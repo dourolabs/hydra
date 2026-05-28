@@ -23,7 +23,7 @@ use hydra::command::output::{CommandContext, ResolvedOutputFormat};
 use hydra_common::{
     api::v1::{
         conversations::CreateConversationRequest,
-        sessions::{AgentConfig, CreateSessionRequest, MountSpec, SessionMode},
+        sessions::{AgentSpec, CreateSessionRequest, MountSpec, SessionMode},
     },
     issues::SessionSettings,
 };
@@ -198,7 +198,11 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
             idle_timeout_secs: None,
             conversation_resume_from: None,
         },
-        agent_config: AgentConfig::default(),
+        agent_config: AgentSpec::Adhoc {
+            system_prompt: "test prompt".to_string(),
+            mcp_config: None,
+        },
+        model: None,
         mount_spec: MountSpec::default(),
         image: None,
         env_vars: HashMap::new(),

@@ -4,12 +4,11 @@ use std::collections::HashMap;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
 use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
-use crate::policy::automations::agent_queue::AGENT_NAME_ENV_VAR;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
 use hydra_common::api::v1::agents::AgentName;
-use hydra_common::api::v1::sessions::{AgentConfig, CreateSessionRequest, SessionMode};
+use hydra_common::api::v1::sessions::{AgentSpec, CreateSessionRequest, SessionMode};
 use hydra_common::constants::ENV_HYDRA_CONVERSATION_ID;
 
 const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
@@ -171,35 +170,11 @@ async fn spawn_session(
         }
     };
 
-    // The server no longer derives agent fields inside `create_session`,
-    // so this automation pre-resolves the agent's prompt, mcp_config,
-    // secrets, and validated name and stamps them onto the request.
-    let system_prompt = match ctx.app_state.resolve_agent_prompt(&agent.prompt_path).await {
-        Ok(prompt) => prompt,
-        Err(err) => {
-            return Err(AutomationError::Other(anyhow::anyhow!(
-                "[{AUTOMATION_NAME}] failed to resolve prompt for agent '{}' on conversation \
-                 {conversation_id} (prompt_path='{}'): {err}",
-                agent.name,
-                agent.prompt_path
-            )));
-        }
-    };
-
-    let mcp_config = match agent.mcp_config_path.as_deref() {
-        Some(path) => match ctx.app_state.resolve_agent_mcp_config(path).await {
-            Ok(cfg) => cfg,
-            Err(err) => {
-                return Err(AutomationError::Other(anyhow::anyhow!(
-                    "[{AUTOMATION_NAME}] failed to resolve MCP config for agent '{}' on \
-                     conversation {conversation_id} (mcp_config_path='{path}'): {err}",
-                    agent.name,
-                )));
-            }
-        },
-        None => None,
-    };
-
+    // Validate the agent's stored name early so we can hand it to the
+    // server as an `AgentSpec::Named { name }`. The server's
+    // `AgentSpec::Named` branch will load the agent row a second time and
+    // resolve its prompt / mcp_config / secrets — this automation is no
+    // longer responsible for any of that.
     let agent_name = AgentName::try_new(agent.name.clone()).map_err(|source| {
         AutomationError::Other(anyhow::anyhow!(
             "[{AUTOMATION_NAME}] agent '{}' has invalid name in the store: {source}",
@@ -225,9 +200,6 @@ async fn spawn_session(
         }
     };
 
-    let secrets =
-        crate::app::sessions::merge_agent_and_settings_secrets(&agent, &conversation_settings);
-
     let actor = ActorRef::Automation {
         automation_name: AUTOMATION_NAME.into(),
         triggered_by: Some(Box::new(ctx.actor().clone())),
@@ -238,7 +210,6 @@ async fn spawn_session(
         ENV_HYDRA_CONVERSATION_ID.to_string(),
         conversation_id.to_string(),
     );
-    env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
 
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
@@ -246,18 +217,14 @@ async fn spawn_session(
             idle_timeout_secs: None,
             conversation_resume_from: None,
         },
-        agent_config: AgentConfig::new(
-            Some(agent_name),
-            conversation_settings.model.clone(),
-            Some(system_prompt),
-            mcp_config,
-        ),
+        agent_config: AgentSpec::Named { name: agent_name },
+        model: conversation_settings.model.clone(),
         mount_spec,
         image: conversation_settings.image.clone(),
         env_vars,
         cpu_limit: conversation_settings.cpu_limit.clone(),
         memory_limit: conversation_settings.memory_limit.clone(),
-        secrets,
+        secrets: conversation_settings.secrets.clone(),
         spawned_from: None,
         resumed_from: None,
     };

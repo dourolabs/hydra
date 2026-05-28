@@ -16,7 +16,6 @@ use anyhow::Context;
 #[cfg(test)]
 use hydra_common::RepoName;
 use hydra_common::api::v1 as api;
-use hydra_common::api::v1::sessions::McpConfig;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::{IssueId, SessionId, VersionNumber};
 use std::collections::{HashMap, HashSet};
@@ -86,8 +85,6 @@ impl AgentQueue {
         state: &AppState,
         issue_id: &IssueId,
         issue: &Issue,
-        prompt: &str,
-        mcp_config: Option<McpConfig>,
     ) -> anyhow::Result<Option<SessionId>> {
         let session_settings =
             state.apply_session_settings_defaults(issue.session_settings.clone());
@@ -109,33 +106,27 @@ impl AgentQueue {
 
         let mut env_vars = HashMap::new();
         env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
-        env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), self.agent.name.clone());
-
-        let merged_secrets =
-            crate::app::sessions::merge_agent_and_settings_secrets(&self.agent, &session_settings);
 
         // The `agents` domain object holds the name as a free `String`.
         // Validate here so a malformed stored name surfaces immediately
-        // rather than silently producing a session whose
-        // `agent_config.agent_name` is empty.
+        // rather than letting the server emit a 4xx mid-spawn.
         let agent_name = hydra_common::api::v1::agents::AgentName::try_new(self.agent.name.clone())
             .with_context(|| {
                 format!("agent '{}' has invalid name in the store", self.agent.name)
             })?;
+        // `AgentSpec::Named` makes the server resolve the prompt /
+        // mcp_config / secrets and stamp `AGENT_NAME_ENV_VAR` — no more
+        // per-caller duplication of that logic.
         let request = api::sessions::CreateSessionRequest {
             mode: api::sessions::SessionMode::Headless,
-            agent_config: api::sessions::AgentConfig::new(
-                Some(agent_name),
-                session_settings.model.clone(),
-                Some(prompt.to_string()),
-                mcp_config,
-            ),
+            agent_config: api::sessions::AgentSpec::Named { name: agent_name },
+            model: session_settings.model.clone(),
             mount_spec,
             image,
             env_vars,
             cpu_limit: session_settings.cpu_limit.clone(),
             memory_limit: session_settings.memory_limit.clone(),
-            secrets: merged_secrets,
+            secrets: session_settings.secrets.clone(),
             spawned_from: Some(issue_id.clone()),
             resumed_from: None,
         };
@@ -207,8 +198,6 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
         task_state: &AgentTaskState,
-        cached_prompt: &mut Option<String>,
-        cached_mcp_config: &mut Option<Option<McpConfig>>,
     ) -> anyhow::Result<SpawnResult> {
         let has_feedback = issue.feedback.is_some();
 
@@ -259,46 +248,6 @@ impl AgentQueue {
             return Ok(SpawnResult::Skipped);
         }
 
-        // Resolve prompt (lazily cached across calls).
-        if cached_prompt.is_none() {
-            *cached_prompt = Some(
-                state
-                    .resolve_agent_prompt(&self.agent.prompt_path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "failed to fetch prompt for agent '{}' at path '{}'",
-                            self.agent.name, self.agent.prompt_path
-                        )
-                    })?,
-            );
-        }
-        let prompt = cached_prompt
-            .as_deref()
-            .context("prompt cache unexpectedly empty after fetch")?;
-
-        // Resolve MCP config (lazily cached across calls).
-        if cached_mcp_config.is_none() {
-            let mcp_config = if let Some(path) = &self.agent.mcp_config_path {
-                state
-                    .resolve_agent_mcp_config(path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "failed to resolve MCP config for agent '{}' at path '{}'",
-                            self.agent.name, path
-                        )
-                    })?
-            } else {
-                None
-            };
-            *cached_mcp_config = Some(mcp_config);
-        }
-        let mcp_config = cached_mcp_config
-            .as_ref()
-            .context("MCP config cache unexpectedly empty after fetch")?
-            .clone();
-
         // Spawn attempt tracking is checked BEFORE creating the session so
         // an exhausted issue doesn't accumulate orphan rows. (Previously the
         // session was built first; with `build_task` now persisting through
@@ -331,9 +280,7 @@ impl AgentQueue {
             });
         }
 
-        let maybe_session_id = self
-            .build_task(state, issue_id, issue, prompt, mcp_config)
-            .await?;
+        let maybe_session_id = self.build_task(state, issue_id, issue).await?;
         let Some(session_id) = maybe_session_id else {
             return Ok(SpawnResult::Skipped);
         };
@@ -438,25 +385,25 @@ mod tests {
         Arc::new(RwLock::new(HashMap::new()))
     }
 
+    fn make_agent(agent_name: &str) -> crate::domain::agents::Agent {
+        crate::domain::agents::Agent::new(
+            agent_name.to_string(),
+            format!("/agents/{agent_name}/prompt.md"),
+            None,
+            DEFAULT_AGENT_MAX_TRIES,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            false,
+            false,
+            Vec::new(),
+        )
+    }
+
     fn queue(agent_name: &str) -> AgentQueue {
         queue_with_attempts(agent_name, shared_attempts())
     }
 
     fn queue_with_attempts(agent_name: &str, attempts: SharedSpawnAttempts) -> AgentQueue {
-        use crate::domain::agents::Agent;
-        AgentQueue::new(
-            Agent::new(
-                agent_name.to_string(),
-                format!("/agents/{agent_name}/prompt.md"),
-                None,
-                DEFAULT_AGENT_MAX_TRIES,
-                DEFAULT_AGENT_MAX_SIMULTANEOUS,
-                false,
-                false,
-                Vec::new(),
-            ),
-            attempts,
-        )
+        AgentQueue::new(make_agent(agent_name), attempts)
     }
 
     fn queue_with_secrets(agent_name: &str, secrets: Vec<String>) -> AgentQueue {
@@ -476,20 +423,68 @@ mod tests {
         )
     }
 
+    /// Seed the agent's prompt document AND the agent record so the
+    /// server's `AgentSpec::Named` branch can resolve both. The agent
+    /// record is inserted using the same shape as the in-memory
+    /// `AgentQueue.agent` so `queue(agent_name)`-built tests see a
+    /// consistent agent across the server's read path and the
+    /// queue's in-memory copy.
     async fn seed_agent_prompt(
         handles: &TestStateHandles,
         agent_name: &str,
         prompt: &str,
     ) -> anyhow::Result<()> {
+        seed_agent(handles, make_agent(agent_name), prompt).await
+    }
+
+    async fn seed_agent_with_secrets(
+        handles: &TestStateHandles,
+        agent_name: &str,
+        prompt: &str,
+        secrets: Vec<String>,
+    ) -> anyhow::Result<()> {
+        use crate::domain::agents::Agent;
+        seed_agent(
+            handles,
+            Agent::new(
+                agent_name.to_string(),
+                format!("/agents/{agent_name}/prompt.md"),
+                None,
+                DEFAULT_AGENT_MAX_TRIES,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
+                false,
+                false,
+                secrets,
+            ),
+            prompt,
+        )
+        .await
+    }
+
+    async fn seed_agent(
+        handles: &TestStateHandles,
+        agent: crate::domain::agents::Agent,
+        prompt: &str,
+    ) -> anyhow::Result<()> {
         use crate::domain::documents::Document;
-        let path = format!("/agents/{agent_name}/prompt.md");
+        let path = agent.prompt_path.clone();
         let doc = Document {
-            title: format!("{agent_name} prompt"),
+            title: format!("{} prompt", agent.name),
             body_markdown: prompt.to_string(),
             path: Some(path.parse().unwrap()),
             deleted: false,
         };
-        handles.store.add_document(doc, &ActorRef::test()).await?;
+        // The document may already exist if a previous call seeded
+        // this agent (state_with_repository seeds vanilla copies of
+        // `agent-a` and `agent-b`; bespoke tests re-seed afterwards).
+        // Tolerate the conflict — the test only cares about the agent
+        // record's fields, not the prompt body, and the prompt is the
+        // same string in practice.
+        let _ = handles.store.add_document(doc, &ActorRef::test()).await;
+        // Same idempotency story for the agent record.
+        if handles.store.add_agent(agent.clone()).await.is_err() {
+            handles.store.update_agent(agent).await?;
+        }
         Ok(())
     }
 
@@ -687,17 +682,9 @@ mod tests {
         let issues = handles.state.list_issues().await?;
 
         let mut session_ids = Vec::new();
-        let mut cached_prompt: Option<String> = None;
         for (issue_id, versioned_issue) in &issues {
             if let Ok(SpawnResult::Spawned(id)) = queue
-                .spawn_for_issue(
-                    &handles.state,
-                    issue_id,
-                    &versioned_issue.item,
-                    &task_state,
-                    &mut cached_prompt,
-                    &mut None,
-                )
+                .spawn_for_issue(&handles.state, issue_id, &versioned_issue.item, &task_state)
                 .await
             {
                 session_ids.push(id);
@@ -779,16 +766,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -839,16 +818,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
@@ -872,16 +843,8 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
 
@@ -909,16 +872,8 @@ mod tests {
         let queue = queue("agent-b");
         let task_state = agent_task_state(&handles.state, "agent-b").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -955,16 +910,8 @@ mod tests {
         };
         let task_state = agent_task_state(&handles.state, "assignment").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = q
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         let session_id = result.into_session_id().unwrap();
@@ -1009,16 +956,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -1056,16 +995,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -1131,16 +1062,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&child_issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &child_issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &child_issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -1218,31 +1141,15 @@ mod tests {
 
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let mut cached_prompt: Option<String> = None;
-
         let issue1 = handles.store.get_issue(&issue_id1, false).await?.item;
         let result1 = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id1,
-                &issue1,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id1, &issue1, &task_state)
             .await?;
         assert!(result1.is_spawned());
 
         let issue2 = handles.store.get_issue(&issue_id2, false).await?.item;
         let result2 = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id2,
-                &issue2,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id2, &issue2, &task_state)
             .await?;
         assert!(result2.is_spawned());
 
@@ -1333,32 +1240,16 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -1418,16 +1309,8 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -1505,16 +1388,8 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&second_issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &second_issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &second_issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         let spawned_session = handles
@@ -1554,48 +1429,24 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -1624,16 +1475,8 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let first_run = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(first_run.is_spawned());
         // Transition the spawned session to terminal so the
@@ -1644,16 +1487,8 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let blocked = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!blocked.is_spawned());
 
@@ -1667,16 +1502,8 @@ mod tests {
 
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
 
@@ -1706,16 +1533,8 @@ mod tests {
         // First spawn attempt succeeds (attempt 1 of 1).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&parent_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
@@ -1723,16 +1542,8 @@ mod tests {
         // Second attempt should be blocked (max_tries=1 reached).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&parent_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let blocked = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &issue_item, &task_state)
             .await?;
         assert!(!blocked.is_spawned());
 
@@ -1758,16 +1569,8 @@ mod tests {
         // Now the counter should have reset, so spawning succeeds again.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&parent_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         let spawned_session = handles
@@ -1825,49 +1628,25 @@ mod tests {
 
         // First spawn attempt succeeds for both parent and child.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let mut cached_prompt: Option<String> = None;
-
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let parent_result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &parent_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &parent_issue, &task_state)
             .await?;
         assert!(parent_result.is_spawned());
         record_completed_task(&handles, parent_result.into_session_id().unwrap()).await?;
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &child_id,
-                &child_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &child_id, &child_issue, &task_state)
             .await?;
         assert!(child_result.is_spawned());
         record_completed_task(&handles, child_result.into_session_id().unwrap()).await?;
 
         // Further attempts should be blocked for both.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let mut cached_prompt: Option<String> = None;
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let blocked = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &parent_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &parent_issue, &task_state)
             .await?;
         assert!(!blocked.is_spawned());
 
@@ -1883,31 +1662,15 @@ mod tests {
         // Parent's counter should have reset (child version changed).
         // Child's counter should also reset (its status changed).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let mut cached_prompt: Option<String> = None;
-
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let parent_result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &parent_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &parent_issue, &task_state)
             .await?;
         assert!(parent_result.is_spawned());
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &child_id,
-                &child_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &child_id, &child_issue, &task_state)
             .await?;
         assert!(child_result.is_spawned());
 
@@ -1954,49 +1717,25 @@ mod tests {
 
         // First spawn consumes both parent and child.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let mut cached_prompt: Option<String> = None;
-
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let parent_result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &parent_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &parent_issue, &task_state)
             .await?;
         assert!(parent_result.is_spawned());
         record_completed_task(&handles, parent_result.into_session_id().unwrap()).await?;
 
         let child_issue = handles.store.get_issue(&child_id, false).await?.item;
         let child_result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &child_id,
-                &child_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &child_id, &child_issue, &task_state)
             .await?;
         assert!(child_result.is_spawned());
         record_completed_task(&handles, child_result.into_session_id().unwrap()).await?;
 
         // No changes to children — counter should NOT reset, so no tasks spawn.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let mut cached_prompt: Option<String> = None;
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &parent_id,
-                &parent_issue,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &parent_id, &parent_issue, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -2047,16 +1786,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -2083,16 +1814,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
 
@@ -2144,16 +1867,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         let session = handles
@@ -2228,16 +1943,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
 
@@ -2290,16 +1997,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
 
@@ -2339,16 +2038,8 @@ mod tests {
         // First iteration: spawns one task (attempt 1 of 2).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue1
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
@@ -2360,16 +2051,8 @@ mod tests {
         // Should still spawn (attempt 2 of 2).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue2
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
@@ -2381,16 +2064,8 @@ mod tests {
         // Should be blocked (max_tries=2 reached across iterations).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue3
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(
             !result.is_spawned(),
@@ -2420,22 +2095,21 @@ mod tests {
             .await?;
 
         // Agent has its own secrets, one overlapping with the issue.
+        seed_agent_with_secrets(
+            &handles,
+            "agent-a",
+            "Fix the issue",
+            vec!["OPENAI_API_KEY".to_string(), "CUSTOM_KEY".to_string()],
+        )
+        .await?;
         let queue = queue_with_secrets(
             "agent-a",
             vec!["OPENAI_API_KEY".to_string(), "CUSTOM_KEY".to_string()],
         );
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
 
@@ -2475,19 +2149,18 @@ mod tests {
             )
             .await?;
 
+        seed_agent_with_secrets(
+            &handles,
+            "agent-a",
+            "Fix the issue",
+            vec!["AGENT_SECRET".to_string()],
+        )
+        .await?;
         let queue = queue_with_secrets("agent-a", vec!["AGENT_SECRET".to_string()]);
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
 
@@ -2521,16 +2194,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned());
 
@@ -2576,6 +2241,28 @@ mod tests {
         Ok(())
     }
 
+    /// Re-seed the agent in the store with `mcp_config_path` populated
+    /// so the server's `AgentSpec::Named` branch resolves the same MCP
+    /// config as the queue's in-memory agent.
+    async fn seed_agent_with_mcp_config_path(
+        handles: &TestStateHandles,
+        agent_name: &str,
+        mcp_config_path: &str,
+    ) -> anyhow::Result<()> {
+        use crate::domain::agents::Agent;
+        let agent = Agent::new(
+            agent_name.to_string(),
+            format!("/agents/{agent_name}/prompt.md"),
+            Some(mcp_config_path.to_string()),
+            DEFAULT_AGENT_MAX_TRIES,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            false,
+            false,
+            Vec::new(),
+        );
+        seed_agent(handles, agent, "Fix the issue").await
+    }
+
     #[tokio::test]
     async fn spawn_populates_mcp_config_from_agent() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
@@ -2598,21 +2285,12 @@ mod tests {
             )
             .await?;
 
+        seed_agent_with_mcp_config_path(&handles, "agent-a", mcp_config_path).await?;
         let queue = queue_with_mcp_config_path("agent-a", mcp_config_path);
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
-        let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
-            None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut cached_mcp_config,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
 
         let session_id = result.into_session_id().expect("should spawn a session");
@@ -2647,18 +2325,8 @@ mod tests {
         let queue = queue("agent-a"); // no mcp_config_path
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
-        let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
-            None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut cached_mcp_config,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
 
         let session_id = result.into_session_id().expect("should spawn a session");
@@ -2686,22 +2354,18 @@ mod tests {
             .await?;
 
         // Agent has mcp_config_path but the document doesn't exist
+        seed_agent_with_mcp_config_path(
+            &handles,
+            "agent-a",
+            "/agents/agent-a/nonexistent_mcp_config.json",
+        )
+        .await?;
         let queue =
             queue_with_mcp_config_path("agent-a", "/agents/agent-a/nonexistent_mcp_config.json");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
-        let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
-            None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut cached_mcp_config,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
 
         let session_id = result.into_session_id().expect("should spawn a session");
@@ -2796,16 +2460,8 @@ mod tests {
         // Without feedback: should NOT spawn (closed + blocked deps + parent running).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned(), "should not spawn without feedback");
 
@@ -2820,16 +2476,8 @@ mod tests {
         // With feedback: should spawn despite closed status, blocked deps, and parent running.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned(), "should spawn with feedback set");
 
@@ -2838,16 +2486,8 @@ mod tests {
         let mut task_state = agent_task_state(&handles.state, "agent-a").await?;
         task_state.existing_issue_ids.insert(issue_id.clone());
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(
             !result.is_spawned(),
@@ -2887,16 +2527,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(
             !result.is_spawned(),
@@ -2940,16 +2572,8 @@ mod tests {
         // First spawn attempt with feedback should succeed.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned(), "first attempt should succeed");
         record_completed_task(&handles, result.into_session_id().unwrap()).await?;
@@ -2957,16 +2581,8 @@ mod tests {
         // Second attempt with same feedback should be blocked (max_tries=1).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned(), "should be blocked by max_tries");
 
@@ -2981,16 +2597,8 @@ mod tests {
         // Should spawn again because feedback changed resets attempts.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id,
-                &issue_item,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(result.is_spawned(), "new feedback should reset attempts");
 
@@ -3030,16 +2638,8 @@ mod tests {
         let queue = queue("agent-a");
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let issue_item_a = handles.store.get_issue(&issue_id_a, false).await?.item;
-        let mut cached_prompt: Option<String> = None;
         let result_a = queue
-            .spawn_for_issue(
-                &handles.state,
-                &issue_id_a,
-                &issue_item_a,
-                &task_state,
-                &mut cached_prompt,
-                &mut None,
-            )
+            .spawn_for_issue(&handles.state, &issue_id_a, &issue_item_a, &task_state)
             .await?;
         let session_id_a = result_a
             .into_session_id()
@@ -3090,15 +2690,13 @@ mod tests {
 
         let mut env_vars_b = HashMap::new();
         env_vars_b.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id_b.to_string());
-        env_vars_b.insert(AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string());
+        // Server stamps AGENT_NAME_ENV_VAR for AgentSpec::Named.
         let request_b = api::sessions::CreateSessionRequest {
             mode: api::sessions::SessionMode::Headless,
-            agent_config: api::sessions::AgentConfig::new(
-                Some(hydra_common::api::v1::agents::AgentName::try_new("agent-a").unwrap()),
-                session_settings_b.model.clone(),
-                Some(prompt.to_string()),
-                None,
-            ),
+            agent_config: api::sessions::AgentSpec::Named {
+                name: hydra_common::api::v1::agents::AgentName::try_new("agent-a").unwrap(),
+            },
+            model: session_settings_b.model.clone(),
             mount_spec,
             image: session_settings_b.image.clone(),
             env_vars: env_vars_b,
@@ -3108,6 +2706,7 @@ mod tests {
             spawned_from: Some(issue_id_b.clone()),
             resumed_from: None,
         };
+        let _ = prompt;
         let system_actor = ActorRef::System {
             worker_name: "parity_test".into(),
             on_behalf_of: None,

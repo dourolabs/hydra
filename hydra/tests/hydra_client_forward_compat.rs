@@ -381,11 +381,15 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     // Job endpoints
     use hydra_common::api::v1::sessions::{
-        AgentConfig as ApiAgentConfig, MountSpec as ApiMountSpec, SessionMode as ApiSessionMode,
+        AgentSpec as ApiAgentSpec, MountSpec as ApiMountSpec, SessionMode as ApiSessionMode,
     };
     let create_session_request = CreateSessionRequest {
         mode: ApiSessionMode::Headless,
-        agent_config: ApiAgentConfig::new(None, None, Some("test prompt".to_string()), None),
+        agent_config: ApiAgentSpec::Adhoc {
+            system_prompt: "test prompt".to_string(),
+            mcp_config: None,
+        },
+        model: None,
         mount_spec: ApiMountSpec::default(),
         image: None,
         env_vars: HashMap::new(),

@@ -1,4 +1,5 @@
 use crate::{
+    app::agents::AgentError,
     config::non_empty,
     domain::{
         actors::ActorRef,
@@ -10,7 +11,7 @@ use crate::{
     store::{ReadOnlyStore, Session, Status, StoreError, TaskError, TaskStatusLog},
 };
 use chrono::{DateTime, Duration, Utc};
-use hydra_common::api::v1::sessions::{Bundle, MountItem, MountSpec};
+use hydra_common::api::v1::sessions::{AgentSpec, Bundle, MountItem, MountSpec};
 use hydra_common::{
     SessionId, Versioned,
     api::v1 as api,
@@ -24,6 +25,7 @@ use tracing::{error, info, warn};
 
 use super::TaskResolutionError;
 use super::app_state::AppState;
+use crate::policy::automations::agent_queue::AGENT_NAME_ENV_VAR;
 
 pub(crate) const WORKER_NAME_SESSION_LIFECYCLE: &str = "session_lifecycle";
 pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned_sessions";
@@ -37,6 +39,36 @@ pub enum CreateSessionError {
         #[source]
         source: StoreError,
     },
+    /// Server-side resolution of a `Named` agent failed because no agent
+    /// is registered under that name.
+    #[error("agent '{name}' not found")]
+    AgentNotFound { name: String },
+    /// A bug in the store (or in the route layer) surfaced while loading
+    /// the named agent — not a 404 case.
+    #[error("failed to look up named agent")]
+    AgentLookup {
+        #[source]
+        source: AgentError,
+    },
+    /// Reading the agent's prompt document failed (path empty / not found
+    /// / store error).
+    #[error("failed to resolve prompt for agent '{name}': {source}")]
+    AgentPromptResolution {
+        name: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    /// Reading the agent's MCP config document failed.
+    #[error("failed to resolve mcp_config for agent '{name}': {source}")]
+    AgentMcpConfigResolution {
+        name: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    /// `CreateSessionRequest.agent_config` carried a future-only
+    /// `AgentSpec` variant that this server does not know how to lower.
+    #[error("unsupported AgentSpec variant: {debug}")]
+    UnsupportedAgentSpec { debug: String },
 }
 
 #[derive(Debug, Error)]
@@ -101,11 +133,13 @@ impl AppState {
 
     /// Create a session from a fully-populated `CreateSessionRequest`.
     ///
-    /// Callers own every field — `create_session` performs no derivation
-    /// from `spawned_from` / `conversation_id` and no agent / prompt
-    /// resolution. The only defaulting path is `apply_session_settings_defaults`,
-    /// invoked on a `SessionSettings` built from the request's defaultable
-    /// fields (so global config defaults still fill in e.g. `model`).
+    /// Callers own every field outside `agent_config` — `create_session`
+    /// performs no derivation from `spawned_from` / `conversation_id`.
+    /// Defaulting still happens for `model` (via `apply_session_settings_defaults`
+    /// on a request-derived `SessionSettings`), and the `AgentSpec::Named`
+    /// branch performs the agent/prompt/mcp_config/secrets resolution on
+    /// the server side so callers can collapse to a one-line
+    /// `agent_config: AgentSpec::Named { name }` request.
     ///
     /// Returns the assigned `SessionId` and the persisted domain `Session`
     /// so HTTP callers can populate `CreateSessionResponse.session` without
@@ -119,6 +153,7 @@ impl AppState {
         let api::sessions::CreateSessionRequest {
             mode: req_mode,
             agent_config: req_agent_config,
+            model: req_model,
             mount_spec: req_mount_spec,
             image: req_image,
             env_vars: req_env_vars,
@@ -137,14 +172,72 @@ impl AppState {
         // values pass through unchanged.
         let model = self
             .apply_session_settings_defaults(SessionSettings {
-                model: req_agent_config.model.clone(),
+                model: req_model,
                 ..SessionSettings::default()
             })
             .model;
         let image = req_image;
         let cpu_limit = req_cpu_limit;
+        let mut env_vars = req_env_vars;
         let memory_limit = req_memory_limit;
-        let secrets = req_secrets;
+        let mut secrets = req_secrets;
+
+        // Dispatch on the AgentSpec variant. `Named` reaches into the
+        // store for the agent's prompt / mcp_config / secrets and stamps
+        // the `AGENT_NAME_ENV_VAR` env var. `Adhoc` consumes the inline
+        // prompt verbatim with no I/O.
+        let agent_config = match req_agent_config {
+            AgentSpec::Named { name } => {
+                let agent = self
+                    .get_agent(name.as_str())
+                    .await
+                    .map_err(|err| match err {
+                        AgentError::NotFound { name } => CreateSessionError::AgentNotFound { name },
+                        other => CreateSessionError::AgentLookup { source: other },
+                    })?;
+                let system_prompt = self
+                    .resolve_agent_prompt(&agent.prompt_path)
+                    .await
+                    .map_err(|source| CreateSessionError::AgentPromptResolution {
+                        name: agent.name.clone(),
+                        source,
+                    })?;
+                let mcp_config = match agent.mcp_config_path.as_deref() {
+                    Some(path) => self
+                        .resolve_agent_mcp_config(path)
+                        .await
+                        .map_err(|source| CreateSessionError::AgentMcpConfigResolution {
+                            name: agent.name.clone(),
+                            source,
+                        })?,
+                    None => None,
+                };
+
+                // Merge agent.secrets into the request's secrets while
+                // preserving first-seen order. `merge_agent_and_settings_secrets`
+                // walks `agent.secrets` then `settings.secrets`, so we
+                // stage the request-supplied secrets as `settings.secrets`
+                // before the merge to keep the agent-first ordering.
+                let settings_with_secrets = SessionSettings {
+                    secrets: secrets.clone(),
+                    ..SessionSettings::default()
+                };
+                secrets = merge_agent_and_settings_secrets(&agent, &settings_with_secrets);
+
+                env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
+
+                AgentConfig::new(Some(name), model, Some(system_prompt), mcp_config)
+            }
+            AgentSpec::Adhoc {
+                system_prompt,
+                mcp_config,
+            } => AgentConfig::new(None, model, Some(system_prompt), mcp_config),
+            other => {
+                return Err(CreateSessionError::UnsupportedAgentSpec {
+                    debug: format!("{other:?}"),
+                });
+            }
+        };
 
         // Construction-time invariant: the spec must include a Bundle mount
         // that materializes `working_dir` on disk. A request that arrives
@@ -162,12 +255,6 @@ impl AppState {
             req_mount_spec
         };
 
-        let agent_config = AgentConfig::new(
-            req_agent_config.agent_name,
-            model,
-            req_agent_config.system_prompt,
-            req_agent_config.mcp_config,
-        );
         let mode: SessionMode = req_mode.into();
 
         let mut session = Session::new(
@@ -177,7 +264,7 @@ impl AppState {
             agent_config,
             mount_spec,
             image,
-            req_env_vars,
+            env_vars,
             cpu_limit,
             memory_limit,
             secrets,
@@ -1370,7 +1457,7 @@ mod tests {
     async fn create_session_coerces_empty_mount_spec_to_bundle_none() {
         use crate::domain::conversations::{Conversation, ConversationStatus};
         use hydra_common::api::v1::sessions::{
-            AgentConfig, Bundle, CreateSessionRequest, MountItem, MountSpec, SessionMode,
+            AgentSpec, Bundle, CreateSessionRequest, MountItem, MountSpec, SessionMode,
         };
 
         let state = state_with_default_model("default-model");
@@ -1380,7 +1467,11 @@ mod tests {
         // from. Pre-fix this produced an empty `mounts: []`.
         let headless_request = CreateSessionRequest {
             mode: SessionMode::Headless,
-            agent_config: AgentConfig::default(),
+            agent_config: AgentSpec::Adhoc {
+                system_prompt: "test".to_string(),
+                mcp_config: None,
+            },
+            model: None,
             mount_spec: MountSpec::default(),
             image: None,
             env_vars: std::collections::HashMap::new(),
@@ -1439,7 +1530,11 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            agent_config: AgentConfig::default(),
+            agent_config: AgentSpec::Adhoc {
+                system_prompt: "test".to_string(),
+                mcp_config: None,
+            },
+            model: None,
             mount_spec: MountSpec::default(),
             image: None,
             env_vars: std::collections::HashMap::new(),
@@ -1475,7 +1570,7 @@ mod tests {
     async fn create_session_passes_interactive_and_conversation_id() {
         use crate::domain::conversations::{Conversation, ConversationStatus};
         use hydra_common::api::v1::sessions::{
-            AgentConfig, CreateSessionRequest, MountSpec, SessionMode,
+            AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
         };
 
         let state = state_with_default_model("default-model");
@@ -1483,7 +1578,11 @@ mod tests {
         // Headless session — no conversation lookup, no spawned_from.
         let request = CreateSessionRequest {
             mode: SessionMode::Headless,
-            agent_config: AgentConfig::default(),
+            agent_config: AgentSpec::Adhoc {
+                system_prompt: "test".to_string(),
+                mcp_config: None,
+            },
+            model: None,
             mount_spec: MountSpec::default(),
             image: None,
             env_vars: std::collections::HashMap::new(),
@@ -1530,7 +1629,11 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            agent_config: AgentConfig::default(),
+            agent_config: AgentSpec::Adhoc {
+                system_prompt: "test".to_string(),
+                mcp_config: None,
+            },
+            model: None,
             mount_spec: MountSpec::default(),
             image: None,
             env_vars: std::collections::HashMap::new(),

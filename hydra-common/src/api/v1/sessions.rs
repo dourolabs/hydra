@@ -287,13 +287,44 @@ fn default_status() -> Status {
     Status::Created
 }
 
+/// Caller-facing selector for how to build the resulting
+/// [`Session::agent_config`].
+///
+/// `Named` defers to the server: the request carries only the agent name,
+/// and `AppState::create_session` looks up the agent row to resolve the
+/// `system_prompt` / `mcp_config` / `secrets` / `AGENT_NAME_ENV_VAR` env
+/// var. `Adhoc` skips the DB lookup entirely — the caller hands the
+/// server a literal prompt (non-optional on the wire) and an optional
+/// inline `mcp_config`.
+///
+/// The two variants are exclusive: there is no "Named with prompt
+/// override" middle ground. See `i-mnmvcxmd` for the design rationale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AgentSpec {
+    /// Server resolves prompt / mcp_config / secrets from the agent row.
+    Named { name: AgentName },
+    /// Caller supplies the prompt and (optional) mcp_config inline.
+    Adhoc {
+        system_prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mcp_config: Option<McpConfig>,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct CreateSessionRequest {
     pub mode: SessionMode,
-    #[serde(default)]
-    pub agent_config: AgentConfig,
+    pub agent_config: AgentSpec,
+    /// Model override that applies to both `Named` and `Adhoc` variants.
+    /// Sibling of `image` — same kind of orthogonal override knob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default)]
     pub mount_spec: MountSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1492,7 +1523,11 @@ mod tests {
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
             },
-            agent_config: AgentConfig::default(),
+            agent_config: AgentSpec::Adhoc {
+                system_prompt: "test".to_string(),
+                mcp_config: None,
+            },
+            model: None,
             mount_spec: MountSpec::default(),
             image: None,
             env_vars: HashMap::new(),
@@ -1519,7 +1554,11 @@ mod tests {
     fn create_session_request_round_trips_headless_mode() {
         let request = CreateSessionRequest {
             mode: SessionMode::Headless,
-            agent_config: AgentConfig::new(None, None, Some("do stuff".to_string()), None),
+            agent_config: AgentSpec::Adhoc {
+                system_prompt: "do stuff".to_string(),
+                mcp_config: None,
+            },
+            model: None,
             mount_spec: MountSpec::default(),
             image: None,
             env_vars: HashMap::new(),
@@ -1534,10 +1573,86 @@ mod tests {
         assert_eq!(json["mode"]["type"], "headless");
         // Headless is unit-like — no prompt field on `mode`.
         assert!(json["mode"].get("prompt").is_none());
+        assert_eq!(json["agent_config"]["type"], "adhoc");
         assert_eq!(json["agent_config"]["system_prompt"], "do stuff");
         // Optional/empty fields are omitted on the wire.
         assert!(json.get("spawned_from").is_none());
         assert!(json.get("resumed_from").is_none());
+    }
+
+    #[test]
+    fn agent_spec_named_variant_round_trips() {
+        let agent_name = AgentName::try_new("swe").unwrap();
+        let spec = AgentSpec::Named {
+            name: agent_name.clone(),
+        };
+        let json = serde_json::to_value(&spec).unwrap();
+        assert_eq!(json["type"], "named");
+        assert_eq!(json["name"], "swe");
+
+        let parsed: AgentSpec = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, spec);
+    }
+
+    #[test]
+    fn agent_spec_adhoc_variant_round_trips() {
+        let spec = AgentSpec::Adhoc {
+            system_prompt: "do X".to_string(),
+            mcp_config: Some(serde_json::json!({"mcpServers": {}})),
+        };
+        let json = serde_json::to_value(&spec).unwrap();
+        assert_eq!(json["type"], "adhoc");
+        assert_eq!(json["system_prompt"], "do X");
+        assert!(json["mcp_config"].is_object());
+
+        let parsed: AgentSpec = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed, spec);
+    }
+
+    #[test]
+    fn agent_spec_adhoc_omits_none_mcp_config_on_wire() {
+        let spec = AgentSpec::Adhoc {
+            system_prompt: "do X".to_string(),
+            mcp_config: None,
+        };
+        let json = serde_json::to_value(&spec).unwrap();
+        assert_eq!(json["type"], "adhoc");
+        assert!(
+            json.get("mcp_config").is_none(),
+            "None mcp_config should be omitted; got {json:?}"
+        );
+    }
+
+    #[test]
+    fn create_session_request_round_trips_named_agent_spec() {
+        let agent_name = AgentName::try_new("swe").unwrap();
+        let request = CreateSessionRequest {
+            mode: SessionMode::Headless,
+            agent_config: AgentSpec::Named {
+                name: agent_name.clone(),
+            },
+            model: Some("gpt-4o".to_string()),
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["agent_config"]["type"], "named");
+        assert_eq!(json["agent_config"]["name"], "swe");
+        assert_eq!(json["model"], "gpt-4o");
+
+        let deserialized: CreateSessionRequest = serde_json::from_value(json).unwrap();
+        match deserialized.agent_config {
+            AgentSpec::Named { name } => assert_eq!(name, agent_name),
+            _ => panic!("expected Named variant"),
+        }
+        assert_eq!(deserialized.model.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
