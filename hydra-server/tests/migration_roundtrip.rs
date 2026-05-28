@@ -541,8 +541,8 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         Some(serde_json::json!({"User": {"name": "alice"}})),
     )
     .await?;
-    // 4. Issue without matching tasks_v2 row -> actor=NULL
-    expect_issue_actor_null(pool, "i-actissno").await?;
+    // 4. Issue without matching tasks_v2 row -> External-legacy(<iid>)
+    expect_issue_actor_actor_id(pool, "i-actissno", Some(external_legacy("i-actisstwo"))).await?;
     // 5. Service with valid AgentName -> Agent
     expect_issue_actor_actor_id(
         pool,
@@ -550,8 +550,8 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         Some(serde_json::json!({"Agent": {"name": "swe"}})),
     )
     .await?;
-    // 6. Service with invalid AgentName -> actor=NULL
-    expect_issue_actor_null(pool, "i-actsvcno").await?;
+    // 6. Service with invalid AgentName -> External-legacy(<name>)
+    expect_issue_actor_actor_id(pool, "i-actsvcno", Some(external_legacy("has space"))).await?;
     // 7. Legacy users/<x> -> User
     expect_issue_actor_actor_id(
         pool,
@@ -566,8 +566,13 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         Some(serde_json::json!({"Agent": {"name": "swe"}})),
     )
     .await?;
-    // 9. Legacy unparseable -> actor=NULL
-    expect_issue_actor_null(pool, "i-actlegx").await?;
+    // 9. Legacy unparseable -> External-legacy(<bare-string>)
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actlegx",
+        Some(external_legacy("definitely not an actor")),
+    )
+    .await?;
     // 10. Already-typed User -> no-op (still User)
     expect_issue_actor_actor_id(
         pool,
@@ -575,8 +580,15 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         Some(serde_json::json!({"User": {"name": "alice"}})),
     )
     .await?;
-    // 11. Multi-key actor_id -> actor=NULL
-    expect_issue_actor_null(pool, "i-actmulti").await?;
+    // 11. Multi-key actor_id -> External-legacy(JSON form of the map)
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actmulti",
+        Some(external_legacy(
+            serde_json::json!({"kind": "user", "name": "alice"}).to_string(),
+        )),
+    )
+    .await?;
     // 12. Legacy adhoc/<sid> -> Adhoc
     expect_issue_actor_actor_id(
         pool,
@@ -612,21 +624,38 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         Some(serde_json::json!({"Agent": {"name": "swe"}})),
     )
     .await?;
-    // 17. Legacy users/<x> with invalid Username payload -> actor=NULL
-    expect_issue_actor_null(pool, "i-actubad").await?;
-    // 18. Legacy agents/<x> with invalid AgentName payload -> actor=NULL
-    expect_issue_actor_null(pool, "i-actabad").await?;
-    // 19. Legacy external/<sys>/<x> with invalid ExternalSystem -> actor=NULL
-    expect_issue_actor_null(pool, "i-actexbad").await?;
-    // 20. Legacy a-<issue_id> shorthand is intentionally NOT recognised -> NULL
-    expect_issue_actor_null(pool, "i-actashrt").await?;
+    // 17. Legacy users/<x> with invalid Username -> External-legacy("users/<x>")
+    expect_issue_actor_actor_id(pool, "i-actubad", Some(external_legacy("users/has space")))
+        .await?;
+    // 18. Legacy agents/<x> with invalid AgentName -> External-legacy("agents/<x>")
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actabad",
+        Some(external_legacy("agents/with space")),
+    )
+    .await?;
+    // 19. Legacy external/<sys>/<x> with invalid system -> External-legacy(<bare-string>)
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actexbad",
+        Some(external_legacy("external/has space/foo")),
+    )
+    .await?;
+    // 20. Legacy a-<issue_id> shorthand -> External-legacy("a-<issue_id>")
+    expect_issue_actor_actor_id(pool, "i-actashrt", Some(external_legacy("a-i-actissone"))).await?;
 
     // Issue-arm tie-break edges: multi-match / deleted-only / not-latest /
-    // chained Issue all leave the referring row's actor at NULL because
+    // chained Issue all fall back to External-legacy with the original
+    // parent issue id preserved as the username, because
     // `load_issue_to_actor_id` only inserts when exactly one
     // post-cleanup-resolvable task is associated with the issue.
-    for issue_id in ["i-actrefmny", "i-actrefdel", "i-actrefold", "i-actrefchn"] {
-        expect_issue_actor_null(pool, issue_id).await?;
+    for (issue_id, expected_iid) in [
+        ("i-actrefmny", "i-actissmany"),
+        ("i-actrefdel", "i-actissdel"),
+        ("i-actrefold", "i-actissold"),
+        ("i-actrefchn", "i-actisschn"),
+    ] {
+        expect_issue_actor_actor_id(pool, issue_id, Some(external_legacy(expected_iid))).await?;
     }
 
     // Nested ActorRef rewrites — System.on_behalf_of resolved/unresolved
@@ -719,37 +748,33 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         );
     }
 
-    // actors_v2 — bare `actor_id` column rewrites
-    let row = sqlx::query(
-        "SELECT actor_id::text AS pl FROM metis.actors_v2 \
-         WHERE id = 'actu-aname' AND is_latest = TRUE",
-    )
-    .fetch_one(pool)
-    .await
-    .context("read actors_v2.actor_id for actu-aname")?;
-    let raw: Option<String> = row.get("pl");
-    let got: Option<serde_json::Value> = raw
-        .map(|s| serde_json::from_str(&s))
-        .transpose()
-        .context("decode actor_id for actu-aname")?;
-    if got != Some(serde_json::json!({"User": {"name": "alice"}})) {
-        bail!("actors_v2(actu-aname).actor_id: expected User; got {got:?}");
-    }
-
-    let row = sqlx::query(
-        "SELECT actor_id::text AS pl FROM metis.actors_v2 \
-         WHERE id = 'actu-asvc' AND is_latest = TRUE",
-    )
-    .fetch_one(pool)
-    .await
-    .context("read actors_v2.actor_id for actu-asvc")?;
-    let raw: Option<String> = row.get("pl");
-    let got: Option<serde_json::Value> = raw
-        .map(|s| serde_json::from_str(&s))
-        .transpose()
-        .context("decode actor_id for actu-asvc")?;
-    if got != Some(serde_json::json!({"Agent": {"name": "swe"}})) {
-        bail!("actors_v2(actu-asvc).actor_id: expected Agent; got {got:?}");
+    // actors_v2 — bare `actor_id` column rewrites. `actor_id` is NOT
+    // NULL in this table since `20260205000000_add_v2_tables.sql`, so
+    // every shape must end up with a non-null value after the cleanup.
+    // The last two rows specifically exercise previously-NULLable
+    // paths that would have violated the constraint pre-fix.
+    for (id, expected) in [
+        ("actu-aname", serde_json::json!({"User": {"name": "alice"}})),
+        ("actu-asvc", serde_json::json!({"Agent": {"name": "swe"}})),
+        ("actu-aiss", external_legacy("i-actisstwo")),
+        ("actu-asvcbad", external_legacy("has space")),
+    ] {
+        let row = sqlx::query(
+            "SELECT actor_id::text AS pl FROM metis.actors_v2 \
+             WHERE id = $1 AND is_latest = TRUE",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read actors_v2.actor_id for {id}"))?;
+        let raw: Option<String> = row.get("pl");
+        let got: Option<serde_json::Value> = raw
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .with_context(|| format!("decode actor_id for {id}"))?;
+        if got.as_ref() != Some(&expected) {
+            bail!("actors_v2({id}).actor_id: expected {expected}; got {got:?}");
+        }
     }
 
     // conversation_events_v2 — Session inside Authenticated is rewritten to Adhoc.
@@ -774,63 +799,86 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         bail!("conversation_events_v2.actor: expected {expected}; got {got:?}");
     }
 
-    // §3.3 smoke: read every non-NULLed row through the store and
-    // confirm `ActorRef::deserialize` accepts the rewritten payload.
+    // §3.3 smoke: read every row through the store and confirm
+    // `ActorRef::deserialize` accepts the rewritten payload — including
+    // the new External-legacy fallback shape that catches serde drift
+    // between the migration's raw JSON and
+    // `hydra_common::ActorId::deserialize`.
     use hydra_server::domain::actors::{ActorId, ActorRef as DomainActorRef};
     let store = PostgresStoreV2::new(pool.clone());
+    let legacy = ExternalSystem::try_new("legacy").unwrap();
+    let external_legacy_actor = |username: &str| ActorId::External {
+        system: legacy.clone(),
+        username: username.to_string(),
+    };
     for (issue_id, expected_actor_id) in [
         (
             "i-actuname",
-            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+            ActorId::User(ApiUsername::try_new("alice").unwrap()),
         ),
-        (
-            "i-actsess",
-            Some(ActorId::Adhoc("s-sessone".parse().unwrap())),
-        ),
+        ("i-actsess", ActorId::Adhoc("s-sessone".parse().unwrap())),
         (
             "i-actiss",
-            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+            ActorId::User(ApiUsername::try_new("alice").unwrap()),
         ),
+        // Previously NULL — now External-legacy.
+        ("i-actissno", external_legacy_actor("i-actisstwo")),
         (
             "i-actsvcok",
-            Some(ActorId::Agent(AgentName::try_new("swe").unwrap())),
+            ActorId::Agent(AgentName::try_new("swe").unwrap()),
         ),
+        ("i-actsvcno", external_legacy_actor("has space")),
         (
             "i-actlegu",
-            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+            ActorId::User(ApiUsername::try_new("alice").unwrap()),
         ),
         (
             "i-actlega",
-            Some(ActorId::Agent(AgentName::try_new("swe").unwrap())),
+            ActorId::Agent(AgentName::try_new("swe").unwrap()),
+        ),
+        (
+            "i-actlegx",
+            external_legacy_actor("definitely not an actor"),
         ),
         (
             "i-actuser",
-            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+            ActorId::User(ApiUsername::try_new("alice").unwrap()),
         ),
-        // New per-variant Authenticated/actor_id rows below.
         (
-            "i-actadhoc",
-            Some(ActorId::Adhoc("s-adhocone".parse().unwrap())),
+            "i-actmulti",
+            external_legacy_actor(
+                &serde_json::json!({"kind": "user", "name": "alice"}).to_string(),
+            ),
         ),
+        ("i-actadhoc", ActorId::Adhoc("s-adhocone".parse().unwrap())),
         (
             "i-actextn",
-            Some(ActorId::External {
+            ActorId::External {
                 system: ExternalSystem::try_new("github").unwrap(),
                 username: "jayantk".to_string(),
-            }),
+            },
         ),
         (
             "i-actushrt",
-            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+            ActorId::User(ApiUsername::try_new("alice").unwrap()),
         ),
-        (
-            "i-actsshrt",
-            Some(ActorId::Adhoc("s-abcdef".parse().unwrap())),
-        ),
+        ("i-actsshrt", ActorId::Adhoc("s-abcdef".parse().unwrap())),
         (
             "i-actsvshr",
-            Some(ActorId::Agent(AgentName::try_new("swe").unwrap())),
+            ActorId::Agent(AgentName::try_new("swe").unwrap()),
         ),
+        ("i-actubad", external_legacy_actor("users/has space")),
+        ("i-actabad", external_legacy_actor("agents/with space")),
+        (
+            "i-actexbad",
+            external_legacy_actor("external/has space/foo"),
+        ),
+        ("i-actashrt", external_legacy_actor("a-i-actissone")),
+        // Issue-arm tie-break edges fall back with the parent issue id.
+        ("i-actrefmny", external_legacy_actor("i-actissmany")),
+        ("i-actrefdel", external_legacy_actor("i-actissdel")),
+        ("i-actrefold", external_legacy_actor("i-actissold")),
+        ("i-actrefchn", external_legacy_actor("i-actisschn")),
     ] {
         let issue = store
             .get_issue(&parse_issue_id(issue_id)?, false)
@@ -839,39 +887,11 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         let actor = issue.actor.with_context(|| {
             format!("expected non-None actor on {issue_id} after cleanup; got None")
         })?;
-        match (&actor, expected_actor_id.as_ref()) {
-            (DomainActorRef::Authenticated { actor_id, .. }, Some(expected))
-                if actor_id == expected => {}
+        match &actor {
+            DomainActorRef::Authenticated { actor_id, .. } if actor_id == &expected_actor_id => {}
             other => bail!(
                 "{issue_id}: expected Authenticated(actor_id={expected_actor_id:?}); got {other:?}"
             ),
-        }
-    }
-    for issue_id in [
-        "i-actissno",
-        "i-actsvcno",
-        "i-actlegx",
-        "i-actmulti",
-        // Invalid Legacy bare-string payloads (§ per-variant gaps).
-        "i-actubad",
-        "i-actabad",
-        "i-actexbad",
-        "i-actashrt",
-        // Issue-arm tie-break edges that omit from the lookup map.
-        "i-actrefmny",
-        "i-actrefdel",
-        "i-actrefold",
-        "i-actrefchn",
-    ] {
-        let issue = store
-            .get_issue(&parse_issue_id(issue_id)?, false)
-            .await
-            .with_context(|| format!("store-level read of {issue_id}"))?;
-        if issue.actor.is_some() {
-            bail!(
-                "{issue_id}: expected actor=None (cleanup NULLed unrecoverable rows); got {:?}",
-                issue.actor
-            );
         }
     }
 
@@ -1038,20 +1058,11 @@ async fn expect_issue_actor_actor_id(
     Ok(())
 }
 
-async fn expect_issue_actor_null(pool: &PgPool, issue_id: &str) -> Result<()> {
-    let row = sqlx::query(
-        "SELECT actor IS NULL AS is_null FROM metis.issues_v2 \
-         WHERE id = $1 AND is_latest = TRUE",
-    )
-    .bind(issue_id)
-    .fetch_one(pool)
-    .await
-    .with_context(|| format!("read issues_v2.actor IS NULL for {issue_id}"))?;
-    let is_null: bool = row.get("is_null");
-    if !is_null {
-        bail!("issue {issue_id}: expected actor IS NULL after cleanup");
-    }
-    Ok(())
+/// Canonical External-legacy fallback JSON wire shape.
+fn external_legacy(username: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "External": {"system": "legacy", "username": username.into()}
+    })
 }
 
 async fn expect_session_event_count(pool: &PgPool, session_id: &str, expected: i64) -> Result<()> {

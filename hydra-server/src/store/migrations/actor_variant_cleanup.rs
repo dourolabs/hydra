@@ -10,10 +10,29 @@
 //! |--------------------------------------------------|-----------------------------------------------------------------------------------------------------|
 //! | `{"Username":"alice"}`                           | `{"User":{"name":"alice"}}`                                                                         |
 //! | `{"Session":"s-..."}`                            | `{"Adhoc":{"session_id":"s-..."}}`                                                                  |
-//! | `{"Issue":"i-..."}`                              | Actor of the latest non-deleted `tasks_v2` row where `spawned_from = "i-..."`. Otherwise NULL.      |
-//! | `{"Service":"<n>"}`                              | `{"Agent":{"name":"<n>"}}` if `<n>` validates as `AgentName`. Otherwise NULL.                       |
-//! | `"<bare-string>"` (a `Legacy` payload)           | Parsed via this module's self-contained parser; on parse failure NULL.                              |
-//! | Multi-key map (Legacy catch-all)                 | Same as bare-string parser; on failure NULL.                                                        |
+//! | `{"Issue":"i-..."}`                              | Actor of the latest non-deleted `tasks_v2` row where `spawned_from = "i-..."`. Otherwise External-legacy(`"i-..."`). |
+//! | `{"Service":"<n>"}`                              | `{"Agent":{"name":"<n>"}}` if `<n>` validates as `AgentName`. Otherwise External-legacy(`"<n>"`).   |
+//! | `"<bare-string>"` (a `Legacy` payload)           | Parsed via this module's self-contained parser; on parse failure External-legacy(`"<bare-string>"`).|
+//! | Multi-key map (Legacy catch-all)                 | External-legacy with the JSON-stringified map as the username.                                      |
+//! | Anything else (unknown tag, non-string/non-map)  | External-legacy with the JSON-stringified payload as the username.                                  |
+//!
+//! ## External-legacy fallback
+//!
+//! Any input the per-variant rules above can't rewrite into a typed
+//! post-cleanup variant lands in `{"External":{"system":"legacy","username":<preserved>}}`
+//! rather than NULL. The original identifier is preserved verbatim so
+//! the row stays forensically recoverable. `system = "legacy"` is a
+//! domain-meaningful marker (not a synonym for "unknown") — see
+//! `i-rxlmigrv` for the user's rationale and the AGENTS.md
+//! placeholder-values carve-out.
+//!
+//! Two `Option`-shaped slots intentionally null-collapse instead:
+//! `System.on_behalf_of` (`Option<ActorId>`) and
+//! `Automation.triggered_by` (`Option<Box<ActorRef>>`). The row's outer
+//! `actor` column already stays non-null via the attribution captured
+//! in `worker_name` / `automation_name`, so propagating External-legacy
+//! into the inner slot would add noise without satisfying any new
+//! invariant.
 //!
 //! ## Self-contained
 //!
@@ -109,11 +128,84 @@ pub(crate) enum Rewrite {
     Replace(Value),
     /// Pre-cleanup `{"Issue":"<id>"}` shape — needs a `tasks_v2`
     /// lookup in the backend layer to resolve into a final shape.
+    /// If the lookup misses, the caller selects a context-specific
+    /// fallback (External-legacy for non-null columns, null for
+    /// `Option`-shaped sub-actor slots).
     NeedsIssueLookup(String),
-    /// Couldn't recognise the shape (e.g. unparseable Legacy, invalid
-    /// Service name, multi-key map that doesn't match any variant).
-    /// Caller NULLs the row's actor column and warn-logs.
-    Drop { reason: &'static str },
+    /// No typed rewrite possible (unparseable bare-string Legacy,
+    /// invalid Service name, multi-key map, unknown tag, …). `username`
+    /// preserves the original identifier verbatim so the caller can
+    /// wrap it into an External-legacy fallback for non-null columns,
+    /// or null-collapse it for `Option`-shaped sub-actor slots.
+    Fallback { username: String },
+}
+
+/// Build the canonical External-legacy fallback JSON. Used by callers
+/// that own a non-null column (the outer `actor` / `actor_id`) and
+/// need to preserve `username` verbatim instead of NULLing the row.
+fn external_legacy_fallback(username: impl Into<String>) -> Value {
+    NewActorId::External {
+        system: "legacy".to_string(),
+        username: username.into(),
+    }
+    .to_value()
+}
+
+/// Resolve a non-`NoOp` `Rewrite` outcome for a slot that owns a
+/// **non-null** column (outer `actor` / `actor_id`). Issue-lookup
+/// misses and `Fallback` outcomes both resolve to External-legacy with
+/// the original identifier preserved as the username.
+fn resolve_for_outer_slot(
+    rewrite: Rewrite,
+    issue_to_actor_id: &HashMap<String, Value>,
+) -> OuterResolution {
+    match rewrite {
+        Rewrite::NoOp => OuterResolution::NoOp,
+        Rewrite::Replace(v) => OuterResolution::Value(v),
+        Rewrite::NeedsIssueLookup(iid) => OuterResolution::Value(
+            issue_to_actor_id
+                .get(&iid)
+                .cloned()
+                .unwrap_or_else(|| external_legacy_fallback(iid)),
+        ),
+        Rewrite::Fallback { username } => {
+            OuterResolution::Value(external_legacy_fallback(username))
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OuterResolution {
+    NoOp,
+    Value(Value),
+}
+
+/// Resolve a non-`NoOp` `Rewrite` outcome for an `Option`-shaped
+/// sub-actor slot (`System.on_behalf_of`, the inner `actor_id` of
+/// `Automation.triggered_by.Authenticated`). Issue-lookup misses and
+/// `Fallback` outcomes both collapse to `null` rather than propagating
+/// the External-legacy noise into a field that's already attribution-
+/// covered by `worker_name` / `automation_name`.
+fn resolve_for_inner_slot(
+    rewrite: Rewrite,
+    issue_to_actor_id: &HashMap<String, Value>,
+) -> InnerResolution {
+    match rewrite {
+        Rewrite::NoOp => InnerResolution::NoOp,
+        Rewrite::Replace(v) => InnerResolution::Value(v),
+        Rewrite::NeedsIssueLookup(iid) => match issue_to_actor_id.get(&iid).cloned() {
+            Some(v) => InnerResolution::Value(v),
+            None => InnerResolution::Null,
+        },
+        Rewrite::Fallback { .. } => InnerResolution::Null,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InnerResolution {
+    NoOp,
+    Value(Value),
+    Null,
 }
 
 /// Parse a possibly-legacy `ActorId` JSON value.
@@ -125,15 +217,16 @@ pub(crate) fn classify_actor_id(value: &Value) -> Rewrite {
         // Bare-string Legacy payload.
         return match parse_legacy_string(s) {
             Some(new) => Rewrite::Replace(new.to_value()),
-            None => Rewrite::Drop {
-                reason: "unparseable bare-string Legacy actor",
+            None => Rewrite::Fallback {
+                username: s.to_string(),
             },
         };
     }
 
     let Some(map) = value.as_object() else {
-        return Rewrite::Drop {
-            reason: "actor_id is neither a string nor a map",
+        // Numbers, booleans, arrays, null — preserve via JSON form.
+        return Rewrite::Fallback {
+            username: value.to_string(),
         };
     };
 
@@ -143,14 +236,10 @@ pub(crate) fn classify_actor_id(value: &Value) -> Rewrite {
         return classify_tagged(tag, payload);
     }
 
-    // Multi-key map: Legacy catch-all. The bare-string parser doesn't
-    // help here — the only sensible recovery would be to try matching
-    // the map against each known variant shape, but production hasn't
-    // emitted multi-key blobs since the internally-tagged
-    // pre-Phase-1 wire shape was retired (which had a "kind" key plus
-    // payload fields; not a recognisable post-cleanup map). NULL it.
-    Rewrite::Drop {
-        reason: "multi-key map (Legacy catch-all) not parseable as any variant",
+    // Multi-key map (legacy catch-all): preserve the JSON form so
+    // operators can recover whatever the row used to be.
+    Rewrite::Fallback {
+        username: value.to_string(),
     }
 }
 
@@ -167,8 +256,8 @@ fn classify_tagged(tag: &str, payload: &Value) -> Rewrite {
                 }
                 .to_value(),
             ),
-            None => Rewrite::Drop {
-                reason: "Username payload is not a string",
+            None => Rewrite::Fallback {
+                username: payload.to_string(),
             },
         },
         "Session" => match payload.as_str() {
@@ -178,14 +267,14 @@ fn classify_tagged(tag: &str, payload: &Value) -> Rewrite {
                 }
                 .to_value(),
             ),
-            None => Rewrite::Drop {
-                reason: "Session payload is not a string",
+            None => Rewrite::Fallback {
+                username: payload.to_string(),
             },
         },
         "Issue" => match payload.as_str() {
             Some(iid) => Rewrite::NeedsIssueLookup(iid.to_string()),
-            None => Rewrite::Drop {
-                reason: "Issue payload is not a string",
+            None => Rewrite::Fallback {
+                username: payload.to_string(),
             },
         },
         "Service" => match payload.as_str() {
@@ -196,17 +285,22 @@ fn classify_tagged(tag: &str, payload: &Value) -> Rewrite {
                     }
                     .to_value(),
                 ),
-                Err(_) => Rewrite::Drop {
-                    reason: "Service name does not validate as AgentName",
+                Err(_) => Rewrite::Fallback {
+                    username: name.to_string(),
                 },
             },
-            None => Rewrite::Drop {
-                reason: "Service payload is not a string",
+            None => Rewrite::Fallback {
+                username: payload.to_string(),
             },
         },
-        _ => Rewrite::Drop {
-            reason: "unknown variant tag",
-        },
+        _ => {
+            // Unknown variant tag: preserve the whole `{tag: payload}`
+            // JSON form so operators can grep for and recover the
+            // original shape.
+            Rewrite::Fallback {
+                username: json!({ tag: payload }).to_string(),
+            }
+        }
     }
 }
 
@@ -222,7 +316,8 @@ fn classify_tagged(tag: &str, payload: &Value) -> Rewrite {
 /// recognised here — Issue rewrites require a `tasks_v2` lookup that
 /// the caller drives, and Legacy strings carrying `a-i-...` are far
 /// rarer than the corresponding `{"Issue":"i-..."}` tagged shape.
-/// They drop to NULL.
+/// They fall back to External-legacy via `Rewrite::Fallback` with the
+/// bare string preserved as the username.
 fn parse_legacy_string(s: &str) -> Option<NewActorId> {
     if let Some(rest) = s.strip_prefix("users/") {
         Username::try_new(rest).ok()?;
@@ -312,23 +407,25 @@ pub(crate) fn classify_actor_ref(
             let Some(actor_id) = inner.get("actor_id") else {
                 return ActorRefRewrite::NoOp;
             };
-            let final_actor_id = match classify_actor_id(actor_id) {
-                Rewrite::NoOp => return ActorRefRewrite::NoOp,
-                Rewrite::Replace(v) => Some(v),
-                Rewrite::NeedsIssueLookup(iid) => issue_to_actor_id.get(&iid).cloned(),
-                Rewrite::Drop { .. } => None,
-            };
+            // Outer `actor` column must stay non-null per `i-rxlmigrv`,
+            // so unresolved Issue lookups / Fallback outcomes both
+            // surface as External-legacy with the original identifier
+            // preserved as the username.
+            let final_actor_id =
+                match resolve_for_outer_slot(classify_actor_id(actor_id), issue_to_actor_id) {
+                    OuterResolution::NoOp => return ActorRefRewrite::NoOp,
+                    OuterResolution::Value(v) => v,
+                };
             let mut new_inner = inner.clone();
-            match final_actor_id {
-                Some(v) => {
-                    new_inner.insert("actor_id".to_string(), v);
-                    ActorRefRewrite::Replace(json!({ "Authenticated": new_inner }))
-                }
-                None => ActorRefRewrite::DropToNull,
-            }
+            new_inner.insert("actor_id".to_string(), final_actor_id);
+            ActorRefRewrite::Replace(json!({ "Authenticated": new_inner }))
         }
         "System" => {
-            // `on_behalf_of: Option<ActorId>`.
+            // `on_behalf_of: Option<ActorId>`. An unresolvable
+            // sub-actor null-collapses (rather than wrapping in
+            // External-legacy) because the row's outer `actor`
+            // already attribution-covers via `worker_name`. See module
+            // docs / `i-rxlmigrv` for the rationale.
             let Some(inner) = payload.as_object() else {
                 return ActorRefRewrite::NoOp;
             };
@@ -338,24 +435,21 @@ pub(crate) fn classify_actor_ref(
             if on_behalf_of.is_null() {
                 return ActorRefRewrite::NoOp;
             }
-            let final_actor_id = match classify_actor_id(on_behalf_of) {
-                Rewrite::NoOp => return ActorRefRewrite::NoOp,
-                Rewrite::Replace(v) => Some(v),
-                Rewrite::NeedsIssueLookup(iid) => issue_to_actor_id.get(&iid).cloned(),
-                // We can't NULL the whole ActorRef from a System
-                // sub-actor that failed to resolve — drop just the
-                // on_behalf_of to None, keeping the System worker_name.
-                Rewrite::Drop { .. } => Some(Value::Null),
-            };
+            let final_actor_id =
+                match resolve_for_inner_slot(classify_actor_id(on_behalf_of), issue_to_actor_id) {
+                    InnerResolution::NoOp => return ActorRefRewrite::NoOp,
+                    InnerResolution::Value(v) => v,
+                    InnerResolution::Null => Value::Null,
+                };
             let mut new_inner = inner.clone();
-            new_inner.insert(
-                "on_behalf_of".to_string(),
-                final_actor_id.unwrap_or(Value::Null),
-            );
+            new_inner.insert("on_behalf_of".to_string(), final_actor_id);
             ActorRefRewrite::Replace(json!({ "System": new_inner }))
         }
         "Automation" => {
-            // `triggered_by: Option<Box<ActorRef>>` — recurse.
+            // `triggered_by: Option<Box<ActorRef>>`. Inner unresolved
+            // Authenticated sub-actors null-collapse for the same
+            // reason as `System.on_behalf_of` above (the outer
+            // `automation_name` carries attribution).
             let Some(inner) = payload.as_object() else {
                 return ActorRefRewrite::NoOp;
             };
@@ -365,19 +459,14 @@ pub(crate) fn classify_actor_ref(
             if triggered_by.is_null() {
                 return ActorRefRewrite::NoOp;
             }
-            match classify_actor_ref(triggered_by, issue_to_actor_id) {
-                ActorRefRewrite::NoOp => ActorRefRewrite::NoOp,
-                ActorRefRewrite::Replace(v) => {
+            match classify_actor_ref_inner(triggered_by, issue_to_actor_id) {
+                InnerActorRefRewrite::NoOp => ActorRefRewrite::NoOp,
+                InnerActorRefRewrite::Value(v) => {
                     let mut new_inner = inner.clone();
                     new_inner.insert("triggered_by".to_string(), v);
                     ActorRefRewrite::Replace(json!({ "Automation": new_inner }))
                 }
-                ActorRefRewrite::DropToNull => {
-                    // Couldn't resolve the inner trigger — collapse to
-                    // a triggered_by-less Automation rather than
-                    // NULLing the whole ActorRef. The Automation
-                    // payload's automation_name still carries
-                    // attribution.
+                InnerActorRefRewrite::Null => {
                     let mut new_inner = inner.clone();
                     new_inner.insert("triggered_by".to_string(), Value::Null);
                     ActorRefRewrite::Replace(json!({ "Automation": new_inner }))
@@ -389,10 +478,60 @@ pub(crate) fn classify_actor_ref(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum InnerActorRefRewrite {
+    NoOp,
+    Value(Value),
+    Null,
+}
+
+/// Like `classify_actor_ref`, but for an `ActorRef` that lives inside
+/// an `Option`-shaped sub-actor slot (`Automation.triggered_by`).
+/// Inner Authenticated arms null-collapse on unresolved Issue lookups
+/// / `Fallback`, rather than wrapping into External-legacy.
+fn classify_actor_ref_inner(
+    value: &Value,
+    issue_to_actor_id: &HashMap<String, Value>,
+) -> InnerActorRefRewrite {
+    let Some(map) = value.as_object() else {
+        return InnerActorRefRewrite::NoOp;
+    };
+    if map.len() != 1 {
+        return InnerActorRefRewrite::NoOp;
+    }
+    let (tag, payload) = map.iter().next().expect("len==1");
+    match tag.as_str() {
+        "Authenticated" => {
+            let Some(inner) = payload.as_object() else {
+                return InnerActorRefRewrite::NoOp;
+            };
+            let Some(actor_id) = inner.get("actor_id") else {
+                return InnerActorRefRewrite::NoOp;
+            };
+            match resolve_for_inner_slot(classify_actor_id(actor_id), issue_to_actor_id) {
+                InnerResolution::NoOp => InnerActorRefRewrite::NoOp,
+                InnerResolution::Value(v) => {
+                    let mut new_inner = inner.clone();
+                    new_inner.insert("actor_id".to_string(), v);
+                    InnerActorRefRewrite::Value(json!({ "Authenticated": new_inner }))
+                }
+                InnerResolution::Null => InnerActorRefRewrite::Null,
+            }
+        }
+        // Nested System / Automation inside triggered_by reuse the
+        // outer walker — the rule "null-collapse on unresolved" only
+        // applies to the immediately-Authenticated sub-actor.
+        "System" | "Automation" => match classify_actor_ref(value, issue_to_actor_id) {
+            ActorRefRewrite::NoOp => InnerActorRefRewrite::NoOp,
+            ActorRefRewrite::Replace(v) => InnerActorRefRewrite::Value(v),
+        },
+        _ => InnerActorRefRewrite::NoOp,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ActorRefRewrite {
     NoOp,
     Replace(Value),
-    DropToNull,
 }
 
 // ---------------------------------------------------------------------------
@@ -401,16 +540,16 @@ pub(crate) enum ActorRefRewrite {
 
 #[derive(Debug, Default)]
 struct Counts {
-    /// (table, "rewritten" | "nulled") -> count.
+    /// (table, kind) -> count. `kind` is `"rewritten"` — no driver
+    /// path NULLs an actor / actor_id column anymore (the
+    /// External-legacy fallback covers every previously-NULLable
+    /// case).
     by_table: HashMap<(&'static str, &'static str), u64>,
 }
 
 impl Counts {
     fn rewrote(&mut self, table: &'static str) {
         *self.by_table.entry((table, "rewritten")).or_insert(0) += 1;
-    }
-    fn nulled(&mut self, table: &'static str) {
-        *self.by_table.entry((table, "nulled")).or_insert(0) += 1;
     }
 }
 
@@ -543,7 +682,7 @@ mod sqlite {
                     target: "actor_variant_cleanup",
                     issue_id = %iid,
                     matches = actors.len(),
-                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will NULL Issue actors"
+                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will fall back to External-legacy for the original Issue id"
                 );
             }
         }
@@ -587,18 +726,8 @@ mod sqlite {
             ActorRefRewrite::NoOp => Ok(()),
             ActorRefRewrite::Replace(new_value) => {
                 let new_json = new_value.to_string();
-                exec_pk_update(pool, table, "actor", pk_sql, row, Some(&new_json)).await?;
+                exec_pk_update(pool, table, "actor", pk_sql, row, &new_json).await?;
                 counts.rewrote(table);
-                Ok(())
-            }
-            ActorRefRewrite::DropToNull => {
-                exec_pk_update(pool, table, "actor", pk_sql, row, None).await?;
-                counts.nulled(table);
-                tracing::warn!(
-                    target: "actor_variant_cleanup",
-                    table = %table,
-                    "NULLed actor column on row that couldn't be rewritten"
-                );
                 Ok(())
             }
         }
@@ -626,26 +755,14 @@ mod sqlite {
                 Ok(v) => v,
                 Err(_) => Value::String(actor_id.clone()),
             };
-            let rewrite = classify_actor_id(&parsed);
-            let final_value: Option<Value> = match rewrite {
-                Rewrite::NoOp => continue,
-                Rewrite::Replace(v) => Some(v),
-                Rewrite::NeedsIssueLookup(iid) => issue_to_actor_id.get(&iid).cloned(),
-                Rewrite::Drop { .. } => None,
-            };
-            let serialized = final_value.as_ref().map(|v| v.to_string());
-            exec_pk_update(pool, table, column, pk_sql, &row, serialized.as_deref()).await?;
-            if serialized.is_some() {
-                counts.rewrote(table);
-            } else {
-                counts.nulled(table);
-                tracing::warn!(
-                    target: "actor_variant_cleanup",
-                    table = %table,
-                    column = %column,
-                    "NULLed unresolvable actor_id"
-                );
-            }
+            let final_value =
+                match resolve_for_outer_slot(classify_actor_id(&parsed), issue_to_actor_id) {
+                    OuterResolution::NoOp => continue,
+                    OuterResolution::Value(v) => v,
+                };
+            let serialized = final_value.to_string();
+            exec_pk_update(pool, table, column, pk_sql, &row, &serialized).await?;
+            counts.rewrote(table);
         }
         Ok(())
     }
@@ -656,7 +773,7 @@ mod sqlite {
         column: &'static str,
         pk_sql: &str,
         row: &sqlx::sqlite::SqliteRow,
-        new_value: Option<&str>,
+        new_value: &str,
     ) -> Result<()> {
         // sqlx::sqlite can't express tuple equality directly, so we
         // dispatch on the shape of pk_sql.
@@ -778,7 +895,7 @@ mod postgres {
                     target: "actor_variant_cleanup",
                     issue_id = %iid,
                     matches = actors.len(),
-                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will NULL Issue actors"
+                    "Issue actor lookup: 0 or >1 matching tasks_v2 rows; will fall back to External-legacy for the original Issue id"
                 );
             }
         }
@@ -820,18 +937,8 @@ mod postgres {
         match rewrite {
             ActorRefRewrite::NoOp => Ok(()),
             ActorRefRewrite::Replace(new_value) => {
-                exec_pk_update(pool, table, "actor", pk_cols, row, Some(new_value)).await?;
+                exec_pk_update(pool, table, "actor", pk_cols, row, new_value).await?;
                 counts.rewrote(table);
-                Ok(())
-            }
-            ActorRefRewrite::DropToNull => {
-                exec_pk_update(pool, table, "actor", pk_cols, row, None).await?;
-                counts.nulled(table);
-                tracing::warn!(
-                    target: "actor_variant_cleanup",
-                    table = %table,
-                    "NULLed actor column on row that couldn't be rewritten"
-                );
                 Ok(())
             }
         }
@@ -856,25 +963,13 @@ mod postgres {
             .with_context(|| format!("scan metis.{table}.{column}"))?;
         for row in rows {
             let actor_id: Value = row.try_get("payload")?;
-            let rewrite = classify_actor_id(&actor_id);
-            let final_value: Option<Value> = match rewrite {
-                Rewrite::NoOp => continue,
-                Rewrite::Replace(v) => Some(v),
-                Rewrite::NeedsIssueLookup(iid) => issue_to_actor_id.get(&iid).cloned(),
-                Rewrite::Drop { .. } => None,
-            };
-            exec_pk_update(pool, table, column, &pk_cols, &row, final_value.clone()).await?;
-            if final_value.is_some() {
-                counts.rewrote(table);
-            } else {
-                counts.nulled(table);
-                tracing::warn!(
-                    target: "actor_variant_cleanup",
-                    table = %table,
-                    column = %column,
-                    "NULLed unresolvable actor_id"
-                );
-            }
+            let final_value =
+                match resolve_for_outer_slot(classify_actor_id(&actor_id), issue_to_actor_id) {
+                    OuterResolution::NoOp => continue,
+                    OuterResolution::Value(v) => v,
+                };
+            exec_pk_update(pool, table, column, &pk_cols, &row, final_value).await?;
+            counts.rewrote(table);
         }
         Ok(())
     }
@@ -894,7 +989,7 @@ mod postgres {
         column: &'static str,
         pk_cols: &[&str],
         row: &sqlx::postgres::PgRow,
-        new_value: Option<Value>,
+        new_value: Value,
     ) -> Result<()> {
         let where_clause = pk_cols
             .iter()
@@ -929,8 +1024,10 @@ mod postgres {
 /// `ActorRef::System` blob and resolve it to a post-cleanup wire
 /// shape. Returns `None` for `Automation` (which doesn't carry a flat
 /// actor_id), unrecognised shapes, and any pre-cleanup actor that
-/// itself fails to resolve (e.g. another `Issue` reference — we don't
-/// chase chains of issue lookups, only the first hop).
+/// itself fails to resolve (chained `Issue` references — we don't
+/// chase chains of issue lookups, only the first hop — or `Fallback`
+/// outcomes whose External-legacy form would be a spurious "real"
+/// actor to substitute into a different row).
 fn extract_actor_id_from_actor_ref(value: &Value) -> Option<Value> {
     let map = value.as_object()?;
     if map.len() != 1 {
@@ -953,7 +1050,7 @@ fn extract_actor_id_from_actor_ref(value: &Value) -> Option<Value> {
     match classify_actor_id(&raw) {
         Rewrite::NoOp => Some(raw),
         Rewrite::Replace(v) => Some(v),
-        Rewrite::NeedsIssueLookup(_) | Rewrite::Drop { .. } => None,
+        Rewrite::NeedsIssueLookup(_) | Rewrite::Fallback { .. } => None,
     }
 }
 
@@ -998,9 +1095,17 @@ mod tests {
     }
 
     #[test]
-    fn classify_service_invalid_name_drops() {
+    fn classify_service_invalid_name_returns_external_legacy_fallback() {
+        // Invalid AgentName payload preserves the original `<name>` as
+        // the External-legacy username so the row stays forensically
+        // recoverable instead of NULLing.
         let v = json!({"Service": "has space"});
-        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+        assert_eq!(
+            classify_actor_id(&v),
+            Rewrite::Fallback {
+                username: "has space".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -1064,21 +1169,41 @@ mod tests {
     }
 
     #[test]
-    fn classify_bare_string_unparseable_drops() {
+    fn classify_bare_string_unparseable_returns_external_legacy_fallback() {
+        // Unrecognised bare-string Legacy payload preserves the
+        // original string verbatim as the External-legacy username.
         let v = json!("¯\\_(ツ)_/¯");
-        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+        assert_eq!(
+            classify_actor_id(&v),
+            Rewrite::Fallback {
+                username: "¯\\_(ツ)_/¯".to_string(),
+            }
+        );
     }
 
     #[test]
-    fn classify_multi_key_map_drops() {
+    fn classify_multi_key_map_returns_external_legacy_fallback() {
+        // Multi-key legacy catch-all preserves the JSON form of the
+        // whole map so operators can recover whatever the row used to
+        // be.
         let v = json!({"kind": "user", "name": "alice"});
-        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+        assert_eq!(
+            classify_actor_id(&v),
+            Rewrite::Fallback {
+                username: v.to_string(),
+            }
+        );
     }
 
     #[test]
-    fn classify_unknown_tag_drops() {
+    fn classify_unknown_tag_returns_external_legacy_fallback() {
         let v = json!({"Robot": {"name": "r2"}});
-        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+        assert_eq!(
+            classify_actor_id(&v),
+            Rewrite::Fallback {
+                username: v.to_string(),
+            }
+        );
     }
 
     #[test]
@@ -1092,8 +1217,9 @@ mod tests {
 
     #[test]
     fn output_round_trips_through_hydra_common_deserialize() {
-        // Belt-and-braces: the migration's output must deserialize via
-        // the upstream `hydra_common::ActorId::deserialize`.
+        // Belt-and-braces: every concrete shape the migration emits
+        // must deserialize via the upstream
+        // `hydra_common::ActorId::deserialize`.
         for raw in [
             json!({"Username": "alice"}),
             json!({"Session": "s-abcdef"}),
@@ -1105,6 +1231,22 @@ mod tests {
             let Rewrite::Replace(v) = rewrite else {
                 panic!("expected Replace for {raw}");
             };
+            let _: hydra_common::ActorId = serde_json::from_value(v.clone())
+                .unwrap_or_else(|e| panic!("upstream deserialize failed for {v}: {e}"));
+        }
+
+        // External-legacy fallback shapes also must round-trip — the
+        // §3.3 store-level smoke depends on it.
+        for raw in [
+            json!({"Service": "has space"}),
+            json!("a-i-abc"),
+            json!({"kind": "user", "name": "alice"}),
+        ] {
+            let rewrite = classify_actor_id(&raw);
+            let Rewrite::Fallback { username } = rewrite else {
+                panic!("expected Fallback for {raw}");
+            };
+            let v = external_legacy_fallback(username);
             let _: hydra_common::ActorId = serde_json::from_value(v.clone())
                 .unwrap_or_else(|e| panic!("upstream deserialize failed for {v}: {e}"));
         }
@@ -1195,11 +1337,53 @@ mod tests {
     }
 
     #[test]
-    fn actor_ref_authenticated_issue_no_match_drops_to_null() {
+    fn actor_ref_authenticated_issue_no_match_falls_back_to_external_legacy() {
+        // Outer `actor` column must stay non-null per `i-rxlmigrv`, so
+        // an unresolved Issue lookup wraps into External-legacy with
+        // the issue id preserved as the username.
         let raw = json!({"Authenticated": {"actor_id": {"Issue": "i-no-match"}}});
         let lookup = HashMap::new();
         let rewrite = classify_actor_ref(&raw, &lookup);
-        assert_eq!(rewrite, ActorRefRewrite::DropToNull);
+        assert_eq!(
+            rewrite,
+            ActorRefRewrite::Replace(json!({
+                "Authenticated": {
+                    "actor_id": {"External": {"system": "legacy", "username": "i-no-match"}}
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn actor_ref_authenticated_service_invalid_falls_back_to_external_legacy() {
+        let raw = json!({"Authenticated": {"actor_id": {"Service": "has space"}}});
+        let lookup = HashMap::new();
+        let rewrite = classify_actor_ref(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            ActorRefRewrite::Replace(json!({
+                "Authenticated": {
+                    "actor_id": {"External": {"system": "legacy", "username": "has space"}}
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn actor_ref_authenticated_unparseable_bare_string_falls_back_to_external_legacy() {
+        let raw = json!({"Authenticated": {"actor_id": "definitely not an actor"}});
+        let lookup = HashMap::new();
+        let rewrite = classify_actor_ref(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            ActorRefRewrite::Replace(json!({
+                "Authenticated": {
+                    "actor_id": {
+                        "External": {"system": "legacy", "username": "definitely not an actor"}
+                    }
+                }
+            }))
+        );
     }
 
     #[test]
@@ -1240,26 +1424,73 @@ mod tests {
             Rewrite::Replace(json!({"Agent": {"name": "swe"}}))
         );
         let invalid = json!("svc-has space");
-        assert!(matches!(classify_actor_id(&invalid), Rewrite::Drop { .. }));
+        assert_eq!(
+            classify_actor_id(&invalid),
+            Rewrite::Fallback {
+                username: "svc-has space".to_string(),
+            }
+        );
     }
 
     #[test]
-    fn classify_bare_string_a_issue_shorthand_drops() {
+    fn classify_bare_string_a_issue_shorthand_falls_back() {
         // `a-<issue_id>` is intentionally unrecognised by the bare-string
         // parser: the corresponding tagged shape `{"Issue":"i-..."}`
         // covers the same case and routes through the lookup, while a
         // bare `a-` string would short-circuit that path with no Issue
-        // lookup at all.
+        // lookup at all. The unrecognised string lands in the
+        // External-legacy fallback so the row stays non-null.
         let v = json!("a-i-abc");
-        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+        assert_eq!(
+            classify_actor_id(&v),
+            Rewrite::Fallback {
+                username: "a-i-abc".to_string(),
+            }
+        );
     }
 
     #[test]
-    fn classify_bare_string_external_invalid_system_drops() {
+    fn classify_bare_string_external_invalid_system_falls_back() {
         // `ExternalSystem::try_new` rejects whitespace, so the legacy
-        // path `external/<has space>/foo` falls through to Drop.
+        // path `external/<has space>/foo` falls through to Fallback —
+        // the whole original bare string is preserved verbatim.
         let v = json!("external/has space/foo");
-        assert!(matches!(classify_actor_id(&v), Rewrite::Drop { .. }));
+        assert_eq!(
+            classify_actor_id(&v),
+            Rewrite::Fallback {
+                username: "external/has space/foo".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn classify_non_string_non_map_falls_back() {
+        // Numbers, booleans, nulls, arrays land in External-legacy
+        // with their JSON form preserved as the username.
+        for raw in [json!(42), json!(true), json!(null), json!(["a"])] {
+            let expected = raw.to_string();
+            match classify_actor_id(&raw) {
+                Rewrite::Fallback { username } if username == expected => {}
+                other => panic!("unexpected classification for {raw}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn classify_tagged_payload_not_string_falls_back() {
+        // `{"Username": 42}` and similar: payload isn't a string. The
+        // Fallback carries the payload's JSON form so operators can
+        // see what came in.
+        for raw in [
+            json!({"Username": 42}),
+            json!({"Session": null}),
+            json!({"Issue": ["i-abc"]}),
+            json!({"Service": {"nested": "thing"}}),
+        ] {
+            let Rewrite::Fallback { .. } = classify_actor_id(&raw) else {
+                panic!("expected Fallback for {raw}");
+            };
+        }
     }
 
     #[test]
@@ -1283,6 +1514,58 @@ mod tests {
                 "System": {
                     "worker_name": "task-spawner",
                     "on_behalf_of": null
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn classify_actor_ref_system_fallback_collapses_to_null_on_behalf_of() {
+        // Inner `Option<ActorId>` slots null-collapse on any
+        // unresolvable sub-actor — including Fallback outcomes —
+        // because the row's outer attribution already lives in
+        // `worker_name`. See module docs / `i-rxlmigrv`.
+        let raw = json!({
+            "System": {
+                "worker_name": "task-spawner",
+                "on_behalf_of": {"Service": "has space"}
+            }
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_actor_ref(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            ActorRefRewrite::Replace(json!({
+                "System": {
+                    "worker_name": "task-spawner",
+                    "on_behalf_of": null
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn classify_actor_ref_automation_fallback_collapses_to_null_triggered_by() {
+        // Same rationale as the System fallback test above —
+        // Automation.triggered_by's inner Authenticated.actor_id is an
+        // `Option`-shaped sub-actor slot; a Fallback outcome
+        // null-collapses rather than wrapping in External-legacy.
+        let raw = json!({
+            "Automation": {
+                "automation_name": "github_pr_sync",
+                "triggered_by": {
+                    "Authenticated": {"actor_id": {"Service": "has space"}}
+                }
+            }
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_actor_ref(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            ActorRefRewrite::Replace(json!({
+                "Automation": {
+                    "automation_name": "github_pr_sync",
+                    "triggered_by": null
                 }
             }))
         );
