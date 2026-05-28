@@ -131,7 +131,10 @@ Agents:
 - `dropped` — user no longer wants this. **When the user says "cancel that" / "never mind" / "we don't
   need this anymore", set status to `dropped`. Do NOT close as done.** Dropping a parent auto-drops
   open children — usually what the user wants when cancelling a chunk of work.
-- `failed` — agent-side outcomes. Surface them when reporting status; do not set them
+- `failed` — usually an agent-side outcome that you should surface but not set. **Exception:** when
+  delivering user feedback on a SWE-created `review-request` or `merge-request` issue (see
+  `### Responding to a SWE review-request / merge-request issue` below), setting `failed` is the
+  canonical way to tell SWE there's feedback waiting. Outside that case, don't set `failed`
   yourself.
 
 ### Patches
@@ -184,6 +187,36 @@ form is the canonical response path for those.
   status out of sync with the user's decision.
 - `--feedback` is the right path for issues without a form — e.g., redirecting an in-flight PM/SWE
   effort without dropping it.
+
+### Responding to a SWE review-request / merge-request issue
+
+When the SWE agent finishes a patch, it creates a `review-request` or `merge-request` issue
+assigned to a user (often you, via the conversation). To deliver feedback that SWE will pick up,
+**both** of these steps are needed:
+
+1. **Post the review on the patch itself.** Find the patch via the knowledge graph — `hydra issues
+   get <id>` shows the issue's patches, or `hydra graph search "$ISSUE_ID | descendants
+   rel=has-patch | kind=patch"` traverses there directly. Use `hydra patches review <p-id> --author
+   <user> --contents "..."` to post the review (with `--request-changes` if the user is asking for
+   changes; plain comment if they're just commenting). Quote the user's wording in `--contents`.
+2. **Mark the review-request / merge-request issue as `failed`** with `hydra issues update <id>
+   --status failed`. SWE won't start working again until **all** of its assigned issues are in a
+   terminal state (like every other agent). Setting the issue to `failed` is the signal that
+   there's feedback waiting and it unblocks SWE to start the next round.
+
+When a user leaves feedback on a SWE patch, they typically want SWE to start working again — so
+both steps are usually needed. Don't post the patch review without also failing the issue, or SWE
+will sit idle holding open work.
+
+**Form exception.** If the SWE-created issue carries a `form`, use `hydra issues submit-form` as
+described above instead of setting `--status failed` directly. The form's `request_changes` action
+typically has `failed` as its effect, so the end state is the same — but the form is the canonical
+path when it exists.
+
+**Approval path.** If the user is happy with the patch and wants to merge, don't set `failed`. For
+form-bearing issues, use `submit-form` with the `approve` action. For non-form merge-request
+issues, the usual flow is to set the issue to `closed` once the patch merges (a merge-request
+issue's job is done at that point) — but only do this if the user explicitly approved.
 
 ## Configuring agents
 
@@ -300,7 +333,10 @@ Does NOT belong:
     `hydra issues submit-form` instead — the form is the canonical response path there.
 - Don't close an `in-progress` issue as `closed` to "cancel" it. Use `dropped`. `closed` means done;
   `dropped` means no longer wanted.
-- Don't set issues to `failed` or `rejected` — those are agent outcomes, not user actions.
+- Don't set issues to `failed` or `rejected` as user actions, **except** on SWE-created
+  `review-request` / `merge-request` issues, where setting `failed` is the canonical way to deliver
+  user feedback (see `### Responding to a SWE review-request / merge-request issue` above).
+  Outside that case, treat `failed` and `rejected` as agent-only outcomes.
 - Don't poll or sleep waiting for things. If the user wants to know when something finishes, tell
   them you'll check next time they ask, or look at notifications when they return.
 - Don't include task-agent workflow language ("end your session", "mark all notifications as read
