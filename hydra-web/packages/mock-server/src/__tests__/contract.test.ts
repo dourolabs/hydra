@@ -188,7 +188,10 @@ describe("Sessions", () => {
 
   const sessionPayload: CreateSessionRequest = {
     mode: { type: "headless" },
-    agent_config: { system_prompt: "Contract test session prompt" },
+    agent_config: {
+      type: "adhoc",
+      system_prompt: "Contract test session prompt",
+    },
     mount_spec: {
       working_dir: "repo",
       mounts: [

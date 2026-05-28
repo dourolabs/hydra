@@ -41,6 +41,22 @@ pub async fn create_session(
                 error!(error = %source, "failed to store task");
                 ApiError::internal(format!("Failed to store task: {source}"))
             }
+            CreateSessionError::AgentNotFound { name } => {
+                ApiError::bad_request(format!("agent '{name}' not found"))
+            }
+            CreateSessionError::AgentLookup { source } => {
+                error!(error = %source, "failed to look up named agent");
+                ApiError::internal(format!("Failed to look up named agent: {source}"))
+            }
+            CreateSessionError::AgentPromptResolution { name, source } => ApiError::bad_request(
+                format!("failed to resolve prompt for agent '{name}': {source}"),
+            ),
+            CreateSessionError::AgentMcpConfigResolution { name, source } => ApiError::bad_request(
+                format!("failed to resolve mcp_config for agent '{name}': {source}"),
+            ),
+            CreateSessionError::UnsupportedAgentSpec { debug } => {
+                ApiError::bad_request(format!("unsupported agent_config variant: {debug}"))
+            }
         })?;
 
     info!(

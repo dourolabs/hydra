@@ -46,7 +46,7 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "mode": { "type": "headless" },
-            "agent_config": { "system_prompt": "0" }
+            "agent_config": { "type": "adhoc", "system_prompt": "0" }
         }))
         .send()
         .await?;
@@ -92,6 +92,7 @@ async fn create_session_passes_through_caller_supplied_bundle() -> anyhow::Resul
         .post(format!("{}/v1/sessions", server2.base_url()))
         .json(&json!({
             "mode": { "type": "headless" },
+            "agent_config": { "type": "adhoc", "system_prompt": "test" },
             "mount_spec": {
                 "working_dir": "repo",
                 "mounts": [
@@ -139,6 +140,7 @@ async fn create_session_respects_image_override() -> anyhow::Result<()> {
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "mode": { "type": "headless" },
+            "agent_config": { "type": "adhoc", "system_prompt": "test" },
             "image": "ghcr.io/example/custom:dev"
         }))
         .send()
@@ -169,6 +171,7 @@ async fn create_session_image_override_beats_repo_default() -> anyhow::Result<()
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "mode": { "type": "headless" },
+            "agent_config": { "type": "adhoc", "system_prompt": "test" },
             "image": "ghcr.io/example/override:main"
         }))
         .send()
@@ -196,6 +199,7 @@ async fn create_session_stores_provided_variables() -> anyhow::Result<()> {
         .post(format!("{}/v1/sessions", server.base_url()))
         .json(&json!({
             "mode": { "type": "headless" },
+            "agent_config": { "type": "adhoc", "system_prompt": "custom prompt" },
             "env_vars": { "FOO": "bar", "PROMPT": "custom prompt" }
         }))
         .send()
@@ -303,7 +307,10 @@ async fn session_versions_endpoints_return_history() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "mode": { "type": "headless" } }))
+        .json(&json!({
+            "mode": { "type": "headless" },
+            "agent_config": { "type": "adhoc", "system_prompt": "test" }
+        }))
         .send()
         .await?;
 
@@ -414,7 +421,10 @@ async fn session_version_endpoints_return_404s() -> anyhow::Result<()> {
 
     let response = client
         .post(format!("{}/v1/sessions", server.base_url()))
-        .json(&json!({ "mode": { "type": "headless" } }))
+        .json(&json!({
+            "mode": { "type": "headless" },
+            "agent_config": { "type": "adhoc", "system_prompt": "test" }
+        }))
         .send()
         .await?;
 

@@ -19,6 +19,8 @@ import type {
   WorkerContext,
   Status,
   MountItem,
+  AgentConfig,
+  AgentSpec,
 } from "@hydra/api";
 
 // `Session` lost its top-level `prompt` / `interactive` / `model` fields in
@@ -46,6 +48,26 @@ export function conversationIdOf(session: Session): string | null {
   const legacy = session as LegacySession;
   if (session.mode?.type === "interactive") return session.mode.conversation_id;
   return legacy.interactive?.conversation_id ?? null;
+}
+
+function lowerAgentSpec(
+  spec: AgentSpec,
+  model: string | null,
+): AgentConfig {
+  if (spec.type === "named") {
+    return {
+      agent_name: spec.name,
+      model,
+      system_prompt: null,
+      mcp_config: null,
+    };
+  }
+  return {
+    agent_name: null,
+    model,
+    system_prompt: spec.system_prompt,
+    mcp_config: spec.mcp_config ?? null,
+  };
 }
 
 const COLLECTION = "sessions";
@@ -205,9 +227,19 @@ export function createSessionRoutes(store: Store): Hono {
             ] as MountItem[],
           }
         : body.mount_spec;
+    // Lower the `AgentSpec` request enum into the resolved
+    // `AgentConfig` stored on `Session.agent_config`. The mock
+    // does not load agent rows, so a `Named` request stamps the
+    // name onto `agent_config.agent_name` and leaves
+    // `system_prompt` / `mcp_config` unresolved — production
+    // hydra-server fills these from the agent row.
+    const agentConfig: AgentConfig = lowerAgentSpec(
+      body.agent_config,
+      body.model ?? null,
+    );
     const task: Session = {
       mode: body.mode,
-      agent_config: body.agent_config,
+      agent_config: agentConfig,
       mount_spec: mountSpec,
       spawned_from: body.spawned_from,
       resumed_from: body.resumed_from,

@@ -5,7 +5,7 @@ use hydra::client::{HydraClient, HydraClientTimeouts};
 use hydra::config::{AppConfig, ServerSection};
 use hydra_common::{
     api::v1::sessions::{
-        AgentConfig, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
+        AgentSpec, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
     },
     issues::{
         Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, IssueVersionRecord,
@@ -52,7 +52,11 @@ fn create_session_request_with_repo_url(
     );
     CreateSessionRequest {
         mode: SessionMode::Headless,
-        agent_config: AgentConfig::new(None, None, Some(prompt.to_string()), None),
+        agent_config: AgentSpec::Adhoc {
+            system_prompt: prompt.to_string(),
+            mcp_config: None,
+        },
+        model: None,
         mount_spec,
         image: None,
         env_vars: HashMap::new(),

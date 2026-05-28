@@ -10,6 +10,7 @@ export type { Action } from "./generated/Action";
 export type { ActionStyle } from "./generated/ActionStyle";
 export type { AgentConfig } from "./generated/AgentConfig";
 export type { AgentRecord } from "./generated/AgentRecord";
+export type { AgentSpec } from "./generated/AgentSpec";
 export type { AgentResponse } from "./generated/AgentResponse";
 export type { ApiErrorBody } from "./generated/ApiErrorBody";
 export type { BuildCacheContext } from "./generated/BuildCacheContext";

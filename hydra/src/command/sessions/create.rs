@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use hydra_common::{
     api::v1::sessions::{
-        AgentConfig, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
+        AgentSpec, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
         SessionVersionRecord,
     },
     logs::LogsQuery,
@@ -52,7 +52,11 @@ pub async fn run(
     };
     let request = CreateSessionRequest {
         mode: SessionMode::Headless,
-        agent_config: AgentConfig::new(None, None, Some(prompt.clone()), None),
+        agent_config: AgentSpec::Adhoc {
+            system_prompt: prompt.clone(),
+            mcp_config: None,
+        },
+        model: None,
         mount_spec,
         image,
         env_vars,
@@ -330,7 +334,9 @@ mod tests {
     use httpmock::prelude::*;
     use hydra_common::{
         repositories::{ListRepositoriesResponse, Repository, RepositoryRecord},
-        sessions::{CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord},
+        sessions::{
+            AgentConfig, CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord,
+        },
         task_status::{Status, TaskError},
         users::Username,
     };

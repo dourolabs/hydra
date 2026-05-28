@@ -122,25 +122,16 @@ impl Automation for SpawnSessionsAutomation {
             let active_tasks = task_state.running_tasks + task_state.pending_tasks;
             let mut remaining_capacity = max_simultaneous.saturating_sub(active_tasks);
 
-            // Resolve the prompt and MCP config once per agent, lazily (only if needed).
-            let mut cached_prompt: Option<String> = None;
-            let mut cached_mcp_config: Option<Option<hydra_common::api::v1::sessions::McpConfig>> =
-                None;
-
+            // Server-side `create_session` (AgentSpec::Named branch) now
+            // resolves the agent prompt + mcp_config per call. The caller
+            // no longer caches them across iterations.
             for (issue_id, issue) in &target_issues {
                 if remaining_capacity == 0 {
                     break;
                 }
 
                 match queue
-                    .spawn_for_issue(
-                        ctx.app_state,
-                        issue_id,
-                        issue,
-                        &task_state,
-                        &mut cached_prompt,
-                        &mut cached_mcp_config,
-                    )
+                    .spawn_for_issue(ctx.app_state, issue_id, issue, &task_state)
                     .await
                 {
                     Ok(SpawnResult::Spawned(session_id)) => {
