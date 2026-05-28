@@ -482,6 +482,119 @@ mod sqlite_integration_tests {
                 .unwrap();
         assert_eq!(event_count.0, 0);
     }
+
+    /// Legacy headless row whose session already carries a
+    /// `session_events` row (e.g. the actor-variant-cleanup baseline
+    /// fixture seeds one for `s-actrowx`). The backfill must still
+    /// rewrite the row's `mode` JSON and stamp `tasks_v2.conversation_id`,
+    /// but MUST NOT attempt to insert a synthesized first UserMessage
+    /// — doing so would collide on the `(session_id, version_number)`
+    /// UNIQUE index and clobber the real event ordering.
+    #[tokio::test]
+    async fn backfill_preserves_existing_session_events() {
+        let pool = fresh_pool().await;
+        let session_id = "s-haseventz";
+        let original_event_content = "se hello";
+        let original_event_ts = "2026-05-10T10:35:00.000Z";
+        let legacy_prompt = "do thing";
+        sqlx::query(
+            "INSERT INTO tasks_v2 \
+                (id, version_number, creator, image, env_vars, \
+                 status, deleted, creation_time, conversation_id, \
+                 mount_spec, agent_config, mode, is_latest, greet_user) \
+             VALUES (?1, 1, 'alice', NULL, '{}', \
+                     'complete', 0, '2026-05-01T00:00:00.000Z', NULL, \
+                     '{\"working_dir\":\"repo\",\"mounts\":[]}', \
+                     '{}', \
+                     json_object('type', 'headless', 'prompt', ?2), \
+                     1, 0)",
+        )
+        .bind(session_id)
+        .bind(legacy_prompt)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Pre-seed the (session_id, version_number=1) event so the
+        // backfill's insert WOULD collide if not guarded.
+        let event_data = format!(
+            "{{\"type\":\"user_message\",\"content\":\"{original_event_content}\",\"timestamp\":\"{original_event_ts}\"}}",
+        );
+        sqlx::query(
+            "INSERT INTO session_events \
+                (session_id, version_number, event_type, event_data, actor, created_at) \
+             VALUES (?1, 1, 'user_message', ?2, NULL, ?3)",
+        )
+        .bind(session_id)
+        .bind(&event_data)
+        .bind(original_event_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        super::sqlite::run(&pool).await.unwrap();
+
+        // Mode rewrite happened: conversation_id is now stamped on the
+        // row both in the JSON and in the denormalized column.
+        let row = sqlx::query("SELECT mode, conversation_id FROM tasks_v2 WHERE id = ?1")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mode_text: String = row.try_get("mode").unwrap();
+        let conv_col: Option<String> = row.try_get("conversation_id").unwrap();
+        let mode: Value = serde_json::from_str(&mode_text).unwrap();
+        let conv_in_mode = mode
+            .get("conversation_id")
+            .and_then(Value::as_str)
+            .expect("backfill must stamp conversation_id even when session has events");
+        assert_eq!(conv_col.as_deref(), Some(conv_in_mode));
+
+        // The pre-existing session_events row must still be the only
+        // event and its content must be unchanged — the backfill did
+        // NOT clobber it with a synthesized UserMessage carrying the
+        // legacy prompt.
+        let events = sqlx::query(
+            "SELECT version_number, event_data FROM session_events \
+             WHERE session_id = ?1 ORDER BY version_number ASC",
+        )
+        .bind(session_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "exactly one session_event must exist post-backfill; got {}",
+            events.len(),
+        );
+        let v: i64 = events[0].try_get("version_number").unwrap();
+        assert_eq!(v, 1);
+        let data: String = events[0].try_get("event_data").unwrap();
+        let parsed: Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(
+            parsed.get("content").and_then(Value::as_str),
+            Some(original_event_content),
+            "existing session_event content must be preserved (not clobbered by backfill prompt)"
+        );
+
+        // Idempotent: a second pass must not create any further events
+        // and must not create a second conversation for this row.
+        super::sqlite::run(&pool).await.unwrap();
+        let event_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")
+                .bind(session_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(event_count.0, 1);
+        let conv_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM conversations WHERE id = ?1")
+            .bind(conv_in_mode)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(conv_count.0, 1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -545,10 +658,45 @@ mod sqlite {
 
             let agent_name = agent_name_from_agent_config(&agent_config_text, &session_id)?;
 
-            // Run the three coordinated writes in a transaction so a
-            // crash mid-row leaves the source row untouched and the
-            // next migration run picks it up cleanly.
+            // Run the coordinated writes in a transaction so a crash
+            // mid-row leaves the source row untouched and the next
+            // migration run picks it up cleanly.
             let mut tx = pool.begin().await.context("begin sqlite tx")?;
+
+            // If the session already has session_events rows (e.g. the
+            // actor-variant-cleanup baseline fixture inserts one for
+            // `s-actrowx`, and any past production codepath could have
+            // appended events to a headless session before this
+            // migration ran), the synthesized UserMessage would collide
+            // on the `(session_id, version_number)` unique index AND
+            // would clobber the real event ordering. In that case skip
+            // the event insert — the pre-existing events are the real
+            // model-input history — but still rewrite `mode` and
+            // populate `tasks_v2.conversation_id` so the row matches
+            // the post-PR-2 shape. The migration remains idempotent:
+            // a re-run still hits the `mode.conversation_id` skip path
+            // because the rewrite happens unconditionally below.
+            let existing_event_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")
+                    .bind(&session_id)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "count existing session_events for headless backfill of {session_id}"
+                        )
+                    })?;
+            let synthesize_first_event = existing_event_count == 0;
+            if !synthesize_first_event {
+                tracing::warn!(
+                    target: "headless_conversation_backfill",
+                    session_id = %session_id,
+                    existing_event_count,
+                    "headless-conversation-backfill: session already has session_events; \
+                     rewriting mode but skipping synthesized first UserMessage to avoid \
+                     clobbering existing event ordering",
+                );
+            }
 
             // 1. New `conversations` row. `agent_name` is inherited from
             //    the session's agent_config so downstream consumers
@@ -577,20 +725,26 @@ mod sqlite {
             //    Keyed by session_id so it lands on the same session
             //    `get_session_events` queries off (per the post-Phase-E
             //    architecture — see `migrations/events.rs` module docs).
-            let event_data = user_message_event_data(&prompt, &now_rfc3339);
-            sqlx::query(
-                "INSERT INTO session_events \
-                    (session_id, version_number, event_type, event_data, actor, created_at) \
-                 VALUES (?1, 1, 'user_message', ?2, NULL, ?3)",
-            )
-            .bind(&session_id)
-            .bind(&event_data)
-            .bind(&now_rfc3339)
-            .execute(&mut *tx)
-            .await
-            .with_context(|| {
-                format!("insert session_events UserMessage for headless backfill of {session_id}")
-            })?;
+            //    Skipped when the session already has events — see the
+            //    `existing_event_count` block above for the rationale.
+            if synthesize_first_event {
+                let event_data = user_message_event_data(&prompt, &now_rfc3339);
+                sqlx::query(
+                    "INSERT INTO session_events \
+                        (session_id, version_number, event_type, event_data, actor, created_at) \
+                     VALUES (?1, 1, 'user_message', ?2, NULL, ?3)",
+                )
+                .bind(&session_id)
+                .bind(&event_data)
+                .bind(&now_rfc3339)
+                .execute(&mut *tx)
+                .await
+                .with_context(|| {
+                    format!(
+                        "insert session_events UserMessage for headless backfill of {session_id}"
+                    )
+                })?;
+            }
 
             // 3. Rewrite the tasks_v2 row's mode JSON to add
             //    conversation_id, AND populate the denormalized
@@ -701,14 +855,40 @@ mod postgres {
 
             let conversation_id = ConversationId::generate(id_len)
                 .context("generate ConversationId for headless backfill (length within bounds)")?;
-            let now = Utc::now();
-            let now_rfc3339 = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
             // Reuse the shared text-form helper so sqlite + postgres
             // pull from identical decode paths.
             let agent_name = agent_name_from_agent_config(&agent_config.to_string(), &session_id)?;
 
             let mut tx = pool.begin().await.context("begin postgres tx")?;
+
+            // Skip the synthesized first UserMessage when the session
+            // already has session_events_v2 rows — see the sqlite driver
+            // for full rationale. The mode rewrite + conversation_id
+            // column still happen so the row matches the post-PR-2
+            // shape and the migration stays idempotent.
+            let existing_event_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM metis.session_events_v2 WHERE session_id = $1",
+            )
+            .bind(&session_id)
+            .fetch_one(&mut *tx)
+            .await
+            .with_context(|| {
+                format!(
+                    "count existing metis.session_events_v2 for headless backfill of {session_id}"
+                )
+            })?;
+            let synthesize_first_event = existing_event_count == 0;
+            if !synthesize_first_event {
+                tracing::warn!(
+                    target: "headless_conversation_backfill",
+                    session_id = %session_id,
+                    existing_event_count,
+                    "headless-conversation-backfill: session already has session_events_v2; \
+                     rewriting mode but skipping synthesized first UserMessage to avoid \
+                     clobbering existing event ordering",
+                );
+            }
 
             let creator = legacy_creator_for_row(&mut *tx, &session_id).await?;
             sqlx::query(
@@ -726,23 +906,26 @@ mod postgres {
                 format!("insert metis.conversations_v2 row for headless backfill of {session_id}")
             })?;
 
-            let event_data: Value =
-                serde_json::from_str(&user_message_event_data(&prompt, &now_rfc3339))
-                    .expect("user_message_event_data builds valid JSON");
-            sqlx::query(
-                "INSERT INTO metis.session_events_v2 \
-                    (session_id, version_number, event_type, event_data, actor, created_at) \
-                 VALUES ($1, 1, 'user_message', $2, NULL, NOW())",
-            )
-            .bind(&session_id)
-            .bind(&event_data)
-            .execute(&mut *tx)
-            .await
-            .with_context(|| {
-                format!(
-                    "insert metis.session_events_v2 UserMessage for headless backfill of {session_id}"
+            if synthesize_first_event {
+                let now_rfc3339 = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                let event_data: Value =
+                    serde_json::from_str(&user_message_event_data(&prompt, &now_rfc3339))
+                        .expect("user_message_event_data builds valid JSON");
+                sqlx::query(
+                    "INSERT INTO metis.session_events_v2 \
+                        (session_id, version_number, event_type, event_data, actor, created_at) \
+                     VALUES ($1, 1, 'user_message', $2, NULL, NOW())",
                 )
-            })?;
+                .bind(&session_id)
+                .bind(&event_data)
+                .execute(&mut *tx)
+                .await
+                .with_context(|| {
+                    format!(
+                        "insert metis.session_events_v2 UserMessage for headless backfill of {session_id}"
+                    )
+                })?;
+            }
 
             let new_mode = rewrite_mode(&prompt, &conversation_id);
             sqlx::query(

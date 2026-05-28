@@ -505,6 +505,65 @@ async fn assert_data_shape_invariants(pool: &PgPool) -> Result<()> {
         }
     }
 
+    // ---- PR-2 special case: `s-actrowx` is a legacy headless row whose
+    // session also has a pre-seeded `session_events_v2` row (content
+    // "se hello", inserted by the actor-variant-cleanup fixture before
+    // this PR's backfill runs). The backfill must still rewrite `mode`
+    // and stamp `tasks_v2.conversation_id`, but MUST NOT clobber the
+    // existing event with a synthesized first UserMessage carrying the
+    // legacy prompt — doing so would (a) collide on the
+    // `(session_id, version_number)` unique index and (b) destroy the
+    // real model-input history. ----
+    let row = sqlx::query(
+        "SELECT mode::text, conversation_id FROM metis.tasks_v2 \
+         WHERE id = 's-actrowx' AND is_latest = TRUE",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read backfilled mode for s-actrowx")?;
+    let mode_text: String = row.get(0);
+    let conv_id_col: Option<String> = row.get(1);
+    let mode: serde_json::Value = serde_json::from_str(&mode_text)?;
+    let conv_id_json = mode
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .context("s-actrowx: expected mode.conversation_id after PR-2 backfill")?;
+    if conv_id_col.as_deref() != Some(conv_id_json) {
+        bail!(
+            "s-actrowx: tasks_v2.conversation_id={conv_id_col:?} must mirror \
+             mode.conversation_id={conv_id_json}"
+        );
+    }
+    // Pre-existing session_events_v2 row at version_number=1 must be
+    // preserved verbatim — content stays "se hello", NOT the legacy
+    // prompt ("do thing").
+    let event_row = sqlx::query(
+        "SELECT event_type, event_data::text, COUNT(*) OVER () AS total FROM metis.session_events_v2 \
+         WHERE session_id = 's-actrowx' ORDER BY version_number ASC LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read first session_events_v2 row for s-actrowx")?;
+    let event_type: String = event_row.get(0);
+    let event_data_text: String = event_row.get(1);
+    let total: i64 = event_row.get(2);
+    let event_data: serde_json::Value = serde_json::from_str(&event_data_text)?;
+    if event_type != "user_message" {
+        bail!("s-actrowx: expected first session_event_type='user_message'; got {event_type}");
+    }
+    if event_data.get("content").and_then(|v| v.as_str()) != Some("se hello") {
+        bail!(
+            "s-actrowx: pre-existing session_event must be preserved (content=\"se hello\"); \
+             got {event_data}"
+        );
+    }
+    if total != 1 {
+        bail!(
+            "s-actrowx: backfill must not append a duplicate event when one already exists; \
+             got total={total} session_events_v2 rows"
+        );
+    }
+
     Ok(())
 }
 
