@@ -46,18 +46,16 @@ WHERE mount_spec IS NULL;
 --------------------------------------------------------------------------------
 -- agent_config backfill
 --
--- `system_prompt` is backfilled from the legacy `prompt` column so the
--- post-PR-1 read path (which sources the worker prompt from
--- `agent_config.system_prompt` for both modes) stays correct for historic
--- rows.
--- `agent_name` is NULL on historical rows: the legacy schema does not
+-- `system_prompt` is intentionally NULL on historical rows — resolving it
+-- from the agent definition is out of scope here (deferred to PR-3).
+-- `agent_name` is also NULL on historical rows: the legacy schema does not
 -- record which agent was used at session-creation time.
 --------------------------------------------------------------------------------
 UPDATE metis.tasks_v2
 SET agent_config = jsonb_build_object(
     'agent_name',    NULL,
     'model',         model,
-    'system_prompt', prompt,
+    'system_prompt', NULL,
     'mcp_config',    mcp_config
 )
 WHERE agent_config IS NULL;
@@ -82,7 +80,7 @@ WHERE agent_config IS NULL;
 UPDATE metis.tasks_v2
 SET mode = CASE
     WHEN conversation_id IS NULL THEN
-        jsonb_build_object('type', 'headless')
+        jsonb_build_object('type', 'headless', 'prompt', prompt)
     ELSE
         jsonb_build_object(
             'type', 'interactive',
