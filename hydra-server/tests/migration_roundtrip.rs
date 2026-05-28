@@ -28,8 +28,8 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::users::Username as ApiUsername;
-use hydra_common::principal::Principal;
-use hydra_common::{HydraId, IssueId, PatchId, RepoName, SessionId};
+use hydra_common::principal::{ExternalSystem, Principal};
+use hydra_common::{DocumentId, HydraId, IssueId, PatchId, RepoName, SessionId};
 use hydra_server::domain::actors::ActorRef;
 use hydra_server::domain::issues::{Issue, IssueStatus, IssueType};
 use hydra_server::domain::patches::{Patch, PatchStatus, Review};
@@ -577,6 +577,147 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
     .await?;
     // 11. Multi-key actor_id -> actor=NULL
     expect_issue_actor_null(pool, "i-actmulti").await?;
+    // 12. Legacy adhoc/<sid> -> Adhoc
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actadhoc",
+        Some(serde_json::json!({"Adhoc": {"session_id": "s-adhocone"}})),
+    )
+    .await?;
+    // 13. Legacy external/<sys>/<user> -> External
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actextn",
+        Some(serde_json::json!({"External": {"system": "github", "username": "jayantk"}})),
+    )
+    .await?;
+    // 14. Legacy u-<x> shorthand -> User
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actushrt",
+        Some(serde_json::json!({"User": {"name": "alice"}})),
+    )
+    .await?;
+    // 15. Legacy s-<sid> shorthand -> Adhoc (session_id preserves the s- prefix)
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actsshrt",
+        Some(serde_json::json!({"Adhoc": {"session_id": "s-abcdef"}})),
+    )
+    .await?;
+    // 16. Legacy svc-<n> shorthand -> Agent
+    expect_issue_actor_actor_id(
+        pool,
+        "i-actsvshr",
+        Some(serde_json::json!({"Agent": {"name": "swe"}})),
+    )
+    .await?;
+    // 17. Legacy users/<x> with invalid Username payload -> actor=NULL
+    expect_issue_actor_null(pool, "i-actubad").await?;
+    // 18. Legacy agents/<x> with invalid AgentName payload -> actor=NULL
+    expect_issue_actor_null(pool, "i-actabad").await?;
+    // 19. Legacy external/<sys>/<x> with invalid ExternalSystem -> actor=NULL
+    expect_issue_actor_null(pool, "i-actexbad").await?;
+    // 20. Legacy a-<issue_id> shorthand is intentionally NOT recognised -> NULL
+    expect_issue_actor_null(pool, "i-actashrt").await?;
+
+    // Issue-arm tie-break edges: multi-match / deleted-only / not-latest /
+    // chained Issue all leave the referring row's actor at NULL because
+    // `load_issue_to_actor_id` only inserts when exactly one
+    // post-cleanup-resolvable task is associated with the issue.
+    for issue_id in ["i-actrefmny", "i-actrefdel", "i-actrefold", "i-actrefchn"] {
+        expect_issue_actor_null(pool, issue_id).await?;
+    }
+
+    // Nested ActorRef rewrites — System.on_behalf_of resolved/unresolved
+    // and Automation.triggered_by resolved/unresolved. Unresolved sub-actors
+    // collapse to null WITHIN the ActorRef rather than NULLing the row.
+    expect_table_actor(
+        pool,
+        "issues_v2",
+        "i-actsysu",
+        Some(serde_json::json!({
+            "System": {
+                "worker_name": "task-spawner",
+                "on_behalf_of": {"User": {"name": "alice"}}
+            }
+        })),
+    )
+    .await?;
+    expect_table_actor(
+        pool,
+        "issues_v2",
+        "i-actsysn",
+        Some(serde_json::json!({
+            "System": {
+                "worker_name": "task-spawner",
+                "on_behalf_of": null
+            }
+        })),
+    )
+    .await?;
+    expect_table_actor(
+        pool,
+        "issues_v2",
+        "i-actauto",
+        Some(serde_json::json!({
+            "Automation": {
+                "automation_name": "github_pr_sync",
+                "triggered_by": {
+                    "Authenticated": {"actor_id": {"User": {"name": "alice"}}}
+                }
+            }
+        })),
+    )
+    .await?;
+    expect_table_actor(
+        pool,
+        "issues_v2",
+        "i-actauton",
+        Some(serde_json::json!({
+            "Automation": {
+                "automation_name": "github_pr_sync",
+                "triggered_by": null
+            }
+        })),
+    )
+    .await?;
+
+    // Multi-table coverage — every table in `ACTOR_REF_TABLES_COMMON`
+    // (plus session_events_v2 below) carries one Username-legacy row
+    // that the cleanup must rewrite to a User-tagged ActorRef.
+    let expected_user_authenticated = serde_json::json!({
+        "Authenticated": {"actor_id": {"User": {"name": "alice"}}}
+    });
+    for (table, id) in [
+        ("repositories_v2", "r-actreplc"),
+        ("users_v2", "u-actusrlc"),
+        ("patches_v2", "p-actpchlc"),
+        ("tasks_v2", "s-actrowx"),
+        ("documents_v2", "d-actdoclc"),
+    ] {
+        expect_table_actor(pool, table, id, Some(expected_user_authenticated.clone())).await?;
+    }
+
+    // session_events_v2 has a (session_id, version_number) primary key
+    // and no is_latest column, so it gets a one-off inline assertion.
+    let row = sqlx::query(
+        "SELECT actor::text AS pl FROM metis.session_events_v2 \
+         WHERE session_id = 's-actrowx' AND version_number = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read session_events_v2.actor for (s-actrowx, 1)")?;
+    let raw: Option<String> = row.get("pl");
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("decode session_events_v2.actor")?;
+    if got != Some(expected_user_authenticated.clone()) {
+        bail!(
+            "session_events_v2(s-actrowx, 1).actor: expected {expected_user_authenticated}; got {got:?}",
+        );
+    }
 
     // actors_v2 — bare `actor_id` column rewrites
     let row = sqlx::query(
@@ -666,6 +807,30 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
             "i-actuser",
             Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
         ),
+        // New per-variant Authenticated/actor_id rows below.
+        (
+            "i-actadhoc",
+            Some(ActorId::Adhoc("s-adhocone".parse().unwrap())),
+        ),
+        (
+            "i-actextn",
+            Some(ActorId::External {
+                system: ExternalSystem::try_new("github").unwrap(),
+                username: "jayantk".to_string(),
+            }),
+        ),
+        (
+            "i-actushrt",
+            Some(ActorId::User(ApiUsername::try_new("alice").unwrap())),
+        ),
+        (
+            "i-actsshrt",
+            Some(ActorId::Adhoc("s-abcdef".parse().unwrap())),
+        ),
+        (
+            "i-actsvshr",
+            Some(ActorId::Agent(AgentName::try_new("swe").unwrap())),
+        ),
     ] {
         let issue = store
             .get_issue(&parse_issue_id(issue_id)?, false)
@@ -682,7 +847,22 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
             ),
         }
     }
-    for issue_id in ["i-actissno", "i-actsvcno", "i-actlegx", "i-actmulti"] {
+    for issue_id in [
+        "i-actissno",
+        "i-actsvcno",
+        "i-actlegx",
+        "i-actmulti",
+        // Invalid Legacy bare-string payloads (§ per-variant gaps).
+        "i-actubad",
+        "i-actabad",
+        "i-actexbad",
+        "i-actashrt",
+        // Issue-arm tie-break edges that omit from the lookup map.
+        "i-actrefmny",
+        "i-actrefdel",
+        "i-actrefold",
+        "i-actrefchn",
+    ] {
         let issue = store
             .get_issue(&parse_issue_id(issue_id)?, false)
             .await
@@ -695,6 +875,135 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         }
     }
 
+    // Nested ActorRef shapes — `System` and `Automation` rows must
+    // round-trip through `ActorRef::deserialize` with the inner
+    // `on_behalf_of` / `triggered_by` rewritten or collapsed to None.
+    let sysu = store
+        .get_issue(&parse_issue_id("i-actsysu")?, false)
+        .await
+        .context("store-level read of i-actsysu")?;
+    match sysu.actor.as_ref() {
+        Some(DomainActorRef::System {
+            worker_name,
+            on_behalf_of: Some(ActorId::User(name)),
+        }) if worker_name == "task-spawner" && name.as_str() == "alice" => {}
+        other => bail!(
+            "i-actsysu: expected System(worker_name=task-spawner, on_behalf_of=User(alice)); got {other:?}"
+        ),
+    }
+    let sysn = store
+        .get_issue(&parse_issue_id("i-actsysn")?, false)
+        .await
+        .context("store-level read of i-actsysn")?;
+    match sysn.actor.as_ref() {
+        Some(DomainActorRef::System {
+            worker_name,
+            on_behalf_of: None,
+        }) if worker_name == "task-spawner" => {}
+        other => bail!(
+            "i-actsysn: expected System(worker_name=task-spawner, on_behalf_of=None); got {other:?}"
+        ),
+    }
+    let auto = store
+        .get_issue(&parse_issue_id("i-actauto")?, false)
+        .await
+        .context("store-level read of i-actauto")?;
+    match auto.actor.as_ref() {
+        Some(DomainActorRef::Automation {
+            automation_name,
+            triggered_by: Some(boxed),
+        }) if automation_name == "github_pr_sync" => match boxed.as_ref() {
+            DomainActorRef::Authenticated {
+                actor_id: ActorId::User(name),
+                ..
+            } if name.as_str() == "alice" => {}
+            other => {
+                bail!("i-actauto.triggered_by: expected Authenticated(User(alice)); got {other:?}")
+            }
+        },
+        other => bail!(
+            "i-actauto: expected Automation(github_pr_sync, triggered_by=Authenticated(User(alice))); got {other:?}"
+        ),
+    }
+    let auton = store
+        .get_issue(&parse_issue_id("i-actauton")?, false)
+        .await
+        .context("store-level read of i-actauton")?;
+    match auton.actor.as_ref() {
+        Some(DomainActorRef::Automation {
+            automation_name,
+            triggered_by: None,
+        }) if automation_name == "github_pr_sync" => {}
+        other => bail!(
+            "i-actauton: expected Automation(github_pr_sync, triggered_by=None); got {other:?}"
+        ),
+    }
+
+    // Multi-table coverage — read the post-cleanup actor through the
+    // store for tables that expose an `id`-keyed getter so any serde
+    // drift between the per-table walker's raw JSON output and the
+    // domain `ActorRef` shows up here. `repositories_v2`/`users_v2`
+    // lookups go through name-typed keys (RepoName / Username) that
+    // the bare-id fixtures don't satisfy, so those stay at SQL-level
+    // only above. `session_events_v2` is data-store-only.
+    let multi_user = ActorId::User(ApiUsername::try_new("alice").unwrap());
+    let patch = store
+        .get_patch(&parse_patch_id("p-actpchlc")?, false)
+        .await
+        .context("store-level read of p-actpchlc")?;
+    match patch.actor.as_ref() {
+        Some(DomainActorRef::Authenticated { actor_id, .. }) if actor_id == &multi_user => {}
+        other => bail!("p-actpchlc: expected Authenticated(User(alice)); got {other:?}"),
+    }
+    let session = store
+        .get_session(&parse_session_id("s-actrowx")?, false)
+        .await
+        .context("store-level read of s-actrowx")?;
+    match session.actor.as_ref() {
+        Some(DomainActorRef::Authenticated { actor_id, .. }) if actor_id == &multi_user => {}
+        other => bail!("s-actrowx: expected Authenticated(User(alice)); got {other:?}"),
+    }
+    let document = store
+        .get_document(
+            &DocumentId::from_str("d-actdoclc").context("parse d-actdoclc as DocumentId")?,
+            false,
+        )
+        .await
+        .context("store-level read of d-actdoclc")?;
+    match document.actor.as_ref() {
+        Some(DomainActorRef::Authenticated { actor_id, .. }) if actor_id == &multi_user => {}
+        other => bail!("d-actdoclc: expected Authenticated(User(alice)); got {other:?}"),
+    }
+
+    Ok(())
+}
+
+/// Read the `actor` JSONB column from any `id`+`is_latest`-keyed table
+/// and compare it to `expected`. Used by the §3.2 multi-table coverage
+/// assertions and the nested `ActorRef` (System/Automation) checks.
+async fn expect_table_actor(
+    pool: &PgPool,
+    table: &str,
+    id: &str,
+    expected: Option<serde_json::Value>,
+) -> Result<()> {
+    let sql = format!(
+        "SELECT actor::text AS pl FROM metis.{table} \
+         WHERE id = $1 AND is_latest = TRUE",
+    );
+    let row = sqlx::query(&sql)
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read {table}.actor for {id}"))?;
+    let raw: Option<String> = row.get("pl");
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .with_context(|| format!("decode {table}.actor JSON for {id}"))?;
+    if got != expected {
+        bail!("{table}({id}).actor: expected {expected:?}; got {got:?}");
+    }
     Ok(())
 }
 
