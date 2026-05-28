@@ -211,11 +211,20 @@ async fn spawn_session(
         conversation_id.to_string(),
     );
 
+    // On the resume path, look up the most-recently-created prior session for
+    // this conversation so we can carry the lineage edge directly through
+    // `CreateSessionRequest` instead of a follow-up update.
+    let prior_session_id = if resume_from.is_some() {
+        find_prior_session_id(ctx, conversation_id).await
+    } else {
+        None
+    };
+
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id: conversation_id.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
+            conversation_resume_from: resume_from,
         },
         agent_config: AgentSpec::Named { name: agent_name },
         model: conversation_settings.model.clone(),
@@ -226,7 +235,7 @@ async fn spawn_session(
         memory_limit: conversation_settings.memory_limit.clone(),
         secrets: conversation_settings.secrets.clone(),
         spawned_from: None,
-        resumed_from: None,
+        resumed_from: prior_session_id.clone(),
     };
 
     let session_id = match ctx
@@ -243,56 +252,7 @@ async fn spawn_session(
         }
     };
 
-    if let Some(resume_from) = resume_from {
-        match ctx.store.get_session(&session_id, false).await {
-            Ok(versioned) => {
-                let mut session = versioned.item;
-                // Stamp the legacy event-index hint inside the Interactive
-                // mode variant and set the new session-level lineage edge in
-                // the same update. Resume only makes sense for interactive
-                // sessions; the helper rejects callers that try to stamp on
-                // a Headless mode. The worker reads `conversation_resume_from`
-                // off `session.mode.Interactive`; a follow-up will swap that
-                // for `WorkerContext.resumed_state`.
-                if !session.mode.set_conversation_resume_from(Some(resume_from)) {
-                    tracing::warn!(
-                        automation = AUTOMATION_NAME,
-                        conversation_id = %conversation_id,
-                        session_id = %session_id,
-                        "refusing to stamp conversation_resume_from on a headless session"
-                    );
-                    return Ok(());
-                }
-                if let Some(prior) = find_prior_session_id(ctx, conversation_id, &session_id).await
-                {
-                    session.resumed_from = Some(prior);
-                }
-                if let Err(err) = ctx
-                    .app_state
-                    .store
-                    .update_session_with_actor(&session_id, session, actor.clone())
-                    .await
-                {
-                    tracing::warn!(
-                        automation = AUTOMATION_NAME,
-                        conversation_id = %conversation_id,
-                        session_id = %session_id,
-                        error = %err,
-                        "failed to set conversation_resume_from on resumed session"
-                    );
-                }
-            }
-            Err(err) => {
-                tracing::warn!(
-                    automation = AUTOMATION_NAME,
-                    conversation_id = %conversation_id,
-                    session_id = %session_id,
-                    error = %err,
-                    "failed to load newly-spawned session to set conversation_resume_from"
-                );
-            }
-        }
-
+    if resume_from.is_some() {
         let resumed_timestamp = chrono::Utc::now();
         let resumed_event = ConversationEvent::Resumed {
             session_id: session_id.clone(),
@@ -316,9 +276,7 @@ async fn spawn_session(
         // Dual-write the SessionEvent::Resumed marker onto the newly-spawned
         // session, carrying the prior session id (Phase C step 7 of the
         // sessions-orthogonality redesign, §3.2 mapping rule).
-        if let Some(from_session_id) =
-            find_prior_session_id(ctx, conversation_id, &session_id).await
-        {
+        if let Some(from_session_id) = prior_session_id {
             let session_event = crate::domain::sessions::SessionEvent::Resumed {
                 from_session_id,
                 timestamp: resumed_timestamp,
@@ -351,13 +309,14 @@ async fn spawn_session(
     Ok(())
 }
 
-/// Find the most-recently-created session linked to `conversation_id` that
-/// is NOT the just-spawned `new_session_id`. Returns `None` if no such
-/// session exists (e.g. a fresh conversation that has never been resumed).
+/// Find the most-recently-created session linked to `conversation_id`.
+/// Returns `None` if no such session exists (e.g. a fresh conversation that
+/// has never been resumed). Callers must invoke this BEFORE creating the new
+/// session — otherwise the newly-created session is the most recent, and the
+/// helper returns it instead of the prior one.
 async fn find_prior_session_id(
     ctx: &AutomationContext<'_>,
     conversation_id: &ConversationId,
-    new_session_id: &hydra_common::SessionId,
 ) -> Option<hydra_common::SessionId> {
     use hydra_common::api::v1::sessions::SearchSessionsQuery;
     let mut query = SearchSessionsQuery::default();
@@ -365,7 +324,6 @@ async fn find_prior_session_id(
     let sessions = ctx.store.list_sessions(&query).await.ok()?;
     sessions
         .into_iter()
-        .filter(|(id, _)| id != new_session_id)
         .max_by_key(|(_, v)| v.creation_time)
         .map(|(id, _)| id)
 }
@@ -1236,6 +1194,80 @@ mod tests {
             .map(|(id, _)| id)
             .unwrap();
         assert_eq!(resumed, session_id);
+    }
+
+    #[tokio::test]
+    async fn resume_spawn_sets_resumed_from_to_prior_session_id() {
+        // Regression: the session-level `resumed_from` lineage edge must
+        // point at the most-recently-created prior session for the
+        // conversation. Today's other resume-flow tests cover the
+        // `ConversationEvent::Resumed` side-channel but not the session
+        // field itself.
+        use crate::domain::sessions::{AgentConfig, SessionMode as DomainSessionMode};
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "prompt", false).await;
+
+        let conversation = make_conversation_with_status(Some("swe"), ConversationStatus::Closed);
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        // Seed a prior session linked to the conversation that the resume
+        // spawn should pick up.
+        let prior_session = Session::new(
+            Username::from("creator"),
+            None,
+            None,
+            AgentConfig::default(),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
+            None,
+            std::collections::HashMap::new(),
+            None,
+            None,
+            None,
+            DomainSessionMode::Interactive {
+                conversation_id: conversation_id.clone(),
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            },
+            TaskStatus::Complete,
+            None,
+            None,
+        );
+        let prior_session_id = state
+            .add_session(prior_session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_updated_event(
+            conversation_id.clone(),
+            conversation,
+            make_conversation(Some("swe")),
+        );
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        // Find the newly-spawned (= newest) session and check its
+        // `resumed_from` points at the seeded prior session id.
+        let sessions = state
+            .list_sessions_with_query(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
+        let new_session = sessions
+            .into_iter()
+            .filter(|(id, _)| id != &prior_session_id)
+            .find(|(_, s)| s.item.conversation_id() == Some(&conversation_id))
+            .map(|(_, s)| s.item)
+            .expect("expected a newly-spawned session for the conversation");
+        assert_eq!(new_session.resumed_from, Some(prior_session_id));
     }
 
     #[tokio::test]
