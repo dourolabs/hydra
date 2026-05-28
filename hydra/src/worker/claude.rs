@@ -167,9 +167,12 @@ impl Claude {
     ///
     /// Returns [`MaterializeError::WrongFormat`] if the bytes do not parse as
     /// this wrapper's payload (e.g. cross-model handoff from a Codex
-    /// session), and [`MaterializeError::IoError`] if writing the on-disk
-    /// transcript fails. The dispatcher treats both errors identically and
-    /// falls back to transcript replay.
+    /// session), [`MaterializeError::MissingTranscript`] if the payload
+    /// parses but carries no transcript (the bare session id alone cannot
+    /// resume Claude on a fresh worker — there is no on-disk transcript to
+    /// resume against), and [`MaterializeError::IoError`] if writing the
+    /// on-disk transcript fails. The dispatcher treats all error variants
+    /// identically and falls back to transcript replay.
     pub fn try_materialize(&self, state_bytes: &[u8]) -> Result<NativeResume, MaterializeError> {
         let payload: SessionStatePayload =
             serde_json::from_slice(state_bytes).map_err(|_| MaterializeError::WrongFormat)?;
@@ -177,10 +180,9 @@ impl Claude {
             session_id,
             transcript,
         } = payload;
-        if let Some(bytes) = transcript {
-            let target = transcript_path(&self.home_dir, &self.working_dir, &session_id);
-            write_transcript_atomic(&target, &bytes)?;
-        }
+        let bytes = transcript.ok_or(MaterializeError::MissingTranscript)?;
+        let target = transcript_path(&self.home_dir, &self.working_dir, &session_id);
+        write_transcript_atomic(&target, &bytes)?;
         Ok(NativeResume::Claude(ClaudeResume::SessionId(session_id)))
     }
 
@@ -1220,7 +1222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn try_materialize_without_transcript_still_returns_session_id() {
+    async fn try_materialize_without_transcript_returns_missing_transcript_error() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let cwd = tmp.path().join("repo");
@@ -1234,11 +1236,8 @@ mod tests {
         };
         let bytes = serde_json::to_vec(&payload).unwrap();
 
-        let native = claude.try_materialize(&bytes).expect("materialize ok");
-        assert!(matches!(
-            native,
-            NativeResume::Claude(ClaudeResume::SessionId(ref s)) if s == "abc-uuid"
-        ));
+        let result = claude.try_materialize(&bytes);
+        assert!(matches!(result, Err(MaterializeError::MissingTranscript)));
         // No transcript was provided so nothing should be installed on disk.
         let installed = transcript_path(&home, &cwd, "abc-uuid");
         assert!(!installed.exists());
