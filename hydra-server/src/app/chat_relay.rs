@@ -1,5 +1,6 @@
 use dashmap::DashMap;
 use hydra_common::api::v1::sessions::{SearchSessionsQuery, SessionEvent as ApiSessionEvent};
+use hydra_common::api::v1::task_status::Status;
 use hydra_common::{ConversationId, SessionId};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -79,16 +80,87 @@ pub enum SendToWorkerError {
     ChannelClosed,
 }
 
-/// Resolve the session that "owns" the given conversation right now.
+/// Resolve the *active* session that "owns" the given conversation right now.
 ///
 /// Used by `send_message` and the lifecycle write paths to find the session
 /// id to attach a `SessionEvent` to when the caller only has a
 /// `ConversationId` in hand. Prefers the in-memory `chat_relay_map` (set by
-/// a live worker WebSocket); falls back to picking the most-recently-created
-/// session linked to the conversation. Returns `None` if no session has been
-/// spawned yet — the write is best-effort and is skipped (with a warn log at
-/// the call site) in that case.
+/// a live worker WebSocket — a live relay entry by definition tracks an
+/// active worker); falls back to a store query filtered to active session
+/// states (`Created` / `Pending` / `Running`) and picks the most-recently
+/// created one. Terminated sessions are never returned.
+///
+/// Returns `None` if no active session is currently linked to the
+/// conversation — callers needing to wait briefly for one to appear should
+/// use [`wait_for_active_session_for_conversation`] instead.
 pub async fn resolve_session_for_conversation(
+    state: &AppState,
+    conversation_id: &ConversationId,
+) -> Option<SessionId> {
+    if let Some(entry) = state.chat_relay_map.get(conversation_id) {
+        return Some(entry.session_id.clone());
+    }
+    let mut query = SearchSessionsQuery::default();
+    query.conversation_id = Some(conversation_id.clone());
+    query.status = vec![Status::Created, Status::Pending, Status::Running];
+    let sessions = state.store().list_sessions(&query).await.ok()?;
+    sessions
+        .into_iter()
+        .max_by_key(|(_, v)| v.creation_time)
+        .map(|(id, _)| id)
+}
+
+/// Bounded-wait variant of [`resolve_session_for_conversation`].
+///
+/// Polls the resolver for an active session for up to ~2s (20 × 100ms).
+/// Used by the chat-content write path (`send_message`) on a brand-new
+/// conversation or right after a resume, where
+/// `SpawnConversationSessionsAutomation` is spawning the companion session
+/// concurrently and may not have produced it yet when `send_message`
+/// lands. On timeout returns
+/// [`ResolveActiveSessionError::Timeout`] so the caller surfaces a
+/// non-200 to the client rather than silently dropping the user message.
+pub async fn wait_for_active_session_for_conversation(
+    state: &AppState,
+    conversation_id: &ConversationId,
+) -> Result<SessionId, ResolveActiveSessionError> {
+    const RETRIES: u32 = 20;
+    const DELAY_MS: u64 = 100;
+    for _ in 0..RETRIES {
+        if let Some(id) = resolve_session_for_conversation(state, conversation_id).await {
+            return Ok(id);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(DELAY_MS)).await;
+    }
+    resolve_session_for_conversation(state, conversation_id)
+        .await
+        .ok_or_else(|| ResolveActiveSessionError::Timeout {
+            conversation_id: conversation_id.clone(),
+        })
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveActiveSessionError {
+    #[error("no active session for conversation '{conversation_id}' after wait budget")]
+    Timeout { conversation_id: ConversationId },
+}
+
+/// Resolve the most-recently-created session linked to a conversation,
+/// **without** the active-state filter applied by
+/// [`resolve_session_for_conversation`].
+///
+/// Used by the dual-write helpers below: lifecycle events (`Suspending`,
+/// `Closed`) are routinely appended *after* the worker session has gone
+/// terminal, so the dual-write needs to find the now-terminal session to
+/// land the event on its log. The chat-content write path
+/// (`send_message`) uses the filtered variant instead — it must never
+/// write a `UserMessage` to a dead session.
+///
+/// This helper is scoped to the dual-write callers (part 3 of
+/// [[i-piwnljcg]] inlines them); new callers should prefer
+/// [`resolve_session_for_conversation`] unless they have an explicit need
+/// to address terminated sessions.
+async fn resolve_session_for_conversation_any_status(
     state: &AppState,
     conversation_id: &ConversationId,
 ) -> Option<SessionId> {
@@ -104,58 +176,6 @@ pub async fn resolve_session_for_conversation(
         .map(|(id, _)| id)
 }
 
-/// Like [`resolve_session_for_conversation`] but polls briefly for the
-/// session to appear. Used by the chat-content write path
-/// (`send_message`) on a brand-new conversation, where
-/// `SpawnConversationSessionsAutomation` is spawning the companion session
-/// concurrently and may not have produced it yet when `send_message` lands.
-///
-/// The retry budget is short on purpose: this path is on the user-facing
-/// `POST /v1/conversations/:id/messages` (and the immediate-after-create
-/// follow-up from `create_conversation`), so we want to bound the worst
-/// case. If the session still isn't there after the budget, the caller
-/// proceeds without a session-event write and a warn fires.
-pub async fn resolve_session_for_conversation_with_retry(
-    state: &AppState,
-    conversation_id: &ConversationId,
-) -> Option<SessionId> {
-    const RETRIES: u32 = 20;
-    const DELAY_MS: u64 = 100;
-    for _ in 0..RETRIES {
-        if let Some(id) = resolve_session_for_conversation(state, conversation_id).await {
-            return Some(id);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(DELAY_MS)).await;
-    }
-    resolve_session_for_conversation(state, conversation_id).await
-}
-
-/// Like [`resolve_session_for_conversation_with_retry`] but waits for a
-/// session strictly *newer* than `prior` to appear. Used by `send_message`
-/// in the resume-on-send path so the user message lands on the freshly
-/// spawned session rather than the prior (now-closed) one. If `prior` is
-/// `None`, falls back to the standard retry resolver.
-pub async fn wait_for_new_session_for_conversation(
-    state: &AppState,
-    conversation_id: &ConversationId,
-    prior: Option<&SessionId>,
-) -> Option<SessionId> {
-    let Some(prior) = prior else {
-        return resolve_session_for_conversation_with_retry(state, conversation_id).await;
-    };
-    const RETRIES: u32 = 20;
-    const DELAY_MS: u64 = 100;
-    for _ in 0..RETRIES {
-        if let Some(id) = resolve_session_for_conversation(state, conversation_id).await {
-            if &id != prior {
-                return Some(id);
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(DELAY_MS)).await;
-    }
-    resolve_session_for_conversation(state, conversation_id).await
-}
-
 /// Dual-write a `SessionEvent` to the session backing this conversation.
 ///
 /// Logs a warn and returns `Ok(())` if no session exists yet (this happens
@@ -169,7 +189,9 @@ pub async fn dual_write_session_event_for_conversation(
     event: SessionEvent,
     actor: ActorRef,
 ) -> Result<(), StoreError> {
-    let Some(session_id) = resolve_session_for_conversation(state, conversation_id).await else {
+    let Some(session_id) =
+        resolve_session_for_conversation_any_status(state, conversation_id).await
+    else {
         warn!(
             %conversation_id,
             "dual-write SessionEvent skipped: no session linked to conversation yet"
@@ -292,10 +314,40 @@ pub async fn store_session_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::test_helpers::state_with_default_model;
+    use crate::domain::sessions::{AgentConfig, Session, SessionMode};
+    use crate::domain::task_status::Status as DomainStatus;
+    use crate::domain::users::Username;
+    use crate::routes::sessions::mount_spec_from_create_request;
     use chrono::Utc;
+    use std::collections::HashMap;
+    use std::time::Instant;
 
     fn test_relay_map() -> ChatRelayMap {
         Arc::new(DashMap::new())
+    }
+
+    fn interactive_session(conversation_id: &ConversationId, status: DomainStatus) -> Session {
+        Session::new(
+            Username::from("test-creator"),
+            None,
+            None,
+            AgentConfig::default(),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
+            Some("worker:latest".to_string()),
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Interactive {
+                conversation_id: conversation_id.clone(),
+                idle_timeout_secs: None,
+                conversation_resume_from: None,
+            },
+            status,
+            None,
+            None,
+        )
     }
 
     #[tokio::test]
@@ -342,5 +394,117 @@ mod tests {
         };
         let result = send_to_worker(&map, &conversation_id, event).await;
         assert!(matches!(result, Err(SendToWorkerError::NoRelay)));
+    }
+
+    #[tokio::test]
+    async fn resolve_session_for_conversation_filters_terminated_sessions() {
+        // A session that has already transitioned to a terminal status
+        // (`Complete` / `Failed`) must not be returned by the resolver —
+        // the active-state filter is what lets the caller treat the
+        // resolver result as "currently owns the conversation".
+        let state = state_with_default_model("default-model");
+        let conversation_id = ConversationId::new();
+
+        for status in [DomainStatus::Complete, DomainStatus::Failed] {
+            let session = interactive_session(&conversation_id, status);
+            state
+                .store
+                .add_session_with_actor(
+                    session,
+                    Utc::now(),
+                    crate::domain::actors::ActorRef::test(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let resolved = resolve_session_for_conversation(&state, &conversation_id).await;
+        assert!(
+            resolved.is_none(),
+            "terminated sessions must not be returned by the resolver, got {resolved:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_session_for_conversation_returns_active_session() {
+        // The happy path: an active session in `Running` exists for this
+        // conversation, so the resolver returns it.
+        let state = state_with_default_model("default-model");
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), crate::domain::actors::ActorRef::test())
+            .await
+            .unwrap();
+
+        let resolved = resolve_session_for_conversation(&state, &conversation_id).await;
+        assert_eq!(resolved, Some(session_id));
+    }
+
+    #[tokio::test]
+    async fn wait_for_active_session_times_out_when_no_session_appears() {
+        // No session is ever inserted, so the bounded-wait resolver must
+        // surface a `Timeout` error after the wait budget elapses. The
+        // budget is 20 × 100ms = 2s, so we give ourselves headroom on the
+        // upper bound to keep the test stable on slow runners.
+        let state = state_with_default_model("default-model");
+        let conversation_id = ConversationId::new();
+
+        let started = Instant::now();
+        let result = wait_for_active_session_for_conversation(&state, &conversation_id).await;
+        let elapsed = started.elapsed();
+
+        match result {
+            Err(ResolveActiveSessionError::Timeout {
+                conversation_id: id,
+            }) => {
+                assert_eq!(id, conversation_id);
+            }
+            other => panic!("expected Timeout error, got {other:?}"),
+        }
+        assert!(
+            elapsed >= std::time::Duration::from_millis(1900),
+            "expected the resolver to spend ~2s before timing out, got {elapsed:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_for_active_session_skips_terminated_and_succeeds_on_active() {
+        // A terminated session is present alongside a freshly-active one.
+        // The resolver must return the active one (the terminated one is
+        // filtered out by the status query, and the active one wins the
+        // `max_by_key(creation_time)` tiebreak by virtue of being created
+        // later).
+        let state = state_with_default_model("default-model");
+        let conversation_id = ConversationId::new();
+
+        let terminated = interactive_session(&conversation_id, DomainStatus::Complete);
+        state
+            .store
+            .add_session_with_actor(
+                terminated,
+                Utc::now(),
+                crate::domain::actors::ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let active = interactive_session(&conversation_id, DomainStatus::Running);
+        let (active_id, _) = state
+            .store
+            .add_session_with_actor(
+                active,
+                Utc::now() + chrono::Duration::milliseconds(1),
+                crate::domain::actors::ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let resolved = wait_for_active_session_for_conversation(&state, &conversation_id)
+            .await
+            .expect("expected the active session to be returned");
+        assert_eq!(resolved, active_id);
     }
 }

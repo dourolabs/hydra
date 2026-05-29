@@ -285,6 +285,15 @@ fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
             error!(error = %source, "failed to resolve agent for create_conversation");
             ApiError::internal(format!("agent resolution error: {source}"))
         }
+        CreateConversationError::NoActiveSession { conversation_id } => {
+            error!(
+                conversation_id = %conversation_id,
+                "create_conversation: no active session became available within wait budget"
+            );
+            ApiError::service_unavailable(format!(
+                "no active session for conversation '{conversation_id}' yet — retry",
+            ))
+        }
     }
 }
 
@@ -307,6 +316,15 @@ fn map_send_message_error(err: SendMessageError) -> ApiError {
         SendMessageError::Forbidden { principal } => ApiError::forbidden(format!(
             "user '{principal}' is not the creator of this conversation",
         )),
+        SendMessageError::NoActiveSession { conversation_id } => {
+            error!(
+                conversation_id = %conversation_id,
+                "send_message: no active session became available within wait budget"
+            );
+            ApiError::service_unavailable(format!(
+                "no active session for conversation '{conversation_id}' yet — retry",
+            ))
+        }
     }
 }
 

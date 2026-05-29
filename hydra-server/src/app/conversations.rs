@@ -15,6 +15,8 @@ use hydra_common::{
 use thiserror::Error;
 use tracing::{info, warn};
 
+use crate::app::chat_relay::ResolveActiveSessionError;
+
 use super::app_state::AppState;
 
 #[derive(Debug, Error)]
@@ -31,6 +33,8 @@ pub enum CreateConversationError {
         #[source]
         source: AgentError,
     },
+    #[error("no active session for conversation '{conversation_id}' after wait budget")]
+    NoActiveSession { conversation_id: ConversationId },
 }
 
 #[derive(Debug, Error)]
@@ -42,6 +46,8 @@ pub enum SendMessageError {
     },
     #[error("principal '{principal}' is not the conversation creator")]
     Forbidden { principal: Username },
+    #[error("no active session for conversation '{conversation_id}' after wait budget")]
+    NoActiveSession { conversation_id: ConversationId },
 }
 
 #[derive(Debug, Error)]
@@ -141,6 +147,9 @@ impl AppState {
                             )),
                         }
                     }
+                    SendMessageError::NoActiveSession { conversation_id } => {
+                        CreateConversationError::NoActiveSession { conversation_id }
+                    }
                 })?;
         }
 
@@ -179,13 +188,8 @@ impl AppState {
         // new message. The companion session — and the corresponding Resumed
         // event — are produced asynchronously by
         // `SpawnConversationSessionsAutomation` when the ConversationUpdated
-        // event lands on the bus. Capture the resumed-from-prior flag so we
-        // know whether to wait for the spawn-automation to create the new
-        // session before writing the user message to it.
-        let resumed_from_non_active = versioned.item.status != ConversationStatus::Active;
-        let prior_session_id =
-            chat_relay::resolve_session_for_conversation(self, conversation_id).await;
-        if resumed_from_non_active {
+        // event lands on the bus.
+        if versioned.item.status != ConversationStatus::Active {
             let mut updated = versioned.item;
             updated.status = ConversationStatus::Active;
             self.store
@@ -200,32 +204,22 @@ impl AppState {
         //
         // On a brand-new or just-reactivated conversation, the session may
         // be in the process of being spawned by
-        // `SpawnConversationSessionsAutomation`; wait briefly so the message
-        // lands on the new session rather than the prior (closed) one.
+        // `SpawnConversationSessionsAutomation`; wait briefly. The resolver
+        // filters on active session states, so a stale terminated session
+        // is never returned — that's why a single wait is enough and the
+        // old "new vs prior session id" comparison can go away.
         let event = SessionEvent::UserMessage {
             content,
             timestamp: chrono::Utc::now(),
         };
-        let resolved = if resumed_from_non_active {
-            chat_relay::wait_for_new_session_for_conversation(
-                self,
-                conversation_id,
-                prior_session_id.as_ref(),
-            )
-            .await
-        } else {
-            chat_relay::resolve_session_for_conversation_with_retry(self, conversation_id).await
-        };
-        if let Some(session_id) = resolved {
-            let _ =
-                chat_relay::dual_write_session_event(self, &session_id, event.clone(), actor_ref)
-                    .await;
-        } else {
-            warn!(
-                %conversation_id,
-                "send_message: no session linked to conversation after retry — user message will be lost"
-            );
-        }
+        let session_id =
+            chat_relay::wait_for_active_session_for_conversation(self, conversation_id)
+                .await
+                .map_err(|ResolveActiveSessionError::Timeout { conversation_id }| {
+                    SendMessageError::NoActiveSession { conversation_id }
+                })?;
+        let _ =
+            chat_relay::dual_write_session_event(self, &session_id, event.clone(), actor_ref).await;
 
         // Forward to worker via ChatRelayMap if connected
         let api_event: api_sessions::SessionEvent = event.into();
@@ -598,6 +592,33 @@ mod tests {
         conversation_id: &ConversationId,
     ) -> Versioned<Session> {
         wait_for_session(state, conversation_id).await
+    }
+
+    /// Drive an existing session to a terminal status via the event-emitting
+    /// `update_session_with_actor` path. Required when a test that closes a
+    /// conversation needs to then send a message into the resume path: with
+    /// the active-state filter on the chat_relay resolver, a prior session
+    /// that is still in `Created`/`Pending`/`Running` would otherwise be
+    /// returned by the resolver instead of waiting for the new spawn. In
+    /// production this transition happens via the kill_job + monitor flow;
+    /// in unit tests we simulate it directly.
+    async fn mark_session_terminal(
+        state: &AppState,
+        session_id: &hydra_common::SessionId,
+        status: crate::domain::task_status::Status,
+    ) {
+        let mut session = state
+            .store()
+            .get_session(session_id, false)
+            .await
+            .expect("session must exist")
+            .item;
+        session.status = status;
+        state
+            .store
+            .update_session_with_actor(session_id, session, ActorRef::test())
+            .await
+            .expect("update_session_with_actor must succeed");
     }
 
     /// Look up the most-recent session_id for a conversation, polling
@@ -1084,11 +1105,33 @@ mod tests {
             .await
             .unwrap();
         let _initial = session_for_conversation(&state, &conversation_id).await;
+        let initial_session_id = session_id_for_conversation(&state, &conversation_id).await;
 
         state
             .close_conversation(&conversation_id, ActorRef::test())
             .await
             .unwrap();
+
+        // Drive the prior session terminal. In production the kill_job +
+        // monitor_running_sessions flow does this; in this unit test we
+        // simulate it directly so the chat_relay resolver's active-state
+        // filter has the prior session out of the candidate set when
+        // `send_message` runs.
+        //
+        // The SessionUpdated event fired here drives the
+        // SpawnConversationSessionsAutomation's idle-flip branch. While the
+        // conversation is still Closed that branch is a no-op, so we sleep
+        // briefly to let the automation drain the event before we flip the
+        // conversation Active in `send_message`. Otherwise the stale
+        // SessionUpdated could land *after* the Active flip and race the
+        // conversation right back to Idle.
+        mark_session_terminal(
+            &state,
+            &initial_session_id,
+            crate::domain::task_status::Status::Complete,
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         state
             .send_message(
@@ -1155,11 +1198,23 @@ mod tests {
             .await
             .unwrap();
         let _initial = session_for_conversation(&state, &conversation_id).await;
+        let initial_session_id = session_id_for_conversation(&state, &conversation_id).await;
 
         state
             .close_conversation(&conversation_id, ActorRef::test())
             .await
             .unwrap();
+
+        // Drive the prior session terminal — see the matching test above
+        // for why this is required under the active-state-filter resolver,
+        // and why we sleep briefly afterwards.
+        mark_session_terminal(
+            &state,
+            &initial_session_id,
+            crate::domain::task_status::Status::Complete,
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         // The automation captures the resume snapshot at the position just
         // after the most recent Closed event. We sample the event count here
@@ -1290,12 +1345,17 @@ mod tests {
         // logs a warning and bails. This replaces the legacy behavior of
         // synchronously creating a session whose prompt was the bare user
         // message; that fallback is no longer reachable.
+        //
+        // Created with `message = None` so the bounded-wait resolver in
+        // `send_message` is not exercised here — that path correctly errors
+        // out when no active session ever appears, which is covered by its
+        // own test below.
         let state = state_with_default_model("default-model");
         let _runner = start_test_automation_runner(&state);
 
         let (conversation_id, _) = state
             .create_conversation(
-                Some("hello".to_string()),
+                None,
                 None,
                 SessionSettings::default(),
                 ActorRef::test(),
@@ -1626,5 +1686,48 @@ mod tests {
             versioned_after.item, versioned_before.item,
             "forbidden send_message must not mutate the conversation",
         );
+    }
+
+    #[tokio::test]
+    async fn send_message_errors_when_no_active_session_spawns_within_budget() {
+        // No agent is registered and the conversation has no `agent_name`,
+        // so `SpawnConversationSessionsAutomation` won't spawn a session.
+        // After the 2s bounded-wait budget elapses, `send_message` must
+        // surface `NoActiveSession` instead of the old warn-log-and-drop
+        // behavior.
+        let state = state_with_default_model("default-model");
+        let _runner = start_test_automation_runner(&state);
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                None,
+                None,
+                SessionSettings::default(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        let result = state
+            .send_message(
+                &conversation_id,
+                "hello".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await;
+
+        match result {
+            Err(crate::app::SendMessageError::NoActiveSession {
+                conversation_id: id,
+            }) => {
+                assert_eq!(id, conversation_id);
+            }
+            other => panic!(
+                "expected NoActiveSession, got {:?}",
+                other.as_ref().err().map(|e| e.to_string())
+            ),
+        }
     }
 }
