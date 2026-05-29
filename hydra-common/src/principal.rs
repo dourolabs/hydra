@@ -427,6 +427,24 @@ mod tests {
     // --- Principal Display / FromStr -------------------------------------
 
     #[test]
+    fn principal_from_str_user() {
+        let p: Principal = "users/alice".parse().unwrap();
+        assert_eq!(p, alice());
+    }
+
+    #[test]
+    fn principal_from_str_agent() {
+        let p: Principal = "agents/swe".parse().unwrap();
+        assert_eq!(p, swe());
+    }
+
+    #[test]
+    fn principal_from_str_external() {
+        let p: Principal = "external/github/jayantk".parse().unwrap();
+        assert_eq!(p, gh_jayantk());
+    }
+
+    #[test]
     fn principal_from_str_round_trips_display() {
         for p in [alice(), swe(), gh_jayantk()] {
             let s = p.to_string();

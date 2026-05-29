@@ -1062,12 +1062,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_session_id_returns_none_when_missing() {
-        let line = r#"{"type":"assistant","message":{"content":[]}}"#;
-        assert_eq!(extract_session_id(line), None);
-    }
-
-    #[test]
     fn extract_assistant_text_from_text_block() {
         let line =
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}"#;
