@@ -173,13 +173,36 @@ async fn handle_relay_socket(
                                     bytes,
                                     "received SessionStateUpload — storing"
                                 );
-                                let _ = chat_relay::store_session_state(
-                                    &state,
-                                    &session_id,
-                                    data,
-                                    actor_ref.clone(),
-                                )
-                                .await;
+                                // Errors are logged and swallowed so a
+                                // transient store failure does not tear
+                                // down the WebSocket relay; the worker
+                                // will retry the upload on its next
+                                // Suspending event.
+                                match state
+                                    .store
+                                    .store_session_state_with_actor(
+                                        &session_id,
+                                        data,
+                                        actor_ref.clone(),
+                                    )
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        info!(
+                                            %session_id,
+                                            bytes,
+                                            "session_state stored",
+                                        );
+                                    }
+                                    Err(err) => {
+                                        warn!(
+                                            %session_id,
+                                            bytes,
+                                            error = %err,
+                                            "store session_state failed",
+                                        );
+                                    }
+                                }
                             }
                             Err(err) => {
                                 warn!(%session_id, error = %err, "invalid worker message, ignoring");

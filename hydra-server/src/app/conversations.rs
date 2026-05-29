@@ -10,7 +10,7 @@ use crate::{
 };
 use hydra_common::{
     ConversationId, Versioned,
-    api::v1::{agents::AgentName, sessions as api_sessions},
+    api::v1::{agents::AgentName, sessions as api_sessions, sessions::SearchSessionsQuery},
 };
 use thiserror::Error;
 use tracing::{info, warn};
@@ -218,8 +218,34 @@ impl AppState {
                 .map_err(|ResolveActiveSessionError::Timeout { conversation_id }| {
                     SendMessageError::NoActiveSession { conversation_id }
                 })?;
-        let _ =
-            chat_relay::dual_write_session_event(self, &session_id, event.clone(), actor_ref).await;
+
+        // Dual-write the UserMessage to the session's event log. Errors are
+        // logged and swallowed: the matching write to the conversation log
+        // (via the relay below + worker catch-up) remains the source of
+        // truth during the dual-write phase.
+        let preview = event.preview();
+        match self
+            .store
+            .append_session_event_with_actor(&session_id, event.clone(), actor_ref)
+            .await
+        {
+            Ok(version) => {
+                info!(
+                    %session_id,
+                    version,
+                    event = %preview,
+                    "dual-write SessionEvent appended",
+                );
+            }
+            Err(err) => {
+                warn!(
+                    %session_id,
+                    event = %preview,
+                    error = %err,
+                    "dual-write SessionEvent failed",
+                );
+            }
+        }
 
         // Forward to worker via ChatRelayMap if connected
         let api_event: api_sessions::SessionEvent = event.into();
@@ -270,14 +296,76 @@ impl AppState {
         // redesign). At this point the worker is still alive (we kill it
         // below), so the active relay entry — and the session it points to
         // — is the right target.
-        if let Some(session_event) = chat_relay::conversation_event_to_session_event(&event) {
-            let _ = chat_relay::dual_write_session_event_for_conversation(
-                self,
-                conversation_id,
-                session_event,
-                actor_ref.clone(),
-            )
-            .await;
+        //
+        // The match keeps a full arm for each lifecycle variant even though
+        // close emits `Closed` in practice — other lifecycle write paths
+        // may grow into this surface later. `Resumed` is `None` here
+        // because the producing session id is the new session and the
+        // prior `from_session_id` only exists in the spawn automation,
+        // which writes that `SessionEvent::Resumed` directly.
+        let session_event = match &event {
+            ConversationEvent::Suspending { reason, timestamp } => Some(SessionEvent::Suspending {
+                reason: reason.clone(),
+                timestamp: *timestamp,
+            }),
+            ConversationEvent::Closed { timestamp } => Some(SessionEvent::Closed {
+                timestamp: *timestamp,
+            }),
+            ConversationEvent::Resumed { .. } => None,
+        };
+        if let Some(session_event) = session_event {
+            // Resolve the session backing this conversation without an
+            // active-state filter: a lifecycle `Closed` may land after the
+            // worker session has already gone terminal (e.g. the worker
+            // exited before the user clicked close), and we still want the
+            // event on its log.
+            let resolved_session_id = if let Some(entry) = self.chat_relay_map.get(conversation_id)
+            {
+                Some(entry.session_id.clone())
+            } else {
+                let mut query = SearchSessionsQuery::default();
+                query.conversation_id = Some(conversation_id.clone());
+                self.store()
+                    .list_sessions(&query)
+                    .await
+                    .ok()
+                    .and_then(|sessions| {
+                        sessions
+                            .into_iter()
+                            .max_by_key(|(_, v)| v.creation_time)
+                            .map(|(id, _)| id)
+                    })
+            };
+            if let Some(session_id) = resolved_session_id {
+                let preview = session_event.preview();
+                match self
+                    .store
+                    .append_session_event_with_actor(&session_id, session_event, actor_ref.clone())
+                    .await
+                {
+                    Ok(version) => {
+                        info!(
+                            %session_id,
+                            version,
+                            event = %preview,
+                            "dual-write SessionEvent appended",
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            %session_id,
+                            event = %preview,
+                            error = %err,
+                            "dual-write SessionEvent failed",
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    %conversation_id,
+                    "dual-write SessionEvent skipped: no session linked to conversation yet"
+                );
+            }
         }
 
         // Kill the worker if one is currently relaying this conversation.
