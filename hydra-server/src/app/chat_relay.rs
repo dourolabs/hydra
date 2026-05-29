@@ -29,7 +29,7 @@ pub const TO_WORKER_CAPACITY: usize = 64;
 ///
 /// The enum and the inner map are private; all access goes through the
 /// methods on this struct so callers never pattern-match on the state.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ChatRelayMap {
     inner: Arc<DashMap<ConversationId, Entry>>,
 }
@@ -58,6 +58,9 @@ pub enum SendEventError {
 }
 
 impl ChatRelayMap {
+    // Deliberate single explicit constructor; `Default` is omitted to
+    // keep the construction surface minimal.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
@@ -158,13 +161,13 @@ impl ChatRelayMap {
         store: &StoreWithEvents,
     ) -> Vec<ApiSessionEvent> {
         let drained: Vec<PendingItem> = {
-            let mut entry =
-                self.inner
-                    .entry(conversation_id.clone())
-                    .or_insert_with(|| Entry::ActiveConnection {
-                        session_id: session_id.clone(),
-                        to_worker: to_worker.clone(),
-                    });
+            let mut entry = self
+                .inner
+                .entry(conversation_id.clone())
+                .or_insert_with(|| Entry::ActiveConnection {
+                    session_id: session_id.clone(),
+                    to_worker: to_worker.clone(),
+                });
             // `or_insert_with` either inserted a fresh ActiveConnection
             // (drained = []) or returned a pre-existing entry that we now
             // overwrite. Use `mem::replace` to swap and capture the prior
@@ -182,6 +185,18 @@ impl ChatRelayMap {
             }
         };
 
+        // The DashMap entry lock is released above before this loop
+        // runs, so a concurrent `send_event_to_conversation` that
+        // arrives now will (correctly) observe `ActiveConnection` and
+        // dual-write its event in parallel. The session log assigns
+        // versions in arrival order, so its event may interleave
+        // between drained items on the log; live worker order is still
+        // preserved because the relay route forwards `drained_events`
+        // synchronously before entering the bidirectional loop. A
+        // later `Reconnecting` catch-up could replay the log out of
+        // strict FIFO with the pending vec — the race window is tiny
+        // (same user driving send_message and the worker socket), and
+        // strict cross-source FIFO is left to future work.
         let mut drained_events = Vec::with_capacity(drained.len());
         for item in drained {
             dual_write_session_event(store, &session_id, item.event.clone(), item.actor).await;
@@ -376,14 +391,24 @@ mod tests {
 
         let (tx, mut rx) = mpsc::channel(TO_WORKER_CAPACITY);
         let drained = map
-            .set_active(conversation_id.clone(), session_id.clone(), tx, &state.store)
+            .set_active(
+                conversation_id.clone(),
+                session_id.clone(),
+                tx,
+                &state.store,
+            )
             .await;
         assert!(drained.is_empty(), "no events queued before set_active");
 
         let event = user_msg("hello");
-        map.send_event_to_conversation(&conversation_id, event.clone(), &state.store, ActorRef::test())
-            .await
-            .unwrap();
+        map.send_event_to_conversation(
+            &conversation_id,
+            event.clone(),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
 
         let received = rx.recv().await.expect("worker channel must receive event");
         assert_eq!(received, event);
@@ -431,7 +456,12 @@ mod tests {
 
         let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
         let _drained = map
-            .set_active(conversation_id.clone(), session_id.clone(), tx, &state.store)
+            .set_active(
+                conversation_id.clone(),
+                session_id.clone(),
+                tx,
+                &state.store,
+            )
             .await;
 
         let events = state.store.get_session_events(&session_id).await.unwrap();
@@ -460,7 +490,12 @@ mod tests {
 
         let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
         let _ = map
-            .set_active(conversation_id.clone(), session_id.clone(), tx, &state.store)
+            .set_active(
+                conversation_id.clone(),
+                session_id.clone(),
+                tx,
+                &state.store,
+            )
             .await;
         assert_eq!(map.active_session_id(&conversation_id), Some(session_id));
 

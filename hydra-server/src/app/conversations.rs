@@ -450,6 +450,7 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::chat_relay::TO_WORKER_CAPACITY;
     use crate::{
         app::{
             AppState,
@@ -466,7 +467,6 @@ mod tests {
         },
         policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     };
-    use crate::app::chat_relay::TO_WORKER_CAPACITY;
     use hydra_common::{
         ConversationId, SessionId, Versioned,
         api::v1::sessions::{SearchSessionsQuery, SessionEvent as ApiSessionEvent},
