@@ -1,5 +1,5 @@
 use crate::{
-    app::{AgentError, chat_relay},
+    app::AgentError,
     domain::{
         actors::ActorRef,
         conversations::{Conversation, ConversationEvent, ConversationStatus},
@@ -14,8 +14,6 @@ use hydra_common::{
 };
 use thiserror::Error;
 use tracing::{info, warn};
-
-use crate::app::chat_relay::ResolveActiveSessionError;
 
 use super::app_state::AppState;
 
@@ -33,8 +31,6 @@ pub enum CreateConversationError {
         #[source]
         source: AgentError,
     },
-    #[error("no active session for conversation '{conversation_id}' after wait budget")]
-    NoActiveSession { conversation_id: ConversationId },
 }
 
 #[derive(Debug, Error)]
@@ -46,8 +42,6 @@ pub enum SendMessageError {
     },
     #[error("principal '{principal}' is not the conversation creator")]
     Forbidden { principal: Username },
-    #[error("no active session for conversation '{conversation_id}' after wait budget")]
-    NoActiveSession { conversation_id: ConversationId },
 }
 
 #[derive(Debug, Error)]
@@ -147,9 +141,6 @@ impl AppState {
                             )),
                         }
                     }
-                    SendMessageError::NoActiveSession { conversation_id } => {
-                        CreateConversationError::NoActiveSession { conversation_id }
-                    }
                 })?;
         }
 
@@ -198,68 +189,30 @@ impl AppState {
                 .map_err(|source| SendMessageError::Store { source })?;
         }
 
-        // Append the UserMessage to the conversation's active session as a
-        // `SessionEvent`. Chat content lives on the session log (Phase E
-        // step 18 of the sessions-orthogonality redesign).
-        //
-        // On a brand-new or just-reactivated conversation, the session may
-        // be in the process of being spawned by
-        // `SpawnConversationSessionsAutomation`; wait briefly. The resolver
-        // filters on active session states, so a stale terminated session
-        // is never returned — that's why a single wait is enough and the
-        // old "new vs prior session id" comparison can go away.
+        // Hand the UserMessage off to the chat-relay layer. When a worker
+        // is connected, the relay both dual-writes to the session event
+        // log AND forwards over the per-conversation channel. When no
+        // worker is connected yet (a brand-new or just-reactivated
+        // conversation whose companion session is still being spawned by
+        // `SpawnConversationSessionsAutomation`), the event is queued
+        // and delivered atomically when the worker connects — preserving
+        // the Phase E invariant that UserMessage lives on the session
+        // log without forcing this path to block on a session lookup.
         let event = SessionEvent::UserMessage {
             content,
             timestamp: chrono::Utc::now(),
         };
-        let session_id =
-            chat_relay::wait_for_active_session_for_conversation(self, conversation_id)
-                .await
-                .map_err(|ResolveActiveSessionError::Timeout { conversation_id }| {
-                    SendMessageError::NoActiveSession { conversation_id }
-                })?;
-
-        // Dual-write the UserMessage to the session's event log. Errors are
-        // logged and swallowed: the matching write to the conversation log
-        // (via the relay below + worker catch-up) remains the source of
-        // truth during the dual-write phase.
-        let preview = event.preview();
-        match self
-            .store
-            .append_session_event_with_actor(&session_id, event.clone(), actor_ref)
-            .await
-        {
-            Ok(version) => {
-                info!(
-                    %session_id,
-                    version,
-                    event = %preview,
-                    "dual-write SessionEvent appended",
-                );
-            }
-            Err(err) => {
-                warn!(
-                    %session_id,
-                    event = %preview,
-                    error = %err,
-                    "dual-write SessionEvent failed",
-                );
-            }
-        }
-
-        // Forward to worker via ChatRelayMap if connected
         let api_event: api_sessions::SessionEvent = event.into();
-        match chat_relay::send_to_worker(&self.chat_relay_map, conversation_id, api_event.clone())
+        match self
+            .chat_relay_map
+            .send_event_to_conversation(conversation_id, api_event.clone(), &self.store, actor_ref)
             .await
         {
             Ok(()) => {
-                info!(conversation_id = %conversation_id, "message forwarded to worker");
-            }
-            Err(chat_relay::SendToWorkerError::NoRelay) => {
-                info!(conversation_id = %conversation_id, "no relay connected, worker will catch up");
+                info!(conversation_id = %conversation_id, "send_message accepted");
             }
             Err(err) => {
-                warn!(conversation_id = %conversation_id, error = %err, "failed to forward message to worker");
+                warn!(conversation_id = %conversation_id, error = %err, "send_message: relay forward failed");
             }
         }
 
@@ -318,23 +271,25 @@ impl AppState {
             // active-state filter: a lifecycle `Closed` may land after the
             // worker session has already gone terminal (e.g. the worker
             // exited before the user clicked close), and we still want the
-            // event on its log.
-            let resolved_session_id = if let Some(entry) = self.chat_relay_map.get(conversation_id)
-            {
-                Some(entry.session_id.clone())
-            } else {
-                let mut query = SearchSessionsQuery::default();
-                query.conversation_id = Some(conversation_id.clone());
-                self.store()
-                    .list_sessions(&query)
-                    .await
-                    .ok()
-                    .and_then(|sessions| {
-                        sessions
-                            .into_iter()
-                            .max_by_key(|(_, v)| v.creation_time)
-                            .map(|(id, _)| id)
-                    })
+            // event on its log. Prefer the actively-connected session
+            // (which by definition is the one currently relaying); fall
+            // back to the most-recent session of any status.
+            let resolved_session_id = match self.chat_relay_map.active_session_id(conversation_id) {
+                Some(id) => Some(id),
+                None => {
+                    let mut query = SearchSessionsQuery::default();
+                    query.conversation_id = Some(conversation_id.clone());
+                    self.store()
+                        .list_sessions(&query)
+                        .await
+                        .ok()
+                        .and_then(|sessions| {
+                            sessions
+                                .into_iter()
+                                .max_by_key(|(_, v)| v.creation_time)
+                                .map(|(id, _)| id)
+                        })
+                }
             };
             if let Some(session_id) = resolved_session_id {
                 let preview = session_event.preview();
@@ -370,8 +325,7 @@ impl AppState {
 
         // Kill the worker if one is currently relaying this conversation.
         // If no entry is present, no worker is connected and no kill is needed.
-        if let Some(entry) = self.chat_relay_map.get(conversation_id).map(|e| e.clone()) {
-            let session_id = entry.session_id;
+        if let Some(session_id) = self.chat_relay_map.active_session_id(conversation_id) {
             match self.job_engine.kill_job(&session_id).await {
                 Ok(()) => {
                     info!(conversation_id = %conversation_id, session_id = %session_id, "killed active session");
@@ -496,6 +450,7 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::chat_relay::TO_WORKER_CAPACITY;
     use crate::{
         app::{
             AppState,
@@ -512,8 +467,37 @@ mod tests {
         },
         policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     };
-    use hydra_common::{ConversationId, Versioned, api::v1::sessions::SearchSessionsQuery};
+    use hydra_common::{
+        ConversationId, SessionId, Versioned,
+        api::v1::sessions::{SearchSessionsQuery, SessionEvent as ApiSessionEvent},
+    };
     use std::time::Duration;
+    use tokio::sync::mpsc;
+
+    /// Simulate a worker connecting to the conversation's relay so the
+    /// chat_relay layer transitions to `ActiveConnection`. Drains any
+    /// queued events into the given session's log (dual-write) and
+    /// returns the per-conversation worker receiver — held by the
+    /// caller so subsequent dual-writes can drain it as needed. In
+    /// production this is what `handle_relay_socket` does after the
+    /// catch-up handshake.
+    async fn simulate_worker_connect(
+        state: &AppState,
+        conversation_id: &ConversationId,
+        session_id: &SessionId,
+    ) -> mpsc::Receiver<ApiSessionEvent> {
+        let (tx, rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = state
+            .chat_relay_map
+            .set_active(
+                conversation_id.clone(),
+                session_id.clone(),
+                tx,
+                &state.store,
+            )
+            .await;
+        rx
+    }
 
     /// How long tests will wait for the spawn-conversation-sessions automation
     /// to settle. The runner processes events from the bus on a separate
@@ -1124,6 +1108,10 @@ mod tests {
         // Wait for the initial spawn to settle before counting events.
         let _initial = session_for_conversation(&state, &conversation_id).await;
         let session_id = session_id_for_conversation(&state, &conversation_id).await;
+        // Simulate the worker connecting so chat_relay flips to Active and
+        // subsequent send_message calls dual-write to the session log
+        // synchronously (drains any events queued during create_conversation).
+        let _worker_rx = simulate_worker_connect(&state, &conversation_id, &session_id).await;
 
         let session_events_before = state.store().get_session_events(&session_id).await.unwrap();
         let count_before = session_events_before.len();
@@ -1200,11 +1188,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Drive the prior session terminal. In production the kill_job +
-        // monitor_running_sessions flow does this; in this unit test we
-        // simulate it directly so the chat_relay resolver's active-state
-        // filter has the prior session out of the candidate set when
-        // `send_message` runs.
+        // Drive the prior session terminal so
+        // `SpawnConversationSessionsAutomation` will spawn a fresh
+        // resumed session rather than considering the initial one still
+        // "active". In production the kill_job + monitor_running_sessions
+        // flow drives this transition.
         //
         // The SessionUpdated event fired here drives the
         // SpawnConversationSessionsAutomation's idle-flip branch. While the
@@ -1233,10 +1221,14 @@ mod tests {
 
         // Wait for the resume-on-send to settle: the automation appends a
         // Resumed event on the conversation log and spawns a second session.
-        // The new UserMessage lands on the new session's SessionEvent log.
+        // The new UserMessage lands on the new session's SessionEvent log
+        // when the worker connects (set_active drains pending events into
+        // the new session's log) — simulate that worker connection here.
         use crate::domain::sessions::SessionEvent as DomainSessionEvent;
         let resumed_session_id = wait_for_resumed_event(&state, &conversation_id).await;
         wait_for_session_count(&state, &conversation_id, 2).await;
+        let _worker_rx =
+            simulate_worker_connect(&state, &conversation_id, &resumed_session_id).await;
 
         let session_events = poll_until(POLL_TIMEOUT, || async {
             let events = state
@@ -1657,6 +1649,9 @@ mod tests {
             .unwrap();
         let _initial = session_for_conversation(&state, &conversation_id).await;
         let session_id = session_id_for_conversation(&state, &conversation_id).await;
+        // Simulate the worker connecting so the dual-write on the next
+        // send_message lands on the session log synchronously.
+        let _worker_rx = simulate_worker_connect(&state, &conversation_id, &session_id).await;
 
         use crate::domain::sessions::SessionEvent as DomainSessionEvent;
         let session_events_before = state.store().get_session_events(&session_id).await.unwrap();
@@ -1777,12 +1772,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_message_errors_when_no_active_session_spawns_within_budget() {
-        // No agent is registered and the conversation has no `agent_name`,
-        // so `SpawnConversationSessionsAutomation` won't spawn a session.
-        // After the 2s bounded-wait budget elapses, `send_message` must
-        // surface `NoActiveSession` instead of the old warn-log-and-drop
-        // behavior.
+    async fn send_message_with_no_session_queues_in_chat_relay() {
+        // Under the queue-and-deliver model, send_message no longer
+        // blocks on a session spawn; the event lands in the chat-relay
+        // PendingConnection and is delivered atomically when a worker
+        // connects. With no agent registered and no `agent_name` the
+        // session never spawns, so we observe the queued shape: the
+        // call returns Ok, and no UserMessage is written to any session
+        // log (no session exists to write to).
         let state = state_with_default_model("default-model");
         let _runner = start_test_automation_runner(&state);
 
@@ -1797,25 +1794,27 @@ mod tests {
             .await
             .unwrap();
 
-        let result = state
+        state
             .send_message(
                 &conversation_id,
                 "hello".to_string(),
                 ActorRef::test(),
                 Username::from("creator"),
             )
-            .await;
+            .await
+            .expect("send_message must accept the event for queueing");
 
-        match result {
-            Err(crate::app::SendMessageError::NoActiveSession {
-                conversation_id: id,
-            }) => {
-                assert_eq!(id, conversation_id);
-            }
-            other => panic!(
-                "expected NoActiveSession, got {:?}",
-                other.as_ref().err().map(|e| e.to_string())
-            ),
-        }
+        // No session was ever spawned, so no session log exists for the
+        // message. The pending queue holds it in memory until a worker
+        // connects (an acceptable tradeoff per the parent issue's brief).
+        let sessions = state
+            .store()
+            .list_sessions(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
+        assert!(
+            sessions.is_empty(),
+            "no session should exist when no agent and no default are registered"
+        );
     }
 }

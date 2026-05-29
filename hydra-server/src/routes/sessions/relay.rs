@@ -1,5 +1,5 @@
 use crate::app::AppState;
-use crate::app::chat_relay;
+use crate::app::chat_relay::TO_WORKER_CAPACITY;
 use crate::domain::actors::{Actor, ActorRef};
 use crate::store::StoreError;
 use axum::{
@@ -16,6 +16,7 @@ use hydra_common::api::v1::conversations::{
     ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage,
 };
 use hydra_common::api::v1::sessions::{SearchSessionsQuery, SessionEvent};
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::{ApiError, SessionIdPath};
@@ -135,16 +136,50 @@ async fn handle_relay_socket(
         return;
     }
 
-    // Step 3: Register relay in ChatRelayMap.
-    let mut user_msg_rx = chat_relay::register_relay(
-        &state.chat_relay_map,
-        conversation_id.clone(),
-        session_id.clone(),
+    // Step 3: Flip the chat_relay entry to ActiveConnection and capture any
+    // events queued while no worker was connected. Each drained event has
+    // already been dual-written to the new session's event log inside
+    // `set_active`, so a future Reconnecting catch-up will replay it from
+    // the log; we now deliver the in-memory copy as the first "live"
+    // messages, after the catch-up.
+    let (to_worker, mut user_msg_rx) = mpsc::channel(TO_WORKER_CAPACITY);
+    let drained_pending = state
+        .chat_relay_map
+        .set_active(
+            conversation_id.clone(),
+            session_id.clone(),
+            to_worker,
+            &state.store,
+        )
+        .await;
+
+    info!(
+        %session_id,
+        drained = drained_pending.len(),
+        "relay registered, starting relay loop"
     );
 
-    info!(%session_id, "relay registered, starting relay loop");
-
     let actor_ref = ActorRef::from(&actor);
+
+    // Drain queued pending events onto the WebSocket before entering the
+    // bidirectional loop. They are the first live messages the worker
+    // sees; concurrent send_event_to_conversation calls land in the mpsc
+    // and are picked up by the loop below afterwards, preserving FIFO.
+    for event in drained_pending {
+        let server_msg = ServerMessage::Event { event };
+        match serde_json::to_string(&server_msg) {
+            Ok(json) => {
+                if ws_sender.send(Message::Text(json)).await.is_err() {
+                    warn!(%session_id, "failed to forward drained pending event, WebSocket closed");
+                    state.chat_relay_map.disconnect(&conversation_id);
+                    return;
+                }
+            }
+            Err(err) => {
+                error!(%session_id, error = %err, "failed to serialize drained pending event");
+            }
+        }
+    }
 
     // Step 4: Relay loop — bidirectional message forwarding.
     loop {
@@ -256,7 +291,7 @@ async fn handle_relay_socket(
     // is owned by `SpawnConversationSessionsAutomation`, which flips it when
     // the companion session reaches a terminal status (Complete / Failed).
     // The relay only unregisters its in-memory entry here.
-    chat_relay::unregister_relay(&state.chat_relay_map, &conversation_id);
+    state.chat_relay_map.disconnect(&conversation_id);
     info!(%session_id, %conversation_id, "relay unregistered");
 }
 

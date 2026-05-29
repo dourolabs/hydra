@@ -392,10 +392,29 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
         },
     )
     .await?;
+    // Under the queue-and-deliver design, the user message sent before the
+    // worker connected lives on the chat_relay's pending queue, not on the
+    // session log — catch-up reflects only the session log, so it's empty
+    // here. The queued message is delivered next as a live `Event` frame
+    // (drained on the Pending→Active transition that just happened inside
+    // `set_active`).
     assert_eq!(
         catch_up.events.len(),
-        1,
-        "fresh worker should receive the initial user message in catch-up"
+        0,
+        "catch-up reflects session-log state; pre-connect events arrive as drained pending events"
+    );
+    let live = drain_server_messages(&mut ws, Duration::from_millis(500)).await?;
+    let drained_user_msg = live.iter().any(|m| {
+        matches!(
+            m,
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. },
+            } if content == "hello"
+        )
+    });
+    assert!(
+        drained_user_msg,
+        "drained pending UserMessage must be delivered to the worker as a live Event frame, got {live:?}"
     );
 
     send_worker_message(
@@ -818,18 +837,23 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         },
     )
     .await?;
+    // The queue-and-deliver model defers the dual-write of pre-connect
+    // events until the worker connects, so catch-up (which reads the
+    // session log) is empty here; msg1 arrives next as a drained-pending
+    // live `Event` frame.
     assert_eq!(
         catch_up.events.len(),
-        1,
-        "fresh worker should see msg1 in the initial catch-up"
+        0,
+        "fresh worker catch-up reflects the session log; pre-connect events arrive as live drained pending"
     );
+    let drained = drain_server_messages(&mut ws1, Duration::from_millis(500)).await?;
     assert!(
-        matches!(
-            &catch_up.events[0],
-            SessionEvent::UserMessage { content, .. } if content == msg1
-        ),
-        "first catch-up event should be msg1, got {:?}",
-        catch_up.events[0]
+        drained.iter().any(|m| matches!(
+            m,
+            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. } }
+                if content == msg1
+        )),
+        "msg1 should arrive as a drained pending live Event, got {drained:?}"
     );
 
     send_worker_message(
@@ -1355,6 +1379,11 @@ async fn resume_after_session_state_upload_persists_but_omits_from_catch_up() ->
         },
     )
     .await?;
+    // Drain any events queued by the chat_relay's Pending→Active drain
+    // (the initial "hello" arrives here as a live `Event` under the
+    // queue-and-deliver design). Reading them stops the kernel from
+    // RST-ing the close handshake when we drop the socket below.
+    let _ = drain_server_messages(&mut ws, Duration::from_millis(100)).await?;
     send_worker_message(
         &mut ws,
         WorkerMessage::Event {

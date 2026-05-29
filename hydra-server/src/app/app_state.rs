@@ -111,7 +111,7 @@ impl AppState {
             policy_engine: Arc::new(policy_engine),
             secret_manager,
             device_sessions: Arc::new(DashMap::new()),
-            chat_relay_map: Arc::new(DashMap::new()),
+            chat_relay_map: ChatRelayMap::new(),
         }
     }
 
