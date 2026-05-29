@@ -26,6 +26,7 @@ Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D 
 ## Testing Guidelines
 Run `cargo test --workspace` before opening a pull request. Keep tests near their code (shared helpers belong in `hydra-common/src/lib.rs`). For async code use `#[tokio::test]` and descriptive names such as `logs_returns_latest_chunks`. Add regression tests for every fix and cover new branches, especially job-state transitions and Kubernetes interactions.
 - When changing Rust API types in `hydra-common`, you must also regenerate TypeScript types and run `cd hydra-web && pnpm typecheck` to verify the frontend still compiles.
+- Don't write tests whose only assertion is that a well-used third-party library behaves as documented — e.g., `serde` round-trips on derived types (`from_str(to_string(x)) == x`), `chrono` parse-of-format symmetry, `Uuid::parse_str(uuid.to_string())`. They pin behaviors the library author already tests. Useful coverage at the same boundary: wire-format shape tests that assert specific JSON tag literals (the wire format is *our* contract), `ts-rs` exports (they verify *our* type-export pipeline), and integration tests that exercise the type through real codepaths (HTTP route, WS frame, DB write/read).
 
 ## Final Task Checklist
 Before finishing any task, you **must** run and fix all issues from these commands:
