@@ -146,7 +146,11 @@ export function createInteractiveSessionForConversation(
 ): string {
   const id = generateId("session");
   const task: Session = {
-    mode: { type: "interactive", conversation_id: conversationId },
+    mode: {
+      type: "interactive",
+      conversation_id: conversationId,
+      greet_user: false,
+    },
     agent_config: {},
     mount_spec: {
       working_dir: "repo",

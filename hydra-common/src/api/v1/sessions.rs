@@ -31,9 +31,9 @@ pub struct InteractiveOptions {
     /// long without a user message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_timeout_secs: Option<u64>,
-    /// When resuming a conversation, the event index to resume from. The worker
-    /// sends this in the WorkerConnect handshake so the server only replays
-    /// events after this index and includes session state for resumption.
+    /// When resuming a conversation, the event index to resume from.
+    /// Consumed by Phase 1 of the worker lifecycle when scoping the
+    /// session_events replay over the WS.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_resume_from: Option<usize>,
 }

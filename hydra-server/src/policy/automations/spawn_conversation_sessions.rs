@@ -274,48 +274,11 @@ async fn spawn_session(
             );
         }
 
-        // Dual-write the SessionEvent::Resumed marker onto the newly-spawned
-        // session, carrying the prior session id (Phase C step 7 of the
-        // sessions-orthogonality redesign, §3.2 mapping rule). Errors are
-        // logged and swallowed: the ConversationEvent::Resumed appended
-        // above is the source of truth during the dual-write phase.
-        if let Some(from_session_id) = prior_session_id {
-            let session_event = crate::domain::sessions::SessionEvent::Resumed {
-                from_session_id,
-                timestamp: resumed_timestamp,
-            };
-            let preview = session_event.preview();
-            match ctx
-                .app_state
-                .store
-                .append_session_event_with_actor(&session_id, session_event, actor)
-                .await
-            {
-                Ok(version) => {
-                    tracing::info!(
-                        %session_id,
-                        version,
-                        event = %preview,
-                        "dual-write SessionEvent appended",
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        %session_id,
-                        event = %preview,
-                        error = %err,
-                        "dual-write SessionEvent failed",
-                    );
-                }
-            }
-        } else {
-            tracing::warn!(
-                automation = AUTOMATION_NAME,
-                conversation_id = %conversation_id,
-                session_id = %session_id,
-                "dual-write SessionEvent::Resumed skipped: no prior session found for conversation"
-            );
-        }
+        // The worker emits `SessionEvent::Resumed` exactly once on its
+        // session log after `try_materialize` succeeds (design §6 / §1.4).
+        // The dual-write that used to happen here is gone; the
+        // `ConversationEvent::Resumed` appended above is the only
+        // server-side Resumed write.
     }
 
     tracing::info!(

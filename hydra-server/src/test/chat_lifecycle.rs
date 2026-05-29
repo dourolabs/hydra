@@ -1,7 +1,7 @@
 //! End-to-end integration tests for the chat lifecycle: create → message →
 //! idle-suspend → resume → message → close.
 //!
-//! These tests act as a fake worker that connects to `/v1/sessions/:id/relay`
+//! These tests act as a fake worker that connects to `/v1/sessions/:id/events`
 //! over WebSocket and sends the same `WorkerMessage` events a real worker
 //! would, allowing the server-side suspension/resume logic to be exercised
 //! without spawning a real Claude CLI process.
@@ -293,6 +293,30 @@ async fn worker_handshake_raw(
     worker_handshake(ws, opener).await
 }
 
+/// Send `WorkerMessage::Ready` and read the next `ServerMessage`,
+/// returning it if it's `FirstMessage { agent_prompt, user_message }`.
+///
+/// Returns `Ok(None)` if the server stashed the `agent_prompt` as
+/// `pending_first_message` (no queued UserMessage yet) and no
+/// `FirstMessage` arrives within `timeout`.
+async fn send_ready_and_await_first_message(
+    ws: &mut WsStream,
+    timeout: Duration,
+) -> anyhow::Result<Option<(String, String)>> {
+    send_worker_message(ws, WorkerMessage::Ready).await?;
+    let msgs = drain_server_messages(ws, timeout).await?;
+    for m in msgs {
+        if let ServerMessage::FirstMessage {
+            agent_prompt,
+            user_message,
+        } = m
+        {
+            return Ok(Some((agent_prompt, user_message)));
+        }
+    }
+    Ok(None)
+}
+
 /// Send a single `WorkerMessage` to the server over the relay WebSocket.
 async fn send_worker_message(ws: &mut WsStream, msg: WorkerMessage) -> anyhow::Result<()> {
     let json = serde_json::to_string(&msg)?;
@@ -517,13 +541,16 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
 }
 
 #[tokio::test]
-#[ignore = "pending rewrite for WS-only Phase-1 split — see i-dfccncsf"]
 async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Result<()> {
-    // Regression test for the "agent forgets prior context on resume" bug.
-    // The fake worker passes the real `resume_from_event_index` value that
-    // the resumed session was created with; the server must respond with the
-    // full event log (UserMessage + AssistantMessage + Suspending) regardless,
-    // so the new worker can rebuild context from it.
+    // Regression test for the "agent forgets prior context on resume" bug,
+    // adapted to the WS-only Phase 1 split: the new worker opens `Fresh`,
+    // the server replies `ResumeContext { prior_session_id }`, the worker
+    // asks for the prior transcript via `RequestTranscript`, and the
+    // server must return the FULL prior-session event log
+    // (UserMessage + AssistantMessage + Suspending). The `Resumed` marker
+    // now lives on the new session's own log (emitted by the worker after
+    // a successful `try_materialize`), so it does NOT show up in this
+    // transcript.
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
     let client = test_client();
@@ -628,11 +655,15 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     // log so the new worker can reconstruct context from it.
     let mut ws2 = connect_relay(&server.base_url(), &resumed_session_id).await?;
     let catch_up = worker_handshake(&mut ws2, WorkerMessage::Fresh).await?;
-    // Expected sequence: UserMessage, AssistantMessage, Suspending, Resumed.
+    // Expected sequence: UserMessage, AssistantMessage, Suspending. The
+    // `Resumed` marker lives on the NEW session (the worker emits it
+    // post-`try_materialize`); the prior-session transcript does not
+    // contain it.
     assert_eq!(
         catch_up.events.len(),
-        4,
-        "Fresh catch-up must return the full event log; got {:?}",
+        3,
+        "RequestTranscript should return the prior session's event log; \
+         got {:?}",
         catch_up.events
     );
     assert!(
@@ -655,11 +686,6 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         matches!(catch_up.events[2], SessionEvent::Suspending { .. }),
         "event[2] should be Suspending, got {:?}",
         catch_up.events[2]
-    );
-    assert!(
-        matches!(catch_up.events[3], SessionEvent::Resumed { .. }),
-        "event[3] should be Resumed, got {:?}",
-        catch_up.events[3]
     );
 
     // Step 4: send a new user message and verify the worker receives it via
@@ -816,14 +842,17 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "pending rewrite for WS-only Phase-1 split — see i-dfccncsf"]
 async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
 -> anyhow::Result<()> {
-    // Regression guard for the close/resume flow:
-    //   1. The catch-up sent to a freshly-spawned worker after /resume must
-    //      include the full prior conversation history (user messages and
-    //      assistant replies) so the agent can reconstruct context.
-    //   2. After the new worker re-attaches, the server must forward ONLY
+    // Regression guard for the close/resume flow, adapted to the WS-only
+    // Phase 1 split:
+    //   1. After /resume, the freshly-spawned worker opens `Fresh`, sees
+    //      `ResumeContext { prior_session_id }`, and requests the prior
+    //      session's transcript. That `Transcript { events }` must include
+    //      the full prior conversation history (user messages and
+    //      assistant replies plus the Suspending + Closed lifecycle
+    //      markers) so the agent can reconstruct context.
+    //   2. After the new worker re-attaches, the relay must forward ONLY
     //      the next new user message — not replay msg1/msg2/msg3 — so the
     //      assistant does not generate redundant replies for earlier turns.
     let (state, store) = state_with_idle_timeout_secs(2);
@@ -1041,14 +1070,16 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
     let catch_up2 = worker_handshake(&mut ws2, WorkerMessage::Fresh).await?;
 
-    // History-tracked assertion: full prior log, in insertion order.
-    // Expected sequence: msg1, reply1, msg2, reply2, msg3, reply3, Suspending,
-    // Closed, Resumed = 9 events.
+    // History-tracked assertion: full prior session log, in insertion
+    // order. Expected sequence: msg1, reply1, msg2, reply2, msg3, reply3,
+    // Suspending, Closed = 8 events. The `Resumed` marker lives on the
+    // new session (worker emits it post-`try_materialize`); it's not in
+    // the prior-session transcript.
     assert_eq!(
         catch_up2.events.len(),
-        9,
-        "catch-up should contain 3 user + 3 assistant + Suspending + Closed + \
-         Resumed = 9 events, got {:?}",
+        8,
+        "transcript should contain 3 user + 3 assistant + Suspending + \
+         Closed = 8 events, got {:?}",
         catch_up2.events
     );
     match &catch_up2.events[0] {
@@ -1084,11 +1115,6 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         matches!(catch_up2.events[7], SessionEvent::Closed { .. }),
         "event[7] should be Closed, got {:?}",
         catch_up2.events[7]
-    );
-    assert!(
-        matches!(catch_up2.events[8], SessionEvent::Resumed { .. }),
-        "event[8] should be Resumed, got {:?}",
-        catch_up2.events[8]
     );
 
     // Step 7: send msg4 and verify the resumed relay forwards ONLY this new
@@ -1207,13 +1233,16 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
 }
 
 #[tokio::test]
-#[ignore = "pending rewrite for WS-only Phase-1 split — see i-dfccncsf"]
 async fn close_then_resume_replays_full_history_with_no_session_state() -> anyhow::Result<()> {
     // Regression test for the user-reported "agent forgets context on resume"
-    // bug. When the user /closes a chat, the worker is killed without
-    // uploading session_state. After /resume, the new worker must still
-    // receive the full prior event log in its catch-up so it can rebuild
-    // context — even though no session_state was ever persisted.
+    // bug, adapted to the WS-only Phase 1 split. When the user /closes a
+    // chat, the worker is killed without uploading session_state. After
+    // /resume, the new worker opens `Fresh`, sees `ResumeContext` (with
+    // `resume_blob = None` since nothing was uploaded, and
+    // `prior_session_id = Some`), and asks for the prior transcript. The
+    // server must return the full prior event log
+    // (UserMessage + AssistantMessage + Closed) so the new worker can
+    // rebuild context — even though no session_state was ever persisted.
     let (state, store) = state_with_idle_timeout_secs(2);
     let server = spawn_test_server_with_state(state, store.clone()).await?;
     let client = test_client();
@@ -1303,11 +1332,14 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
     let catch_up = worker_handshake(&mut ws2, WorkerMessage::Fresh).await?;
 
-    // Expected sequence: UserMessage("first user message"), AssistantMessage("first agent reply"), Closed, Resumed.
+    // Expected sequence: UserMessage("first user message"),
+    // AssistantMessage("first agent reply"), Closed. The `Resumed` marker
+    // is emitted by the worker on the NEW session log after a successful
+    // `try_materialize`, so it is NOT in the prior-session transcript.
     assert_eq!(
         catch_up.events.len(),
-        4,
-        "expected the full event log on resume, got {:?}",
+        3,
+        "expected the prior session's event log on resume, got {:?}",
         catch_up.events
     );
     assert!(
@@ -1331,11 +1363,6 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         matches!(catch_up.events[2], SessionEvent::Closed { .. }),
         "event[2] should be Closed, got {:?}",
         catch_up.events[2]
-    );
-    assert!(
-        matches!(catch_up.events[3], SessionEvent::Resumed { .. }),
-        "event[3] should be Resumed, got {:?}",
-        catch_up.events[3]
     );
 
     Ok(())
@@ -1647,8 +1674,8 @@ async fn register_agent_with_prompt_body(
 /// `PromptPrepend` middleware to fire.
 ///
 /// The test passes if the worker observes the first user message via
-/// EITHER `WorkerCatchUp.events` OR a `ServerMessage::Event` on the relay,
-/// which mirrors how the bug actually manifests in production.
+/// EITHER `ServerMessage::CatchUp.events` OR a `ServerMessage::Event` on the
+/// relay, which mirrors how the bug actually manifests in production.
 #[tokio::test]
 async fn create_conversation_with_first_message_reaches_worker_via_relay() -> anyhow::Result<()> {
     let (state, store) = state_with_idle_timeout_secs(2);
@@ -1865,8 +1892,12 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     // active session. UserMessage("hello") and the assistant reply + the
     // Suspending all happen on s1; UserMessage("follow-up") may land on s1
     // (relay still connected) or s2 depending on relay-map timing — either
-    // is acceptable. Resumed lands on s2. Closed is appended after /close
-    // and lands on the latest session for the conversation (s2).
+    // is acceptable. `Resumed` is no longer dual-written by the server (it
+    // moved to the worker post-`try_materialize` per the WS-only lifecycle
+    // redesign); this fake-worker-driven test never emits it, so the
+    // session log shows zero `SessionEvent::Resumed`. Closed is appended
+    // after /close and lands on the latest session for the conversation
+    // (s2).
     let s1_events: Vec<DomainSessionEvent> = store
         .get_session_events(&s1)
         .await?
@@ -1916,21 +1947,13 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
         "dual-write AssistantMessage count (s1+s2)"
     );
     assert_eq!(total_suspending, 1, "dual-write Suspending count (s1+s2)");
-    assert_eq!(total_resumed, 1, "dual-write Resumed count (s1+s2)");
-    assert_eq!(total_closed, 1, "dual-write Closed count (s1+s2)");
-
-    // The Resumed event lands on the new session, carrying the prior id.
-    let resumed_from = s2_events.iter().find_map(|e| match e {
-        DomainSessionEvent::Resumed {
-            from_session_id, ..
-        } => Some(from_session_id.clone()),
-        _ => None,
-    });
     assert_eq!(
-        resumed_from.as_ref(),
-        Some(&s1),
-        "SessionEvent::Resumed on s2 must carry s1 as from_session_id"
+        total_resumed, 0,
+        "SessionEvent::Resumed is now emitted by the worker after \
+         `try_materialize`; this fake worker never emits one, so the count \
+         must be zero (count s1+s2)"
     );
+    assert_eq!(total_closed, 1, "dual-write Closed count (s1+s2)");
 
     // session_state: the upload from worker #1 must appear keyed on the
     // producing session id (s1).
@@ -2027,6 +2050,323 @@ async fn get_session_events_route_returns_events() -> anyhow::Result<()> {
         .send()
         .await?;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// FirstMessage acceptance matrix (design §5 / §1.4 of the WS-only worker
+// lifecycle redesign). Each case drives Phase 1 + Phase 2 of a fake worker
+// against the real `routes/sessions/relay.rs` handler and asserts on the
+// emitted `ServerMessage::FirstMessage`.
+// ---------------------------------------------------------------------------
+
+/// Spawn an interactive session attached to a freshly-created conversation,
+/// using the provided `system_prompt` and `greet_user` knob. Returns the new
+/// session_id.
+async fn create_interactive_session_with_settings(
+    state: &AppState,
+    store: &Arc<dyn Store>,
+    system_prompt: &str,
+    greet_user: bool,
+) -> anyhow::Result<SessionId> {
+    use crate::domain::conversations::{Conversation, ConversationStatus};
+    use crate::domain::users::Username;
+    use hydra_common::api::v1::sessions::{
+        AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+    };
+
+    let (conversation_id, _) = store
+        .add_conversation(
+            Conversation {
+                title: None,
+                agent_name: None,
+                status: ConversationStatus::Active,
+                creator: Username::from("creator"),
+                session_settings: crate::domain::issues::SessionSettings::default(),
+                deleted: false,
+            },
+            &ActorRef::test(),
+        )
+        .await?;
+
+    let req = CreateSessionRequest {
+        mode: SessionMode::Interactive {
+            conversation_id,
+            idle_timeout_secs: None,
+            conversation_resume_from: None,
+            greet_user,
+        },
+        agent_config: AgentSpec::Adhoc {
+            system_prompt: system_prompt.to_string(),
+            mcp_config: None,
+        },
+        model: None,
+        mount_spec: MountSpec::default(),
+        image: None,
+        env_vars: std::collections::HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: None,
+        resumed_from: None,
+    };
+    let (id, _) = state
+        .create_session(req, ActorRef::test(), Username::from("creator"))
+        .await
+        .map_err(|err| anyhow::anyhow!("create_session failed: {err}"))?;
+    Ok(id)
+}
+
+/// Spawn a headless session with the provided `system_prompt`. Returns the new
+/// session_id.
+async fn create_headless_session_with_prompt(
+    state: &AppState,
+    system_prompt: &str,
+) -> anyhow::Result<SessionId> {
+    use crate::domain::users::Username;
+    use hydra_common::api::v1::sessions::{
+        AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+    };
+
+    let req = CreateSessionRequest {
+        mode: SessionMode::Headless,
+        agent_config: AgentSpec::Adhoc {
+            system_prompt: system_prompt.to_string(),
+            mcp_config: None,
+        },
+        model: None,
+        mount_spec: MountSpec::default(),
+        image: None,
+        env_vars: std::collections::HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: None,
+        resumed_from: None,
+    };
+    let (id, _) = state
+        .create_session(req, ActorRef::test(), Username::from("creator"))
+        .await
+        .map_err(|err| anyhow::anyhow!("create_session failed: {err}"))?;
+    Ok(id)
+}
+
+/// (a) Fresh headless — server emits `FirstMessage` immediately on `Ready`
+/// with `agent_prompt = system_prompt` and `user_message = ""`. The Phase-1
+/// `ResumeContext` carries `resume_blob = None` and `prior_session_id =
+/// None` for a brand-new headless session.
+#[tokio::test]
+async fn first_message_fresh_headless_emits_system_prompt_immediately() -> anyhow::Result<()> {
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let session_id =
+        create_headless_session_with_prompt(&state, "you are a helpful headless agent").await?;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    let first = send_ready_and_await_first_message(&mut ws, Duration::from_secs(1)).await?;
+    let (agent_prompt, user_message) =
+        first.ok_or_else(|| anyhow::anyhow!("expected a FirstMessage; got none"))?;
+    assert_eq!(agent_prompt, "you are a helpful headless agent");
+    assert_eq!(
+        user_message, "",
+        "headless FirstMessage.user_message must be empty"
+    );
+
+    Ok(())
+}
+
+/// (a′) Fresh headless with empty `system_prompt` — `FirstMessage { "", "" }`
+/// is the legal, expected payload (G11 of the design: empty strings are valid
+/// at every layer; the wrapper accepts an empty prompt).
+#[tokio::test]
+async fn first_message_fresh_headless_with_empty_system_prompt_accepts_empty_strings()
+-> anyhow::Result<()> {
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let session_id = create_headless_session_with_prompt(&state, "").await?;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    let first = send_ready_and_await_first_message(&mut ws, Duration::from_secs(1)).await?;
+    let (agent_prompt, user_message) =
+        first.ok_or_else(|| anyhow::anyhow!("expected a FirstMessage; got none"))?;
+    assert_eq!(agent_prompt, "");
+    assert_eq!(user_message, "");
+
+    Ok(())
+}
+
+/// (b) Fresh interactive (`greet_user = false`) with a queued first user
+/// message — the relay folds the queued UserMessage into `FirstMessage` on
+/// `Ready` and suppresses the redundant `Event` push.
+#[tokio::test]
+async fn first_message_fresh_interactive_no_greet_with_queued_message_folds_in()
+-> anyhow::Result<()> {
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let session_id =
+        create_interactive_session_with_settings(&state, &store, "system: be brief", false).await?;
+
+    // Pre-Ready: send a user message. With the chat_relay queue-and-deliver
+    // design, before the worker connects the UserMessage lands on the
+    // pending queue; on connect it drains. We drive that flow by posting
+    // through send_message via the state's app handle.
+    let conv_id = store
+        .get_session(&session_id, false)
+        .await?
+        .item
+        .conversation_id()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("interactive session must have a conversation_id"))?;
+    use crate::domain::users::Username;
+    state
+        .send_message(
+            &conv_id,
+            "hello from user".to_string(),
+            ActorRef::test(),
+            Username::from("creator"),
+        )
+        .await?;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    let first = send_ready_and_await_first_message(&mut ws, Duration::from_secs(2)).await?;
+    let (agent_prompt, user_message) = first
+        .ok_or_else(|| anyhow::anyhow!("expected a FirstMessage with the folded UserMessage"))?;
+    assert_eq!(agent_prompt, "system: be brief");
+    assert_eq!(
+        user_message, "hello from user",
+        "queued UserMessage must be folded into FirstMessage.user_message"
+    );
+
+    Ok(())
+}
+
+/// (c) Fresh interactive (`greet_user = false`) with NO queued user message
+/// — `Ready` stashes `pending_first_message`; no `FirstMessage` arrives
+/// until a UserMessage shows up. When a UserMessage is then sent, the
+/// stashed `agent_prompt` is paired with it and emitted as `FirstMessage`,
+/// AND the redundant `Event { UserMessage }` is suppressed.
+#[tokio::test]
+async fn first_message_fresh_interactive_no_greet_stashes_pending_then_delivers_on_send()
+-> anyhow::Result<()> {
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let session_id =
+        create_interactive_session_with_settings(&state, &store, "stay quiet", false).await?;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+
+    // Send Ready, then briefly poll: no FirstMessage should arrive yet
+    // because no UserMessage is queued — the agent_prompt was stashed as
+    // `pending_first_message`.
+    send_worker_message(&mut ws, WorkerMessage::Ready).await?;
+    let pre = drain_server_messages(&mut ws, Duration::from_millis(200)).await?;
+    assert!(
+        !pre.iter()
+            .any(|m| matches!(m, ServerMessage::FirstMessage { .. })),
+        "no FirstMessage expected before a UserMessage arrives; got {pre:?}"
+    );
+
+    // Now post a UserMessage; the relay should hand-off as a FirstMessage
+    // pairing the stashed `agent_prompt` with the new user content, and
+    // suppress the redundant `Event { UserMessage }` push.
+    use crate::domain::users::Username;
+    let conv_id = store
+        .get_session(&session_id, false)
+        .await?
+        .item
+        .conversation_id()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("interactive session must have a conversation_id"))?;
+    state
+        .send_message(
+            &conv_id,
+            "delayed hi".to_string(),
+            ActorRef::test(),
+            Username::from("creator"),
+        )
+        .await?;
+
+    let post = drain_server_messages(&mut ws, Duration::from_secs(2)).await?;
+    let first = post.iter().find_map(|m| match m {
+        ServerMessage::FirstMessage {
+            agent_prompt,
+            user_message,
+        } => Some((agent_prompt.clone(), user_message.clone())),
+        _ => None,
+    });
+    let (agent_prompt, user_message) = first.ok_or_else(|| {
+        anyhow::anyhow!("expected FirstMessage after the UserMessage was posted; got {post:?}")
+    })?;
+    assert_eq!(agent_prompt, "stay quiet");
+    assert_eq!(user_message, "delayed hi");
+    let dup_event_user = post.iter().any(|m| {
+        matches!(
+            m,
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. }
+            } if content == "delayed hi"
+        )
+    });
+    assert!(
+        !dup_event_user,
+        "the relay must suppress the redundant Event {{ UserMessage }} after folding it into \
+         FirstMessage; got {post:?}"
+    );
+
+    Ok(())
+}
+
+/// (d) Fresh interactive with `greet_user = true` — server emits
+/// `FirstMessage { agent_prompt, user_message: "" }` immediately on `Ready`
+/// regardless of queued state, so the agent produces a greeting turn first.
+#[tokio::test]
+async fn first_message_fresh_interactive_greet_user_true_emits_with_empty_user_message()
+-> anyhow::Result<()> {
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let session_id =
+        create_interactive_session_with_settings(&state, &store, "greet me", true).await?;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    let first = send_ready_and_await_first_message(&mut ws, Duration::from_secs(2)).await?;
+    let (agent_prompt, user_message) =
+        first.ok_or_else(|| anyhow::anyhow!("expected a FirstMessage; got none"))?;
+    assert_eq!(agent_prompt, "greet me");
+    assert_eq!(
+        user_message, "",
+        "greet_user=true must produce an empty user_message so the agent greets first"
+    );
+
+    Ok(())
+}
+
+/// First inbound that is not `Fresh` or `Reconnecting` is a protocol error
+/// — the relay closes the WS without entering Phase 2.
+#[tokio::test]
+async fn first_inbound_other_than_fresh_or_reconnecting_is_protocol_error() -> anyhow::Result<()> {
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let session_id = create_headless_session_with_prompt(&state, "any").await?;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    send_worker_message(&mut ws, WorkerMessage::Ready).await?;
+    // The server should close the socket rather than reply with anything.
+    let msgs = drain_server_messages(&mut ws, Duration::from_secs(1)).await?;
+    let first_message_count = msgs
+        .iter()
+        .filter(|m| matches!(m, ServerMessage::FirstMessage { .. }))
+        .count();
+    assert_eq!(
+        first_message_count, 0,
+        "an out-of-order Ready as the first inbound must NOT produce a FirstMessage; \
+         got {msgs:?}"
+    );
 
     Ok(())
 }

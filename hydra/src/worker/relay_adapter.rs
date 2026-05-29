@@ -88,22 +88,16 @@ async fn run_pump<S>(
                             }
                         }
                     }
-                    Ok(Some(ServerMessage::FirstMessage { agent_prompt, user_message })) => {
-                        // Mid-stream FirstMessage: fold into a single UserMessage
-                        // so the interactive loop keeps going.
-                        let combined = match (agent_prompt.as_str(), user_message.as_str()) {
-                            ("", "") => String::new(),
-                            ("", u) => u.to_string(),
-                            (p, "") => p.to_string(),
-                            (p, u) => format!("{p}\n\n{u}"),
-                        };
-                        if input_tx
-                            .send(WorkerInputMessage { content: combined })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
+                    Ok(Some(ServerMessage::FirstMessage { .. })) => {
+                        // Per design §1.5, `FirstMessage` is single-shot:
+                        // Phase 2 delivers it exactly once and Phase 3
+                        // should never see it again. Treat a duplicate as
+                        // a server-side ordering bug and drop it rather
+                        // than silently feeding it as an extra user turn.
+                        warn!(
+                            "relay pump dropping stray FirstMessage in Phase 3 \
+                             (server-side ordering bug — should be single-shot in Phase 2)"
+                        );
                     }
                     Ok(Some(other)) => {
                         warn!(?other, "relay pump ignoring unexpected ServerMessage in Phase 3");

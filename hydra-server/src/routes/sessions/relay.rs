@@ -37,7 +37,15 @@ pub async fn session_events_or_relay(
     ws: Option<WebSocketUpgrade>,
 ) -> Result<Response, ApiError> {
     match ws {
-        Some(ws) => session_relay(State(state), Extension(actor), SessionIdPath(session_id), ws).await,
+        Some(ws) => {
+            session_relay(
+                State(state),
+                Extension(actor),
+                SessionIdPath(session_id),
+                ws,
+            )
+            .await
+        }
         None => session_events_json(State(state), SessionIdPath(session_id))
             .await
             .map(axum::response::IntoResponse::into_response),

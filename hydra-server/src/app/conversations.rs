@@ -467,7 +467,9 @@ mod tests {
         },
         policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     };
-    use hydra_common::{ConversationId, SessionId, Versioned, api::v1::sessions::SearchSessionsQuery};
+    use hydra_common::{
+        ConversationId, SessionId, Versioned, api::v1::sessions::SearchSessionsQuery,
+    };
     use std::time::Duration;
     use tokio::sync::mpsc;
 
