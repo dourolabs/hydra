@@ -371,9 +371,13 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
 
     let summary = &summaries[0];
     // `event_count` aggregates chat-text SessionEvents across every session
-    // linked to the conversation. Creating with `message: "Hello!"` spawns an
-    // interactive session and writes one `UserMessage` to it.
-    assert_eq!(summary.event_count, 1);
+    // linked to the conversation. Under the queue-and-deliver model the
+    // first user message stays on the chat-relay's pending queue until a
+    // worker connects (no worker connects in this HTTP-only smoke test),
+    // so no session log carries it yet — event_count is 0. The summary
+    // entry still exists because the conversation row does; it just has
+    // zero chat events on any session log.
+    assert_eq!(summary.event_count, 0);
 
     Ok(())
 }

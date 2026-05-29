@@ -1,143 +1,256 @@
 use dashmap::DashMap;
-use hydra_common::api::v1::sessions::{SearchSessionsQuery, SessionEvent as ApiSessionEvent};
-use hydra_common::api::v1::task_status::Status;
+use hydra_common::api::v1::sessions::SessionEvent as ApiSessionEvent;
 use hydra_common::{ConversationId, SessionId};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::{info, warn};
 
-use crate::app::app_state::AppState;
-
-/// A relay entry associated with an active conversation. Holds the channel
-/// for sending user messages to a connected worker, plus the session id of
-/// the worker currently relaying the conversation (used for kill_job, etc.).
-#[derive(Debug, Clone)]
-pub struct RelayEntry {
-    /// The session id of the worker currently connected to this conversation.
-    pub session_id: SessionId,
-    /// Send session events (currently only `UserMessage`) TO the worker
-    /// (server -> worker direction).
-    pub to_worker: mpsc::Sender<ApiSessionEvent>,
-}
-
-/// In-memory map of active conversation relays. Maps conversation IDs to
-/// their relay entries, enabling the server to route messages between
-/// frontends and worker containers.
-pub type ChatRelayMap = Arc<DashMap<ConversationId, RelayEntry>>;
+use crate::app::event_bus::StoreWithEvents;
+use crate::domain::actors::ActorRef;
+use crate::domain::sessions::SessionEvent;
 
 /// Channel capacity for the server->worker mpsc channel.
-const TO_WORKER_CAPACITY: usize = 64;
+pub const TO_WORKER_CAPACITY: usize = 64;
 
-/// Register a new relay for the given conversation. Returns the receiving end
-/// of the server->worker channel so the WebSocket handler can use it.
-pub fn register_relay(
-    relay_map: &ChatRelayMap,
-    conversation_id: ConversationId,
-    session_id: SessionId,
-) -> mpsc::Receiver<ApiSessionEvent> {
-    let (to_worker_tx, to_worker_rx) = mpsc::channel(TO_WORKER_CAPACITY);
-
-    let entry = RelayEntry {
-        session_id,
-        to_worker: to_worker_tx,
-    };
-    relay_map.insert(conversation_id, entry);
-
-    to_worker_rx
+/// In-memory queue/route table for chat-relay traffic between the
+/// conversation HTTP routes and connected workers.
+///
+/// Each conversation is in one of two states, both held as an internal
+/// [`Entry`]:
+///
+/// - [`Entry::ActiveConnection`] — a worker has connected and registered
+///   via [`ChatRelayMap::set_active`]. Subsequent events are delivered
+///   over the per-conversation mpsc and dual-written to the session log.
+/// - [`Entry::PendingConnection`] — no worker has registered yet (either
+///   the companion session is still being spawned or the worker has not
+///   yet completed its WebSocket handshake). Events accepted here are
+///   queued in FIFO order and delivered atomically at the Pending→Active
+///   transition.
+///
+/// The enum and the inner map are private; all access goes through the
+/// methods on this struct so callers never pattern-match on the state.
+#[derive(Clone, Default)]
+pub struct ChatRelayMap {
+    inner: Arc<DashMap<ConversationId, Entry>>,
 }
 
-/// Unregister the relay for the given conversation, cleaning up channels.
-pub fn unregister_relay(relay_map: &ChatRelayMap, conversation_id: &ConversationId) {
-    relay_map.remove(conversation_id);
+enum Entry {
+    ActiveConnection {
+        session_id: SessionId,
+        to_worker: mpsc::Sender<ApiSessionEvent>,
+    },
+    PendingConnection {
+        pending: Vec<PendingItem>,
+    },
 }
 
-/// Send a session event to the worker for the given conversation.
-/// Returns an error if the conversation has no active relay or the channel is full.
-pub async fn send_to_worker(
-    relay_map: &ChatRelayMap,
-    conversation_id: &ConversationId,
+/// A pending event held alongside the actor that originated it so the
+/// dual-write at drain time preserves authorship in the session log.
+struct PendingItem {
     event: ApiSessionEvent,
-) -> Result<(), SendToWorkerError> {
-    let entry = relay_map
-        .get(conversation_id)
-        .ok_or(SendToWorkerError::NoRelay)?;
-    entry
-        .to_worker
-        .send(event)
-        .await
-        .map_err(|_| SendToWorkerError::ChannelClosed)
+    actor: ActorRef,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum SendToWorkerError {
-    #[error("no active relay for conversation")]
-    NoRelay,
-    #[error("relay channel closed")]
+pub enum SendEventError {
+    #[error("relay channel closed for conversation")]
     ChannelClosed,
 }
 
-/// Resolve the *active* session that "owns" the given conversation right now.
-///
-/// Used by `send_message` and the lifecycle write paths to find the session
-/// id to attach a `SessionEvent` to when the caller only has a
-/// `ConversationId` in hand. Prefers the in-memory `chat_relay_map` (set by
-/// a live worker WebSocket — a live relay entry by definition tracks an
-/// active worker); falls back to a store query filtered to active session
-/// states (`Created` / `Pending` / `Running`) and picks the most-recently
-/// created one. Terminated sessions are never returned.
-///
-/// Returns `None` if no active session is currently linked to the
-/// conversation — callers needing to wait briefly for one to appear should
-/// use [`wait_for_active_session_for_conversation`] instead.
-pub async fn resolve_session_for_conversation(
-    state: &AppState,
-    conversation_id: &ConversationId,
-) -> Option<SessionId> {
-    if let Some(entry) = state.chat_relay_map.get(conversation_id) {
-        return Some(entry.session_id.clone());
-    }
-    let mut query = SearchSessionsQuery::default();
-    query.conversation_id = Some(conversation_id.clone());
-    query.status = vec![Status::Created, Status::Pending, Status::Running];
-    let sessions = state.store().list_sessions(&query).await.ok()?;
-    sessions
-        .into_iter()
-        .max_by_key(|(_, v)| v.creation_time)
-        .map(|(id, _)| id)
-}
-
-/// Bounded-wait variant of [`resolve_session_for_conversation`].
-///
-/// Polls the resolver for an active session for up to ~2s (20 × 100ms).
-/// Used by the chat-content write path (`send_message`) on a brand-new
-/// conversation or right after a resume, where
-/// `SpawnConversationSessionsAutomation` is spawning the companion session
-/// concurrently and may not have produced it yet when `send_message`
-/// lands. On timeout returns
-/// [`ResolveActiveSessionError::Timeout`] so the caller surfaces a
-/// non-200 to the client rather than silently dropping the user message.
-pub async fn wait_for_active_session_for_conversation(
-    state: &AppState,
-    conversation_id: &ConversationId,
-) -> Result<SessionId, ResolveActiveSessionError> {
-    const RETRIES: u32 = 20;
-    const DELAY_MS: u64 = 100;
-    for _ in 0..RETRIES {
-        if let Some(id) = resolve_session_for_conversation(state, conversation_id).await {
-            return Ok(id);
+impl ChatRelayMap {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
         }
-        tokio::time::sleep(std::time::Duration::from_millis(DELAY_MS)).await;
     }
-    resolve_session_for_conversation(state, conversation_id)
-        .await
-        .ok_or_else(|| ResolveActiveSessionError::Timeout {
-            conversation_id: conversation_id.clone(),
-        })
+
+    /// Accept an event for `conversation_id`. If a worker is connected
+    /// ([`Entry::ActiveConnection`]) the event is dual-written to the
+    /// session log and forwarded to the worker's channel. If no worker
+    /// is connected yet, the event is queued
+    /// ([`Entry::PendingConnection`]) and will be delivered on the next
+    /// [`set_active`](Self::set_active) call.
+    ///
+    /// The decision (active vs pending) is made under the DashMap entry
+    /// lock so a concurrent [`set_active`](Self::set_active) cannot race
+    /// a message past the drain.
+    pub async fn send_event_to_conversation(
+        &self,
+        conversation_id: &ConversationId,
+        event: ApiSessionEvent,
+        store: &StoreWithEvents,
+        actor: ActorRef,
+    ) -> Result<(), SendEventError> {
+        enum Decision {
+            Active {
+                session_id: SessionId,
+                to_worker: mpsc::Sender<ApiSessionEvent>,
+            },
+            Queued,
+        }
+        let decision = {
+            let mut entry = self
+                .inner
+                .entry(conversation_id.clone())
+                .or_insert_with(|| Entry::PendingConnection {
+                    pending: Vec::new(),
+                });
+            match entry.value_mut() {
+                Entry::ActiveConnection {
+                    session_id,
+                    to_worker,
+                } => Decision::Active {
+                    session_id: session_id.clone(),
+                    to_worker: to_worker.clone(),
+                },
+                Entry::PendingConnection { pending } => {
+                    pending.push(PendingItem {
+                        event: event.clone(),
+                        actor: actor.clone(),
+                    });
+                    Decision::Queued
+                }
+            }
+        };
+
+        match decision {
+            Decision::Queued => {
+                info!(
+                    %conversation_id,
+                    "no relay connected, event queued until worker connects"
+                );
+                Ok(())
+            }
+            Decision::Active {
+                session_id,
+                to_worker,
+            } => {
+                dual_write_session_event(store, &session_id, event.clone(), actor).await;
+                to_worker
+                    .send(event)
+                    .await
+                    .map_err(|_| SendEventError::ChannelClosed)
+            }
+        }
+    }
+
+    /// Atomically transition the entry for `conversation_id` to
+    /// [`Entry::ActiveConnection`] and return any events that were queued
+    /// while it was [`Entry::PendingConnection`].
+    ///
+    /// Each drained event is dual-written to the freshly-connected
+    /// session's event log before this call returns, so a subsequent
+    /// `Reconnecting` catch-up replays them from the log. The relay
+    /// route is then responsible for delivering the returned vec to the
+    /// worker over the WebSocket as the first "live" messages, after
+    /// the catch-up has been sent.
+    ///
+    /// If an entry already exists in `ActiveConnection` (e.g. a second
+    /// worker connection for the same conversation) the new entry
+    /// replaces it; the prior `to_worker` channel is dropped, which
+    /// closes the old relay loop. The returned vec is empty in that
+    /// case (there were no pending events).
+    pub async fn set_active(
+        &self,
+        conversation_id: ConversationId,
+        session_id: SessionId,
+        to_worker: mpsc::Sender<ApiSessionEvent>,
+        store: &StoreWithEvents,
+    ) -> Vec<ApiSessionEvent> {
+        let drained: Vec<PendingItem> = {
+            let mut entry =
+                self.inner
+                    .entry(conversation_id.clone())
+                    .or_insert_with(|| Entry::ActiveConnection {
+                        session_id: session_id.clone(),
+                        to_worker: to_worker.clone(),
+                    });
+            // `or_insert_with` either inserted a fresh ActiveConnection
+            // (drained = []) or returned a pre-existing entry that we now
+            // overwrite. Use `mem::replace` to swap and capture the prior
+            // value atomically under the entry lock.
+            let previous = std::mem::replace(
+                entry.value_mut(),
+                Entry::ActiveConnection {
+                    session_id: session_id.clone(),
+                    to_worker,
+                },
+            );
+            match previous {
+                Entry::PendingConnection { pending } => pending,
+                Entry::ActiveConnection { .. } => Vec::new(),
+            }
+        };
+
+        let mut drained_events = Vec::with_capacity(drained.len());
+        for item in drained {
+            dual_write_session_event(store, &session_id, item.event.clone(), item.actor).await;
+            drained_events.push(item.event);
+        }
+        drained_events
+    }
+
+    /// Remove the entry entirely. Called when a worker WebSocket
+    /// disconnects so a subsequent reconnect starts from a clean slate.
+    pub fn disconnect(&self, conversation_id: &ConversationId) {
+        self.inner.remove(conversation_id);
+    }
+
+    /// Returns the session id of the currently-connected worker, or
+    /// `None` if no worker is connected (i.e. no entry, or the entry is
+    /// still `PendingConnection`).
+    pub fn active_session_id(&self, conversation_id: &ConversationId) -> Option<SessionId> {
+        self.inner
+            .get(conversation_id)
+            .and_then(|entry| match entry.value() {
+                Entry::ActiveConnection { session_id, .. } => Some(session_id.clone()),
+                Entry::PendingConnection { .. } => None,
+            })
+    }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ResolveActiveSessionError {
-    #[error("no active session for conversation '{conversation_id}' after wait budget")]
-    Timeout { conversation_id: ConversationId },
+/// Dual-write an event to the session's event log. Errors are logged
+/// and swallowed: the worker's own write of the equivalent event
+/// remains the source of truth during the dual-write phase, and a
+/// transient store failure must not tear down the relay.
+async fn dual_write_session_event(
+    store: &StoreWithEvents,
+    session_id: &SessionId,
+    event: ApiSessionEvent,
+    actor: ActorRef,
+) {
+    let domain_event: SessionEvent = match event.try_into() {
+        Ok(e) => e,
+        Err(_) => {
+            warn!(
+                %session_id,
+                "dual-write skipped: unknown SessionEvent variant",
+            );
+            return;
+        }
+    };
+    let preview = domain_event.preview();
+    match store
+        .append_session_event_with_actor(session_id, domain_event, actor)
+        .await
+    {
+        Ok(version) => {
+            info!(
+                %session_id,
+                version,
+                event = %preview,
+                "dual-write SessionEvent appended",
+            );
+        }
+        Err(err) => {
+            warn!(
+                %session_id,
+                event = %preview,
+                error = %err,
+                "dual-write SessionEvent failed",
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -148,13 +261,9 @@ mod tests {
     use crate::domain::task_status::Status as DomainStatus;
     use crate::domain::users::Username;
     use crate::routes::sessions::mount_spec_from_create_request;
+    use crate::store::ReadOnlyStore;
     use chrono::Utc;
     use std::collections::HashMap;
-    use std::time::Instant;
-
-    fn test_relay_map() -> ChatRelayMap {
-        Arc::new(DashMap::new())
-    }
 
     fn interactive_session(conversation_id: &ConversationId, status: DomainStatus) -> Session {
         Session::new(
@@ -179,161 +288,205 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn register_and_unregister_relay() {
-        let map = test_relay_map();
-        let conversation_id = ConversationId::new();
-        let session_id = SessionId::new();
-
-        let _rx = register_relay(&map, conversation_id.clone(), session_id.clone());
-        assert!(map.contains_key(&conversation_id));
-        assert_eq!(map.get(&conversation_id).unwrap().session_id, session_id);
-
-        unregister_relay(&map, &conversation_id);
-        assert!(!map.contains_key(&conversation_id));
-    }
-
-    #[tokio::test]
-    async fn send_to_worker_delivers_message() {
-        let map = test_relay_map();
-        let conversation_id = ConversationId::new();
-        let session_id = SessionId::new();
-        let mut rx = register_relay(&map, conversation_id.clone(), session_id);
-
-        let event = ApiSessionEvent::UserMessage {
-            content: "hello".to_string(),
+    fn user_msg(content: &str) -> ApiSessionEvent {
+        ApiSessionEvent::UserMessage {
+            content: content.to_string(),
             timestamp: Utc::now(),
-        };
-        send_to_worker(&map, &conversation_id, event.clone())
-            .await
-            .unwrap();
-
-        let received = rx.recv().await.unwrap();
-        assert_eq!(received, event);
-    }
-
-    #[tokio::test]
-    async fn send_to_worker_no_relay_returns_error() {
-        let map = test_relay_map();
-        let conversation_id = ConversationId::new();
-
-        let event = ApiSessionEvent::UserMessage {
-            content: "hello".to_string(),
-            timestamp: Utc::now(),
-        };
-        let result = send_to_worker(&map, &conversation_id, event).await;
-        assert!(matches!(result, Err(SendToWorkerError::NoRelay)));
-    }
-
-    #[tokio::test]
-    async fn resolve_session_for_conversation_filters_terminated_sessions() {
-        // A session that has already transitioned to a terminal status
-        // (`Complete` / `Failed`) must not be returned by the resolver —
-        // the active-state filter is what lets the caller treat the
-        // resolver result as "currently owns the conversation".
-        let state = state_with_default_model("default-model");
-        let conversation_id = ConversationId::new();
-
-        for status in [DomainStatus::Complete, DomainStatus::Failed] {
-            let session = interactive_session(&conversation_id, status);
-            state
-                .store
-                .add_session_with_actor(
-                    session,
-                    Utc::now(),
-                    crate::domain::actors::ActorRef::test(),
-                )
-                .await
-                .unwrap();
         }
-
-        let resolved = resolve_session_for_conversation(&state, &conversation_id).await;
-        assert!(
-            resolved.is_none(),
-            "terminated sessions must not be returned by the resolver, got {resolved:?}",
-        );
     }
 
     #[tokio::test]
-    async fn resolve_session_for_conversation_returns_active_session() {
-        // The happy path: an active session in `Running` exists for this
-        // conversation, so the resolver returns it.
+    async fn send_event_to_conversation_queues_when_no_entry() {
+        // No worker has connected yet, so the first send must insert a
+        // PendingConnection holding the event. `active_session_id` returns
+        // None until set_active flips it.
         let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("first"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+
+        assert!(map.active_session_id(&conversation_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn send_event_to_conversation_appends_to_pending() {
+        // Two sends prior to any worker connecting should both queue;
+        // the drain at set_active time must yield them in FIFO order.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
         let conversation_id = ConversationId::new();
 
         let session = interactive_session(&conversation_id, DomainStatus::Running);
         let (session_id, _) = state
             .store
-            .add_session_with_actor(session, Utc::now(), crate::domain::actors::ActorRef::test())
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
-        let resolved = resolve_session_for_conversation(&state, &conversation_id).await;
-        assert_eq!(resolved, Some(session_id));
+        for content in ["first", "second", "third"] {
+            map.send_event_to_conversation(
+                &conversation_id,
+                user_msg(content),
+                &state.store,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let drained = map
+            .set_active(conversation_id.clone(), session_id, tx, &state.store)
+            .await;
+
+        let drained_contents: Vec<String> = drained
+            .into_iter()
+            .map(|e| match e {
+                ApiSessionEvent::UserMessage { content, .. } => content,
+                other => panic!("unexpected drained variant: {other:?}"),
+            })
+            .collect();
+        assert_eq!(drained_contents, vec!["first", "second", "third"]);
     }
 
     #[tokio::test]
-    async fn wait_for_active_session_times_out_when_no_session_appears() {
-        // No session is ever inserted, so the bounded-wait resolver must
-        // surface a `Timeout` error after the wait budget elapses. The
-        // budget is 20 × 100ms = 2s, so we give ourselves headroom on the
-        // upper bound to keep the test stable on slow runners.
+    async fn send_event_to_conversation_delivers_to_active() {
+        // After set_active flips the entry, a subsequent send must
+        // deliver on the worker channel directly AND dual-write to the
+        // session log.
+        use crate::domain::sessions::SessionEvent as DomainSessionEvent;
         let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
         let conversation_id = ConversationId::new();
 
-        let started = Instant::now();
-        let result = wait_for_active_session_for_conversation(&state, &conversation_id).await;
-        let elapsed = started.elapsed();
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
 
-        match result {
-            Err(ResolveActiveSessionError::Timeout {
-                conversation_id: id,
-            }) => {
-                assert_eq!(id, conversation_id);
-            }
-            other => panic!("expected Timeout error, got {other:?}"),
-        }
+        let (tx, mut rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let drained = map
+            .set_active(conversation_id.clone(), session_id.clone(), tx, &state.store)
+            .await;
+        assert!(drained.is_empty(), "no events queued before set_active");
+
+        let event = user_msg("hello");
+        map.send_event_to_conversation(&conversation_id, event.clone(), &state.store, ActorRef::test())
+            .await
+            .unwrap();
+
+        let received = rx.recv().await.expect("worker channel must receive event");
+        assert_eq!(received, event);
+
+        // Dual-write hit the session log.
+        let events = state.store.get_session_events(&session_id).await.unwrap();
+        let hit = events.iter().any(|v| {
+            matches!(
+                &v.item,
+                DomainSessionEvent::UserMessage { content, .. } if content == "hello"
+            )
+        });
         assert!(
-            elapsed >= std::time::Duration::from_millis(1900),
-            "expected the resolver to spend ~2s before timing out, got {elapsed:?}",
+            hit,
+            "send_event_to_conversation must dual-write to the session log on Active delivery"
         );
     }
 
     #[tokio::test]
-    async fn wait_for_active_session_skips_terminated_and_succeeds_on_active() {
-        // A terminated session is present alongside a freshly-active one.
-        // The resolver must return the active one (the terminated one is
-        // filtered out by the status query, and the active one wins the
-        // `max_by_key(creation_time)` tiebreak by virtue of being created
-        // later).
+    async fn set_active_dual_writes_drained_pending_in_fifo() {
+        // Queue three events while Pending, then set_active and confirm
+        // they reach the session log in the order they were queued.
+        use crate::domain::sessions::SessionEvent as DomainSessionEvent;
         let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
         let conversation_id = ConversationId::new();
 
-        let terminated = interactive_session(&conversation_id, DomainStatus::Complete);
-        state
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
             .store
-            .add_session_with_actor(
-                terminated,
-                Utc::now(),
-                crate::domain::actors::ActorRef::test(),
-            )
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
             .await
             .unwrap();
 
-        let active = interactive_session(&conversation_id, DomainStatus::Running);
-        let (active_id, _) = state
-            .store
-            .add_session_with_actor(
-                active,
-                Utc::now() + chrono::Duration::milliseconds(1),
-                crate::domain::actors::ActorRef::test(),
+        for content in ["a", "b", "c"] {
+            map.send_event_to_conversation(
+                &conversation_id,
+                user_msg(content),
+                &state.store,
+                ActorRef::test(),
             )
             .await
             .unwrap();
+        }
 
-        let resolved = wait_for_active_session_for_conversation(&state, &conversation_id)
+        let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _drained = map
+            .set_active(conversation_id.clone(), session_id.clone(), tx, &state.store)
+            .await;
+
+        let events = state.store.get_session_events(&session_id).await.unwrap();
+        let contents: Vec<&str> = events
+            .iter()
+            .filter_map(|v| match &v.item {
+                DomainSessionEvent::UserMessage { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(contents, vec!["a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn disconnect_removes_entry() {
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
             .await
-            .expect("expected the active session to be returned");
-        assert_eq!(resolved, active_id);
+            .unwrap();
+
+        let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(conversation_id.clone(), session_id.clone(), tx, &state.store)
+            .await;
+        assert_eq!(map.active_session_id(&conversation_id), Some(session_id));
+
+        map.disconnect(&conversation_id);
+        assert!(map.active_session_id(&conversation_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn active_session_id_none_for_pending_entry() {
+        // A PendingConnection — created implicitly by a send before any
+        // worker connects — must NOT surface a session id via
+        // `active_session_id`; the kill-job path treats Some only as
+        // "a worker is connected to this session right now".
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("queued"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+
+        assert!(map.active_session_id(&conversation_id).is_none());
     }
 }
