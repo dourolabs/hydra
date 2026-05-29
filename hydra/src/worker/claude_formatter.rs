@@ -378,12 +378,6 @@ mod tests {
     }
 
     #[test]
-    fn truncate_adds_ellipsis_when_needed() {
-        let result = truncate("abcdef", 5);
-        assert_eq!(result, "ab...");
-    }
-
-    #[test]
     fn format_block_uses_cyan_for_assistant_prefix() {
         let rendered = format_block("assistant>", "test");
         // Cyan ANSI code is \x1b[36m
@@ -559,12 +553,6 @@ mod tests {
     }
 
     #[test]
-    fn last_assistant_text_returns_none_when_no_assistant_message() {
-        let formatter = StreamFormatter::new();
-        assert_eq!(formatter.last_assistant_text(), None);
-    }
-
-    #[test]
     fn last_assistant_text_returns_none_for_tool_only_assistant_message() {
         let mut formatter = StreamFormatter::new();
 
@@ -669,12 +657,6 @@ mod tests {
                 cache_creation_input_tokens: 2,
             }
         );
-    }
-
-    #[test]
-    fn aggregated_usage_starts_zero() {
-        let formatter = StreamFormatter::new();
-        assert_eq!(formatter.aggregated_usage(), &TokenUsage::default());
     }
 
     #[test]

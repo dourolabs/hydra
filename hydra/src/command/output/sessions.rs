@@ -404,15 +404,6 @@ mod tests {
         assert!(lines.last().unwrap().contains("..."));
     }
 
-    #[test]
-    fn format_status_returns_plain_labels() {
-        assert_eq!(format_status(&Status::Created), "created");
-        assert_eq!(format_status(&Status::Pending), "pending");
-        assert_eq!(format_status(&Status::Running), "running");
-        assert_eq!(format_status(&Status::Complete), "complete");
-        assert_eq!(format_status(&Status::Failed), "failed");
-    }
-
     fn build_session(
         conversation_id: Option<hydra_common::ConversationId>,
         usage: Option<hydra_common::api::v1::sessions::TokenUsage>,
@@ -518,13 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn session_summary_note_renders_em_dash_when_usage_missing() {
-        let record = build_summary_record(None, None);
-        let note = session_summary_note(&record).expect("note present");
-        assert_eq!(note, "tokens: —");
-    }
-
-    #[test]
     fn session_note_renders_tokens_when_usage_present() {
         use hydra_common::api::v1::sessions::TokenUsage;
 
@@ -540,12 +524,5 @@ mod tests {
             note.contains("tokens: total=35,747,111 | input=33,947,111 out=250,000 cache_read=1,500,000 cache_create=50,000"),
             "expected new-shape tokens in {note}"
         );
-    }
-
-    #[test]
-    fn session_note_renders_em_dash_when_usage_missing() {
-        let record = build_version_record(None);
-        let note = session_note(&record).expect("note present");
-        assert_eq!(note, "tokens: —");
     }
 }

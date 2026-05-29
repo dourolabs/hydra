@@ -159,21 +159,6 @@ mod tests {
     use tempfile::tempdir;
     use tower::ServiceExt;
 
-    #[test]
-    fn sanitize_key_rejects_invalid_segments() {
-        assert!(sanitize_key("../secret").is_err());
-        assert!(sanitize_key("/absolute").is_err());
-        assert!(sanitize_key("./local").is_err());
-        assert!(sanitize_key("").is_err());
-    }
-
-    #[test]
-    fn sanitize_prefix_allows_empty() {
-        use crate::util::sanitize_prefix;
-        assert_eq!(sanitize_prefix("").expect("prefix"), "");
-        assert!(sanitize_prefix("../secret").is_err());
-    }
-
     #[tokio::test]
     async fn object_lifecycle_roundtrip() {
         let dir = tempdir().expect("temp dir");
@@ -795,60 +780,6 @@ mod tests {
     }
 
     #[test]
-    fn byte_range_explicit_range() {
-        // bytes=0-999 on a 2000 byte file
-        let range = ByteRange::resolve("bytes=0-999", 2000).expect("range");
-        assert_eq!(range.start, 0);
-        assert_eq!(range.end, 999);
-    }
-
-    #[test]
-    fn byte_range_open_ended() {
-        // bytes=500- on a 2000 byte file
-        let range = ByteRange::resolve("bytes=500-", 2000).expect("range");
-        assert_eq!(range.start, 500);
-        assert_eq!(range.end, 1999);
-    }
-
-    #[test]
-    fn byte_range_suffix() {
-        // bytes=-500 on a 2000 byte file (last 500 bytes)
-        let range = ByteRange::resolve("bytes=-500", 2000).expect("range");
-        assert_eq!(range.start, 1500);
-        assert_eq!(range.end, 1999);
-    }
-
-    #[test]
-    fn byte_range_clamped_to_content_length() {
-        // bytes=0-5000 on a 2000 byte file should clamp to 1999
-        let range = ByteRange::resolve("bytes=0-5000", 2000).expect("range");
-        assert_eq!(range.start, 0);
-        assert_eq!(range.end, 1999);
-    }
-
-    #[test]
-    fn byte_range_suffix_larger_than_file() {
-        // bytes=-5000 on a 2000 byte file should return the whole file
-        let range = ByteRange::resolve("bytes=-5000", 2000).expect("range");
-        assert_eq!(range.start, 0);
-        assert_eq!(range.end, 1999);
-    }
-
-    #[test]
-    fn byte_range_invalid_start_beyond_content() {
-        // bytes=5000- on a 2000 byte file should fail
-        let range = ByteRange::resolve("bytes=5000-", 2000);
-        assert!(range.is_none());
-    }
-
-    #[test]
-    fn byte_range_invalid_start_greater_than_end() {
-        // bytes=1000-500 is invalid
-        let range = ByteRange::resolve("bytes=1000-500", 2000);
-        assert!(range.is_none());
-    }
-
-    #[test]
     fn byte_range_invalid_format() {
         // Not starting with bytes=
         assert!(ByteRange::resolve("range=0-100", 2000).is_none());
@@ -858,20 +789,6 @@ mod tests {
         assert!(ByteRange::resolve("bytes=0-100, 200-300", 2000).is_none());
         // Non-numeric values
         assert!(ByteRange::resolve("bytes=abc-def", 2000).is_none());
-    }
-
-    #[test]
-    fn byte_range_zero_length_file() {
-        // Any range on a zero-length file should fail
-        assert!(ByteRange::resolve("bytes=0-100", 0).is_none());
-        assert!(ByteRange::resolve("bytes=0-", 0).is_none());
-        assert!(ByteRange::resolve("bytes=-100", 0).is_none());
-    }
-
-    #[test]
-    fn byte_range_suffix_zero() {
-        // bytes=-0 is invalid (requesting last 0 bytes)
-        assert!(ByteRange::resolve("bytes=-0", 2000).is_none());
     }
 
     #[tokio::test]

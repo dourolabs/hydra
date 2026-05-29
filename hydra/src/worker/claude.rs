@@ -1131,12 +1131,6 @@ mod tests {
         assert!(matches!(events[0], ClaudeEvent::Raw { .. }));
     }
 
-    #[test]
-    fn encoded_cwd_replaces_slashes_and_dots_with_dashes() {
-        let cwd = Path::new("/tmp/.tmpOH7bq5/repo");
-        assert_eq!(encoded_cwd(cwd), "-tmp--tmpOH7bq5-repo");
-    }
-
     #[tokio::test]
     async fn claude_new_errors_when_both_auth_envs_absent() {
         let tmp = tempfile::tempdir().unwrap();

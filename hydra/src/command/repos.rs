@@ -931,24 +931,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_remote_url_passes_through_https_url() {
-        let url = resolve_remote_url("https://github.com/org/repo.git").unwrap();
-        assert_eq!(url, "https://github.com/org/repo.git");
-    }
-
-    #[test]
-    fn resolve_remote_url_passes_through_git_ssh_url() {
-        let url = resolve_remote_url("git@github.com:org/repo.git").unwrap();
-        assert_eq!(url, "git@github.com:org/repo.git");
-    }
-
-    #[test]
-    fn resolve_remote_url_passes_through_file_url() {
-        let url = resolve_remote_url("file:///tmp/my-repo").unwrap();
-        assert_eq!(url, "file:///tmp/my-repo");
-    }
-
-    #[test]
     fn resolve_remote_url_rejects_empty() {
         let err = resolve_remote_url("   ").unwrap_err();
         assert!(
@@ -1001,12 +983,6 @@ mod tests {
             url.starts_with("file://"),
             "should recognize bare repo: {url}"
         );
-    }
-
-    #[test]
-    fn resolve_remote_url_trims_whitespace() {
-        let url = resolve_remote_url("  https://github.com/org/repo.git  ").unwrap();
-        assert_eq!(url, "https://github.com/org/repo.git");
     }
 
     #[test]

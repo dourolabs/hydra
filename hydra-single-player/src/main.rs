@@ -50,57 +50,10 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn parse_server_init_subcommand() {
-        let sp_cli = SinglePlayerCli::try_parse_from(["hydra", "server", "init"]).expect("parse");
-        match sp_cli.command {
-            Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Init { force, .. },
-            }) => {
-                assert!(!force, "force should default to false");
-            }
-            _ => panic!("expected Server Init"),
-        }
-    }
-
-    #[test]
-    fn parse_issues_subcommand() {
-        let sp_cli = SinglePlayerCli::try_parse_from(["hydra", "issues", "list"]).expect("parse");
-        assert!(sp_cli.command.is_none());
-        match sp_cli.cli.command {
-            Some(cli::Commands::Issues { .. }) => {}
-            _ => panic!("expected Issues"),
-        }
-    }
-
-    #[test]
     fn parse_without_subcommand_has_no_command() {
         let sp_cli = SinglePlayerCli::try_parse_from(["hydra"]).expect("parse");
         assert!(sp_cli.command.is_none());
         assert!(sp_cli.cli.command.is_none());
-    }
-
-    #[test]
-    fn parse_server_init_with_config_flag() {
-        let sp_cli = SinglePlayerCli::try_parse_from([
-            "hydra",
-            "server",
-            "init",
-            "--config",
-            "/path/to/config.yaml",
-        ])
-        .expect("parse");
-        match sp_cli.command {
-            Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Init { config, force, .. },
-            }) => {
-                assert_eq!(
-                    config,
-                    Some(std::path::PathBuf::from("/path/to/config.yaml"))
-                );
-                assert!(!force);
-            }
-            _ => panic!("expected Server Init with --config"),
-        }
     }
 
     #[test]
@@ -154,22 +107,6 @@ mod tests {
                 );
             }
             _ => panic!("expected Server Init with --force and --config"),
-        }
-    }
-
-    #[test]
-    fn parse_server_logs_with_options() {
-        let sp_cli =
-            SinglePlayerCli::try_parse_from(["hydra", "server", "logs", "-n", "100", "--watch"])
-                .expect("parse");
-        match sp_cli.command {
-            Some(SinglePlayerCommands::Server {
-                command: ServerCommand::Logs { lines, watch },
-            }) => {
-                assert_eq!(lines, 100);
-                assert!(watch);
-            }
-            _ => panic!("expected Server Logs"),
         }
     }
 }

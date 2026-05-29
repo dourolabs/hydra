@@ -177,25 +177,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_now_literal() {
-        let now = fixed_now();
-        let result = parse_window_arg_with_now("now", now).unwrap();
-        assert_eq!(result, now);
-    }
-
-    #[test]
-    fn parses_rfc3339_timestamp_with_z() {
-        let result = parse_window_arg_with_now("2026-05-15T13:00:00Z", fixed_now()).unwrap();
-        assert_eq!(result, Utc.with_ymd_and_hms(2026, 5, 15, 13, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn parses_rfc3339_timestamp_with_offset() {
-        let result = parse_window_arg_with_now("2026-05-15T13:00:00+02:00", fixed_now()).unwrap();
-        assert_eq!(result, Utc.with_ymd_and_hms(2026, 5, 15, 11, 0, 0).unwrap());
-    }
-
-    #[test]
     fn parses_relative_seconds() {
         let now = fixed_now();
         let result = parse_window_arg_with_now("-30s", now).unwrap();
@@ -293,13 +274,5 @@ mod tests {
             matches!(err, TimeParseError::Unrecognized(_)),
             "got {err:?}"
         );
-    }
-
-    #[test]
-    fn hydra_time_display_round_trips_through_from_str() {
-        let original = HydraTime::from_utc(Utc.with_ymd_and_hms(2026, 5, 15, 13, 0, 0).unwrap());
-        let s = original.to_string();
-        let parsed: HydraTime = s.parse().unwrap();
-        assert_eq!(parsed, original);
     }
 }

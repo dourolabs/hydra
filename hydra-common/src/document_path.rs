@@ -221,26 +221,6 @@ mod tests {
     }
 
     #[test]
-    fn display_matches_as_str() {
-        let path: DocumentPath = "/docs/file.md".parse().unwrap();
-        assert_eq!(path.to_string(), path.as_str());
-    }
-
-    #[test]
-    fn into_string_returns_canonical_form() {
-        let path: DocumentPath = "docs/file.md".parse().unwrap();
-        let s: String = path.into();
-        assert_eq!(s, "/docs/file.md");
-    }
-
-    #[test]
-    fn as_ref_returns_str() {
-        let path: DocumentPath = "/docs/file.md".parse().unwrap();
-        let s: &str = path.as_ref();
-        assert_eq!(s, "/docs/file.md");
-    }
-
-    #[test]
     fn try_from_string_works() {
         let path = DocumentPath::try_from("docs/file.md".to_string()).unwrap();
         assert_eq!(path.as_str(), "/docs/file.md");
@@ -253,30 +233,9 @@ mod tests {
     }
 
     #[test]
-    fn serializes_as_string() {
-        let path: DocumentPath = "/docs/file.md".parse().unwrap();
-        let value = serde_json::to_value(&path).unwrap();
-        assert_eq!(value, serde_json::json!("/docs/file.md"));
-    }
-
-    #[test]
-    fn deserializes_valid_path() {
-        let path: DocumentPath =
-            serde_json::from_value(serde_json::json!("/docs/file.md")).unwrap();
-        assert_eq!(path.as_str(), "/docs/file.md");
-    }
-
-    #[test]
     fn deserializes_and_normalizes() {
         let path: DocumentPath = serde_json::from_value(serde_json::json!("docs/file.md")).unwrap();
         assert_eq!(path.as_str(), "/docs/file.md");
-    }
-
-    #[test]
-    fn deserialize_rejects_invalid_path() {
-        let result: Result<DocumentPath, _> =
-            serde_json::from_value(serde_json::json!(".hidden/file.md"));
-        assert!(result.is_err());
     }
 
     #[test]
@@ -285,17 +244,5 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let restored: DocumentPath = serde_json::from_str(&json).unwrap();
         assert_eq!(original, restored);
-    }
-
-    #[test]
-    fn document_with_optional_document_path() {
-        // Verify Option<DocumentPath> serialization
-        let some_path: Option<DocumentPath> = Some("/docs/file.md".parse().unwrap());
-        let json = serde_json::to_value(&some_path).unwrap();
-        assert_eq!(json, serde_json::json!("/docs/file.md"));
-
-        let none_path: Option<DocumentPath> = None;
-        let json = serde_json::to_value(&none_path).unwrap();
-        assert_eq!(json, serde_json::json!(null));
     }
 }

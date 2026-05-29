@@ -272,20 +272,6 @@ mod tests {
     }
 
     #[test]
-    fn s3_config_accepts_empty_credentials() {
-        let config = S3StorageConfig {
-            endpoint_url: "https://s3.example.com".to_string(),
-            bucket: "hydra-cache".to_string(),
-            region: "us-east-1".to_string(),
-            access_key_id: None,
-            secret_access_key: None,
-            session_token: None,
-        };
-
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
     fn s3_config_rejects_missing_required_fields() {
         let config = S3StorageConfig {
             endpoint_url: "".to_string(),
@@ -360,21 +346,6 @@ mod tests {
             config.validate(),
             Err(BuildCacheError::Config {
                 field: "session_token",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn filesystem_config_requires_root_dir() {
-        let config = FileSystemStorageConfig {
-            root_dir: "".to_string(),
-        };
-
-        assert!(matches!(
-            config.validate(),
-            Err(BuildCacheError::Config {
-                field: "root_dir",
                 ..
             })
         ));

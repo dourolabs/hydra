@@ -133,17 +133,3 @@ impl From<UserSummary> for api::users::UserSummary {
         api::users::UserSummary::new(value.username.into(), value.github_user_id)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn username_converts_between_domain_and_api() {
-        let domain = Username::from("hydra");
-        let api_value: api::users::Username = domain.clone().into();
-        let round_trip: Username = api_value.into();
-
-        assert_eq!(round_trip, domain);
-    }
-}

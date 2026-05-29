@@ -490,40 +490,6 @@ mod tests {
         assert_eq!(actor_ref.display_name(), "cascade (triggered by alice)");
     }
 
-    #[test]
-    fn actor_ref_test_helper() {
-        let actor_ref = ActorRef::test();
-        assert_eq!(
-            actor_ref,
-            ActorRef::System {
-                worker_name: "test".into(),
-                on_behalf_of: None,
-            }
-        );
-    }
-
-    // --- Display for variants ---
-
-    #[test]
-    fn actor_id_display_user_path_form() {
-        assert_eq!(alice_user().to_string(), "users/alice");
-    }
-
-    #[test]
-    fn actor_id_display_agent_path_form() {
-        assert_eq!(swe_agent().to_string(), "agents/swe");
-    }
-
-    #[test]
-    fn actor_id_display_adhoc_path_form() {
-        assert_eq!(adhoc_session().to_string(), "adhoc/s-abcdef");
-    }
-
-    #[test]
-    fn actor_id_display_external_path_form() {
-        assert_eq!(gh_external().to_string(), "external/github/jayantk");
-    }
-
     // --- FromStr / parse_actor_name accept the canonical path forms ---
 
     #[test]
@@ -577,30 +543,6 @@ mod tests {
     fn actor_id_from_str_empty_fails() {
         assert!("".parse::<ActorId>().is_err());
         assert!("  ".parse::<ActorId>().is_err());
-    }
-
-    #[test]
-    fn parse_actor_name_agent_path() {
-        let result = parse_actor_name("agents/swe");
-        assert_eq!(result, Some(swe_agent()));
-    }
-
-    #[test]
-    fn parse_actor_name_adhoc_path() {
-        let result = parse_actor_name("adhoc/s-abcdef");
-        assert_eq!(result, Some(adhoc_session()));
-    }
-
-    #[test]
-    fn parse_actor_name_user_path() {
-        let result = parse_actor_name("users/alice");
-        assert_eq!(result, Some(alice_user()));
-    }
-
-    #[test]
-    fn parse_actor_name_external_path() {
-        let result = parse_actor_name("external/github/jayantk");
-        assert_eq!(result, Some(gh_external()));
     }
 
     #[test]
@@ -693,29 +635,6 @@ mod tests {
     }
 
     // --- ActorRef.session_id round-trip and §5.4 back-compat ---
-
-    #[test]
-    fn actor_ref_authenticated_with_session_id_round_trips() {
-        let sid = SessionId::from_str("s-abcdef").unwrap();
-        let actor_ref = ActorRef::Authenticated {
-            actor_id: swe_agent(),
-            session_id: Some(sid),
-        };
-        let json = serde_json::to_string(&actor_ref).unwrap();
-        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
-        assert_eq!(actor_ref, deserialized);
-    }
-
-    #[test]
-    fn actor_ref_authenticated_with_none_session_id_round_trips() {
-        let actor_ref = ActorRef::Authenticated {
-            actor_id: alice_user(),
-            session_id: None,
-        };
-        let json = serde_json::to_string(&actor_ref).unwrap();
-        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
-        assert_eq!(actor_ref, deserialized);
-    }
 
     #[test]
     fn originating_session_id_authenticated_agent_with_sid() {

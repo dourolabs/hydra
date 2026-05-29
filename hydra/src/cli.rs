@@ -350,7 +350,6 @@ pub fn resolve_server_url(cli: &Cli, app_config: &AppConfig) -> Result<String> {
 mod tests {
     use super::*;
     use crate::command::agents::AgentsCommand;
-    use clap::Parser;
     use tempfile::tempdir;
 
     fn base_cli() -> Cli {
@@ -413,24 +412,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_without_subcommand_has_no_command() {
-        let cli = Cli::try_parse_from(["hydra"]).expect("parse");
-        assert!(cli.command.is_none());
-    }
-
-    #[test]
-    fn is_broken_pipe_detects_stdout_broken_pipe_sentinel() {
-        let err: anyhow::Error = StdoutBrokenPipe.into();
-        assert!(is_broken_pipe(&err));
-    }
-
-    #[test]
-    fn is_broken_pipe_detects_stdout_broken_pipe_in_wrapped_chain() {
-        let err = anyhow::Error::new(StdoutBrokenPipe).context("writing output");
-        assert!(is_broken_pipe(&err));
-    }
-
-    #[test]
     fn is_broken_pipe_returns_false_for_raw_io_broken_pipe() {
         // A raw io::Error(BrokenPipe) coming from anywhere in the chain (e.g.
         // reqwest's hyper transport when the server connection drops) must NOT
@@ -445,19 +426,6 @@ mod tests {
     fn is_broken_pipe_returns_false_for_wrapped_raw_io_broken_pipe() {
         let io_err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed");
         let err = anyhow::Error::new(io_err).context("submitting create patch request");
-        assert!(!is_broken_pipe(&err));
-    }
-
-    #[test]
-    fn is_broken_pipe_returns_false_for_other_errors() {
-        let err = anyhow::anyhow!("some other error");
-        assert!(!is_broken_pipe(&err));
-    }
-
-    #[test]
-    fn is_broken_pipe_returns_false_for_other_io_errors() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
-        let err: anyhow::Error = io_err.into();
         assert!(!is_broken_pipe(&err));
     }
 

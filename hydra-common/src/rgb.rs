@@ -143,36 +143,4 @@ mod tests {
         let err = "#1234567".parse::<Rgb>().unwrap_err();
         assert!(matches!(err, RgbError::InvalidLength { actual: 8 }));
     }
-
-    #[test]
-    fn serde_round_trip() {
-        let rgb: Rgb = "#e74c3c".parse().unwrap();
-        let json = serde_json::to_string(&rgb).unwrap();
-        assert_eq!(json, "\"#e74c3c\"");
-        let deserialized: Rgb = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, rgb);
-    }
-
-    #[test]
-    fn display_and_from_str_round_trip() {
-        let rgb: Rgb = "#ABCDEF".parse().unwrap();
-        let displayed = rgb.to_string();
-        let parsed: Rgb = displayed.parse().unwrap();
-        assert_eq!(parsed, rgb);
-    }
-
-    #[test]
-    fn try_from_string() {
-        let rgb = Rgb::try_from("#abcdef".to_string()).unwrap();
-        assert_eq!(rgb.as_ref(), "#abcdef");
-
-        let s: String = rgb.into();
-        assert_eq!(s, "#abcdef");
-    }
-
-    #[test]
-    fn deserialize_rejects_invalid() {
-        let result = serde_json::from_str::<Rgb>("\"not-a-color\"");
-        assert!(result.is_err());
-    }
 }

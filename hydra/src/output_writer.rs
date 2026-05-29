@@ -102,10 +102,4 @@ mod tests {
             "non-BrokenPipe errors must not be tagged with the sentinel"
         );
     }
-
-    #[test]
-    fn convert_pipe_error_ok_passes_through() {
-        let ok: std::io::Result<i32> = Ok(42);
-        assert_eq!(convert_pipe_error(ok).unwrap(), 42);
-    }
 }

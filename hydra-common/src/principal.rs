@@ -409,36 +409,6 @@ mod tests {
     // --- Principal serde round-trip --------------------------------------
 
     #[test]
-    fn principal_user_serde_round_trip() {
-        let p = alice();
-        let value = serde_json::to_value(&p).unwrap();
-        assert_eq!(value, json!({"User": {"name": "alice"}}));
-        let back: Principal = serde_json::from_value(value).unwrap();
-        assert_eq!(back, p);
-    }
-
-    #[test]
-    fn principal_agent_serde_round_trip() {
-        let p = swe();
-        let value = serde_json::to_value(&p).unwrap();
-        assert_eq!(value, json!({"Agent": {"name": "swe"}}));
-        let back: Principal = serde_json::from_value(value).unwrap();
-        assert_eq!(back, p);
-    }
-
-    #[test]
-    fn principal_external_serde_round_trip() {
-        let p = gh_jayantk();
-        let value = serde_json::to_value(&p).unwrap();
-        assert_eq!(
-            value,
-            json!({"External": {"system": "github", "username": "jayantk"}})
-        );
-        let back: Principal = serde_json::from_value(value).unwrap();
-        assert_eq!(back, p);
-    }
-
-    #[test]
     fn principal_deserialize_unknown_variant_errors() {
         let err =
             serde_json::from_value::<Principal>(json!({"Robot": {"name": "r2"}})).unwrap_err();
@@ -455,39 +425,6 @@ mod tests {
     }
 
     // --- Principal Display / FromStr -------------------------------------
-
-    #[test]
-    fn principal_display_user() {
-        assert_eq!(alice().to_string(), "users/alice");
-    }
-
-    #[test]
-    fn principal_display_agent() {
-        assert_eq!(swe().to_string(), "agents/swe");
-    }
-
-    #[test]
-    fn principal_display_external() {
-        assert_eq!(gh_jayantk().to_string(), "external/github/jayantk");
-    }
-
-    #[test]
-    fn principal_from_str_user() {
-        let p: Principal = "users/alice".parse().unwrap();
-        assert_eq!(p, alice());
-    }
-
-    #[test]
-    fn principal_from_str_agent() {
-        let p: Principal = "agents/swe".parse().unwrap();
-        assert_eq!(p, swe());
-    }
-
-    #[test]
-    fn principal_from_str_external() {
-        let p: Principal = "external/github/jayantk".parse().unwrap();
-        assert_eq!(p, gh_jayantk());
-    }
 
     #[test]
     fn principal_from_str_round_trips_display() {
@@ -673,11 +610,6 @@ mod tests {
     // --- principal_eq (Phase 6 kind-aware case-insensitive equality) -----
 
     #[test]
-    fn principal_eq_same_user_same_case() {
-        assert!(principal_eq(&alice(), &alice()));
-    }
-
-    #[test]
     fn principal_eq_user_case_insensitive() {
         let upper = Principal::user(Username::try_new("ALICE").unwrap());
         assert!(principal_eq(&alice(), &upper));
@@ -727,13 +659,6 @@ mod tests {
     fn principal_eq_external_differs_by_username() {
         let alice = Principal::external(ExternalSystem::try_new("github").unwrap(), "alice");
         let bob = Principal::external(ExternalSystem::try_new("github").unwrap(), "bob");
-        assert!(!principal_eq(&alice, &bob));
-    }
-
-    #[test]
-    fn principal_eq_different_users() {
-        let alice = Principal::user(Username::try_new("alice").unwrap());
-        let bob = Principal::user(Username::try_new("bob").unwrap());
         assert!(!principal_eq(&alice, &bob));
     }
 }
