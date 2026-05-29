@@ -4,4 +4,4 @@ import type { RelationResponse } from "./RelationResponse";
 /**
  * Response body for `GET /v1/relations/`.
  */
-export type ListRelationsResponse = { relations: Array<RelationResponse> };
+export type ListRelationsResponse = { relations: Array<RelationResponse>, };

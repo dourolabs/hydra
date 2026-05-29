@@ -146,7 +146,11 @@ export function createInteractiveSessionForConversation(
 ): string {
   const id = generateId("session");
   const task: Session = {
-    mode: { type: "interactive", conversation_id: conversationId },
+    mode: {
+      type: "interactive",
+      conversation_id: conversationId,
+      greet_user: false,
+    },
     agent_config: {},
     mount_spec: {
       working_dir: "repo",
@@ -403,15 +407,22 @@ export function createSessionRoutes(store: Store): Hono {
       return c.json({ error: `session '${id}' not found` }, 404);
     }
     const task = entry.data;
-    // PR-F: WorkerContext.session is a straight read of the persisted
-    // session; no per-fetch re-derivation of mount_spec from a separate
-    // `context` field.
-    const sessionWithEnv: Session = { ...task, env_vars: task.env_vars ?? {} };
+    const modeKind =
+      task.mode.type === "interactive" ? "interactive" : "headless";
+    const idleTimeoutSecs =
+      task.mode.type === "interactive"
+        ? (task.mode.idle_timeout_secs ?? null)
+        : null;
     const resp: WorkerContext = {
-      session: sessionWithEnv,
+      session_id: id,
+      mode_kind: modeKind,
+      mounts: task.mount_spec.mounts,
+      working_dir: task.mount_spec.working_dir,
+      model: task.agent_config.model ?? null,
+      mcp_config: task.agent_config.mcp_config ?? null,
+      idle_timeout_secs: idleTimeoutSecs,
       resolved_env: task.env_vars ?? {},
       github_token: null,
-      resumed_state: null,
     };
     return c.json(resp);
   });

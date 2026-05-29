@@ -321,12 +321,13 @@ async fn drive_worker_lifecycle(
         Err(err) => return (outputs.lock().unwrap().clone(), Err(err)),
     };
     let WorkerContext {
-        session,
+        mounts,
+        working_dir,
         resolved_env: mut variables,
         github_token,
         ..
     } = context;
-    let mount_spec = session.mount_spec.clone();
+    let mount_spec = hydra_common::sessions::MountSpec::new(working_dir, mounts);
 
     let temp_dir = match tempfile::tempdir() {
         Ok(t) => t,

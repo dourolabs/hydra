@@ -4,21 +4,18 @@ import type { ActorRef } from "./ActorRef";
 /**
  * Pairs a value with its version number.
  */
-export type Versioned<T> = {
-  item: T;
-  version: bigint;
-  /**
-   * Timestamp when this version was recorded.
-   */
-  timestamp: string;
-  /**
-   * The actor who performed this mutation.
-   * `None` for historical versions that predate actor tracking.
-   */
-  actor?: ActorRef | null;
-  /**
-   * Timestamp when the first version (version 1) of this entity was created.
-   * Used to pass creation time from the store to route handlers.
-   */
-  creation_time: string;
-};
+export type Versioned<T> = { item: T, version: bigint, 
+/**
+ * Timestamp when this version was recorded.
+ */
+timestamp: string, 
+/**
+ * The actor who performed this mutation.
+ * `None` for historical versions that predate actor tracking.
+ */
+actor?: ActorRef | null, 
+/**
+ * Timestamp when the first version (version 1) of this entity was created.
+ * Used to pass creation time from the store to route handlers.
+ */
+creation_time: string, };

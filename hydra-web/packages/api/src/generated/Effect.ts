@@ -4,4 +4,4 @@ import type { IssueStatus } from "./IssueStatus";
 /**
  * What happens when an action is taken.
  */
-export type Effect = { type: "update_issue"; status: IssueStatus } | { type: "record_only" };
+export type Effect = { "type": "update_issue", status: IssueStatus, } | { "type": "record_only" };

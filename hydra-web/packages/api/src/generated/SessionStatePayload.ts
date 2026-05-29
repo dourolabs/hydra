@@ -11,19 +11,17 @@
  * unknown variant deserialization fails fast and the resumer falls back to
  * the context-primer path.
  */
-export type SessionStatePayload = {
-  version: "v1";
-  /**
-   * Claude's internal session UUID, extracted from the JSONL stream
-   * the prior worker observed on Claude's stdout. Used as the
-   * argument to `claude --resume <session_id>`.
-   */
-  session_id: string;
-  /**
-   * The bytes of Claude's per-project transcript file at the moment
-   * of upload. `None` means the worker captured a `session_id` but
-   * could not read the transcript file (e.g. missing or unreadable);
-   * in that case the resumer should fall back to the primer path.
-   */
-  transcript?: number[] | null;
-};
+export type SessionStatePayload = { "version": "v1", 
+/**
+ * Claude's internal session UUID, extracted from the JSONL stream
+ * the prior worker observed on Claude's stdout. Used as the
+ * argument to `claude --resume <session_id>`.
+ */
+session_id: string, 
+/**
+ * The bytes of Claude's per-project transcript file at the moment
+ * of upload. `None` means the worker captured a `session_id` but
+ * could not read the transcript file (e.g. missing or unreadable);
+ * in that case the resumer should fall back to the primer path.
+ */
+transcript?: number[] | null, };

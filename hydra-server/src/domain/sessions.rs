@@ -74,6 +74,11 @@ pub enum SessionMode {
         /// `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
         /// state-blob direction.
         conversation_resume_from: Option<usize>,
+        /// Whether the agent should produce a greeting turn before any user
+        /// message arrives. Default `false` matches today's interactive
+        /// behavior.
+        #[serde(default)]
+        greet_user: bool,
     },
 }
 
@@ -97,6 +102,17 @@ impl SessionMode {
             } => *conversation_resume_from,
             SessionMode::Headless => None,
         }
+    }
+
+    /// `true` iff `mode` is `Interactive` with `greet_user = true`.
+    pub fn greet_user(&self) -> bool {
+        matches!(
+            self,
+            SessionMode::Interactive {
+                greet_user: true,
+                ..
+            }
+        )
     }
 
     /// Stamp the resume hint on an interactive mode. Returns `false` if
@@ -321,10 +337,12 @@ impl From<api::sessions::SessionMode> for SessionMode {
                 conversation_id,
                 idle_timeout_secs,
                 conversation_resume_from,
+                greet_user,
             } => SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
                 conversation_resume_from,
+                greet_user,
             },
             _ => unreachable!("unsupported session mode variant"),
         }
@@ -339,10 +357,12 @@ impl From<SessionMode> for api::sessions::SessionMode {
                 conversation_id,
                 idle_timeout_secs,
                 conversation_resume_from,
+                greet_user,
             } => api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
                 conversation_resume_from,
+                greet_user,
             },
         }
     }

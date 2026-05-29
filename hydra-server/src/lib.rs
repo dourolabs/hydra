@@ -360,10 +360,6 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::sessions::get_session_version),
         )
         .route(
-            "/v1/sessions/:session_id/events",
-            get(routes::sessions::get_session_events),
-        )
-        .route(
             "/v1/sessions/:session_id/logs",
             get(routes::sessions::logs::get_session_logs),
         )
@@ -376,8 +372,8 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::sessions::context::get_session_context),
         )
         .route(
-            "/v1/sessions/:session_id/relay",
-            get(routes::sessions::relay::session_relay),
+            "/v1/sessions/:session_id/events",
+            get(routes::sessions::relay::session_events_or_relay),
         )
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users", get(routes::users::list_users))

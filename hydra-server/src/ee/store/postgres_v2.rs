@@ -5844,6 +5844,7 @@ mod tests {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: None,
             conversation_resume_from: Some(7),
+            greet_user: false,
         };
 
         let (task_id, _) = store
@@ -8557,6 +8558,7 @@ mod tests {
             conversation_id: conv_a.clone(),
             idle_timeout_secs: None,
             conversation_resume_from: None,
+            greet_user: false,
         };
         let (task_a_id, _) = handles
             .store
@@ -8569,6 +8571,7 @@ mod tests {
             conversation_id: conv_b.clone(),
             idle_timeout_secs: None,
             conversation_resume_from: None,
+            greet_user: false,
         };
         handles
             .store
@@ -8873,6 +8876,7 @@ mod tests {
                 conversation_id: cid,
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
+                greet_user: false,
             },
             None => SessionMode::Headless,
         };

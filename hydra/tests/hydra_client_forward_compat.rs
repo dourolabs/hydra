@@ -445,11 +445,9 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let context = client.get_session_context(&job_id).await?;
     let bundle_item = context
-        .session
-        .mount_spec
         .mounts
         .first()
-        .expect("mount_spec must include at least one item");
+        .expect("mounts must include at least one item");
     let hydra_common::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
         panic!("expected Bundle item first, got {bundle_item:?}");
     };
@@ -830,28 +828,21 @@ fn forward_repo_info(repo_name: &RepoName) -> Value {
 
 fn forward_worker_context_json() -> Value {
     json!({
-        "session": {
-            "creator": "future-creator",
-            "agent_config": {
-                "model": "future-model",
-                "extra_agent_field": true
+        "session_id": "s-forwardct",
+        "mode_kind": "headless",
+        "mounts": [
+            {
+                "type": "bundle",
+                "target": "repo",
+                "bundle": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
+                "session_id": "s-forwardct",
             },
-            "mount_spec": {
-                "working_dir": "repo",
-                "mounts": [
-                    {
-                        "type": "bundle",
-                        "target": "repo",
-                        "bundle": { "type": "workspace_snapshot", "path": "/tmp/work", "details": "future" },
-                        "session_id": "s-forwardct",
-                    },
-                    {"type": "documents", "target": "documents"}
-                ],
-                "note": "future-only key inside spec"
-            },
-            "mode": { "type": "headless", "prompt": "worker prompt" },
-            "future_field": "future"
-        },
+            {"type": "documents", "target": "documents"}
+        ],
+        "working_dir": "repo",
+        "model": "future-model",
+        "mcp_config": null,
+        "idle_timeout_secs": null,
         "resolved_env": { "foo": "bar" },
         "github_token": null,
         "note": "context"

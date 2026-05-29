@@ -2,4 +2,4 @@
 import type { SessionId } from "./SessionId";
 import type { Status } from "./Status";
 
-export type SetSessionStatusResponse = { session_id: SessionId; status: Status };
+export type SetSessionStatusResponse = { session_id: SessionId, status: Status, };

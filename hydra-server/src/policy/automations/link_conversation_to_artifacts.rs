@@ -252,6 +252,7 @@ mod tests {
                 conversation_id: cid,
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
+                greet_user: false,
             },
             None => SessionMode::Headless,
         };

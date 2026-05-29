@@ -5,25 +5,24 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * A single form field.
  */
-export type Field = {
-  /**
-   * Unique key within the form. Used as the key in the response map.
-   */
-  key: string;
-  /**
-   * Human-readable label displayed above the input.
-   */
-  label: string;
-  /**
-   * Optional help text displayed below the input.
-   */
-  description?: string | null;
-  /**
-   * The input type and its configuration.
-   */
-  input: Input;
-  /**
-   * Default value. Type must match the input type.
-   */
-  default?: JsonValue | null;
-};
+export type Field = { 
+/**
+ * Unique key within the form. Used as the key in the response map.
+ */
+key: string, 
+/**
+ * Human-readable label displayed above the input.
+ */
+label: string, 
+/**
+ * Optional help text displayed below the input.
+ */
+description?: string | null, 
+/**
+ * The input type and its configuration.
+ */
+input: Input, 
+/**
+ * Default value. Type must match the input type.
+ */
+default?: JsonValue | null, };

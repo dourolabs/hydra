@@ -14,7 +14,8 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use crate::worker::claude::{Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage};
 use crate::worker::codex::Codex;
 use crate::worker::report::{
-    RunReport, SessionResume, TokenUsage, WorkerEvent, WorkerInputMessage,
+    MaterializeError, NativeResume, RunReport, SessionResume, TokenUsage, WorkerEvent,
+    WorkerInputMessage,
 };
 
 /// Routes a worker invocation to either the Claude or Codex per-model wrapper.
@@ -66,15 +67,34 @@ impl ModelSelector {
 
     /// Run one batch turn. The Codex arm currently has no resume support;
     /// `resume` is logged and dropped if supplied.
-    pub async fn run(&mut self, prompt: &str, resume: Option<SessionResume>) -> Result<RunReport> {
+    pub async fn run(&mut self, prompt: &str, resume: Option<NativeResume>) -> Result<RunReport> {
         match self {
-            Self::Claude(c) => c.run(prompt, resume.map(claude_resume_from_generic)).await,
+            Self::Claude(c) => {
+                let claude_resume = resume.and_then(|r| match r {
+                    NativeResume::Claude(c) => Some(c),
+                    _ => None,
+                });
+                c.run(prompt, claude_resume).await
+            }
             Self::Codex(c) => {
                 if resume.is_some() {
                     tracing::debug!("ModelSelector: dropping `resume` for Codex (out of scope)");
                 }
                 c.run(prompt).await
             }
+        }
+    }
+
+    /// Per-wrapper materialization of a resume blob. Returns `Err(NotImplemented)`
+    /// for wrappers that don't support resume; the caller falls back to
+    /// transcript-primer replay either way.
+    pub async fn try_materialize(
+        &self,
+        state_bytes: &[u8],
+    ) -> std::result::Result<NativeResume, MaterializeError> {
+        match self {
+            Self::Claude(c) => c.try_materialize(state_bytes),
+            Self::Codex(c) => c.try_materialize(state_bytes),
         }
     }
 
@@ -88,11 +108,14 @@ impl ModelSelector {
         output: mpsc::Sender<WorkerEvent>,
         session_id: &SessionId,
         prompt: &str,
-        resume: Option<SessionResume>,
+        resume: Option<NativeResume>,
     ) -> Result<RunReport> {
         match self {
             Self::Claude(c) => {
-                let claude_resume = resume.map(claude_resume_from_generic);
+                let claude_resume = resume.and_then(|r| match r {
+                    NativeResume::Claude(c) => Some(c),
+                    _ => None,
+                });
                 let (claude_in_tx, claude_in_rx) = mpsc::channel::<ClaudeUserMessage>(32);
                 let (claude_out_tx, claude_out_rx) = mpsc::channel::<ClaudeEvent>(32);
                 let in_pump = spawn_input_translator(input, claude_in_tx);
@@ -155,7 +178,10 @@ impl ModelSelector {
     }
 }
 
-/// Translate the generic `SessionResume` into Claude's native shape.
+/// Translate the legacy generic `SessionResume` into Claude's native
+/// shape. Used by older call sites that haven't migrated to
+/// `NativeResume` yet; kept for back-compat.
+#[allow(dead_code)]
 fn claude_resume_from_generic(r: SessionResume) -> ClaudeResume {
     match r {
         SessionResume::BySessionId(id) => ClaudeResume::SessionId(id),

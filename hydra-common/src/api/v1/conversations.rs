@@ -216,41 +216,34 @@ pub struct SendMessageRequest {
     pub content: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum WorkerConnect {
-    Fresh {
-        resume_from_event_index: Option<usize>,
-    },
-    Reconnecting {
-        last_received_event_index: usize,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-pub struct WorkerCatchUp {
-    /// Prior chat events across the conversation's resumption chain (concatenated
-    /// in session creation-time order). The worker uses this to seed its
-    /// primer / context on a fresh start.
-    pub events: Vec<SessionEvent>,
-}
-
 /// Messages sent from the worker to the server over the relay WebSocket.
 ///
-/// This enum distinguishes between session events (which get stored and
-/// broadcast) and session state uploads (binary blobs for resumption).
+/// The first message must be either `Fresh` or `Reconnecting`; the server
+/// bails the connection on any other first-inbound variant. Phase 2's
+/// `Ready` signals that the worker has finished context negotiation and
+/// is awaiting `FirstMessage`. Phase 3 carries session events and
+/// session-state uploads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerMessage {
-    /// A session event (assistant message, suspending, etc.).
+    /// Phase 1 — fresh worker boot; expect `ResumeContext`.
+    Fresh,
+    /// Phase 1 — worker reconnecting after a transient drop; expect `CatchUp`.
+    Reconnecting {
+        last_received_session_event_index: usize,
+    },
+    /// Phase 1 — native resume materialization failed (or blob was absent
+    /// with a prior session id), so the worker asks for the prior
+    /// session's transcript to use as primer text.
+    RequestTranscript { prior_session_id: SessionId },
+    /// Phase 2 — worker has finished context negotiation and is awaiting
+    /// `FirstMessage`.
+    Ready,
+    /// Phase 3 — a session event (assistant message, tool use, etc.).
     Event { event: SessionEvent },
-    /// A session state upload for resumption support.
+    /// Phase 3 (anytime) — a session state upload for resumption support.
     SessionStateUpload {
         #[cfg_attr(feature = "ts", ts(type = "number[]"))]
         data: Vec<u8>,
@@ -293,9 +286,31 @@ pub enum SessionStatePayload {
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
-    /// Catch-up payload sent immediately after the worker connects.
-    CatchUp(WorkerCatchUp),
-    /// A session event forwarded to the worker (e.g., a user message).
+    /// Phase 1 (Fresh) — server-side resume context. `resume_blob` carries
+    /// the persisted opaque bytes (if any); `prior_session_id` is set when
+    /// the session resumes from another. Both are `None` for a brand-new
+    /// session with no lineage.
+    ResumeContext {
+        #[cfg_attr(feature = "ts", ts(type = "number[] | null"))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_blob: Option<Vec<u8>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prior_session_id: Option<SessionId>,
+    },
+    /// Phase 1 (RequestTranscript fallback) — the prior session's event log
+    /// for the worker to use as primer text.
+    Transcript { events: Vec<SessionEvent> },
+    /// Phase 1 (Reconnecting) — events past the worker's last seen index.
+    CatchUp { events: Vec<SessionEvent> },
+    /// Phase 2 — the first prompt + user message, combined into a single
+    /// turn. Either string may be empty; the worker concatenates them with
+    /// a `\n\n` separator (collapsing when one side is empty).
+    FirstMessage {
+        agent_prompt: String,
+        user_message: String,
+    },
+    /// Phase 3 — a session event forwarded to the worker (e.g., a user
+    /// message in interactive mode).
     Event { event: SessionEvent },
 }
 
@@ -353,50 +368,103 @@ mod tests {
     }
 
     #[test]
-    fn worker_connect_fresh_round_trip() {
-        let msg = WorkerConnect::Fresh {
-            resume_from_event_index: Some(5),
+    fn worker_message_fresh_round_trip() {
+        let msg = WorkerMessage::Fresh;
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"fresh""#));
+    }
+
+    #[test]
+    fn worker_message_reconnecting_round_trip() {
+        let msg = WorkerMessage::Reconnecting {
+            last_received_session_event_index: 10,
         };
         let json = serde_json::to_string(&msg).unwrap();
-        let deserialized: WorkerConnect = serde_json::from_str(&json).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"reconnecting""#));
+    }
+
+    #[test]
+    fn worker_message_request_transcript_round_trip() {
+        let msg = WorkerMessage::RequestTranscript {
+            prior_session_id: SessionId::new(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"request_transcript""#));
+    }
+
+    #[test]
+    fn worker_message_ready_round_trip() {
+        let msg = WorkerMessage::Ready;
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"ready""#));
+    }
+
+    #[test]
+    fn server_message_resume_context_round_trip() {
+        let msg = ServerMessage::ResumeContext {
+            resume_blob: Some(vec![1, 2, 3, 4]),
+            prior_session_id: Some(SessionId::new()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"resume_context""#));
+    }
+
+    #[test]
+    fn server_message_resume_context_empty_round_trip() {
+        let msg = ServerMessage::ResumeContext {
+            resume_blob: None,
+            prior_session_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
     }
 
     #[test]
-    fn worker_connect_reconnecting_round_trip() {
-        let msg = WorkerConnect::Reconnecting {
-            last_received_event_index: 10,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let deserialized: WorkerConnect = serde_json::from_str(&json).unwrap();
-        assert_eq!(msg, deserialized);
-    }
-
-    #[test]
-    fn worker_catch_up_round_trip() {
-        let catch_up = WorkerCatchUp {
+    fn server_message_transcript_round_trip() {
+        let msg = ServerMessage::Transcript {
             events: vec![SessionEvent::UserMessage {
-                content: "test".to_string(),
+                content: "primer".to_string(),
                 timestamp: Utc::now(),
             }],
         };
-        let json = serde_json::to_string(&catch_up).unwrap();
-        let deserialized: WorkerCatchUp = serde_json::from_str(&json).unwrap();
-        assert_eq!(catch_up, deserialized);
-        assert!(
-            !json.contains("session_state"),
-            "session_state must never appear on the wire — it caused giant catch-up \
-             frames to exceed the WebSocket size limit (see i-xwmoxzhe); got {json}"
-        );
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"transcript""#));
     }
 
     #[test]
-    fn worker_catch_up_tolerates_legacy_session_state_field() {
-        // Older servers may still ship `session_state` in the catch-up payload.
-        // The new worker ignores it; deserialization must not fail.
-        let json = r#"{"events":[],"session_state":[1,2,3]}"#;
-        let catch_up: WorkerCatchUp = serde_json::from_str(json).unwrap();
-        assert!(catch_up.events.is_empty());
+    fn server_message_first_message_round_trip() {
+        let msg = ServerMessage::FirstMessage {
+            agent_prompt: "you are a helpful assistant".to_string(),
+            user_message: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"first_message""#));
+    }
+
+    #[test]
+    fn server_message_first_message_accepts_empty_strings() {
+        let msg = ServerMessage::FirstMessage {
+            agent_prompt: String::new(),
+            user_message: String::new(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
     }
 
     #[test]
@@ -486,15 +554,16 @@ mod tests {
 
     #[test]
     fn server_message_catch_up_round_trip() {
-        let msg = ServerMessage::CatchUp(WorkerCatchUp {
+        let msg = ServerMessage::CatchUp {
             events: vec![SessionEvent::UserMessage {
                 content: "hi".to_string(),
                 timestamp: Utc::now(),
             }],
-        });
+        };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"catch_up""#));
     }
 
     #[test]
