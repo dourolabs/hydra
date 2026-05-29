@@ -16,12 +16,13 @@ use hydra_common::api::v1::{
     conversations::{ServerMessage, WorkerMessage},
     sessions::SessionEvent,
 };
+use hydra_common::SessionId;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::tungstenite;
 
 use crate::worker::claude::{Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage};
 use crate::worker::codex::Codex;
-use crate::worker::relay_adapter::{spawn_relay_pump, RelayAdapter};
+use crate::worker::relay_adapter::{spawn_relay_pump, ReconnectFn, RelayAdapter};
 use crate::worker::report::{
     MaterializeError, NativeResume, RunReport, SessionResume, TokenUsage, WorkerEvent,
     WorkerInputMessage,
@@ -92,8 +93,15 @@ impl ModelSelector {
 
     /// Drive a complete interactive run on `ws`. Owns Phase 1 / Phase 2 and
     /// then hands the socket to the [`crate::worker::relay_adapter`] pump for
-    /// Phase 3; returns the resulting [`RunReport`].
-    pub async fn drive_interactive<S>(&mut self, mut ws: WorkerSocket<S>) -> Result<RunReport>
+    /// Phase 3; returns the resulting [`RunReport`]. `session_id` and
+    /// `reconnect` are forwarded to the pump so it can reopen the WS on a
+    /// mid-session drop while the model is still running.
+    pub async fn drive_interactive<S>(
+        &mut self,
+        mut ws: WorkerSocket<S>,
+        session_id: SessionId,
+        reconnect: ReconnectFn<S>,
+    ) -> Result<RunReport>
     where
         S: Sink<tungstenite::Message, Error = tungstenite::Error>
             + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
@@ -108,7 +116,7 @@ impl ModelSelector {
             input_rx,
             output_tx,
             pump,
-        } = spawn_relay_pump(ws);
+        } = spawn_relay_pump(ws, session_id, reconnect);
         let report = self
             .run_interactive_with_native(input_rx, output_tx, &prompt, resume)
             .await;
