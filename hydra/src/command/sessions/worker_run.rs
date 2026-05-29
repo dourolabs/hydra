@@ -19,12 +19,13 @@ use hydra_common::{
     SessionId,
 };
 
+use crate::client::RelayWebSocket;
 use crate::command::sessions::mounts;
 use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::util::format_thousands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
-use crate::worker::relay_adapter::{spawn_relay_pump, RelayAdapter};
+use crate::worker::relay_adapter::{spawn_relay_pump, Reconnector, RelayAdapter};
 use crate::worker::report::{NativeResume, RunReport, TokenUsage};
 use crate::worker::socket::WorkerSocket;
 use crate::{
@@ -167,7 +168,11 @@ pub async fn run(
                 let phase1 = phase1_negotiate(&mut selector, &mut ws, &job).await;
                 let run_result = match phase1 {
                     Err(err) => Err(err),
-                    Ok((resume, primer)) => {
+                    Ok(Phase1Outcome {
+                        resume,
+                        primer,
+                        worker_events_sent,
+                    }) => {
                         let first_message = phase2_ready(&mut ws).await;
                         match first_message {
                             Err(err) => Err(err),
@@ -176,11 +181,17 @@ pub async fn run(
                                     concat_first_message(&primer, &agent_prompt, &user_message);
                                 if interactive {
                                     log_status("Phase: interactive agent execution — starting");
+                                    let initial_seq = initial_session_event_seq(
+                                        worker_events_sent,
+                                        &user_message,
+                                    );
+                                    let reconnector =
+                                        build_reconnector(Arc::clone(&client), job.clone());
                                     let RelayAdapter {
                                         input_rx,
                                         output_tx,
                                         pump,
-                                    } = spawn_relay_pump(ws);
+                                    } = spawn_relay_pump(ws, reconnector, initial_seq);
                                     let report = selector
                                         .run_interactive(input_rx, output_tx, &job, &prompt, resume)
                                         .await;
@@ -282,15 +293,25 @@ pub async fn run(
     }
 }
 
+/// Result of Phase 1 — the materialized native resume handle (if any), the
+/// transcript primer events (used as a prepended context when native resume
+/// failed), and a count of `WorkerMessage::Event`s the worker has already
+/// sent during Phase 1 (so the Phase-3 pump's `session_event_seq` can start
+/// from the correct base for `Reconnecting`).
+struct Phase1Outcome {
+    resume: Option<NativeResume>,
+    primer: Vec<SessionEvent>,
+    worker_events_sent: usize,
+}
+
 /// Phase 1 — context negotiation. Sends `Fresh`, awaits `ResumeContext`,
 /// attempts native materialization, and on failure asks for the prior
-/// session's transcript as primer text. Returns the resolved
-/// `NativeResume` (if any) and the primer-event list (may be empty).
+/// session's transcript as primer text.
 async fn phase1_negotiate<S>(
     selector: &mut ModelSelector,
     ws: &mut WorkerSocket<S>,
     _job: &SessionId,
-) -> Result<(Option<NativeResume>, Vec<SessionEvent>)>
+) -> Result<Phase1Outcome>
 where
     S: futures::Sink<
             tokio_tungstenite::tungstenite::Message,
@@ -335,6 +356,7 @@ where
     // worker emits `SessionEvent::Resumed` exactly once on its session
     // log. The server-side dual-write at `spawn_conversation_sessions`
     // is gone; this is the sole source.
+    let mut worker_events_sent: usize = 0;
     if native.is_some() {
         if let Some(from) = prior_session_id.clone() {
             ws.send(WorkerMessage::Event {
@@ -344,6 +366,7 @@ where
                 },
             })
             .await?;
+            worker_events_sent += 1;
         }
     }
 
@@ -368,7 +391,41 @@ where
         Vec::new()
     };
 
-    Ok((native, primer))
+    Ok(Phase1Outcome {
+        resume: native,
+        primer,
+        worker_events_sent,
+    })
+}
+
+/// Compute the initial `session_event_seq` the Phase-3 pump should start with
+/// — i.e. the index of the next session event the worker expects to observe.
+///
+/// Worker-emitted Phase-1 events (today: `SessionEvent::Resumed` after a
+/// successful native materialization) are already in the log. Phase-2's
+/// `FirstMessage.user_message`, when non-empty, was dual-written by the relay
+/// when the `UserMessage` arrived from the user's side before being folded
+/// into `FirstMessage`. Each adds one to the base.
+fn initial_session_event_seq(worker_events_sent_in_phase1: usize, user_message: &str) -> usize {
+    let from_first_message = if user_message.is_empty() { 0 } else { 1 };
+    worker_events_sent_in_phase1 + from_first_message
+}
+
+/// Build the relay-pump reconnector for production: a `Fn() -> Future` that
+/// reopens the relay WebSocket through the same client and session id used to
+/// open the original socket. The pump invokes it on a mid-run WS drop (§1.6).
+fn build_reconnector(
+    client: Arc<dyn HydraClientInterface>,
+    job: SessionId,
+) -> Reconnector<RelayWebSocket> {
+    Arc::new(move || {
+        let client = Arc::clone(&client);
+        let job = job.clone();
+        Box::pin(async move {
+            let stream = client.connect_relay_websocket(&job).await?;
+            Ok(WorkerSocket::new(stream))
+        })
+    })
 }
 
 /// Phase 2 — send `Ready`, await `FirstMessage`, return its contents.

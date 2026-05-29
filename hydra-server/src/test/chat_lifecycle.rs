@@ -1562,6 +1562,195 @@ async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Resul
     Ok(())
 }
 
+/// Mid-session WS drop → reconnect via `WorkerMessage::Reconnecting`.
+///
+/// Drives the full acceptance flow from [[i-mppcbsgs]]:
+///
+/// 1. A fake worker connects with `Fresh`, completes Phase 2 (FirstMessage
+///    delivered by folding the initial queued UserMessage), and emits one
+///    `AssistantMessage` Phase-3 event so the session log contains two
+///    entries (`UserMessage` at index 0, `AssistantMessage` at index 1).
+/// 2. The WS is dropped without sending `Suspending` (simulating a network
+///    drop while the model is still running).
+/// 3. A fresh UserMessage is sent through `send_message` during the
+///    disconnect window. It queues in the chat-relay's `PendingConnection`.
+/// 4. A new WS is opened and the worker sends
+///    `WorkerMessage::Reconnecting { last_received_session_event_index: 1 }`
+///    — its counter after the initial UserMessage and the emitted
+///    AssistantMessage.
+/// 5. The reply `CatchUp` carries only the post-index events from the log
+///    (none yet, since the queued UserMessage hasn't been drained), and the
+///    drained pending UserMessage is then delivered as a live
+///    `ServerMessage::Event`.
+/// 6. A subsequent `send_message` flows through the live socket as a single
+///    `Event` — no duplicates on either side.
+#[tokio::test]
+async fn worker_reconnecting_replays_only_post_index_events_with_no_duplicates()
+-> anyhow::Result<()> {
+    init_test_tracing();
+    let (state, store) = state_with_idle_timeout_secs(60);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let client = test_client();
+    use crate::domain::users::Username;
+
+    // Set up a fresh interactive conversation with an initial user message
+    // so Phase 2 has something to fold into FirstMessage.
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("first-turn".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    // --- Phase 1 + 2 on the original WS. ---
+    let mut ws1 = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws1, WorkerMessage::Fresh).await?;
+    let first = send_ready_and_await_first_message(&mut ws1, Duration::from_secs(2)).await?;
+    let (_agent_prompt, user_message) =
+        first.ok_or_else(|| anyhow::anyhow!("expected FirstMessage; got none"))?;
+    assert_eq!(
+        user_message, "first-turn",
+        "Phase 2 must fold the queued UserMessage into FirstMessage"
+    );
+
+    // Emit one AssistantMessage so the session log has two entries
+    // (UserMessage @0, AssistantMessage @1) before the WS drops.
+    let assistant_event = WorkerMessage::Event {
+        event: SessionEvent::AssistantMessage {
+            content: "hi there".to_string(),
+            timestamp: chrono::Utc::now(),
+        },
+    };
+    send_worker_message(&mut ws1, assistant_event).await?;
+
+    // Wait for the dual-write of "first-turn" + the AssistantMessage append
+    // to land before measuring the log size — events take a hop through
+    // the relay's `handle_worker_event` task.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let events = store.get_session_events(&session_id).await?;
+        if events.len() >= 2 {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "expected at least 2 session events (UserMessage + AssistantMessage); got {}",
+                events.len()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    // --- Drop the WS without sending Suspending — simulating a transient
+    // network drop while the model is still running. ---
+    drop(ws1);
+
+    // Give the server-side pump_phase3 a moment to observe the close and
+    // run cleanup (which drops the chat_relay entry). Otherwise a
+    // send_message racing with cleanup might still land on the old
+    // `ActiveConnection` channel.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        if state
+            .chat_relay_map
+            .active_session_id(&conversation_id)
+            .is_none()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    // --- Send a UserMessage during the disconnect window. With no active
+    // entry, chat_relay's `send_event_to_conversation` re-creates a
+    // `PendingConnection` and queues the event. ---
+    state
+        .send_message(
+            &conversation_id,
+            "post-drop".to_string(),
+            ActorRef::test(),
+            Username::from("test-creator"),
+        )
+        .await?;
+
+    // --- Reconnect with `Reconnecting`. The worker's `session_event_seq`
+    // after Phase 2 + one AssistantMessage emission is 2 (UserMessage @0
+    // from FirstMessage + AssistantMessage @1), so the last received
+    // index is 1. ---
+    let mut ws2 = connect_relay(&server.base_url(), &session_id).await?;
+    let handshake = worker_handshake(
+        &mut ws2,
+        WorkerMessage::Reconnecting {
+            last_received_session_event_index: 1,
+        },
+    )
+    .await?;
+
+    // CatchUp must contain only events strictly past index 1. The queued
+    // "post-drop" UserMessage was held in `PendingConnection` (NOT yet
+    // dual-written), so the CatchUp slice itself is empty.
+    assert!(
+        handshake.events.is_empty(),
+        "CatchUp must carry only post-index session-log events; \
+         the queued UserMessage is delivered as a live Event after set_active. \
+         got: {:?}",
+        handshake.events
+    );
+
+    // The drained pending UserMessage now arrives as a live `Event` push.
+    let post_catch_up = drain_server_messages(&mut ws2, Duration::from_secs(2)).await?;
+    let drained_user: Vec<&str> = post_catch_up
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. },
+            } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        drained_user,
+        vec!["post-drop"],
+        "post-drop UserMessage must arrive exactly once on the reconnected socket; got {post_catch_up:?}"
+    );
+
+    // --- Send another UserMessage now that we're live again; it must
+    // arrive once without duplicating the earlier post-drop send. ---
+    state
+        .send_message(
+            &conversation_id,
+            "after-reconnect".to_string(),
+            ActorRef::test(),
+            Username::from("test-creator"),
+        )
+        .await?;
+
+    let live = drain_server_messages(&mut ws2, Duration::from_secs(2)).await?;
+    let live_users: Vec<&str> = live
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. },
+            } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        live_users,
+        vec!["after-reconnect"],
+        "subsequent UserMessage must arrive once on the live socket; got {live:?}"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn conversation_marked_idle_when_companion_session_reaches_terminal_status()
 -> anyhow::Result<()> {
