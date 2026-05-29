@@ -393,11 +393,6 @@ impl Claude {
         prompt: &str,
         resume: Option<ClaudeResume>,
     ) -> Result<RunReport> {
-        // `prompt` is not consumed here — the relay-side adapter applies the
-        // agent-prompt prepend to the first `WorkerInputMessage` before we
-        // ever see it. Kept on the signature for symmetry with `run`.
-        let _ = prompt;
-
         let resume_uuid = match resume {
             Some(ClaudeResume::SessionId(uuid)) => Some(uuid),
             Some(ClaudeResume::TranscriptFile(path)) => Some(install_claude_transcript_file(
@@ -464,6 +459,27 @@ impl Claude {
         // input channel closes so Claude observes EOF on stdin.
         let mut stdin_open = true;
         let mut stdin_taken: Option<tokio::process::ChildStdin> = Some(claude_stdin);
+
+        // Feed the first user message into Claude's stdin using the same wire
+        // shape `spawn_input_translator` uses for subsequent in-session
+        // messages. Without this, Claude blocks in `epoll_wait` since nothing
+        // else delivers the initial prompt.
+        if let Some(stdin) = stdin_taken.as_mut() {
+            let input_line = build_claude_input(prompt);
+            if stdin.write_all(input_line.as_bytes()).await.is_err() {
+                eprintln!(
+                    "Failed to write initial prompt to Claude stdin (process may have exited)"
+                );
+                stdin_open = false;
+                stdin_taken = None;
+            } else if stdin.flush().await.is_err() {
+                eprintln!("Failed to flush initial prompt to Claude stdin");
+                stdin_open = false;
+                stdin_taken = None;
+            } else {
+                println!("Forwarded initial user message to Claude stdin");
+            }
+        }
 
         let idle_timeout = self.idle_timeout;
         let idle_deadline = tokio::time::sleep(idle_timeout);
