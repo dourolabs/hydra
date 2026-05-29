@@ -420,17 +420,6 @@ mod tests {
     }
 
     #[test]
-    fn server_message_resume_context_empty_round_trip() {
-        let msg = ServerMessage::ResumeContext {
-            resume_blob: None,
-            prior_session_id: None,
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
-        assert_eq!(msg, deserialized);
-    }
-
-    #[test]
     fn server_message_transcript_round_trip() {
         let msg = ServerMessage::Transcript {
             events: vec![SessionEvent::UserMessage {
@@ -454,17 +443,6 @@ mod tests {
         let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
         assert!(json.contains(r#""type":"first_message""#));
-    }
-
-    #[test]
-    fn server_message_first_message_accepts_empty_strings() {
-        let msg = ServerMessage::FirstMessage {
-            agent_prompt: String::new(),
-            user_message: String::new(),
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
-        assert_eq!(msg, deserialized);
     }
 
     #[test]

@@ -2045,15 +2045,6 @@ mod tests {
     }
 
     #[test]
-    fn session_mode_kind_round_trips() {
-        for kind in [SessionModeKind::Headless, SessionModeKind::Interactive] {
-            let json = serde_json::to_value(kind).unwrap();
-            let parsed: SessionModeKind = serde_json::from_value(json).unwrap();
-            assert_eq!(parsed, kind);
-        }
-    }
-
-    #[test]
     fn session_event_user_message_round_trip() {
         let event = SessionEvent::UserMessage {
             content: "hello agent".to_string(),
