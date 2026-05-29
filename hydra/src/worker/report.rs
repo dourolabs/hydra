@@ -2,9 +2,10 @@
 //! by the worker. See `designs/worker-model-commands-refactor.md` §3–4 for the
 //! design that motivates this module.
 //!
-//! `RunReport` is the value `ModelSelector::run` / `run_interactive` return.
-//! The generic types (`SessionResume`, `WorkerInputMessage`, `WorkerEvent`)
-//! live here as the model-agnostic surface.
+//! `RunReport` is the value `ModelSelector::drive_headless` /
+//! `drive_interactive` return. The generic types (`SessionResume`,
+//! `WorkerInputMessage`, `WorkerEvent`) live here as the model-agnostic
+//! surface.
 
 use std::path::PathBuf;
 
@@ -14,7 +15,7 @@ use crate::worker::claude::ClaudeResume;
 use crate::worker::codex::CodexResume;
 
 /// Result of one batch or interactive worker run, returned by
-/// `ModelSelector::run` / `ModelSelector::run_interactive`.
+/// `ModelSelector::drive_headless` / `ModelSelector::drive_interactive`.
 #[derive(Debug, Clone)]
 pub struct RunReport {
     /// The final assistant text emitted by the model. Used to populate
@@ -46,8 +47,7 @@ pub enum SessionStateFormat {
     CodexJsonl,
 }
 
-/// Generic resume input, used by `ModelSelector::run` / `run_interactive` (PR
-/// 2). Defined in PR 1 so PR 2 can wire it without re-defining.
+/// Generic resume input.
 #[derive(Debug, Clone)]
 pub enum SessionResume {
     /// Resume by the provider's internal session id.
@@ -58,8 +58,8 @@ pub enum SessionResume {
 }
 
 /// One user message destined for the model. Generic over the model — each
-/// `ModelSelector::run_interactive` arm translates this into its model-native
-/// input message shape.
+/// `ModelSelector::drive_interactive` arm translates this into its
+/// model-native input message shape.
 #[derive(Debug, Clone)]
 pub struct WorkerInputMessage {
     pub content: String,

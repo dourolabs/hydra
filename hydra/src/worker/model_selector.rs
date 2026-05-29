@@ -3,26 +3,36 @@
 //! the generic `WorkerInputMessage` / `WorkerEvent` vocabulary into each
 //! model's native I/O types inside the `match` arms.
 //!
-//! See `designs/worker-model-commands-refactor.md` §3 and §6.
+//! See `designs/worker-model-commands-refactor.md` §3 and §6, and
+//! `designs/sessions-worker-run-interface.md` §3.1 / §3.2 for the
+//! `drive_headless` / `drive_interactive` dispatch surface that owns the
+//! three WS phases.
 
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Result};
-use hydra_common::SessionId;
+use futures::{Sink, Stream};
+use hydra_common::api::v1::{
+    conversations::{ServerMessage, WorkerMessage},
+    sessions::SessionEvent,
+};
 use tokio::{sync::mpsc, task::JoinHandle};
+use tokio_tungstenite::tungstenite;
 
 use crate::worker::claude::{Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage};
 use crate::worker::codex::Codex;
+use crate::worker::relay_adapter::{spawn_relay_pump, RelayAdapter};
 use crate::worker::report::{
     MaterializeError, NativeResume, RunReport, SessionResume, TokenUsage, WorkerEvent,
     WorkerInputMessage,
 };
+use crate::worker::socket::WorkerSocket;
 
 /// Routes a worker invocation to either the Claude or Codex per-model wrapper.
 ///
-/// Constructed once per worker via [`ModelSelector::from_context`]; `run` /
-/// `run_interactive` may be called any number of times against the same
-/// instance.
+/// Constructed once per worker via [`ModelSelector::from_context`]; the public
+/// surface is [`Self::drive_headless`] / [`Self::drive_interactive`], which
+/// own all three WS phases (negotiate, first-message, model-stream pump).
 pub enum ModelSelector {
     Claude(Claude),
     Codex(Codex),
@@ -65,9 +75,135 @@ impl ModelSelector {
         }
     }
 
+    /// Drive a complete headless (non-interactive) run on `ws`. Owns Phase 1
+    /// (context negotiation), Phase 2 (first-message), and the per-wrapper
+    /// model invocation; returns the resulting [`RunReport`].
+    pub async fn drive_headless<S>(&mut self, mut ws: WorkerSocket<S>) -> Result<RunReport>
+    where
+        S: Sink<tungstenite::Message, Error = tungstenite::Error>
+            + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+            + Unpin,
+    {
+        let (resume, primer) = self.phase1_negotiate(&mut ws).await?;
+        let (agent_prompt, user_message) = phase2_ready(&mut ws).await?;
+        let prompt = concat_first_message(&primer, &agent_prompt, &user_message);
+        self.run_with_native(&prompt, resume).await
+    }
+
+    /// Drive a complete interactive run on `ws`. Owns Phase 1 / Phase 2 and
+    /// then hands the socket to the [`crate::worker::relay_adapter`] pump for
+    /// Phase 3; returns the resulting [`RunReport`].
+    pub async fn drive_interactive<S>(&mut self, mut ws: WorkerSocket<S>) -> Result<RunReport>
+    where
+        S: Sink<tungstenite::Message, Error = tungstenite::Error>
+            + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+            + Unpin
+            + Send
+            + 'static,
+    {
+        let (resume, primer) = self.phase1_negotiate(&mut ws).await?;
+        let (agent_prompt, user_message) = phase2_ready(&mut ws).await?;
+        let prompt = concat_first_message(&primer, &agent_prompt, &user_message);
+        let RelayAdapter {
+            input_rx,
+            output_tx,
+            pump,
+        } = spawn_relay_pump(ws);
+        let report = self
+            .run_interactive_with_native(input_rx, output_tx, &prompt, resume)
+            .await;
+        let _ = pump.await;
+        report
+    }
+
+    /// Phase 1 — context negotiation. Sends `Fresh`, awaits `ResumeContext`,
+    /// attempts native materialization, and on failure asks for the prior
+    /// session's transcript as primer text. Returns the resolved
+    /// [`NativeResume`] (if any) and the primer-event list (may be empty).
+    async fn phase1_negotiate<S>(
+        &mut self,
+        ws: &mut WorkerSocket<S>,
+    ) -> Result<(Option<NativeResume>, Vec<SessionEvent>)>
+    where
+        S: Sink<tungstenite::Message, Error = tungstenite::Error>
+            + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+            + Unpin,
+    {
+        ws.send(WorkerMessage::Fresh).await?;
+        let resume_ctx = ws
+            .recv()
+            .await?
+            .ok_or_else(|| anyhow!("ws closed before ResumeContext"))?;
+        let (resume_blob, prior_session_id) = match resume_ctx {
+            ServerMessage::ResumeContext {
+                resume_blob,
+                prior_session_id,
+            } => (resume_blob, prior_session_id),
+            other => return Err(anyhow!("expected ResumeContext, got {other:?}")),
+        };
+
+        // Try native materialization first; on Err, fall back to transcript replay.
+        let (native, need_transcript) = match resume_blob {
+            Some(bytes) => match self.try_materialize_resume(&bytes).await {
+                Ok(native) => (Some(native), false),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        prior_session_id = ?prior_session_id,
+                        "native resume materialization failed; falling back to transcript replay",
+                    );
+                    (None, prior_session_id.is_some())
+                }
+            },
+            None => (None, prior_session_id.is_some()),
+        };
+
+        // Per design §1.4 / §6: when native materialization succeeded the
+        // worker emits `SessionEvent::Resumed` exactly once on its session
+        // log.
+        if native.is_some() {
+            if let Some(from) = prior_session_id.clone() {
+                ws.send(WorkerMessage::Event {
+                    event: SessionEvent::Resumed {
+                        from_session_id: from,
+                        timestamp: chrono::Utc::now(),
+                    },
+                })
+                .await?;
+            }
+        }
+
+        let primer = if need_transcript {
+            if let Some(prior) = prior_session_id {
+                ws.send(WorkerMessage::RequestTranscript {
+                    prior_session_id: prior,
+                })
+                .await?;
+                let resp = ws
+                    .recv()
+                    .await?
+                    .ok_or_else(|| anyhow!("ws closed before Transcript"))?;
+                match resp {
+                    ServerMessage::Transcript { events } => events,
+                    other => return Err(anyhow!("expected Transcript, got {other:?}")),
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        Ok((native, primer))
+    }
+
     /// Run one batch turn. The Codex arm currently has no resume support;
     /// `resume` is logged and dropped if supplied.
-    pub async fn run(&mut self, prompt: &str, resume: Option<NativeResume>) -> Result<RunReport> {
+    async fn run_with_native(
+        &mut self,
+        prompt: &str,
+        resume: Option<NativeResume>,
+    ) -> Result<RunReport> {
         match self {
             Self::Claude(c) => {
                 let claude_resume = resume.and_then(|r| match r {
@@ -85,10 +221,10 @@ impl ModelSelector {
         }
     }
 
-    /// Per-wrapper materialization of a resume blob. Returns `Err(NotImplemented)`
-    /// for wrappers that don't support resume; the caller falls back to
-    /// transcript-primer replay either way.
-    pub async fn try_materialize(
+    /// Per-wrapper materialization of a resume blob. Returns
+    /// `Err(NotImplemented)` for wrappers that don't support resume; the
+    /// caller falls back to transcript-primer replay either way.
+    async fn try_materialize_resume(
         &self,
         state_bytes: &[u8],
     ) -> std::result::Result<NativeResume, MaterializeError> {
@@ -102,11 +238,10 @@ impl ModelSelector {
     /// (`codex` does not have a long-lived stdin/stdout shape); the caller is
     /// expected to kind-check before opening the relay WebSocket so this is a
     /// belt-and-suspenders guard.
-    pub async fn run_interactive(
+    async fn run_interactive_with_native(
         &mut self,
-        input: mpsc::Receiver<WorkerInputMessage>,
-        output: mpsc::Sender<WorkerEvent>,
-        session_id: &SessionId,
+        input_rx: mpsc::Receiver<WorkerInputMessage>,
+        output_tx: mpsc::Sender<WorkerEvent>,
         prompt: &str,
         resume: Option<NativeResume>,
     ) -> Result<RunReport> {
@@ -118,16 +253,10 @@ impl ModelSelector {
                 });
                 let (claude_in_tx, claude_in_rx) = mpsc::channel::<ClaudeUserMessage>(32);
                 let (claude_out_tx, claude_out_rx) = mpsc::channel::<ClaudeEvent>(32);
-                let in_pump = spawn_input_translator(input, claude_in_tx);
-                let out_pump = spawn_output_translator(claude_out_rx, output);
+                let in_pump = spawn_input_translator(input_rx, claude_in_tx);
+                let out_pump = spawn_output_translator(claude_out_rx, output_tx);
                 let report = c
-                    .run_interactive(
-                        claude_in_rx,
-                        claude_out_tx,
-                        session_id,
-                        prompt,
-                        claude_resume,
-                    )
+                    .run_interactive(claude_in_rx, claude_out_tx, prompt, claude_resume)
                     .await;
                 let _ = in_pump.await;
                 let _ = out_pump.await;
@@ -176,6 +305,75 @@ impl ModelSelector {
         tracing::warn!(model = %raw, "ModelSelector: model name unrecognized, defaulting to Codex");
         Kind::Codex
     }
+}
+
+/// Phase 2 — send `Ready`, await `FirstMessage`, return its contents.
+async fn phase2_ready<S>(ws: &mut WorkerSocket<S>) -> Result<(String, String)>
+where
+    S: Sink<tungstenite::Message, Error = tungstenite::Error>
+        + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+        + Unpin,
+{
+    ws.send(WorkerMessage::Ready).await?;
+    let msg = ws
+        .recv()
+        .await?
+        .ok_or_else(|| anyhow!("ws closed before FirstMessage"))?;
+    match msg {
+        ServerMessage::FirstMessage {
+            agent_prompt,
+            user_message,
+        } => Ok((agent_prompt, user_message)),
+        other => Err(anyhow!("expected FirstMessage, got {other:?}")),
+    }
+}
+
+/// Concatenate the optional primer (from a transcript-replay fallback),
+/// the agent prompt, and the user message into one model-input string,
+/// collapsing empty pieces.
+fn concat_first_message(
+    primer_events: &[SessionEvent],
+    agent_prompt: &str,
+    user_message: &str,
+) -> String {
+    let primer = primer_to_text(primer_events);
+    let base = match (agent_prompt, user_message) {
+        ("", "") => String::new(),
+        ("", u) => u.to_string(),
+        (p, "") => p.to_string(),
+        (p, u) => format!("{p}\n\n{u}"),
+    };
+    if primer.is_empty() {
+        base
+    } else if base.is_empty() {
+        primer
+    } else {
+        format!("{primer}\n\n{base}")
+    }
+}
+
+fn primer_to_text(events: &[SessionEvent]) -> String {
+    let mut out = String::new();
+    for e in events {
+        match e {
+            SessionEvent::UserMessage { content, .. } => {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str("User: ");
+                out.push_str(content);
+            }
+            SessionEvent::AssistantMessage { content, .. } => {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str("Assistant: ");
+                out.push_str(content);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Translate a generic `SessionResume` into Claude's native shape.
@@ -446,6 +644,17 @@ mod tests {
             }
             other => panic!("expected ToolUse, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn concat_first_message_collapses_empty_pieces() {
+        assert_eq!(concat_first_message(&[], "", ""), "");
+        assert_eq!(concat_first_message(&[], "prompt", ""), "prompt");
+        assert_eq!(concat_first_message(&[], "", "user"), "user");
+        assert_eq!(
+            concat_first_message(&[], "prompt", "user"),
+            "prompt\n\nuser"
+        );
     }
 
     #[tokio::test]

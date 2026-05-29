@@ -1,9 +1,9 @@
 //! Phase-3 bidirectional pump for the interactive worker lifecycle.
 //!
-//! Per `designs/sessions-worker-run-interface.md` §3.2, after `worker_run`
-//! drives Phase 1 (context negotiation) and Phase 2 (first message) on the
-//! `WorkerSocket`, it hands the socket to this pump and the per-wrapper
-//! input/output channels do the rest:
+//! Per `designs/sessions-worker-run-interface.md` §3.2, after
+//! `ModelSelector::drive_interactive` runs Phase 1 (context negotiation) and
+//! Phase 2 (first message) on the `WorkerSocket`, it hands the socket to this
+//! pump and the per-wrapper input/output channels do the rest:
 //!
 //! * Inbound `ServerMessage::Event { SessionEvent::UserMessage }` is
 //!   translated into a `WorkerInputMessage` and pushed onto `input_tx`.
@@ -26,12 +26,13 @@ use crate::worker::socket::WorkerSocket;
 /// Handles returned by [`spawn_relay_pump`].
 pub struct RelayAdapter {
     /// Caller-side input receiver. Carries `WorkerInputMessage`s produced from
-    /// inbound `ServerMessage::Event { SessionEvent::UserMessage }`. The
-    /// caller passes this to `ModelSelector::run_interactive`.
+    /// inbound `ServerMessage::Event { SessionEvent::UserMessage }`.
+    /// `ModelSelector::drive_interactive` forwards this into the per-wrapper
+    /// interactive runner.
     pub input_rx: mpsc::Receiver<WorkerInputMessage>,
-    /// Caller-side output sender. The caller passes this to
-    /// `ModelSelector::run_interactive`; the model emits `WorkerEvent`s on it
-    /// which the pump forwards onto the WebSocket.
+    /// Caller-side output sender. `ModelSelector::drive_interactive` hands
+    /// this to the per-wrapper interactive runner, which emits `WorkerEvent`s
+    /// on it; the pump forwards them onto the WebSocket.
     pub output_tx: mpsc::Sender<WorkerEvent>,
     /// Join handle for the pump task. The pump ends when either the
     /// WebSocket closes or `output_tx` is dropped.
