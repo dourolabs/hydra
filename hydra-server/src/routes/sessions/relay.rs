@@ -211,7 +211,13 @@ async fn handle_fresh_path(
 
     // Register the active connection so subsequent UserMessages on this
     // conversation reach us via the relay. Headless sessions skip this.
-    let (to_worker, mut to_worker_rx) = mpsc::channel::<ServerMessage>(TO_WORKER_CAPACITY);
+    // The entry starts in the `Negotiating` phase, so drained pending
+    // events and any concurrent `send_event_to_conversation` arrivals
+    // are HELD in the relay buffer until `mark_ready` below — this is
+    // what prevents the worker (which strictly expects `Transcript` /
+    // `FirstMessage` during Phase 1/2) from seeing pre-Phase-1 `Event`
+    // pushes.
+    let (to_worker, to_worker_rx) = mpsc::channel::<ServerMessage>(TO_WORKER_CAPACITY);
     let mut drained_pending: Vec<(SessionEvent, usize)> = Vec::new();
     if let Some(conv_id) = conversation_id.as_ref() {
         drained_pending = state
@@ -220,132 +226,137 @@ async fn handle_fresh_path(
             .await;
     }
 
-    // Forward any pre-Ready drained UserMessages as Event pushes;
-    // they'll be re-folded into FirstMessage at the handle_ready step if
-    // the mode calls for it. (In practice this happens later via
-    // pending_first_message — drained messages here are the rare case
-    // where a UserMessage arrived before set_active.)
-    let mut drained_user_messages: Vec<String> = Vec::new();
-    for (event, event_index) in drained_pending {
-        if let SessionEvent::UserMessage { content, .. } = &event {
-            drained_user_messages.push(content.clone());
-        }
-        let msg = ServerMessage::Event { event, event_index };
-        if !send_json(&mut ws_sender, &msg).await {
-            cleanup(&state, conversation_id.as_ref());
-            return;
-        }
-    }
+    // Collect drained UserMessage contents so handle_ready can fold the
+    // first one into `FirstMessage`. The Event messages themselves live
+    // in the relay's Negotiating buffer and will be flushed by
+    // `mark_ready` once handle_ready has sent `FirstMessage`.
+    let drained_user_messages: Vec<String> = drained_pending
+        .iter()
+        .filter_map(|(event, _)| match event {
+            SessionEvent::UserMessage { content, .. } => Some(content.clone()),
+            _ => None,
+        })
+        .collect();
 
     // Phase-1/Phase-2 loop: handle RequestTranscript fallback and Ready.
+    // We deliberately do NOT `select!` on `to_worker_rx` here — while
+    // in Negotiating, the chat_relay buffers events instead of pushing
+    // through `to_worker`, so nothing should arrive on the rx during
+    // this loop.
     loop {
-        tokio::select! {
-            ws_msg = ws_receiver.next() => {
-                match ws_msg {
-                    Some(Ok(Message::Text(text))) => {
-                        match serde_json::from_str::<WorkerMessage>(&text) {
-                            Ok(WorkerMessage::RequestTranscript { prior_session_id }) => {
-                                let events = match collect_transcript(&state, &prior_session_id).await {
-                                    Ok(events) => events,
-                                    Err(err) => {
-                                        error!(%session_id, error = %err, "transcript load failed");
-                                        let _ = ws_sender.send(Message::Close(None)).await;
-                                        cleanup(&state, conversation_id.as_ref());
-                                        return;
-                                    }
-                                };
-                                let transcript = ServerMessage::Transcript { events };
-                                if !send_json(&mut ws_sender, &transcript).await {
-                                    cleanup(&state, conversation_id.as_ref());
-                                    return;
-                                }
-                            }
-                            Ok(WorkerMessage::Ready) => {
-                                if !handle_ready(
-                                    &mut ws_sender,
-                                    &state,
-                                    &session_id,
-                                    &session,
-                                    drained_user_messages.first().cloned(),
-                                )
-                                .await
-                                {
-                                    cleanup(&state, conversation_id.as_ref());
-                                    return;
-                                }
-                                break;
-                            }
-                            // Phase-3 variants arriving before Ready are
-                            // tolerated; the worker may begin emitting
-                            // events as soon as Phase 1 completes.
-                            Ok(WorkerMessage::Event { event }) => {
-                                if let Err(err) = handle_worker_event(
-                                    &state,
-                                    conversation_id.as_ref(),
-                                    &session_id,
-                                    &actor_ref,
-                                    event,
-                                ).await {
-                                    error!(%session_id, error = %err, "failed to handle worker event in Phase 1/2");
-                                }
-                            }
-                            Ok(WorkerMessage::SessionStateUpload { data }) => {
-                                let bytes = data.len();
-                                info!(%session_id, bytes, "received early SessionStateUpload");
-                                if let Err(err) = state
-                                    .store
-                                    .store_session_state_with_actor(
-                                        &session_id,
-                                        data,
-                                        actor_ref.clone(),
-                                    )
-                                    .await
-                                {
-                                    warn!(%session_id, bytes, error = %err, "store session_state failed (early)");
-                                }
-                            }
-                            Ok(other) => {
-                                error!(%session_id, ?other, "unexpected WorkerMessage in Phase 1/2");
+        match ws_receiver.next().await {
+            Some(Ok(Message::Text(text))) => {
+                match serde_json::from_str::<WorkerMessage>(&text) {
+                    Ok(WorkerMessage::RequestTranscript { prior_session_id }) => {
+                        let events = match collect_transcript(&state, &prior_session_id).await {
+                            Ok(events) => events,
+                            Err(err) => {
+                                error!(%session_id, error = %err, "transcript load failed");
                                 let _ = ws_sender.send(Message::Close(None)).await;
                                 cleanup(&state, conversation_id.as_ref());
                                 return;
                             }
-                            Err(err) => {
-                                warn!(%session_id, error = %err, "invalid worker message in Phase 1/2; ignoring");
+                        };
+                        let transcript = ServerMessage::Transcript { events };
+                        if !send_json(&mut ws_sender, &transcript).await {
+                            cleanup(&state, conversation_id.as_ref());
+                            return;
+                        }
+                    }
+                    Ok(WorkerMessage::Ready) => {
+                        let outcome = handle_ready(
+                            &mut ws_sender,
+                            &state,
+                            &session_id,
+                            &session,
+                            drained_user_messages.first().cloned(),
+                        )
+                        .await;
+                        match outcome {
+                            ReadyOutcome::FirstMessageSent {
+                                folded_user_message,
+                            } => {
+                                // Phase 1/2 is done from our side. Flush any
+                                // buffered events through the WS now — they
+                                // come after FirstMessage in worker order.
+                                if let Some(conv_id) = conversation_id.as_ref() {
+                                    let buffered = state
+                                        .chat_relay_map
+                                        .mark_ready(conv_id, folded_user_message.as_deref());
+                                    for msg in buffered {
+                                        if !send_json(&mut ws_sender, &msg).await {
+                                            cleanup(&state, conversation_id.as_ref());
+                                            return;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                            ReadyOutcome::Stashed => {
+                                // No FirstMessage sent yet — wait for a
+                                // user POST to trigger the fold. The
+                                // chat_relay's send_event_to_conversation
+                                // path handles the transition when that
+                                // happens.
+                                break;
+                            }
+                            ReadyOutcome::Failed => {
+                                cleanup(&state, conversation_id.as_ref());
+                                return;
                             }
                         }
                     }
-                    Some(Ok(Message::Close(_))) | None => {
-                        info!(%session_id, "WebSocket closed before Phase 3");
+                    // Phase-3 variants arriving before Ready are
+                    // tolerated; the worker may begin emitting
+                    // events as soon as Phase 1 completes.
+                    Ok(WorkerMessage::Event { event }) => {
+                        if let Err(err) = handle_worker_event(
+                            &state,
+                            conversation_id.as_ref(),
+                            &session_id,
+                            &actor_ref,
+                            event,
+                        )
+                        .await
+                        {
+                            error!(%session_id, error = %err, "failed to handle worker event in Phase 1/2");
+                        }
+                    }
+                    Ok(WorkerMessage::SessionStateUpload { data }) => {
+                        let bytes = data.len();
+                        info!(%session_id, bytes, "received early SessionStateUpload");
+                        if let Err(err) = state
+                            .store
+                            .store_session_state_with_actor(&session_id, data, actor_ref.clone())
+                            .await
+                        {
+                            warn!(%session_id, bytes, error = %err, "store session_state failed (early)");
+                        }
+                    }
+                    Ok(other) => {
+                        error!(%session_id, ?other, "unexpected WorkerMessage in Phase 1/2");
+                        let _ = ws_sender.send(Message::Close(None)).await;
                         cleanup(&state, conversation_id.as_ref());
                         return;
                     }
-                    Some(Ok(Message::Ping(data))) => {
-                        let _ = ws_sender.send(Message::Pong(data)).await;
-                    }
-                    Some(Ok(_)) => {}
-                    Some(Err(err)) => {
-                        error!(%session_id, error = %err, "WebSocket error before Phase 3");
-                        cleanup(&state, conversation_id.as_ref());
-                        return;
+                    Err(err) => {
+                        warn!(%session_id, error = %err, "invalid worker message in Phase 1/2; ignoring");
                     }
                 }
             }
-            // While waiting for Ready, any inbound user message from the
-            // relay should also be queued onto drained_user_messages so
-            // we can fold the first one into FirstMessage at Ready time.
-            forward = to_worker_rx.recv() => {
-                if let Some(msg) = forward {
-                    if let ServerMessage::Event {
-                        event: SessionEvent::UserMessage { content, .. }, ..
-                    } = &msg {
-                        drained_user_messages.push(content.clone());
-                    }
-                    if !send_json(&mut ws_sender, &msg).await {
-                        cleanup(&state, conversation_id.as_ref());
-                        return;
-                    }
-                }
+            Some(Ok(Message::Close(_))) | None => {
+                info!(%session_id, "WebSocket closed before Phase 3");
+                cleanup(&state, conversation_id.as_ref());
+                return;
+            }
+            Some(Ok(Message::Ping(data))) => {
+                let _ = ws_sender.send(Message::Pong(data)).await;
+            }
+            Some(Ok(_)) => {}
+            Some(Err(err)) => {
+                error!(%session_id, error = %err, "WebSocket error before Phase 3");
+                cleanup(&state, conversation_id.as_ref());
+                return;
             }
         }
     }
@@ -390,12 +401,18 @@ async fn handle_reconnecting_path(
     let conversation_id = session.conversation_id().cloned();
     let (to_worker, to_worker_rx) = mpsc::channel::<ServerMessage>(TO_WORKER_CAPACITY);
     if let Some(conv_id) = conversation_id.as_ref() {
-        let drained = state
+        let _drained = state
             .chat_relay_map
             .set_active(conv_id.clone(), session_id.clone(), to_worker, &state.store)
             .await;
-        for (event, event_index) in drained {
-            let msg = ServerMessage::Event { event, event_index };
+        // For the Reconnecting path, `CatchUp` is the phase-1 completing
+        // message — the worker is already past its initial `Fresh` /
+        // `RequestTranscript` negotiation and just needs the missed
+        // events. Flush the relay buffer (which set_active populated
+        // with the drained pending items) immediately, in order. No
+        // dedup needed because reconnect doesn't fold into FirstMessage.
+        let buffered = state.chat_relay_map.mark_ready(conv_id, None);
+        for msg in buffered {
             if !send_json(&mut ws_sender, &msg).await {
                 cleanup(&state, conversation_id.as_ref());
                 return;
@@ -415,15 +432,33 @@ async fn handle_reconnecting_path(
     .await;
 }
 
-/// Phase-2 first-message resolution. Returns `false` if the connection
-/// should be torn down.
+/// Outcome of `handle_ready` for the relay route to dispatch on.
+///
+/// - `FirstMessageSent` — the server sent `FirstMessage` on the wire;
+///   the route must call `mark_ready` to flush any buffered relay
+///   events. `folded_user_message` is `Some(content)` iff the server
+///   used `content` as `FirstMessage.user_message`; the relay buffer's
+///   first matching `UserMessage` Event (if any) is then removed from
+///   the flush.
+/// - `Stashed` — the server set `pending_first_message` on the relay
+///   entry and is waiting for the next user POST to complete phase-1;
+///   the relay's `send_event_to_conversation` will handle the fold and
+///   flush when that POST arrives.
+/// - `Failed` — the connection should be torn down.
+enum ReadyOutcome {
+    FirstMessageSent { folded_user_message: Option<String> },
+    Stashed,
+    Failed,
+}
+
+/// Phase-2 first-message resolution.
 async fn handle_ready(
     ws_sender: &mut SplitSink<WebSocket, Message>,
     state: &AppState,
     session_id: &SessionId,
     session: &crate::domain::sessions::Session,
     queued_first_user_message: Option<String>,
-) -> bool {
+) -> ReadyOutcome {
     match &session.mode {
         SessionMode::Headless => {
             let agent_prompt = session
@@ -435,7 +470,13 @@ async fn handle_ready(
                 agent_prompt,
                 user_message: String::new(),
             };
-            send_json(ws_sender, &first).await
+            if send_json(ws_sender, &first).await {
+                ReadyOutcome::FirstMessageSent {
+                    folded_user_message: None,
+                }
+            } else {
+                ReadyOutcome::Failed
+            }
         }
         SessionMode::Interactive {
             conversation_id, ..
@@ -455,7 +496,13 @@ async fn handle_ready(
                     agent_prompt,
                     user_message: String::new(),
                 };
-                return send_json(ws_sender, &first).await;
+                return if send_json(ws_sender, &first).await {
+                    ReadyOutcome::FirstMessageSent {
+                        folded_user_message: None,
+                    }
+                } else {
+                    ReadyOutcome::Failed
+                };
             }
 
             // If a UserMessage was already drained during the Phase-1
@@ -463,9 +510,15 @@ async fn handle_ready(
             if let Some(content) = queued_first_user_message {
                 let first = ServerMessage::FirstMessage {
                     agent_prompt,
-                    user_message: content,
+                    user_message: content.clone(),
                 };
-                return send_json(ws_sender, &first).await;
+                return if send_json(ws_sender, &first).await {
+                    ReadyOutcome::FirstMessageSent {
+                        folded_user_message: Some(content),
+                    }
+                } else {
+                    ReadyOutcome::Failed
+                };
             }
 
             // Try to find the first UserMessage for this conversation in
@@ -475,9 +528,21 @@ async fn handle_ready(
                 Ok(Some(content)) => {
                     let first = ServerMessage::FirstMessage {
                         agent_prompt,
-                        user_message: content,
+                        user_message: content.clone(),
                     };
-                    send_json(ws_sender, &first).await
+                    if send_json(ws_sender, &first).await {
+                        // The store scan may return a UserMessage from a
+                        // *prior* session (e.g. on resume); the relay
+                        // buffer only holds events for the current
+                        // session. `mark_ready` only dedupes when the
+                        // buffer actually contains an Event with this
+                        // content, so it's safe to always pass it.
+                        ReadyOutcome::FirstMessageSent {
+                            folded_user_message: Some(content),
+                        }
+                    } else {
+                        ReadyOutcome::Failed
+                    }
                 }
                 Ok(None) => {
                     let stashed = state
@@ -485,13 +550,13 @@ async fn handle_ready(
                         .set_pending_first_message(conversation_id, agent_prompt);
                     if !stashed {
                         warn!(%session_id, "could not stash pending_first_message; bailing");
-                        return false;
+                        return ReadyOutcome::Failed;
                     }
-                    true
+                    ReadyOutcome::Stashed
                 }
                 Err(err) => {
                     error!(%session_id, error = %err, "failed to scan first user message");
-                    false
+                    ReadyOutcome::Failed
                 }
             }
         }

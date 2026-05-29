@@ -452,27 +452,26 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
     // Under the queue-and-deliver design, the user message sent before the
     // worker connected lives on the chat_relay's pending queue, not on the
     // session log — catch-up reflects only the session log, so it's empty
-    // here. The queued message is delivered next as a live `Event` frame
-    // (drained on the Pending→Active transition that just happened inside
-    // `set_active`).
+    // here. The queued message is delivered after Ready as the folded
+    // `FirstMessage.user_message`.
     assert_eq!(
         catch_up.events.len(),
         0,
-        "catch-up reflects session-log state; pre-connect events arrive as drained pending events"
+        "catch-up reflects session-log state; pre-connect events arrive after Ready"
     );
+    send_worker_message(&mut ws, WorkerMessage::Ready).await?;
     let live = drain_server_messages(&mut ws, Duration::from_millis(500)).await?;
-    let drained_user_msg = live.iter().any(|m| {
-        matches!(
-            m,
-            ServerMessage::Event {
-                event: SessionEvent::UserMessage { content, .. },
-                ..
-            } if content == "hello"
-        )
+    let saw_hello = live.iter().any(|m| match m {
+        ServerMessage::FirstMessage { user_message, .. } => user_message == "hello",
+        ServerMessage::Event {
+            event: SessionEvent::UserMessage { content, .. },
+            ..
+        } => content == "hello",
+        _ => false,
     });
     assert!(
-        drained_user_msg,
-        "drained pending UserMessage must be delivered to the worker as a live Event frame, got {live:?}"
+        saw_hello,
+        "drained pending UserMessage must be delivered to the worker after Ready, got {live:?}"
     );
 
     send_worker_message(
@@ -689,6 +688,12 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         catch_up.events[2]
     );
 
+    // Send Ready so the relay phase advances out of Negotiating; the
+    // server folds the prior session's "first user message" into a
+    // FirstMessage and any subsequent in-flight POST arrives as Event.
+    send_worker_message(&mut ws2, WorkerMessage::Ready).await?;
+    let _ = drain_server_messages(&mut ws2, Duration::from_millis(200)).await?;
+
     // Step 4: send a new user message and verify the worker receives it via
     // the relay (i.e. the new session is actively relaying).
     client
@@ -887,21 +892,25 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     let catch_up = worker_handshake(&mut ws1, WorkerMessage::Fresh).await?;
     // The queue-and-deliver model defers the dual-write of pre-connect
     // events until the worker connects, so catch-up (which reads the
-    // session log) is empty here; msg1 arrives next as a drained-pending
-    // live `Event` frame.
+    // session log) is empty here; msg1 arrives folded into FirstMessage
+    // after the worker sends Ready.
     assert_eq!(
         catch_up.events.len(),
         0,
-        "fresh worker catch-up reflects the session log; pre-connect events arrive as live drained pending"
+        "fresh worker catch-up reflects the session log; pre-connect events arrive after Ready"
     );
+    send_worker_message(&mut ws1, WorkerMessage::Ready).await?;
     let drained = drain_server_messages(&mut ws1, Duration::from_millis(500)).await?;
     assert!(
-        drained.iter().any(|m| matches!(
-            m,
-            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. }, .. }
-                if content == msg1
-        )),
-        "msg1 should arrive as a drained pending live Event, got {drained:?}"
+        drained.iter().any(|m| match m {
+            ServerMessage::FirstMessage { user_message, .. } => user_message == msg1,
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. },
+                ..
+            } => content == msg1,
+            _ => false,
+        }),
+        "msg1 should arrive folded into FirstMessage after Ready, got {drained:?}"
     );
 
     send_worker_message(
@@ -1118,6 +1127,12 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "event[7] should be Closed, got {:?}",
         catch_up2.events[7]
     );
+
+    // Send Ready and consume the resume-path FirstMessage (which the
+    // server populates from the prior session's first user message) so
+    // the relay phase transitions to Ready before the live POST below.
+    send_worker_message(&mut ws2, WorkerMessage::Ready).await?;
+    let _ = drain_server_messages(&mut ws2, Duration::from_millis(200)).await?;
 
     // Step 7: send msg4 and verify the resumed relay forwards ONLY this new
     // message — not a replay of msg1/msg2/msg3.
@@ -1713,8 +1728,10 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
 
     // Connect as a fake worker, handshake, and observe the first user
     // message. It may arrive via catch-up (worker connected after the
-    // message was appended) or via the relay (worker connected before the
-    // message landed). Either is sufficient for PromptPrepend to fire.
+    // message was appended), folded into `FirstMessage.user_message`
+    // after Ready (the standard Phase-2 path), or as a `ServerMessage::Event`
+    // flushed after FirstMessage. Any of these is sufficient for
+    // PromptPrepend to fire on the worker side.
     let mut ws = connect_relay(&server.base_url(), &session_id).await?;
     let catch_up = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
 
@@ -1725,25 +1742,25 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
         )
     });
 
-    let saw_via_relay = if saw_in_catch_up {
+    let saw_post_ready = if saw_in_catch_up {
         false
     } else {
+        send_worker_message(&mut ws, WorkerMessage::Ready).await?;
         let drained = drain_server_messages(&mut ws, Duration::from_secs(2)).await?;
-        drained.iter().any(|m| {
-            matches!(
-                m,
-                ServerMessage::Event {
-                    event: SessionEvent::UserMessage { content, .. },
-                    ..
-                } if content == "hello"
-            )
+        drained.iter().any(|m| match m {
+            ServerMessage::FirstMessage { user_message, .. } => user_message == "hello",
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. },
+                ..
+            } => content == "hello",
+            _ => false,
         })
     };
 
     assert!(
-        saw_in_catch_up || saw_via_relay,
-        "worker must observe the first user message via either catch-up or relay; \
-         catch-up events were: {:?}",
+        saw_in_catch_up || saw_post_ready,
+        "worker must observe the first user message via either catch-up, \
+         FirstMessage, or relay Event; catch-up events were: {:?}",
         catch_up.events
     );
 
@@ -2406,31 +2423,28 @@ async fn reconnecting_returns_catch_up_strictly_after_supplied_index() -> anyhow
     let conversation_id = created.conversation_id.clone();
     let session_id = find_session_for_conversation(&store, &conversation_id).await;
 
-    // Phase 1+2 + Phase-3 entry: a Fresh worker handshakes and reads the
-    // drained pending "hello" (queued by the conversation create above)
-    // as a live `Event` frame. Capture its `event_index` so the
-    // Reconnecting handshake can pick up strictly past it.
+    // Phase 1+2 + Phase-3 entry: a Fresh worker handshakes and sends
+    // Ready. The server folds the drained pending "hello" into
+    // FirstMessage.user_message; no event_index is exposed for that
+    // message because it's not delivered as an Event. Then we POST a
+    // second user message to capture an event_index that the
+    // Reconnecting handshake can use as `last_received_session_event_index`.
     let mut ws = connect_relay(&server.base_url(), &session_id).await?;
     let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    send_worker_message(&mut ws, WorkerMessage::Ready).await?;
     let live = drain_server_messages(&mut ws, Duration::from_secs(2)).await?;
-    let mut latest_index: Option<usize> = None;
-    let mut saw_hello = false;
-    for m in &live {
-        if let ServerMessage::Event {
+    let saw_hello = live.iter().any(|m| match m {
+        ServerMessage::FirstMessage { user_message, .. } => user_message == "hello",
+        ServerMessage::Event {
             event: SessionEvent::UserMessage { content, .. },
-            event_index,
-        } = m
-        {
-            assert_eq!(content, "hello");
-            saw_hello = true;
-            latest_index = Some(latest_index.map_or(*event_index, |p: usize| p.max(*event_index)));
-        }
-    }
+            ..
+        } => content == "hello",
+        _ => false,
+    });
     assert!(
         saw_hello,
         "drained pending UserMessage was not delivered to the worker; got {live:?}"
     );
-    let drop_index = latest_index.expect("expected at least one Event to set running max");
 
     // Send a second user message; the worker receives it (and the
     // event_index increments).
@@ -2455,10 +2469,6 @@ async fn reconnecting_returns_catch_up_strictly_after_supplied_index() -> anyhow
             _ => None,
         })
         .expect("second user message must be forwarded with an event_index");
-    assert!(
-        second_index > drop_index,
-        "second event_index ({second_index}) must be > drop_index ({drop_index})"
-    );
 
     // Drop the WS mid-session AND simulate other-variant session-event
     // writes that the worker did NOT see — these must be returned in the
