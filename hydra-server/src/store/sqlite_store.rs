@@ -7876,6 +7876,7 @@ mod tests {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: None,
             conversation_resume_from: Some(7),
+            greet_user: false,
         };
 
         let now = Utc::now();
@@ -10563,6 +10564,7 @@ mod tests {
                     conversation_id: conv_id,
                     idle_timeout_secs: None,
                     conversation_resume_from: None,
+                    greet_user: false,
                 };
             }
             None => {

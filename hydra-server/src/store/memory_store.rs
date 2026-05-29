@@ -5757,6 +5757,7 @@ mod tests {
             conversation_id: conv_a.clone(),
             idle_timeout_secs: None,
             conversation_resume_from: None,
+            greet_user: false,
         };
         let (task_a_id, _) = store
             .add_session(task_a, Utc::now(), &ActorRef::test())
@@ -5768,6 +5769,7 @@ mod tests {
             conversation_id: conv_b.clone(),
             idle_timeout_secs: None,
             conversation_resume_from: None,
+            greet_user: false,
         };
         store
             .add_session(task_b, Utc::now(), &ActorRef::test())
@@ -8687,6 +8689,7 @@ mod tests {
                     conversation_id: conv_id,
                     idle_timeout_secs: None,
                     conversation_resume_from: None,
+                    greet_user: false,
                 };
             }
             None => {

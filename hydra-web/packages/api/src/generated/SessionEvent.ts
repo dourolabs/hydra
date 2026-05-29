@@ -11,11 +11,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * the same store / cache / SSE plumbing can be reused once Phase B wires the
  * new storage in. See `/designs/sessions-orthogonality-redesign.md` §3.2.
  */
-export type SessionEvent =
-  | { type: "user_message"; content: string; timestamp: string }
-  | { type: "assistant_message"; content: string; timestamp: string }
-  | { type: "tool_use"; tool_name: string; payload: JsonValue; timestamp: string }
-  | { type: "suspending"; reason: string; timestamp: string }
-  | { type: "resumed"; from_session_id: SessionId; timestamp: string }
-  | { type: "closed"; timestamp: string }
-  | { type: "unknown" };
+export type SessionEvent = { "type": "user_message", content: string, timestamp: string, } | { "type": "assistant_message", content: string, timestamp: string, } | { "type": "tool_use", tool_name: string, payload: JsonValue, timestamp: string, } | { "type": "suspending", reason: string, timestamp: string, } | { "type": "resumed", from_session_id: SessionId, timestamp: string, } | { "type": "closed", timestamp: string, } | { "type": "unknown" };

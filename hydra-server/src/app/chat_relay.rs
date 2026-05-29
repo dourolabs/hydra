@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use hydra_common::api::v1::conversations::ServerMessage;
 use hydra_common::api::v1::sessions::SessionEvent as ApiSessionEvent;
 use hydra_common::{ConversationId, SessionId};
 use std::sync::Arc;
@@ -37,7 +38,13 @@ pub struct ChatRelayMap {
 enum Entry {
     ActiveConnection {
         session_id: SessionId,
-        to_worker: mpsc::Sender<ApiSessionEvent>,
+        to_worker: mpsc::Sender<ServerMessage>,
+        /// `Some(agent_prompt)` iff a `Ready` has arrived but no first
+        /// `UserMessage` was queued at that moment. When one arrives, the
+        /// relay drains this into `ServerMessage::FirstMessage { agent_prompt,
+        /// user_message }` and suppresses the redundant `Event` push for
+        /// that one message.
+        pending_first_message: Option<String>,
     },
     PendingConnection {
         pending: Vec<PendingItem>,
@@ -74,9 +81,12 @@ impl ChatRelayMap {
     /// ([`Entry::PendingConnection`]) and will be delivered on the next
     /// [`set_active`](Self::set_active) call.
     ///
-    /// The decision (active vs pending) is made under the DashMap entry
-    /// lock so a concurrent [`set_active`](Self::set_active) cannot race
-    /// a message past the drain.
+    /// If `pending_first_message` is set on the active entry and the
+    /// incoming event is a `UserMessage`, the relay emits
+    /// `ServerMessage::FirstMessage { agent_prompt, user_message }` instead
+    /// of the usual `Event` push for that single message, clears the
+    /// pending flag, and suppresses the redundant `Event` push. The
+    /// dual-write to the session log happens unconditionally.
     pub async fn send_event_to_conversation(
         &self,
         conversation_id: &ConversationId,
@@ -87,7 +97,11 @@ impl ChatRelayMap {
         enum Decision {
             Active {
                 session_id: SessionId,
-                to_worker: mpsc::Sender<ApiSessionEvent>,
+                to_worker: mpsc::Sender<ServerMessage>,
+                /// `Some(agent_prompt)` iff this UserMessage should be folded
+                /// into a `FirstMessage`. `None` for any other event, or when
+                /// no first-message is pending.
+                pending_first_prompt: Option<String>,
             },
             Queued,
         }
@@ -102,10 +116,21 @@ impl ChatRelayMap {
                 Entry::ActiveConnection {
                     session_id,
                     to_worker,
-                } => Decision::Active {
-                    session_id: session_id.clone(),
-                    to_worker: to_worker.clone(),
-                },
+                    pending_first_message,
+                } => {
+                    let prompt = if matches!(event, ApiSessionEvent::UserMessage { .. })
+                        && pending_first_message.is_some()
+                    {
+                        pending_first_message.take()
+                    } else {
+                        None
+                    };
+                    Decision::Active {
+                        session_id: session_id.clone(),
+                        to_worker: to_worker.clone(),
+                        pending_first_prompt: prompt,
+                    }
+                }
                 Entry::PendingConnection { pending } => {
                     pending.push(PendingItem {
                         event: event.clone(),
@@ -127,10 +152,20 @@ impl ChatRelayMap {
             Decision::Active {
                 session_id,
                 to_worker,
+                pending_first_prompt,
             } => {
                 dual_write_session_event(store, &session_id, event.clone(), actor).await;
+                let outbound = match (pending_first_prompt, event) {
+                    (Some(agent_prompt), ApiSessionEvent::UserMessage { content, .. }) => {
+                        ServerMessage::FirstMessage {
+                            agent_prompt,
+                            user_message: content,
+                        }
+                    }
+                    (_, event) => ServerMessage::Event { event },
+                };
                 to_worker
-                    .send(event)
+                    .send(outbound)
                     .await
                     .map_err(|_| SendEventError::ChannelClosed)
             }
@@ -157,7 +192,7 @@ impl ChatRelayMap {
         &self,
         conversation_id: ConversationId,
         session_id: SessionId,
-        to_worker: mpsc::Sender<ApiSessionEvent>,
+        to_worker: mpsc::Sender<ServerMessage>,
         store: &StoreWithEvents,
     ) -> Vec<ApiSessionEvent> {
         let drained: Vec<PendingItem> = {
@@ -167,6 +202,7 @@ impl ChatRelayMap {
                 .or_insert_with(|| Entry::ActiveConnection {
                     session_id: session_id.clone(),
                     to_worker: to_worker.clone(),
+                    pending_first_message: None,
                 });
             // `or_insert_with` either inserted a fresh ActiveConnection
             // (drained = []) or returned a pre-existing entry that we now
@@ -177,6 +213,7 @@ impl ChatRelayMap {
                 Entry::ActiveConnection {
                     session_id: session_id.clone(),
                     to_worker,
+                    pending_first_message: None,
                 },
             );
             match previous {
@@ -203,6 +240,43 @@ impl ChatRelayMap {
             drained_events.push(item.event);
         }
         drained_events
+    }
+
+    /// Stash a pending `agent_prompt` on the conversation's active entry
+    /// so the next inbound `UserMessage` is rewritten into a
+    /// `ServerMessage::FirstMessage` (§1.5 of the design). Returns
+    /// `false` if the entry isn't `ActiveConnection` (shouldn't happen —
+    /// `Ready` arrives after `set_active`).
+    pub fn set_pending_first_message(
+        &self,
+        conversation_id: &ConversationId,
+        agent_prompt: String,
+    ) -> bool {
+        match self.inner.get_mut(conversation_id) {
+            Some(mut entry) => match entry.value_mut() {
+                Entry::ActiveConnection {
+                    pending_first_message,
+                    ..
+                } => {
+                    *pending_first_message = Some(agent_prompt);
+                    true
+                }
+                Entry::PendingConnection { .. } => {
+                    warn!(
+                        %conversation_id,
+                        "set_pending_first_message called on PendingConnection entry; ignoring"
+                    );
+                    false
+                }
+            },
+            None => {
+                warn!(
+                    %conversation_id,
+                    "set_pending_first_message called with no entry; ignoring"
+                );
+                false
+            }
+        }
     }
 
     /// Remove the entry entirely. Called when a worker WebSocket
@@ -296,6 +370,7 @@ mod tests {
                 conversation_id: conversation_id.clone(),
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
+                greet_user: false,
             },
             status,
             None,
@@ -305,6 +380,13 @@ mod tests {
 
     fn user_msg(content: &str) -> ApiSessionEvent {
         ApiSessionEvent::UserMessage {
+            content: content.to_string(),
+            timestamp: Utc::now(),
+        }
+    }
+
+    fn assistant_msg(content: &str) -> ApiSessionEvent {
+        ApiSessionEvent::AssistantMessage {
             content: content.to_string(),
             timestamp: Utc::now(),
         }
@@ -411,7 +493,7 @@ mod tests {
         .unwrap();
 
         let received = rx.recv().await.expect("worker channel must receive event");
-        assert_eq!(received, event);
+        assert_eq!(received, ServerMessage::Event { event });
 
         // Dual-write hit the session log.
         let events = state.store.get_session_events(&session_id).await.unwrap();
@@ -523,5 +605,133 @@ mod tests {
         .unwrap();
 
         assert!(map.active_session_id(&conversation_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn pending_first_message_folds_into_first_message() {
+        // After set_active, set a pending first-message prompt. The
+        // next inbound UserMessage must be forwarded as FirstMessage
+        // (not Event) and the dual-write to the session log still happens.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let (tx, mut rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(
+                conversation_id.clone(),
+                session_id.clone(),
+                tx,
+                &state.store,
+            )
+            .await;
+
+        let stashed = map.set_pending_first_message(&conversation_id, "be helpful".to_string());
+        assert!(stashed, "set_pending_first_message must succeed on Active");
+
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("hello"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+
+        let received = rx.recv().await.expect("worker channel must receive");
+        assert_eq!(
+            received,
+            ServerMessage::FirstMessage {
+                agent_prompt: "be helpful".to_string(),
+                user_message: "hello".to_string(),
+            }
+        );
+
+        // A subsequent UserMessage is forwarded as a regular Event
+        // since the pending flag was cleared.
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("again"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+        let received = rx.recv().await.unwrap();
+        assert_eq!(
+            received,
+            ServerMessage::Event {
+                event: ApiSessionEvent::UserMessage {
+                    content: "again".to_string(),
+                    timestamp: match received {
+                        ServerMessage::Event {
+                            event: ApiSessionEvent::UserMessage { timestamp: ts, .. },
+                            ..
+                        } => ts,
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_first_message_does_not_fold_non_user_message() {
+        // An AssistantMessage arriving while pending_first_message is
+        // set should NOT consume the pending prompt.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let (tx, mut rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(
+                conversation_id.clone(),
+                session_id.clone(),
+                tx,
+                &state.store,
+            )
+            .await;
+
+        map.set_pending_first_message(&conversation_id, "still-pending".to_string());
+
+        let assistant = assistant_msg("model talking");
+        map.send_event_to_conversation(
+            &conversation_id,
+            assistant.clone(),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received, ServerMessage::Event { event: assistant });
+
+        // Pending prompt still set: a later UserMessage folds it.
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("now"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+        let received = rx.recv().await.unwrap();
+        assert!(matches!(received, ServerMessage::FirstMessage { .. }));
     }
 }

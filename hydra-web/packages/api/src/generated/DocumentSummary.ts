@@ -7,9 +7,4 @@ import type { LabelSummary } from "./LabelSummary";
  *
  * Excludes `body_markdown`.
  */
-export type DocumentSummary = {
-  title: string;
-  path?: DocumentPath | null;
-  deleted?: boolean;
-  labels?: Array<LabelSummary>;
-};
+export type DocumentSummary = { title: string, path?: DocumentPath | null, deleted?: boolean, labels?: Array<LabelSummary>, };

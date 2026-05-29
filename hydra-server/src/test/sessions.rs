@@ -1030,11 +1030,9 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
     let bundle_item = body
-        .session
-        .mount_spec
         .mounts
         .first()
-        .expect("mount_spec must have at least the bundle item");
+        .expect("mounts must have at least the bundle item");
     let v1::sessions::MountItem::Bundle { bundle, .. } = bundle_item else {
         panic!("expected Bundle item first, got {bundle_item:?}");
     };
@@ -1045,14 +1043,10 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
             rev: "main".to_string(),
         }
     );
-    assert!(matches!(
-        &body.session.mode,
-        v1::sessions::SessionMode::Headless
-    ));
-    assert_eq!(
-        body.session.agent_config.system_prompt.as_deref(),
-        Some("0")
-    );
+    assert_eq!(body.mode_kind, v1::sessions::SessionModeKind::Headless);
+    // Note: system_prompt no longer flows through WorkerContext — it is
+    // delivered to the worker via Phase 2 `FirstMessage` over the relay
+    // websocket.
     Ok(())
 }
 
@@ -1110,10 +1104,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
-    assert_eq!(
-        body.session.agent_config.model.as_deref(),
-        Some("claude-3-5-sonnet")
-    );
+    assert_eq!(body.model.as_deref(), Some("claude-3-5-sonnet"));
     Ok(())
 }
 
@@ -1206,6 +1197,7 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                     conversation_id: hydra_common::ConversationId::new(),
                     idle_timeout_secs: None,
                     conversation_resume_from: None,
+                    greet_user: false,
                 },
                 status: Status::Created,
                 last_message: None,
@@ -1233,13 +1225,8 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
 
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
-    let v1::sessions::SessionMode::Interactive {
-        idle_timeout_secs, ..
-    } = &body.session.mode
-    else {
-        panic!("expected Interactive mode, got {:?}", body.session.mode);
-    };
-    assert_eq!(*idle_timeout_secs, Some(expected_idle_timeout));
+    assert_eq!(body.mode_kind, v1::sessions::SessionModeKind::Interactive);
+    assert_eq!(body.idle_timeout_secs, Some(expected_idle_timeout));
     Ok(())
 }
 
@@ -1525,7 +1512,8 @@ async fn get_session_context_populates_three_item_mount_spec_for_standard_sessio
     let server = spawn_test_server_with_state(state, store).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.session.mount_spec;
+    let spec = v1::sessions::MountSpec::new(context.working_dir.clone(), context.mounts.clone());
+    let spec = &spec;
     assert_eq!(spec.working_dir.as_path().to_str(), Some("repo"));
     assert_eq!(spec.mounts.len(), 3);
     match &spec.mounts[0] {
@@ -1588,7 +1576,8 @@ async fn get_session_context_omits_build_cache_when_cache_unconfigured() -> anyh
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.session.mount_spec;
+    let spec = v1::sessions::MountSpec::new(context.working_dir.clone(), context.mounts.clone());
+    let spec = &spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1645,7 +1634,8 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
 
     // The spec has no BuildCache item because there's no service repo name,
     // even though the server itself has build_cache configured.
-    let spec = &context.session.mount_spec;
+    let spec = v1::sessions::MountSpec::new(context.working_dir.clone(), context.mounts.clone());
+    let spec = &spec;
     assert_eq!(spec.mounts.len(), 2);
     assert!(matches!(spec.mounts[0], MountItem::Bundle { .. }));
     assert!(matches!(spec.mounts[1], MountItem::Documents { .. }));
@@ -1670,7 +1660,8 @@ async fn get_session_context_emits_bundle_item_for_none_bundle() -> anyhow::Resu
     let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
     let context = fetch_worker_context(&server, &session_id).await?;
 
-    let spec = &context.session.mount_spec;
+    let spec = v1::sessions::MountSpec::new(context.working_dir.clone(), context.mounts.clone());
+    let spec = &spec;
     assert_eq!(spec.mounts.len(), 2);
     match &spec.mounts[0] {
         MountItem::Bundle { bundle, .. } => {
@@ -1773,7 +1764,8 @@ async fn get_session_context_mount_spec_matches_get_session_with_build_cache() -
         .await?;
 
     assert_eq!(
-        context.session.mount_spec, session_record.session.mount_spec,
+        v1::sessions::MountSpec::new(context.working_dir.clone(), context.mounts.clone()),
+        session_record.session.mount_spec,
         "WorkerContext.session.mount_spec must equal GET /v1/sessions/:id mount_spec",
     );
     let _ = repo_name;

@@ -1,7 +1,8 @@
 use crate::app::AppState;
 use crate::app::chat_relay::TO_WORKER_CAPACITY;
 use crate::domain::actors::{Actor, ActorRef};
-use crate::store::StoreError;
+use crate::domain::sessions::SessionMode;
+use crate::store::{ReadOnlyStore, StoreError};
 use axum::{
     Extension,
     extract::{
@@ -10,27 +11,66 @@ use axum::{
     },
     response::Response,
 };
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, stream::SplitSink};
+use hydra_common::ConversationId;
 use hydra_common::SessionId;
-use hydra_common::api::v1::conversations::{
-    ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage,
-};
-use hydra_common::api::v1::sessions::{SearchSessionsQuery, SessionEvent};
+use hydra_common::api::v1::conversations::{ServerMessage, WorkerMessage};
+use hydra_common::api::v1::sessions::SessionEvent;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::{ApiError, SessionIdPath};
 
-/// GET /v1/sessions/:session_id/relay — WebSocket upgrade endpoint for
-/// the interactive chat relay. Workers connect here to exchange messages
-/// with the server.
-pub async fn session_relay(
+/// GET /v1/sessions/:session_id/events — dual-purpose endpoint.
+///
+/// * With a WebSocket `Upgrade` header, this becomes the WS-only worker
+///   lifecycle (Phase 1 negotiate → Phase 2 first message → Phase 3
+///   bidirectional pump). Both interactive and headless sessions land on
+///   this branch; mode-specific behaviour is confined to `handle_ready`.
+/// * Without an `Upgrade` header, this returns the persisted
+///   `SessionEvent` log as JSON — the read path used by
+///   `useChatTranscript` and CLI tooling.
+pub async fn session_events_or_relay(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    SessionIdPath(session_id): SessionIdPath,
+    ws: Option<WebSocketUpgrade>,
+) -> Result<Response, ApiError> {
+    match ws {
+        Some(ws) => session_relay(State(state), Extension(actor), SessionIdPath(session_id), ws).await,
+        None => session_events_json(State(state), SessionIdPath(session_id))
+            .await
+            .map(axum::response::IntoResponse::into_response),
+    }
+}
+
+/// JSON read of a session's persisted `SessionEvent` log.
+async fn session_events_json(
+    State(state): State<AppState>,
+    SessionIdPath(session_id): SessionIdPath,
+) -> Result<axum::Json<Vec<SessionEvent>>, ApiError> {
+    use crate::store::ReadOnlyStore as _;
+    let events = state
+        .store
+        .get_session_events(&session_id)
+        .await
+        .map_err(|err| match err {
+            StoreError::SessionNotFound(_) => {
+                ApiError::not_found(format!("session '{session_id}' not found"))
+            }
+            other => ApiError::internal(format!("failed to load session events: {other}")),
+        })?;
+    let api_events: Vec<SessionEvent> = events.into_iter().map(|v| v.item.into()).collect();
+    Ok(axum::Json(api_events))
+}
+
+/// WebSocket upgrade endpoint for the WS-only worker lifecycle.
+async fn session_relay(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     SessionIdPath(session_id): SessionIdPath,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    // Verify the session exists and has a conversation_id.
     let session = state
         .get_latest_session(&session_id)
         .await
@@ -41,61 +81,50 @@ pub async fn session_relay(
             other => ApiError::internal(format!("failed to load session: {other}")),
         })?;
 
-    let conversation_id = session.conversation_id().cloned().ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "session '{session_id}' is not an interactive session (no conversation_id)"
-        ))
-    })?;
-
-    // Verify the conversation exists.
-    state
-        .store()
-        .get_conversation(&conversation_id, false)
-        .await
-        .map_err(|err| match err {
-            StoreError::ConversationNotFound(_) => {
-                ApiError::not_found(format!("conversation '{conversation_id}' not found"))
-            }
-            other => ApiError::internal(format!("failed to load conversation: {other}")),
-        })?;
-
     info!(
         session_id = %session_id,
-        conversation_id = %conversation_id,
+        mode = ?session.mode,
         actor = %actor.name(),
-        "WebSocket relay upgrade requested"
+        "WebSocket events upgrade requested"
     );
 
-    Ok(ws.on_upgrade(move |socket| {
-        handle_relay_socket(socket, state, session_id, conversation_id, actor)
-    }))
+    Ok(ws.on_upgrade(move |socket| handle_events_socket(socket, state, session_id, actor)))
 }
 
-async fn handle_relay_socket(
+async fn handle_events_socket(
     socket: WebSocket,
     state: AppState,
     session_id: SessionId,
-    conversation_id: hydra_common::ConversationId,
     actor: Actor,
 ) {
-    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let session = match state.get_latest_session(&session_id).await {
+        Ok(s) => s,
+        Err(err) => {
+            error!(%session_id, error = %err, "failed to load session after upgrade");
+            return;
+        }
+    };
 
-    // Step 1: Wait for WorkerConnect handshake message.
-    let worker_connect = match ws_receiver.next().await {
-        Some(Ok(Message::Text(text))) => match serde_json::from_str::<WorkerConnect>(&text) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let actor_ref = ActorRef::from(&actor);
+
+    // Phase 1: read the first inbound message — it must be Fresh or
+    // Reconnecting; anything else is a protocol error.
+    let first = match ws_receiver.next().await {
+        Some(Ok(Message::Text(text))) => match serde_json::from_str::<WorkerMessage>(&text) {
             Ok(msg) => msg,
             Err(err) => {
-                error!(%session_id, error = %err, "invalid WorkerConnect message");
+                error!(%session_id, error = %err, "invalid first WorkerMessage");
                 let _ = ws_sender.send(Message::Close(None)).await;
                 return;
             }
         },
         Some(Ok(Message::Close(_))) | None => {
-            info!(%session_id, "WebSocket closed before handshake");
+            info!(%session_id, "WebSocket closed before first message");
             return;
         }
         Some(Ok(other)) => {
-            error!(%session_id, msg_type = ?other, "expected text WorkerConnect message");
+            error!(%session_id, msg_type = ?other, "expected text WorkerMessage");
             let _ = ws_sender.send(Message::Close(None)).await;
             return;
         }
@@ -105,86 +134,377 @@ async fn handle_relay_socket(
         }
     };
 
-    info!(
-        %session_id,
-        connect = ?worker_connect,
-        "worker connected, performing catch-up"
-    );
+    match first {
+        WorkerMessage::Fresh => {
+            handle_fresh_path(
+                ws_sender,
+                ws_receiver,
+                state,
+                session_id,
+                session,
+                actor_ref,
+            )
+            .await
+        }
+        WorkerMessage::Reconnecting {
+            last_received_session_event_index,
+        } => {
+            handle_reconnecting_path(
+                ws_sender,
+                ws_receiver,
+                state,
+                session_id,
+                session,
+                last_received_session_event_index,
+                actor_ref,
+            )
+            .await
+        }
+        other => {
+            error!(
+                %session_id,
+                ?other,
+                "first WorkerMessage must be Fresh or Reconnecting; bailing connection"
+            );
+            let _ = ws_sender.send(Message::Close(None)).await;
+        }
+    }
+}
 
-    // Step 2: Build WorkerCatchUp response.
-    let catch_up =
-        match build_catch_up(&state, &conversation_id, &session_id, &worker_connect).await {
-            Ok(catch_up) => catch_up,
+async fn handle_fresh_path(
+    mut ws_sender: SplitSink<WebSocket, Message>,
+    mut ws_receiver: futures::stream::SplitStream<WebSocket>,
+    state: AppState,
+    session_id: SessionId,
+    session: crate::domain::sessions::Session,
+    actor_ref: ActorRef,
+) {
+    // Reply ResumeContext from the session_state store.
+    let resume_blob = match state.store.get_session_state(&session_id).await {
+        Ok(blob) => blob,
+        Err(err) => {
+            warn!(%session_id, error = %err, "failed to load session_state for ResumeContext");
+            None
+        }
+    };
+    let prior_session_id = session.resumed_from.clone();
+    let resume_ctx = ServerMessage::ResumeContext {
+        resume_blob,
+        prior_session_id,
+    };
+    if !send_json(&mut ws_sender, &resume_ctx).await {
+        return;
+    }
+
+    // The Phase-1 RequestTranscript fallback may arrive before Ready —
+    // we loop on inbound messages until we see Ready (or another
+    // expected late-phase variant).
+    let conversation_id = session.conversation_id().cloned();
+
+    // Register the active connection so subsequent UserMessages on this
+    // conversation reach us via the relay. Headless sessions skip this.
+    let (to_worker, mut to_worker_rx) = mpsc::channel::<ServerMessage>(TO_WORKER_CAPACITY);
+    let mut drained_pending: Vec<SessionEvent> = Vec::new();
+    if let Some(conv_id) = conversation_id.as_ref() {
+        drained_pending = state
+            .chat_relay_map
+            .set_active(conv_id.clone(), session_id.clone(), to_worker, &state.store)
+            .await;
+    }
+
+    // Forward any pre-Ready drained UserMessages as Event pushes;
+    // they'll be re-folded into FirstMessage at the handle_ready step if
+    // the mode calls for it. (In practice this happens later via
+    // pending_first_message — drained messages here are the rare case
+    // where a UserMessage arrived before set_active.)
+    let mut drained_user_messages: Vec<String> = Vec::new();
+    for event in drained_pending {
+        if let SessionEvent::UserMessage { content, .. } = &event {
+            drained_user_messages.push(content.clone());
+        }
+        let msg = ServerMessage::Event { event };
+        if !send_json(&mut ws_sender, &msg).await {
+            cleanup(&state, conversation_id.as_ref());
+            return;
+        }
+    }
+
+    // Phase-1/Phase-2 loop: handle RequestTranscript fallback and Ready.
+    loop {
+        tokio::select! {
+            ws_msg = ws_receiver.next() => {
+                match ws_msg {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<WorkerMessage>(&text) {
+                            Ok(WorkerMessage::RequestTranscript { prior_session_id }) => {
+                                let events = match collect_transcript(&state, &prior_session_id).await {
+                                    Ok(events) => events,
+                                    Err(err) => {
+                                        error!(%session_id, error = %err, "transcript load failed");
+                                        let _ = ws_sender.send(Message::Close(None)).await;
+                                        cleanup(&state, conversation_id.as_ref());
+                                        return;
+                                    }
+                                };
+                                let transcript = ServerMessage::Transcript { events };
+                                if !send_json(&mut ws_sender, &transcript).await {
+                                    cleanup(&state, conversation_id.as_ref());
+                                    return;
+                                }
+                            }
+                            Ok(WorkerMessage::Ready) => {
+                                if !handle_ready(
+                                    &mut ws_sender,
+                                    &state,
+                                    &session_id,
+                                    &session,
+                                    drained_user_messages.first().cloned(),
+                                )
+                                .await
+                                {
+                                    cleanup(&state, conversation_id.as_ref());
+                                    return;
+                                }
+                                break;
+                            }
+                            // Phase-3 variants arriving before Ready are
+                            // tolerated; the worker may begin emitting
+                            // events as soon as Phase 1 completes.
+                            Ok(WorkerMessage::Event { event }) => {
+                                if let Err(err) = handle_worker_event(
+                                    &state,
+                                    conversation_id.as_ref(),
+                                    &session_id,
+                                    &actor_ref,
+                                    event,
+                                ).await {
+                                    error!(%session_id, error = %err, "failed to handle worker event in Phase 1/2");
+                                }
+                            }
+                            Ok(WorkerMessage::SessionStateUpload { data }) => {
+                                let bytes = data.len();
+                                info!(%session_id, bytes, "received early SessionStateUpload");
+                                if let Err(err) = state
+                                    .store
+                                    .store_session_state_with_actor(
+                                        &session_id,
+                                        data,
+                                        actor_ref.clone(),
+                                    )
+                                    .await
+                                {
+                                    warn!(%session_id, bytes, error = %err, "store session_state failed (early)");
+                                }
+                            }
+                            Ok(other) => {
+                                error!(%session_id, ?other, "unexpected WorkerMessage in Phase 1/2");
+                                let _ = ws_sender.send(Message::Close(None)).await;
+                                cleanup(&state, conversation_id.as_ref());
+                                return;
+                            }
+                            Err(err) => {
+                                warn!(%session_id, error = %err, "invalid worker message in Phase 1/2; ignoring");
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        info!(%session_id, "WebSocket closed before Phase 3");
+                        cleanup(&state, conversation_id.as_ref());
+                        return;
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = ws_sender.send(Message::Pong(data)).await;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        error!(%session_id, error = %err, "WebSocket error before Phase 3");
+                        cleanup(&state, conversation_id.as_ref());
+                        return;
+                    }
+                }
+            }
+            // While waiting for Ready, any inbound user message from the
+            // relay should also be queued onto drained_user_messages so
+            // we can fold the first one into FirstMessage at Ready time.
+            forward = to_worker_rx.recv() => {
+                if let Some(msg) = forward {
+                    if let ServerMessage::Event {
+                        event: SessionEvent::UserMessage { content, .. }, ..
+                    } = &msg {
+                        drained_user_messages.push(content.clone());
+                    }
+                    if !send_json(&mut ws_sender, &msg).await {
+                        cleanup(&state, conversation_id.as_ref());
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    pump_phase3(
+        ws_sender,
+        ws_receiver,
+        state,
+        session_id,
+        conversation_id,
+        actor_ref,
+        to_worker_rx,
+    )
+    .await;
+}
+
+async fn handle_reconnecting_path(
+    mut ws_sender: SplitSink<WebSocket, Message>,
+    ws_receiver: futures::stream::SplitStream<WebSocket>,
+    state: AppState,
+    session_id: SessionId,
+    session: crate::domain::sessions::Session,
+    last_received_session_event_index: usize,
+    actor_ref: ActorRef,
+) {
+    let events =
+        match collect_session_events_after(&state, &session_id, last_received_session_event_index)
+            .await
+        {
+            Ok(events) => events,
             Err(err) => {
-                error!(%session_id, error = %err, "failed to build catch-up");
+                error!(%session_id, error = %err, "Reconnecting catch-up load failed");
                 let _ = ws_sender.send(Message::Close(None)).await;
                 return;
             }
         };
-
-    // Send catch-up to worker.
-    let catch_up_msg = ServerMessage::CatchUp(catch_up);
-    let catch_up_json = match serde_json::to_string(&catch_up_msg) {
-        Ok(json) => json,
-        Err(err) => {
-            error!(%session_id, error = %err, "failed to serialize catch-up");
-            return;
-        }
-    };
-    if ws_sender.send(Message::Text(catch_up_json)).await.is_err() {
-        warn!(%session_id, "failed to send catch-up, WebSocket closed");
+    let catch_up = ServerMessage::CatchUp { events };
+    if !send_json(&mut ws_sender, &catch_up).await {
         return;
     }
 
-    // Step 3: Flip the chat_relay entry to ActiveConnection and capture any
-    // events queued while no worker was connected. Each drained event has
-    // already been dual-written to the new session's event log inside
-    // `set_active`, so a future Reconnecting catch-up will replay it from
-    // the log; we now deliver the in-memory copy as the first "live"
-    // messages, after the catch-up.
-    let (to_worker, mut user_msg_rx) = mpsc::channel(TO_WORKER_CAPACITY);
-    let drained_pending = state
-        .chat_relay_map
-        .set_active(
-            conversation_id.clone(),
-            session_id.clone(),
-            to_worker,
-            &state.store,
-        )
-        .await;
-
-    info!(
-        %session_id,
-        drained = drained_pending.len(),
-        "relay registered, starting relay loop"
-    );
-
-    let actor_ref = ActorRef::from(&actor);
-
-    // Drain queued pending events onto the WebSocket before entering the
-    // bidirectional loop. They are the first live messages the worker
-    // sees; concurrent send_event_to_conversation calls land in the mpsc
-    // and are picked up by the loop below afterwards, preserving FIFO.
-    for event in drained_pending {
-        let server_msg = ServerMessage::Event { event };
-        match serde_json::to_string(&server_msg) {
-            Ok(json) => {
-                if ws_sender.send(Message::Text(json)).await.is_err() {
-                    warn!(%session_id, "failed to forward drained pending event, WebSocket closed");
-                    state.chat_relay_map.disconnect(&conversation_id);
-                    return;
-                }
-            }
-            Err(err) => {
-                error!(%session_id, error = %err, "failed to serialize drained pending event");
+    let conversation_id = session.conversation_id().cloned();
+    let (to_worker, to_worker_rx) = mpsc::channel::<ServerMessage>(TO_WORKER_CAPACITY);
+    if let Some(conv_id) = conversation_id.as_ref() {
+        let drained = state
+            .chat_relay_map
+            .set_active(conv_id.clone(), session_id.clone(), to_worker, &state.store)
+            .await;
+        for event in drained {
+            let msg = ServerMessage::Event { event };
+            if !send_json(&mut ws_sender, &msg).await {
+                cleanup(&state, conversation_id.as_ref());
+                return;
             }
         }
     }
 
-    // Step 4: Relay loop — bidirectional message forwarding.
+    pump_phase3(
+        ws_sender,
+        ws_receiver,
+        state,
+        session_id,
+        conversation_id,
+        actor_ref,
+        to_worker_rx,
+    )
+    .await;
+}
+
+/// Phase-2 first-message resolution. Returns `false` if the connection
+/// should be torn down.
+async fn handle_ready(
+    ws_sender: &mut SplitSink<WebSocket, Message>,
+    state: &AppState,
+    session_id: &SessionId,
+    session: &crate::domain::sessions::Session,
+    queued_first_user_message: Option<String>,
+) -> bool {
+    match &session.mode {
+        SessionMode::Headless => {
+            let agent_prompt = session
+                .agent_config
+                .system_prompt
+                .clone()
+                .unwrap_or_default();
+            let first = ServerMessage::FirstMessage {
+                agent_prompt,
+                user_message: String::new(),
+            };
+            send_json(ws_sender, &first).await
+        }
+        SessionMode::Interactive {
+            conversation_id, ..
+        } => {
+            let agent_prompt = if session.resumed_from.is_some() {
+                String::new()
+            } else {
+                session
+                    .agent_config
+                    .system_prompt
+                    .clone()
+                    .unwrap_or_default()
+            };
+
+            if session.mode.greet_user() {
+                let first = ServerMessage::FirstMessage {
+                    agent_prompt,
+                    user_message: String::new(),
+                };
+                return send_json(ws_sender, &first).await;
+            }
+
+            // If a UserMessage was already drained during the Phase-1
+            // wait, fold it in now.
+            if let Some(content) = queued_first_user_message {
+                let first = ServerMessage::FirstMessage {
+                    agent_prompt,
+                    user_message: content,
+                };
+                return send_json(ws_sender, &first).await;
+            }
+
+            // Try to find the first UserMessage for this conversation in
+            // the session log; if absent, stash and return.
+            match find_first_user_message_for_conversation(state, conversation_id, session_id).await
+            {
+                Ok(Some(content)) => {
+                    let first = ServerMessage::FirstMessage {
+                        agent_prompt,
+                        user_message: content,
+                    };
+                    send_json(ws_sender, &first).await
+                }
+                Ok(None) => {
+                    let stashed = state
+                        .chat_relay_map
+                        .set_pending_first_message(conversation_id, agent_prompt);
+                    if !stashed {
+                        warn!(%session_id, "could not stash pending_first_message; bailing");
+                        return false;
+                    }
+                    true
+                }
+                Err(err) => {
+                    error!(%session_id, error = %err, "failed to scan first user message");
+                    false
+                }
+            }
+        }
+    }
+}
+
+/// Phase 3 — bidirectional pump. Worker events go to the session log
+/// (and lifecycle events mirror onto the conversation log); inbound
+/// `ServerMessage`s from the relay's `to_worker` channel are forwarded
+/// to the WS.
+async fn pump_phase3(
+    mut ws_sender: SplitSink<WebSocket, Message>,
+    mut ws_receiver: futures::stream::SplitStream<WebSocket>,
+    state: AppState,
+    session_id: SessionId,
+    conversation_id: Option<ConversationId>,
+    actor_ref: ActorRef,
+    mut to_worker_rx: mpsc::Receiver<ServerMessage>,
+) {
     loop {
         tokio::select! {
-            // Worker -> Server: messages from WebSocket
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
                     Some(Ok(Message::Text(text))) => {
@@ -192,7 +512,7 @@ async fn handle_relay_socket(
                             Ok(WorkerMessage::Event { event }) => {
                                 if let Err(err) = handle_worker_event(
                                     &state,
-                                    &conversation_id,
+                                    conversation_id.as_ref(),
                                     &session_id,
                                     &actor_ref,
                                     event,
@@ -204,15 +524,9 @@ async fn handle_relay_socket(
                                 let bytes = data.len();
                                 info!(
                                     %session_id,
-                                    %conversation_id,
                                     bytes,
                                     "received SessionStateUpload — storing"
                                 );
-                                // Errors are logged and swallowed so a
-                                // transient store failure does not tear
-                                // down the WebSocket relay; the worker
-                                // will retry the upload on its next
-                                // Suspending event.
                                 match state
                                     .store
                                     .store_session_state_with_actor(
@@ -223,21 +537,15 @@ async fn handle_relay_socket(
                                     .await
                                 {
                                     Ok(()) => {
-                                        info!(
-                                            %session_id,
-                                            bytes,
-                                            "session_state stored",
-                                        );
+                                        info!(%session_id, bytes, "session_state stored");
                                     }
                                     Err(err) => {
-                                        warn!(
-                                            %session_id,
-                                            bytes,
-                                            error = %err,
-                                            "store session_state failed",
-                                        );
+                                        warn!(%session_id, bytes, error = %err, "store session_state failed");
                                     }
                                 }
+                            }
+                            Ok(other) => {
+                                warn!(%session_id, ?other, "unexpected WorkerMessage in Phase 3");
                             }
                             Err(err) => {
                                 warn!(%session_id, error = %err, "invalid worker message, ignoring");
@@ -251,35 +559,22 @@ async fn handle_relay_socket(
                     Some(Ok(Message::Ping(data))) => {
                         let _ = ws_sender.send(Message::Pong(data)).await;
                     }
-                    Some(Ok(_)) => {
-                        // Ignore binary and pong messages
-                    }
+                    Some(Ok(_)) => {}
                     Some(Err(err)) => {
-                        error!(%session_id, error = %err, "WebSocket error in relay loop");
+                        error!(%session_id, error = %err, "WebSocket error in Phase 3");
                         break;
                     }
                 }
             }
-
-            // Server -> Worker: user messages queued via the relay
-            user_msg = user_msg_rx.recv() => {
-                match user_msg {
-                    Some(event) => {
-                        let server_msg = ServerMessage::Event { event };
-                        match serde_json::to_string(&server_msg) {
-                            Ok(json) => {
-                                if ws_sender.send(Message::Text(json)).await.is_err() {
-                                    warn!(%session_id, "failed to forward user message, WebSocket closed");
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                error!(%session_id, error = %err, "failed to serialize server message");
-                            }
+            forward = to_worker_rx.recv() => {
+                match forward {
+                    Some(msg) => {
+                        if !send_json(&mut ws_sender, &msg).await {
+                            break;
                         }
                     }
                     None => {
-                        info!(%session_id, "user message channel closed");
+                        info!(%session_id, "to_worker channel closed");
                         break;
                     }
                 }
@@ -287,76 +582,103 @@ async fn handle_relay_socket(
         }
     }
 
-    // Step 5: Cleanup on disconnect. The conversation status (Active → Idle)
-    // is owned by `SpawnConversationSessionsAutomation`, which flips it when
-    // the companion session reaches a terminal status (Complete / Failed).
-    // The relay only unregisters its in-memory entry here.
-    state.chat_relay_map.disconnect(&conversation_id);
-    info!(%session_id, %conversation_id, "relay unregistered");
+    cleanup(&state, conversation_id.as_ref());
 }
 
-/// Build the WorkerCatchUp payload based on the worker's connect message.
-///
-/// For `Fresh` connections, we always return the full event log: a Fresh
-/// handshake means a brand-new worker process (typically in a new container
-/// for resume) that needs the entire conversation history to rebuild context.
-/// The `resume_from_event_index` field is ignored — see the resume design in
-/// `hydra/src/worker/interactive.rs` for how the worker reconstructs context
-/// from the replayed events.
-///
-/// For `Reconnecting` connections we skip events the worker has already seen;
-/// that path is a mid-session WebSocket reconnect where the same worker
-/// process is still alive and only needs the deltas it missed.
-///
-/// Note: the persisted `session_state` blob is intentionally NOT included in
-/// the catch-up. The worker's transcript-based resume path was removed
-/// (predecessor blob is no longer read on resume), and shipping it caused the
-/// catch-up text frame to exceed the WebSocket 16 MiB cap on long
-/// conversations, killing every resume attempt silently (see i-xwmoxzhe). The
-/// upload path (`WorkerMessage::SessionStateUpload` + store) is preserved
-/// untouched so we can revisit catch-up-side delivery later without
-/// reimplementing the writer.
-async fn build_catch_up(
-    state: &AppState,
-    conversation_id: &hydra_common::ConversationId,
-    session_id: &SessionId,
-    worker_connect: &WorkerConnect,
-) -> Result<WorkerCatchUp, StoreError> {
-    // Source prior chat history from `SessionEvent` across every session
-    // linked to the conversation, in session creation-time order. This
-    // mirrors the frontend read path (`useChatTranscript`) per design §3.4.1
-    // and replaces the legacy `ConversationEvent`-driven catch-up that
-    // Phase E step 18 removed.
-    let mut query = SearchSessionsQuery::default();
-    query.conversation_id = Some(conversation_id.clone());
-    let mut sessions = state.store().list_sessions(&query).await?;
-    sessions.sort_by_key(|(_, v)| v.creation_time);
+fn cleanup(state: &AppState, conversation_id: Option<&ConversationId>) {
+    if let Some(conv_id) = conversation_id {
+        state.chat_relay_map.disconnect(conv_id);
+        info!(%conv_id, "relay unregistered");
+    }
+}
 
-    let mut all_events: Vec<SessionEvent> = Vec::new();
-    for (sid, _) in &sessions {
-        let session_events = state.store().get_session_events(sid).await?;
-        for v in session_events {
+async fn send_json<S>(ws_sender: &mut S, msg: &ServerMessage) -> bool
+where
+    S: futures::sink::Sink<Message, Error = axum::Error> + Unpin,
+{
+    let json = match serde_json::to_string(msg) {
+        Ok(s) => s,
+        Err(err) => {
+            error!(error = %err, "failed to serialize ServerMessage");
+            return false;
+        }
+    };
+    if ws_sender.send(Message::Text(json)).await.is_err() {
+        warn!("failed to forward ServerMessage; WebSocket closed");
+        return false;
+    }
+    true
+}
+
+/// Collect every `SessionEvent` along the prior session's resumption
+/// chain, ordered by chain position (oldest first) and then by
+/// per-session event index. The worker uses this as primer text when
+/// native resume materialization failed.
+async fn collect_transcript(
+    state: &AppState,
+    prior_session_id: &SessionId,
+) -> Result<Vec<SessionEvent>, StoreError> {
+    let mut chain: Vec<SessionId> = Vec::new();
+    let mut cur = Some(prior_session_id.clone());
+    while let Some(sid) = cur {
+        let session = state.store.get_session(&sid, false).await?.item;
+        cur = session.resumed_from.clone();
+        chain.push(sid);
+    }
+    chain.reverse();
+
+    let mut all_events = Vec::new();
+    for sid in chain {
+        let events = state.store.get_session_events(&sid).await?;
+        for v in events {
             all_events.push(v.item.into());
         }
     }
+    Ok(all_events)
+}
 
-    let skip_count = match worker_connect {
-        WorkerConnect::Fresh { .. } => 0,
-        WorkerConnect::Reconnecting {
-            last_received_event_index,
-        } => last_received_event_index + 1,
-    };
+async fn collect_session_events_after(
+    state: &AppState,
+    session_id: &SessionId,
+    last_index: usize,
+) -> Result<Vec<SessionEvent>, StoreError> {
+    let events = state.store.get_session_events(session_id).await?;
+    Ok(events
+        .into_iter()
+        .skip(last_index + 1)
+        .map(|v| v.item.into())
+        .collect())
+}
 
-    let events: Vec<SessionEvent> = all_events.into_iter().skip(skip_count).collect();
+/// Find the first `UserMessage` from the conversation's session log
+/// (across every prior session linked to the same conversation) so
+/// `handle_ready` can fold it into the worker's first turn. Returns
+/// `Ok(None)` if no user message exists yet.
+async fn find_first_user_message_for_conversation(
+    state: &AppState,
+    conversation_id: &ConversationId,
+    current_session_id: &SessionId,
+) -> Result<Option<String>, StoreError> {
+    use hydra_common::api::v1::sessions::SearchSessionsQuery;
+    let mut query = SearchSessionsQuery::default();
+    query.conversation_id = Some(conversation_id.clone());
+    let mut sessions = state.store.list_sessions(&query).await?;
+    sessions.sort_by_key(|(_, v)| v.creation_time);
 
-    info!(
-        %conversation_id,
-        %session_id,
-        events = events.len(),
-        "build_catch_up"
-    );
-
-    Ok(WorkerCatchUp { events })
+    for (sid, _) in sessions {
+        let events = state.store.get_session_events(&sid).await?;
+        for v in events {
+            if let crate::domain::sessions::SessionEvent::UserMessage { content, .. } = v.item {
+                return Ok(Some(content));
+            }
+        }
+        if sid == *current_session_id {
+            // No earlier session had a user message and we've reached
+            // the current one with none seen — return None to stash.
+            return Ok(None);
+        }
+    }
+    Ok(None)
 }
 
 /// Handle a session event sent by the worker.
@@ -372,7 +694,7 @@ async fn build_catch_up(
 /// `AssistantMessage`) lives only on the session log per Phase E step 18.
 async fn handle_worker_event(
     state: &AppState,
-    conversation_id: &hydra_common::ConversationId,
+    conversation_id: Option<&ConversationId>,
     session_id: &SessionId,
     actor_ref: &ActorRef,
     event: SessionEvent,
@@ -390,23 +712,20 @@ async fn handle_worker_event(
         .await?;
 
     // Mirror lifecycle events (Suspending / Closed) onto the conversation
-    // events log so the conversation's lifecycle history stays observable
-    // through the legacy `ConversationEvent` SSE / read paths.
-    if let Some(conv_event) = session_event_to_lifecycle_conversation_event(&domain_event) {
-        let _ = state
-            .store
-            .append_conversation_event_with_actor(conversation_id, conv_event, actor_ref.clone())
-            .await;
+    // events log for interactive sessions.
+    if let Some(conv_id) = conversation_id {
+        if let Some(conv_event) = session_event_to_lifecycle_conversation_event(&domain_event) {
+            let _ = state
+                .store
+                .append_conversation_event_with_actor(conv_id, conv_event, actor_ref.clone())
+                .await;
+        }
     }
     Ok(())
 }
 
 /// Map a worker-emitted [`SessionEvent`] onto the corresponding lifecycle
-/// [`crate::domain::conversations::ConversationEvent`], if any. Used by the
-/// relay handler to mirror Suspending / Closed onto the conversation events
-/// log. Returns `None` for chat-content variants (UserMessage /
-/// AssistantMessage), which intentionally do not appear in the conversation
-/// events log post-Phase-E-step-18.
+/// [`crate::domain::conversations::ConversationEvent`], if any.
 fn session_event_to_lifecycle_conversation_event(
     event: &crate::domain::sessions::SessionEvent,
 ) -> Option<crate::domain::conversations::ConversationEvent> {

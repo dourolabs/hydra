@@ -6,19 +6,4 @@ import type { SuggestedAction } from "./SuggestedAction";
  * One reason a merge attempt was blocked. Internally tagged on `kind` so new
  * reason variants can be added without breaking parsers.
  */
-export type MergeBlockedReason =
-  | {
-      kind: "missing_approvals";
-      group_index: number;
-      label?: string | null;
-      eligible_principals: Array<EligiblePrincipal>;
-      current_approvals: Array<string>;
-      needed: number;
-      suggested_action: SuggestedAction;
-    }
-  | {
-      kind: "not_in_mergers";
-      actor: string;
-      allowed_mergers: Array<EligiblePrincipal>;
-      suggested_action: SuggestedAction;
-    };
+export type MergeBlockedReason = { "kind": "missing_approvals", group_index: number, label?: string | null, eligible_principals: Array<EligiblePrincipal>, current_approvals: Array<string>, needed: number, suggested_action: SuggestedAction, } | { "kind": "not_in_mergers", actor: string, allowed_mergers: Array<EligiblePrincipal>, suggested_action: SuggestedAction, };

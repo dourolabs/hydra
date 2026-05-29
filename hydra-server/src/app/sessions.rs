@@ -1529,6 +1529,7 @@ mod tests {
                 conversation_id: conv_id,
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
+                greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {
                 system_prompt: "test".to_string(),
@@ -1628,6 +1629,7 @@ mod tests {
                 conversation_id: conv_id.clone(),
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
+                greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {
                 system_prompt: "test".to_string(),

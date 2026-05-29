@@ -87,7 +87,7 @@ mod tests {
     use chrono::Utc;
     use futures::{channel::mpsc, SinkExt, StreamExt};
     use hydra_common::api::v1::{
-        conversations::{ServerMessage, WorkerCatchUp, WorkerConnect, WorkerMessage},
+        conversations::{ServerMessage, WorkerMessage},
         sessions::SessionEvent,
     };
 
@@ -167,19 +167,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn round_trips_worker_connect_and_server_event() {
+    async fn round_trips_worker_event_and_server_catch_up() {
         let (mut worker, mut server) = paired_sockets();
 
-        // Worker sends a Connect handshake. (Phase-1 wire variants gain new
-        // shapes in PR-3; here we use whatever exists on main today —
-        // `WorkerConnect::Fresh { resume_from_event_index: None }`, wrapped
-        // in a `WorkerMessage` via `serde_json` round-trip through the
-        // existing `WorkerMessage::Event` variant, which is the most stable
-        // surface available pre-PR-3.)
-        //
-        // To exercise the typed `send` path with an actual `WorkerConnect`,
-        // we serialize-and-parse it directly through `WorkerSocket::send` by
-        // wrapping it in the simplest available `WorkerMessage` variant.
         let event = SessionEvent::UserMessage {
             content: "hi".to_string(),
             timestamp: Utc::now(),
@@ -191,10 +181,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Server side observes it as a parsed ServerMessage — but
-        // `WorkerMessage` and `ServerMessage` are different enums, so we
-        // peek at the raw wire frame from the server's perspective by
-        // pulling from its inner stream directly.
         let raw = server.inner.next().await.expect("frame").unwrap();
         match raw {
             tungstenite::Message::Text(text) => {
@@ -207,24 +193,25 @@ mod tests {
             other => panic!("expected text frame, got {other:?}"),
         }
 
-        // Server sends a CatchUp back; worker recv()s it as a ServerMessage.
-        let cu = ServerMessage::CatchUp(WorkerCatchUp { events: vec![] });
+        let cu = ServerMessage::CatchUp { events: vec![] };
         server.send_raw_server_message(&cu).await;
         let got = worker.recv().await.unwrap().expect("server message");
         match got {
-            ServerMessage::CatchUp(WorkerCatchUp { events }) => assert!(events.is_empty()),
+            ServerMessage::CatchUp { events } => assert!(events.is_empty()),
             other => panic!("expected CatchUp, got {other:?}"),
         }
+    }
 
-        // Verifies the `WorkerConnect` (Phase-1) variant also round-trips
-        // through serde — this is what PR-3 will feed through the typed
-        // send path once `WorkerMessage::Connect` lands.
-        let handshake = WorkerConnect::Fresh {
-            resume_from_event_index: None,
+    #[tokio::test]
+    async fn round_trips_fresh_handshake() {
+        let (mut worker, mut server) = paired_sockets();
+        worker.send(WorkerMessage::Fresh).await.unwrap();
+        let raw = server.inner.next().await.expect("frame").unwrap();
+        let tungstenite::Message::Text(text) = raw else {
+            panic!("expected text frame");
         };
-        let json = serde_json::to_string(&handshake).unwrap();
-        let parsed: WorkerConnect = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, handshake);
+        let parsed: WorkerMessage = serde_json::from_str(&text).unwrap();
+        assert!(matches!(parsed, WorkerMessage::Fresh));
     }
 
     impl WorkerSocket<TestStream> {
@@ -260,11 +247,11 @@ mod tests {
             .send(tungstenite::Message::Ping(vec![1, 2, 3]))
             .await
             .unwrap();
-        let cu = ServerMessage::CatchUp(WorkerCatchUp { events: vec![] });
+        let cu = ServerMessage::CatchUp { events: vec![] };
         server.send_raw_server_message(&cu).await;
 
         let got = worker.recv().await.unwrap().expect("server message");
-        assert!(matches!(got, ServerMessage::CatchUp(_)));
+        assert!(matches!(got, ServerMessage::CatchUp { .. }));
 
         // Server side should have received an automatic Pong.
         let raw = server.inner.next().await.expect("pong frame").unwrap();

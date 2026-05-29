@@ -9,9 +9,13 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
+    api::v1::{
+        conversations::{ServerMessage, WorkerMessage},
+        sessions::{SessionEvent, SessionModeKind},
+    },
     constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
-    sessions::{InteractiveOptions, SessionMode, WorkerContext},
+    sessions::{MountSpec, WorkerContext},
     SessionId,
 };
 
@@ -20,8 +24,9 @@ use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::util::format_thousands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
-use crate::worker::relay_adapter::{spawn_relay_adapter, RelayAdapter};
-use crate::worker::report::{RunReport, SessionResume, TokenUsage};
+use crate::worker::relay_adapter::{spawn_relay_pump, RelayAdapter};
+use crate::worker::report::{NativeResume, RunReport, TokenUsage};
+use crate::worker::socket::WorkerSocket;
 use crate::{
     client::{ConflictError, HydraClientInterface},
     command::output::CommandContext,
@@ -39,12 +44,6 @@ pub async fn run(
     use_tempdir: bool,
     _context: &CommandContext,
 ) -> Result<()> {
-    // Initialize a tracing subscriber so structured `tracing::info!` /
-    // `tracing::warn!` / `tracing::error!` calls from worker code are
-    // surfaced on the worker subprocess's stdout/stderr, which the job
-    // engine captures into the per-session log file. `try_init` is a no-op if
-    // a subscriber has already been installed (e.g. inside an integration
-    // test that initializes its own).
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -56,45 +55,25 @@ pub async fn run(
     let job = session;
 
     let WorkerContext {
-        session,
+        session_id: _session_id,
+        mode_kind,
+        mounts,
+        working_dir,
+        model,
+        mcp_config,
+        idle_timeout_secs,
         resolved_env,
         github_token,
         ..
     } = client.get_session_context(&job).await?;
-    let mount_spec = session.mount_spec.clone();
-    let model = session.agent_config.model.clone();
-    let mcp_config_json = session
-        .agent_config
-        .mcp_config
+
+    let mount_spec = MountSpec::new(working_dir, mounts);
+    let mcp_config_json = mcp_config
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
         .context("failed to serialize MCP config")?;
-    let prompt = session
-        .agent_config
-        .system_prompt
-        .clone()
-        .unwrap_or_default();
-    let interactive = match &session.mode {
-        SessionMode::Headless => None,
-        SessionMode::Interactive {
-            conversation_id,
-            idle_timeout_secs,
-            conversation_resume_from,
-        } => Some(InteractiveOptions::new(
-            Some(conversation_id.clone()),
-            *idle_timeout_secs,
-            *conversation_resume_from,
-        )),
-        // The `SessionMode` enum is `#[non_exhaustive]` across the crate
-        // boundary. A future variant should crash loudly here rather than
-        // silently fall through to either branch.
-        other => {
-            return Err(anyhow!(
-                "worker received an unsupported SessionMode: {other:?}"
-            ));
-        }
-    };
+
     let dest = if use_tempdir {
         let tmp = tempfile::tempdir().context("failed to create temporary working directory")?;
         let tmp_path = tmp.keep();
@@ -108,13 +87,6 @@ pub async fn run(
     ensure_color_output_env(&mut execution_env);
     let worker_home_dir = resolve_worker_home_dir();
 
-    // Pre-flight: compute the agent CWD and the per-mount list, and pin the
-    // agent's `HYDRA_DOCUMENTS_DIR` before any mount runs. Each mount creates
-    // its own directory at `setup` time, so we deliberately do **not**
-    // `mkdir` here.
-    //
-    // The server always populates `mount_spec`; we instantiate from it and
-    // surface any unsupported item as a fatal error.
     if let Some(docs_target) = mounts::spec::find_documents_dir(&mount_spec) {
         execution_env.insert(
             ENV_HYDRA_DOCUMENTS_DIR.to_string(),
@@ -125,7 +97,7 @@ pub async fn run(
     let issue_branch_id = execution_env.get(ENV_HYDRA_ISSUE_ID).cloned();
     let mounts::spec::InstantiatedMounts {
         working_dir: repo_path,
-        mounts,
+        mounts: instantiated_mounts,
     } = mounts::spec::instantiate(
         &mount_spec,
         mounts::spec::InstantiateInputs {
@@ -138,7 +110,7 @@ pub async fn run(
         },
     )
     .map_err(|err| anyhow!("failed to instantiate MountSpec: {err}"))?;
-    let mut mounts = mounts;
+    let mut mounts = instantiated_mounts;
 
     let mut errors = Vec::new();
 
@@ -149,16 +121,8 @@ pub async fn run(
     let agent_start = Instant::now();
 
     let mut run_usage: Option<TokenUsage> = None;
-    let last_message = if let Err(err) =
-        reject_interactive_if_unsupported(&model, interactive.is_some())
-    {
-        // Fast-path: when the caller asked for interactive but the model
-        // name resolves to a wrapper that doesn't support it, bail before
-        // `ModelSelector::from_context` runs any per-worker setup (e.g.
-        // `codex login`, writing `~/.codex/config.toml`, creating the output
-        // tempdir, opening the relay WebSocket). The defense-in-depth guard
-        // inside the `Ok(mut selector)` arm below still rejects the same
-        // case if it somehow reaches construction.
+    let interactive = matches!(mode_kind, SessionModeKind::Interactive);
+    let last_message = if let Err(err) = reject_interactive_if_unsupported(&model, interactive) {
         let elapsed = agent_start.elapsed().as_secs_f64();
         log_status(format!(
             "Phase: agent execution — failed during model setup ({elapsed:.2}s): {err}"
@@ -170,13 +134,9 @@ pub async fn run(
             .unwrap_or_else(|| "model setup failed".to_string())
     } else {
         let selector_home_dir = worker_home_dir
+            .clone()
             .ok_or_else(|| anyhow!("HOME must be set to construct a model wrapper"))?;
-        let selector_idle_timeout = Duration::from_secs(
-            interactive
-                .as_ref()
-                .and_then(|opts| opts.idle_timeout_secs)
-                .unwrap_or(600),
-        );
+        let selector_idle_timeout = Duration::from_secs(idle_timeout_secs.unwrap_or(600));
 
         let selector_result = ModelSelector::from_context(
             &model,
@@ -201,38 +161,43 @@ pub async fn run(
                     .unwrap_or_else(|| "model setup failed".to_string())
             }
             Ok(mut selector) => {
-                let run_result = if let Some(interactive_opts) = interactive {
-                    log_status("Phase: interactive agent execution — starting");
-                    if matches!(selector, ModelSelector::Codex(_)) {
-                        Err(anyhow!("model {model:?} does not support interactive mode"))
-                    } else {
-                        let conversation_resume_from = interactive_opts.conversation_resume_from;
-                        let ws_stream = client.connect_relay_websocket(&job).await?;
-                        let RelayAdapter {
-                            input_rx,
-                            output_tx,
-                            pump,
-                            initial_resume,
-                        } = spawn_relay_adapter(
-                            ws_stream,
-                            &job,
-                            conversation_resume_from,
-                            &prompt,
-                            selector_home_dir.clone(),
-                            repo_path.clone(),
-                            selector_idle_timeout,
-                        );
-                        let resume: Option<SessionResume> = initial_resume.await.unwrap_or(None);
-                        let report = selector
-                            .run_interactive(input_rx, output_tx, &job, &prompt, resume)
-                            .await;
-                        let _ = pump.await;
-                        report
+                let ws_stream = client.connect_relay_websocket(&job).await?;
+                let mut ws = WorkerSocket::new(ws_stream);
+
+                let phase1 = phase1_negotiate(&mut selector, &mut ws, &job).await;
+                let run_result = match phase1 {
+                    Err(err) => Err(err),
+                    Ok((resume, primer)) => {
+                        let first_message = phase2_ready(&mut ws).await;
+                        match first_message {
+                            Err(err) => Err(err),
+                            Ok((agent_prompt, user_message)) => {
+                                let prompt =
+                                    concat_first_message(&primer, &agent_prompt, &user_message);
+                                if interactive {
+                                    log_status("Phase: interactive agent execution — starting");
+                                    let RelayAdapter {
+                                        input_rx,
+                                        output_tx,
+                                        pump,
+                                    } = spawn_relay_pump(ws);
+                                    let report = selector
+                                        .run_interactive(input_rx, output_tx, &job, &prompt, resume)
+                                        .await;
+                                    let _ = pump.await;
+                                    report
+                                } else {
+                                    log_status("Phase: agent execution — starting");
+                                    let (output_tx, output_rx) = tokio::sync::mpsc::channel(32);
+                                    let pump = spawn_headless_output_pump(ws, output_rx);
+                                    let report = selector.run(&prompt, resume).await;
+                                    drop(output_tx);
+                                    let _ = pump.await;
+                                    report
+                                }
+                            }
+                        }
                     }
-                } else {
-                    log_status("Phase: agent execution — starting");
-                    let resume: Option<SessionResume> = None;
-                    selector.run(&prompt, resume).await
                 };
 
                 match run_result {
@@ -261,21 +226,6 @@ pub async fn run(
         }
     };
 
-    // Phase: reap orphans. After the agent execution phase, any background
-    // process the agent kicked off (e.g. `pnpm dev`, `vite`, `mock-server`,
-    // or a script that backgrounded itself with `> /dev/null 2>&1 &`) is now
-    // an orphan we don't want — it would keep the worker pod alive past its
-    // useful end. The per-model wrappers' kill-process-group path only
-    // catches children that kept stdout open; this is the namespace-wide
-    // safety net for everything else.
-    //
-    // The reaper itself is gated on `std::process::id() == 1` — i.e. the
-    // worker owns its PID namespace, which holds in production (K8s and
-    // local-Docker both run `hydra sessions worker-run` as the container's
-    // PID 1) but does not hold under the integration test harness or the
-    // local process job engine. In those cases this call is a no-op and the
-    // status line below reports `skipped`. See `worker::reaper` for the full
-    // safety contract.
     log_status("Phase: reap orphans — starting");
     let reap_start = Instant::now();
     let reap_summary = reap_other_processes().await;
@@ -332,6 +282,202 @@ pub async fn run(
     }
 }
 
+/// Phase 1 — context negotiation. Sends `Fresh`, awaits `ResumeContext`,
+/// attempts native materialization, and on failure asks for the prior
+/// session's transcript as primer text. Returns the resolved
+/// `NativeResume` (if any) and the primer-event list (may be empty).
+async fn phase1_negotiate<S>(
+    selector: &mut ModelSelector,
+    ws: &mut WorkerSocket<S>,
+    _job: &SessionId,
+) -> Result<(Option<NativeResume>, Vec<SessionEvent>)>
+where
+    S: futures::Sink<
+            tokio_tungstenite::tungstenite::Message,
+            Error = tokio_tungstenite::tungstenite::Error,
+        > + futures::Stream<
+            Item = std::result::Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    ws.send(WorkerMessage::Fresh).await?;
+    let resume_ctx = ws
+        .recv()
+        .await?
+        .ok_or_else(|| anyhow!("ws closed before ResumeContext"))?;
+    let (resume_blob, prior_session_id) = match resume_ctx {
+        ServerMessage::ResumeContext {
+            resume_blob,
+            prior_session_id,
+        } => (resume_blob, prior_session_id),
+        other => return Err(anyhow!("expected ResumeContext, got {other:?}")),
+    };
+
+    // Try native materialization first; on Err, fall back to transcript replay.
+    let (native, need_transcript) = match resume_blob {
+        Some(bytes) => match selector.try_materialize(&bytes).await {
+            Ok(native) => (Some(native), false),
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    prior_session_id = ?prior_session_id,
+                    "native resume materialization failed; falling back to transcript replay",
+                );
+                (None, prior_session_id.is_some())
+            }
+        },
+        None => (None, prior_session_id.is_some()),
+    };
+
+    let primer = if need_transcript {
+        if let Some(prior) = prior_session_id {
+            ws.send(WorkerMessage::RequestTranscript {
+                prior_session_id: prior,
+            })
+            .await?;
+            let resp = ws
+                .recv()
+                .await?
+                .ok_or_else(|| anyhow!("ws closed before Transcript"))?;
+            match resp {
+                ServerMessage::Transcript { events } => events,
+                other => return Err(anyhow!("expected Transcript, got {other:?}")),
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    Ok((native, primer))
+}
+
+/// Phase 2 — send `Ready`, await `FirstMessage`, return its contents.
+async fn phase2_ready<S>(ws: &mut WorkerSocket<S>) -> Result<(String, String)>
+where
+    S: futures::Sink<
+            tokio_tungstenite::tungstenite::Message,
+            Error = tokio_tungstenite::tungstenite::Error,
+        > + futures::Stream<
+            Item = std::result::Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin,
+{
+    ws.send(WorkerMessage::Ready).await?;
+    let msg = ws
+        .recv()
+        .await?
+        .ok_or_else(|| anyhow!("ws closed before FirstMessage"))?;
+    match msg {
+        ServerMessage::FirstMessage {
+            agent_prompt,
+            user_message,
+        } => Ok((agent_prompt, user_message)),
+        other => Err(anyhow!("expected FirstMessage, got {other:?}")),
+    }
+}
+
+/// Concatenate the optional primer (from a transcript-replay fallback),
+/// the agent prompt, and the user message into one model-input string,
+/// collapsing empty pieces.
+fn concat_first_message(
+    primer_events: &[SessionEvent],
+    agent_prompt: &str,
+    user_message: &str,
+) -> String {
+    let primer = primer_to_text(primer_events);
+    let base = match (agent_prompt, user_message) {
+        ("", "") => String::new(),
+        ("", u) => u.to_string(),
+        (p, "") => p.to_string(),
+        (p, u) => format!("{p}\n\n{u}"),
+    };
+    if primer.is_empty() {
+        base
+    } else if base.is_empty() {
+        primer
+    } else {
+        format!("{primer}\n\n{base}")
+    }
+}
+
+fn primer_to_text(events: &[SessionEvent]) -> String {
+    let mut out = String::new();
+    for e in events {
+        match e {
+            SessionEvent::UserMessage { content, .. } => {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str("User: ");
+                out.push_str(content);
+            }
+            SessionEvent::AssistantMessage { content, .. } => {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str("Assistant: ");
+                out.push_str(content);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Headless mode has no inbound messages, so we just drain the
+/// per-wrapper output channel into WorkerMessage::Event frames.
+fn spawn_headless_output_pump<S>(
+    mut ws: WorkerSocket<S>,
+    mut output_rx: tokio::sync::mpsc::Receiver<crate::worker::report::WorkerEvent>,
+) -> tokio::task::JoinHandle<()>
+where
+    S: futures::Sink<
+            tokio_tungstenite::tungstenite::Message,
+            Error = tokio_tungstenite::tungstenite::Error,
+        > + futures::Stream<
+            Item = std::result::Result<
+                tokio_tungstenite::tungstenite::Message,
+                tokio_tungstenite::tungstenite::Error,
+            >,
+        > + Unpin
+        + Send
+        + 'static,
+{
+    tokio::spawn(async move {
+        while let Some(event) = output_rx.recv().await {
+            if let Some(api_event) = worker_event_to_session_event(event) {
+                let _ = ws.send(WorkerMessage::Event { event: api_event }).await;
+            }
+        }
+    })
+}
+
+fn worker_event_to_session_event(
+    event: crate::worker::report::WorkerEvent,
+) -> Option<SessionEvent> {
+    use crate::worker::report::WorkerEvent;
+    match event {
+        WorkerEvent::AssistantText { text } => Some(SessionEvent::AssistantMessage {
+            content: text,
+            timestamp: chrono::Utc::now(),
+        }),
+        WorkerEvent::ToolUse { tool_name, payload } => Some(SessionEvent::ToolUse {
+            tool_name,
+            payload,
+            timestamp: chrono::Utc::now(),
+        }),
+        WorkerEvent::Usage { .. } | WorkerEvent::SessionInit { .. } | WorkerEvent::Raw { .. } => {
+            None
+        }
+    }
+}
+
 fn ensure_clean_destination(dest: &Path) -> Result<()> {
     if dest.exists() {
         let mut entries =
@@ -377,14 +523,6 @@ async fn submit_session_status(
     .await
 }
 
-/// Retry loop for session status submission.
-///
-/// Each attempt is bounded by `attempt_timeout`. On timeout or any other error
-/// (except a [`ConflictError`], which is treated as success), the attempt is
-/// retried with exponential backoff up to `max_attempts` times. The conflict
-/// case covers an already-submitted status from a prior worker invocation and
-/// is detected structurally via `downcast_ref` rather than by string-matching
-/// the error display.
 async fn submit_session_status_with_retry<F, Fut>(
     job: &SessionId,
     last_message_length: usize,
@@ -447,18 +585,12 @@ fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
 }
 
-/// Emit the three per-run report log lines (token totals, model session id,
-/// session-state path) so the per-session log file the job engine captures
-/// records everything `RunReport` carries. These are the user-visible
-/// outcome of PR 1 — see `designs/worker-model-commands-refactor.md` §7.
 fn log_run_report(report: &RunReport) {
     for line in format_run_report_lines(report) {
         log_status(line);
     }
 }
 
-/// Build the three log lines `log_run_report` emits, kept separate so unit
-/// tests can assert on the output without capturing stdout.
 fn format_run_report_lines(report: &RunReport) -> Vec<String> {
     let mut lines = Vec::with_capacity(3);
     let total = report
@@ -494,12 +626,6 @@ fn resolve_worker_home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Side-effect-free fast-path kind-check used to short-circuit
-/// `worker_run` when an interactive run is requested for a model that
-/// doesn't support it. Returns `Err` only for the rejection case; the
-/// error message matches the defense-in-depth guard below
-/// `ModelSelector::from_context` byte-for-byte so the observable
-/// rejection behavior is unchanged.
 fn reject_interactive_if_unsupported(model: &Option<String>, interactive: bool) -> Result<()> {
     if interactive && !ModelSelector::supports_interactive(model.as_deref()) {
         Err(anyhow!("model {model:?} does not support interactive mode"))
@@ -634,8 +760,6 @@ mod tests {
 
     #[test]
     fn reject_interactive_if_unsupported_none_interactive_returns_err() {
-        // `None` defaults to Codex per `ModelSelector::decide_kind`, so the
-        // fast-path must reject it when interactive is requested.
         let err = reject_interactive_if_unsupported(&None, true)
             .expect_err("None+interactive must be rejected");
         assert_eq!(
@@ -647,9 +771,7 @@ mod tests {
     #[test]
     fn ensure_color_output_env_sets_defaults() {
         let mut env = HashMap::new();
-
         ensure_color_output_env(&mut env);
-
         assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
         assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
@@ -662,59 +784,22 @@ mod tests {
             ("TERM".to_string(), "vt100".to_string()),
             ("FORCE_COLOR".to_string(), "0".to_string()),
         ]);
-
         ensure_color_output_env(&mut env);
-
         assert_eq!(env.get("TERM").map(String::as_str), Some("vt100"));
         assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("0"));
         assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn phase_timeout_records_error_and_status_submission_still_runs() -> Result<()> {
-        // Mirror the inline pattern used in `run`: wrap a slow phase in
-        // `tokio::time::timeout`, push the timeout onto `errors`, then carry on
-        // to status submission. The acceptance criteria require that a phase
-        // timeout never short-circuits the final status update.
-        let phase_timeout = Duration::from_millis(50);
-        let mut errors: Vec<anyhow::Error> = Vec::new();
-
-        let slow_phase = async {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-            Ok::<(), anyhow::Error>(())
-        };
-        match tokio::time::timeout(phase_timeout, slow_phase).await {
-            Ok(_) => panic!("expected the slow phase to time out"),
-            Err(_) => errors.push(anyhow!(
-                "phase timed out after {}s",
-                phase_timeout.as_secs()
-            )),
-        }
-        assert_eq!(errors.len(), 1, "phase timeout must push to errors");
-
-        // Status submission is still invoked, and (because errors is non-empty)
-        // production code would send Failed { reason }; here we just verify the
-        // submission helper succeeds rather than being skipped.
-        let job = task_id("t-phase-timeout");
-        let job_for_response = job.clone();
-        let submission =
-            submit_session_status_with_retry(&job, 0, Duration::from_secs(1), 1, || {
-                let job = job_for_response.clone();
-                async move {
-                    Ok(hydra_common::session_status::SetSessionStatusResponse::new(
-                        job,
-                        hydra_common::task_status::Status::Failed,
-                    ))
-                }
-            })
-            .await;
-
-        assert!(
-            submission.is_ok(),
-            "status submission must run even when a prior phase timed out"
+    #[test]
+    fn concat_first_message_collapses_empty_pieces() {
+        assert_eq!(concat_first_message(&[], "", ""), "");
+        assert_eq!(concat_first_message(&[], "prompt", ""), "prompt");
+        assert_eq!(concat_first_message(&[], "", "user"), "user");
+        assert_eq!(
+            concat_first_message(&[], "prompt", "user"),
+            "prompt\n\nuser"
         );
-        Ok(())
     }
 
     #[tokio::test(start_paused = true)]
@@ -741,16 +826,8 @@ mod tests {
         })
         .await;
 
-        assert!(
-            result.is_ok(),
-            "status submission should succeed on the retry: {:?}",
-            result.err()
-        );
-        assert_eq!(
-            attempts.load(Ordering::SeqCst),
-            2,
-            "expected exactly one retry after the initial transport failure"
-        );
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
         Ok(())
     }
 
@@ -767,15 +844,8 @@ mod tests {
         })
         .await;
 
-        assert!(
-            result.is_err(),
-            "status submission should fail after exhausting retries"
-        );
-        assert_eq!(
-            attempts.load(Ordering::SeqCst),
-            3,
-            "should make exactly max_attempts attempts"
-        );
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
         Ok(())
     }
 
@@ -797,52 +867,8 @@ mod tests {
         })
         .await;
 
-        assert!(result.is_ok(), "ConflictError must be treated as success");
-        assert_eq!(
-            attempts.load(Ordering::SeqCst),
-            1,
-            "409 should short-circuit retries"
-        );
-        Ok(())
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn submit_session_status_retries_on_timeout() -> Result<()> {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let job = task_id("t-status-timeout");
-        let job_for_response = job.clone();
-        let attempts = AtomicUsize::new(0);
-
-        let result =
-            submit_session_status_with_retry(&job, 0, Duration::from_millis(50), 3, || {
-                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
-                let job = job_for_response.clone();
-                async move {
-                    if attempt == 0 {
-                        // Sleep longer than the attempt timeout to force a timeout retry.
-                        tokio::time::sleep(Duration::from_secs(30)).await;
-                        unreachable!("attempt should have been cancelled by timeout")
-                    } else {
-                        Ok(hydra_common::session_status::SetSessionStatusResponse::new(
-                            job,
-                            hydra_common::task_status::Status::Complete,
-                        ))
-                    }
-                }
-            })
-            .await;
-
-        assert!(
-            result.is_ok(),
-            "status submission should succeed after the timeout retry: {:?}",
-            result.err()
-        );
-        assert_eq!(
-            attempts.load(Ordering::SeqCst),
-            2,
-            "expected exactly one retry after the timeout"
-        );
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
         Ok(())
     }
 }

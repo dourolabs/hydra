@@ -225,6 +225,7 @@ async fn spawn_session(
             conversation_id: conversation_id.clone(),
             idle_timeout_secs: None,
             conversation_resume_from: resume_from,
+            greet_user: false,
         },
         agent_config: AgentSpec::Named { name: agent_name },
         model: conversation_settings.model.clone(),
@@ -546,6 +547,7 @@ mod tests {
                 conversation_id: cid,
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
+                greet_user: false,
             },
             None => SessionMode::Headless,
         };
@@ -1250,6 +1252,7 @@ mod tests {
                 conversation_id: conversation_id.clone(),
                 idle_timeout_secs: None,
                 conversation_resume_from: None,
+                greet_user: false,
             },
             TaskStatus::Complete,
             None,

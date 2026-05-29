@@ -3,9 +3,8 @@
 /**
  * Data payload for the connected event sent on initial SSE connection.
  */
-export type ConnectedEventData = {
-  /**
-   * The current event sequence number for reconnection support.
-   */
-  current_seq: bigint;
-};
+export type ConnectedEventData = { 
+/**
+ * The current event sequence number for reconnection support.
+ */
+current_seq: bigint, };

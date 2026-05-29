@@ -467,10 +467,7 @@ mod tests {
         },
         policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     };
-    use hydra_common::{
-        ConversationId, SessionId, Versioned,
-        api::v1::sessions::{SearchSessionsQuery, SessionEvent as ApiSessionEvent},
-    };
+    use hydra_common::{ConversationId, SessionId, Versioned, api::v1::sessions::SearchSessionsQuery};
     use std::time::Duration;
     use tokio::sync::mpsc;
 
@@ -485,7 +482,7 @@ mod tests {
         state: &AppState,
         conversation_id: &ConversationId,
         session_id: &SessionId,
-    ) -> mpsc::Receiver<ApiSessionEvent> {
+    ) -> mpsc::Receiver<hydra_common::api::v1::conversations::ServerMessage> {
         let (tx, rx) = mpsc::channel(TO_WORKER_CAPACITY);
         let _ = state
             .chat_relay_map

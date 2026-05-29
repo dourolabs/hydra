@@ -18,44 +18,21 @@ pub async fn get_session_context(
         ApiError::not_found(format!("Session '{session_id}' not found"))
     })?;
 
-    // Build the API `Session` the worker will see. The persisted
-    // `mount_spec` is now the single source of truth — no re-derivation
-    // from a separate `context` / resolved-bundle path (PR-F).
-    let mut session: v1::sessions::Session = task.clone().into();
-
     // When running in a containerized engine (e.g. Docker), rewrite file://
     // URLs inside `mount_spec.mounts[*].bundle` to the container-side mount
     // path so the worker receives URLs it can resolve from inside the
     // container.
+    let mut mount_spec = task.mount_spec.clone();
     if state.job_engine.is_containerized() {
-        let _ = rewrite_local_bundle_urls(&mut session.mount_spec);
+        let _ = rewrite_local_bundle_urls(&mut mount_spec);
     }
 
-    // Resolve per-user secrets with global fallback and inject into env_vars
-    // (the worker reads env_vars off `WorkerContext`).
+    // Resolve per-user secrets with global fallback and inject into env_vars.
     let mut env_vars = task.env_vars.clone();
     state
         .resolve_secrets_into_env_vars(&task.creator, &mut env_vars, &task.secrets)
         .await;
     env_vars.insert(ENV_HYDRA_ID.to_string(), session_id.to_string());
-    session.env_vars = env_vars.clone();
-
-    // For interactive sessions, fill in the server-configured idle-timeout
-    // default into the embedded `SessionMode::Interactive` so the worker can
-    // read it directly off `session.mode` without a separate handshake field.
-    // Matches the domain `SessionMode` exhaustively so a new variant in a
-    // future PR forces this site to be revisited (the cross-crate API
-    // `SessionMode` is `#[non_exhaustive]`).
-    if let SessionMode::Interactive { .. } = &task.mode {
-        if let v1::sessions::SessionMode::Interactive {
-            idle_timeout_secs, ..
-        } = &mut session.mode
-        {
-            if idle_timeout_secs.is_none() {
-                *idle_timeout_secs = Some(state.config.job.interactive_idle_timeout_secs);
-            }
-        }
-    }
 
     // Resolve the creator's GitHub token server-side so the worker can clone
     // repos. Best-effort: if no token is on file we hand back `None` and the
@@ -74,9 +51,30 @@ pub async fn get_session_context(
         }
     };
 
-    // `resumed_state` is reserved for the §3 resumption design; populated by a
-    // future PR and read by the worker via `Session.resumed_from`.
-    let context = v1::sessions::WorkerContext::new(session, env_vars, github_token, None);
+    // Project the mode kind + idle timeout. For interactive sessions, fall
+    // back to the server-configured default when the caller didn't pin a
+    // value at create-time.
+    let (mode_kind, idle_timeout_secs) = match &task.mode {
+        SessionMode::Headless => (v1::sessions::SessionModeKind::Headless, None),
+        SessionMode::Interactive {
+            idle_timeout_secs, ..
+        } => (
+            v1::sessions::SessionModeKind::Interactive,
+            Some(idle_timeout_secs.unwrap_or(state.config.job.interactive_idle_timeout_secs)),
+        ),
+    };
+
+    let context = v1::sessions::WorkerContext::new(
+        session_id.clone(),
+        mode_kind,
+        mount_spec.mounts,
+        mount_spec.working_dir,
+        task.agent_config.model.clone(),
+        task.agent_config.mcp_config.clone(),
+        idle_timeout_secs,
+        env_vars,
+        github_token,
+    );
     info!(session_id = %session_id, "get_session_context completed");
     Ok(Json(context))
 }

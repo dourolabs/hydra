@@ -264,11 +264,10 @@ describe("Sessions", () => {
   it("get session context", async () => {
     const created = await client.createSession(sessionPayload);
     const ctx = await client.getSessionContext(created.session_id);
-    expect(ctx.session.mode.type).toBe("headless");
-    expect(ctx.session.agent_config?.system_prompt).toBe(
-      "Contract test session prompt",
-    );
-    const firstItem = ctx.session.mount_spec.mounts[0];
+    expect(ctx.mode_kind).toBe("headless");
+    // system_prompt no longer flows through WorkerContext — it is
+    // delivered via Phase 2 `FirstMessage` over the relay websocket.
+    const firstItem = ctx.mounts[0];
     expect(firstItem.type).toBe("bundle");
     if (firstItem.type === "bundle") {
       expect(firstItem.bundle.type).toBe("git_repository");

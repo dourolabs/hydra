@@ -5,21 +5,20 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * The user's response to a form submission.
  */
-export type FormResponse = {
-  /**
-   * Which action was taken.
-   */
-  action_id: string;
-  /**
-   * Who submitted the response.
-   */
-  actor: ActorId;
-  /**
-   * Field values, keyed by field key. Typed JSON values.
-   */
-  values: { [key in string]: JsonValue };
-  /**
-   * When the form was submitted.
-   */
-  submitted_at: string;
-};
+export type FormResponse = { 
+/**
+ * Which action was taken.
+ */
+action_id: string, 
+/**
+ * Who submitted the response.
+ */
+actor: ActorId, 
+/**
+ * Field values, keyed by field key. Typed JSON values.
+ */
+values: { [key in string]: JsonValue }, 
+/**
+ * When the form was submitted.
+ */
+submitted_at: string, };
