@@ -143,13 +143,16 @@ mod tests {
     }
 
     fn make_task(issue_id: &hydra_common::IssueId) -> crate::domain::sessions::Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         crate::domain::sessions::Session::new(
             Username::from("test-creator"),
             Some(issue_id.clone()),
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             Some("worker:latest".to_string()),
             HashMap::new(),

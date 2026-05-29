@@ -362,7 +362,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // `create_actor_for_job` reads `session.agent_config.agent_name` via
+    // `create_actor_for_job` reads `session.agent_name` via
     // `actor_id_of` and mints an `Agent` (when set) or `Adhoc` (when
     // `None`) actor.
     // -----------------------------------------------------------------
@@ -370,7 +370,7 @@ mod tests {
     fn session_with_agent(
         agent_name: Option<hydra_common::api::v1::agents::AgentName>,
     ) -> crate::domain::sessions::Session {
-        use crate::domain::sessions::{AgentConfig, Session, SessionMode};
+        use crate::domain::sessions::{Session, SessionMode};
         use crate::domain::task_status::Status;
         use crate::routes::sessions::mount_spec_from_create_request;
         use hydra_common::api::v1::sessions::Bundle;
@@ -379,7 +379,10 @@ mod tests {
             crate::domain::users::Username::from("creator"),
             None,
             None,
-            AgentConfig::new(agent_name, None, None, None),
+            agent_name,
+            None,
+            None,
+            None,
             mount_spec_from_create_request(Bundle::None, None),
             None,
             HashMap::new(),

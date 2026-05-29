@@ -25,40 +25,6 @@ pub struct InteractiveOptions {
     pub conversation_resume_from: Option<usize>,
 }
 
-/// Per-session knobs handed to the model wrapper. Mirrors
-/// [`api::sessions::AgentConfig`].
-///
-/// `agent_name` is `Option<AgentName>` so the agent-vs-adhoc
-/// discriminant on a session is a validated type. `actor_id_of` reads
-/// this field to build the `ActorId` for the session.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<AgentName>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_config: Option<McpConfig>,
-}
-
-impl AgentConfig {
-    pub fn new(
-        agent_name: Option<AgentName>,
-        model: Option<String>,
-        system_prompt: Option<String>,
-        mcp_config: Option<McpConfig>,
-    ) -> Self {
-        Self {
-            agent_name,
-            model,
-            system_prompt,
-            mcp_config,
-        }
-    }
-}
-
 /// First-class discriminant for the two kinds of sessions Hydra runs.
 /// Mirrors [`api::sessions::SessionMode`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,7 +90,17 @@ pub struct Session {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<SessionId>,
 
-    pub agent_config: AgentConfig,
+    // Former AgentConfig fields, now direct. `agent_name` is `Option<AgentName>`
+    // so the agent-vs-adhoc discriminant on a session is a validated type;
+    // `actor_id_of` reads this field to build the `ActorId` for the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<AgentName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<McpConfig>,
     pub mount_spec: MountSpec,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,11 +134,10 @@ pub struct Session {
     pub usage: Option<TokenUsage>,
 }
 
-/// Build the [`ActorId`] for a session from its embedded
-/// [`AgentConfig`] and the session's own id.
+/// Build the [`ActorId`] for a session from its `agent_name` and the
+/// session's own id.
 ///
-/// The agent-vs-adhoc discriminant lives on
-/// `session.agent_config.agent_name`:
+/// The agent-vs-adhoc discriminant lives on `session.agent_name`:
 ///
 /// - `Some(name)` → agent-spawned session, attributed to `Agent(name)`.
 /// - `None`       → ad-hoc session, attributed to `Adhoc(session_id)`.
@@ -171,7 +146,7 @@ pub struct Session {
 /// alongside the `Session` value because `Session` is keyed by id in
 /// the store and does not carry its own id as a field.
 pub fn actor_id_of(session: &Session, session_id: &SessionId) -> ActorId {
-    match &session.agent_config.agent_name {
+    match &session.agent_name {
         Some(name) => ActorId::Agent(name.clone()),
         None => ActorId::Adhoc(session_id.clone()),
     }
@@ -183,7 +158,10 @@ impl Session {
         creator: Username,
         spawned_from: Option<IssueId>,
         resumed_from: Option<SessionId>,
-        agent_config: AgentConfig,
+        agent_name: Option<AgentName>,
+        model: Option<String>,
+        system_prompt: Option<String>,
+        mcp_config: Option<McpConfig>,
         mount_spec: MountSpec,
         image: Option<String>,
         env_vars: HashMap<String, String>,
@@ -199,7 +177,10 @@ impl Session {
             creator,
             spawned_from,
             resumed_from,
-            agent_config,
+            agent_name,
+            model,
+            system_prompt,
+            mcp_config,
             mount_spec,
             image,
             env_vars,
@@ -227,16 +208,6 @@ impl Session {
     /// Returns `true` if this is an interactive session.
     pub fn is_interactive(&self) -> bool {
         matches!(self.mode, SessionMode::Interactive { .. })
-    }
-
-    /// Returns the prompt string for the worker, regardless of mode.
-    /// The prompt is sourced from `agent_config.system_prompt` for both
-    /// Headless and Interactive sessions.
-    pub fn resolved_prompt(&self) -> &str {
-        self.agent_config
-            .system_prompt
-            .as_deref()
-            .unwrap_or_default()
     }
 }
 
@@ -291,28 +262,6 @@ impl From<InteractiveOptions> for api::sessions::InteractiveOptions {
     }
 }
 
-impl From<api::sessions::AgentConfig> for AgentConfig {
-    fn from(value: api::sessions::AgentConfig) -> Self {
-        AgentConfig {
-            agent_name: value.agent_name,
-            model: value.model,
-            system_prompt: value.system_prompt,
-            mcp_config: value.mcp_config,
-        }
-    }
-}
-
-impl From<AgentConfig> for api::sessions::AgentConfig {
-    fn from(value: AgentConfig) -> Self {
-        api::sessions::AgentConfig::new(
-            value.agent_name,
-            value.model,
-            value.system_prompt,
-            value.mcp_config,
-        )
-    }
-}
-
 impl From<api::sessions::SessionMode> for SessionMode {
     fn from(value: api::sessions::SessionMode) -> Self {
         match value {
@@ -356,7 +305,10 @@ impl TryFrom<api::sessions::Session> for Session {
             creator: value.creator.into(),
             spawned_from: value.spawned_from,
             resumed_from: value.resumed_from,
-            agent_config: value.agent_config.into(),
+            agent_name: value.agent_name,
+            model: value.model,
+            system_prompt: value.system_prompt,
+            mcp_config: value.mcp_config,
             mount_spec: value.mount_spec,
             image: value.image,
             env_vars: value.env_vars,
@@ -382,7 +334,10 @@ impl From<Session> for api::sessions::Session {
             value.creator.into(),
             value.spawned_from,
             value.resumed_from,
-            value.agent_config.into(),
+            value.agent_name,
+            value.model,
+            value.system_prompt,
+            value.mcp_config,
             value.mount_spec,
             value.image,
             value.env_vars,
@@ -578,8 +533,8 @@ impl From<SessionEventSummary> for api::sessions::SessionEventSummary {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentConfig, Session, SessionEvent, SessionEventSummary, SessionMode,
-        UnknownSessionEventVariant, actor_id_of,
+        Session, SessionEvent, SessionEventSummary, SessionMode, UnknownSessionEventVariant,
+        actor_id_of,
     };
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
@@ -607,7 +562,10 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::new(None, Some("gpt-4o".to_string()), None, None),
+            None,
+            Some("gpt-4o".to_string()),
+            None,
+            None,
             test_mount_spec(),
             Some("worker:latest".to_string()),
             HashMap::new(),
@@ -626,10 +584,7 @@ mod tests {
         assert_eq!(round_trip.secrets, secrets);
         assert_eq!(round_trip.mode, domain_session.mode);
         assert_eq!(round_trip.image, domain_session.image);
-        assert_eq!(
-            round_trip.agent_config.model,
-            domain_session.agent_config.model
-        );
+        assert_eq!(round_trip.model, domain_session.model);
     }
 
     #[test]
@@ -638,7 +593,10 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             test_mount_spec(),
             None,
             HashMap::new(),
@@ -727,7 +685,7 @@ mod tests {
 
     // ---------------------------------------------------------------------
     // `actor_id_of(session, session_id)` discriminates agent-spawned
-    // vs ad-hoc sessions off `agent_config.agent_name`. These tests pin
+    // vs ad-hoc sessions off `session.agent_name`. These tests pin
     // its behaviour for both arms.
     // ---------------------------------------------------------------------
 
@@ -736,7 +694,10 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::new(agent_name, None, None, None),
+            agent_name,
+            None,
+            None,
+            None,
             test_mount_spec(),
             None,
             HashMap::new(),

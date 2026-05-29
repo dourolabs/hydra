@@ -62,19 +62,14 @@ pub async fn run(
         ..
     } = client.get_session_context(&job).await?;
     let mount_spec = session.mount_spec.clone();
-    let model = session.agent_config.model.clone();
+    let model = session.model.clone();
     let mcp_config_json = session
-        .agent_config
         .mcp_config
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
         .context("failed to serialize MCP config")?;
-    let prompt = session
-        .agent_config
-        .system_prompt
-        .clone()
-        .unwrap_or_default();
+    let prompt = session.system_prompt.clone().unwrap_or_default();
     let interactive = match &session.mode {
         SessionMode::Headless => None,
         SessionMode::Interactive {

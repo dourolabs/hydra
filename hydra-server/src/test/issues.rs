@@ -1836,13 +1836,16 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
 
     // Helper to create a session linked to this issue
     let make_session = || {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         Session {
             creator: Username::from("test-creator"),
             spawned_from: Some(issue_id.clone()),
             resumed_from: None,
-            agent_config: AgentConfig::default(),
+            agent_name: None,
+            model: None,
+            system_prompt: None,
+            mcp_config: None,
             mount_spec: mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,

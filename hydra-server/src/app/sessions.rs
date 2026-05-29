@@ -1,12 +1,7 @@
 use crate::{
     app::agents::AgentError,
     config::non_empty,
-    domain::{
-        actors::ActorRef,
-        issues::SessionSettings,
-        sessions::{AgentConfig, SessionMode},
-        users::Username,
-    },
+    domain::{actors::ActorRef, issues::SessionSettings, sessions::SessionMode, users::Username},
     job_engine::{BindMount, JobEngineError, JobStatus},
     store::{ReadOnlyStore, Session, Status, StoreError, TaskError, TaskStatusLog},
 };
@@ -185,8 +180,9 @@ impl AppState {
         // Dispatch on the AgentSpec variant. `Named` reaches into the
         // store for the agent's prompt / mcp_config / secrets and stamps
         // the `AGENT_NAME_ENV_VAR` env var. `Adhoc` consumes the inline
-        // prompt verbatim with no I/O.
-        let agent_config = match req_agent_config {
+        // prompt verbatim with no I/O. Each branch lowers the spec into
+        // the four flat agent fields on `Session`.
+        let (agent_name, system_prompt, mcp_config) = match req_agent_config {
             AgentSpec::Named { name } => {
                 let agent = self
                     .get_agent(name.as_str())
@@ -226,12 +222,12 @@ impl AppState {
 
                 env_vars.insert(AGENT_NAME_ENV_VAR.to_string(), agent.name.clone());
 
-                AgentConfig::new(Some(name), model, Some(system_prompt), mcp_config)
+                (Some(name), Some(system_prompt), mcp_config)
             }
             AgentSpec::Adhoc {
                 system_prompt,
                 mcp_config,
-            } => AgentConfig::new(None, model, Some(system_prompt), mcp_config),
+            } => (None, Some(system_prompt), mcp_config),
             other => {
                 return Err(CreateSessionError::UnsupportedAgentSpec {
                     debug: format!("{other:?}"),
@@ -261,7 +257,10 @@ impl AppState {
             creator,
             spawned_from,
             resumed_from,
-            agent_config,
+            agent_name,
+            model,
+            system_prompt,
+            mcp_config,
             mount_spec,
             image,
             env_vars,

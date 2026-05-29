@@ -33,7 +33,7 @@ use hydra_common::{DocumentId, HydraId, IssueId, PatchId, RepoName, SessionId};
 use hydra_server::domain::actors::ActorRef;
 use hydra_server::domain::issues::{Issue, IssueStatus, IssueType};
 use hydra_server::domain::patches::{Patch, PatchStatus, Review};
-use hydra_server::domain::sessions::{AgentConfig, Session, SessionEvent, SessionMode};
+use hydra_server::domain::sessions::{Session, SessionEvent, SessionMode};
 use hydra_server::domain::task_status::Status;
 use hydra_server::domain::users::Username;
 use hydra_server::store::postgres_v2::{self, MIGRATOR, PostgresStoreV2};
@@ -1222,10 +1222,10 @@ async fn smoke_read_sessions(store: &PostgresStoreV2) -> Result<()> {
             session.item.mode
         );
     }
-    if session.item.agent_config.system_prompt.as_deref() != Some("do a thing") {
+    if session.item.system_prompt.as_deref() != Some("do a thing") {
         bail!(
-            "s-headalpha: expected agent_config.system_prompt='do a thing'; got {:?}",
-            session.item.agent_config.system_prompt
+            "s-headalpha: expected system_prompt='do a thing'; got {:?}",
+            session.item.system_prompt
         );
     }
 
@@ -1390,7 +1390,10 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
         Username::from("jayantk"),
         None,
         None,
-        AgentConfig::new(None, None, Some("smoke: do a thing".to_string()), None),
+        None,
+        None,
+        Some("smoke: do a thing".to_string()),
+        None,
         Default::default(),
         None,
         HashMap::new(),
@@ -1416,11 +1419,11 @@ async fn smoke_create_session(store: &PostgresStoreV2) -> Result<()> {
             fetched.item.mode
         );
     }
-    if fetched.item.agent_config.system_prompt.as_deref() != Some("smoke: do a thing") {
+    if fetched.item.system_prompt.as_deref() != Some("smoke: do a thing") {
         bail!(
-            "post-migration create_session did not round-trip agent_config.system_prompt; \
+            "post-migration create_session did not round-trip system_prompt; \
              got {:?}",
-            fetched.item.agent_config.system_prompt
+            fetched.item.system_prompt
         );
     }
     Ok(())

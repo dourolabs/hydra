@@ -4,7 +4,7 @@ use crate::config::BuildCacheSection;
 use crate::domain::{
     actors::{ActorRef, store_github_token_secrets},
     patches::{Patch, PatchStatus},
-    sessions::{AgentConfig, SessionMode},
+    sessions::SessionMode,
     users::{User, Username},
 };
 use crate::routes::sessions::mount_spec_from_create_request;
@@ -59,7 +59,7 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
     let resolved = resolver_state.resolve_task(&task).await?;
 
     assert!(matches!(&task.mode, SessionMode::Headless));
-    assert_eq!(task.agent_config.system_prompt.as_deref(), Some("0"));
+    assert_eq!(task.system_prompt.as_deref(), Some("0"));
     assert_eq!(resolved.context.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
@@ -250,12 +250,15 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
         cache_creation_input_tokens: 12,
     };
     let session = {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         Session {
             creator: Username::from("test-creator"),
             spawned_from: None,
             resumed_from: None,
-            agent_config: AgentConfig::default(),
+            agent_name: None,
+            model: None,
+            system_prompt: None,
+            mcp_config: None,
             mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -477,7 +480,10 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -753,7 +759,10 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -833,7 +842,10 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -934,7 +946,10 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -995,7 +1010,10 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::new(None, None, Some("0".to_string()), None),
+                agent_name: None,
+                model: None,
+                system_prompt: Some("0".to_string()),
+                mcp_config: None,
                 mount_spec: mount_spec_from_create_request(context_bundle.clone(), None),
                 image: Some(default_image.clone()),
                 env_vars: HashMap::new(),
@@ -1049,10 +1067,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
         &body.session.mode,
         v1::sessions::SessionMode::Headless
     ));
-    assert_eq!(
-        body.session.agent_config.system_prompt.as_deref(),
-        Some("0")
-    );
+    assert_eq!(body.session.system_prompt.as_deref(), Some("0"));
     Ok(())
 }
 
@@ -1068,12 +1083,10 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::new(
-                    None,
-                    Some("claude-3-5-sonnet".to_string()),
-                    None,
-                    None,
-                ),
+                agent_name: None,
+                model: Some("claude-3-5-sonnet".to_string()),
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -1110,10 +1123,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
 
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
-    assert_eq!(
-        body.session.agent_config.model.as_deref(),
-        Some("claude-3-5-sonnet")
-    );
+    assert_eq!(body.session.model.as_deref(), Some("claude-3-5-sonnet"));
     Ok(())
 }
 
@@ -1129,7 +1139,10 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -1190,7 +1203,10 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -1287,7 +1303,10 @@ async fn get_session_context_populates_github_token_from_creator_secret() -> any
                 creator: creator.clone(),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: mount_spec_from_create_request(context_bundle, None),
                 image: Some(default_image()),
                 env_vars: HashMap::new(),
@@ -1340,7 +1359,10 @@ async fn get_session_context_returns_none_token_when_creator_has_no_secret() -> 
                 creator: Username::from("test-creator"),
                 spawned_from: None,
                 resumed_from: None,
-                agent_config: AgentConfig::default(),
+                agent_name: None,
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
                 mount_spec: crate::routes::sessions::mount_spec_from_create_request(
                     hydra_common::api::v1::sessions::Bundle::None,
                     None,
@@ -1423,7 +1445,10 @@ fn make_session_with_service_repo(
         creator: Username::from("test-creator"),
         spawned_from: None,
         resumed_from: None,
-        agent_config: AgentConfig::default(),
+        agent_name: None,
+        model: None,
+        system_prompt: None,
+        mcp_config: None,
         mount_spec,
         image: Some(default_image()),
         env_vars,
@@ -1447,7 +1472,10 @@ fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
         creator: Username::from("test-creator"),
         spawned_from: None,
         resumed_from: None,
-        agent_config: AgentConfig::default(),
+        agent_name: None,
+        model: None,
+        system_prompt: None,
+        mcp_config: None,
         mount_spec: crate::routes::sessions::mount_spec_from_create_request(
             hydra_common::api::v1::sessions::Bundle::None,
             None,
@@ -1619,7 +1647,10 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
         creator: Username::from("test-creator"),
         spawned_from: None,
         resumed_from: None,
-        agent_config: AgentConfig::default(),
+        agent_name: None,
+        model: None,
+        system_prompt: None,
+        mcp_config: None,
         mount_spec: mount_spec_from_create_request(bundle, None),
         image: Some(default_image()),
         env_vars: HashMap::new(),

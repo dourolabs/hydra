@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use tokio::sync::OnceCell;
 
 #[cfg(test)]
-use super::{AgentConfig, SessionMode};
+use super::SessionMode;
 use super::{
     AuthTokenRow, ConversationEventSummary, ReadOnlyStore, Session, SessionEvent,
     SessionEventSummary, Status, Store, StoreError, TaskError, TaskStatusLog,
@@ -1514,9 +1514,12 @@ impl SqliteStore {
         // NULL in every row (backfilled by PR-1, dual-written since PR-2).
         let mount_spec = serde_json::from_str(&row.mount_spec)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
-        let agent_config = serde_json::from_str(&row.agent_config).map_err(|e| {
-            StoreError::Internal(format!("failed to deserialize agent_config: {e}"))
-        })?;
+        let agent_config_json: serde_json::Value = serde_json::from_str(&row.agent_config)
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize agent_config: {e}"))
+            })?;
+        let (agent_name, model, system_prompt, mcp_config) =
+            super::read_stored_agent_fields(&agent_config_json)?;
         let mode = serde_json::from_str(&row.mode)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?;
         let resumed_from = row
@@ -1532,7 +1535,10 @@ impl SqliteStore {
             creator,
             spawned_from,
             resumed_from,
-            agent_config,
+            agent_name,
+            model,
+            system_prompt,
+            mcp_config,
             mount_spec,
             image: row.image.clone(),
             env_vars,
@@ -7358,7 +7364,10 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::new(None, None, Some(prompt.to_string()), None),
+            None,
+            None,
+            Some(prompt.to_string()),
+            None,
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -7447,15 +7456,9 @@ mod tests {
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[1].version, 2);
         assert_eq!(versions[0].item.mode, SessionMode::Headless);
-        assert_eq!(
-            versions[0].item.agent_config.system_prompt.as_deref(),
-            Some("v1")
-        );
+        assert_eq!(versions[0].item.system_prompt.as_deref(), Some("v1"));
         assert_eq!(versions[1].item.mode, SessionMode::Headless);
-        assert_eq!(
-            versions[1].item.agent_config.system_prompt.as_deref(),
-            Some("v2")
-        );
+        assert_eq!(versions[1].item.system_prompt.as_deref(), Some("v2"));
     }
 
     #[tokio::test]
@@ -7567,7 +7570,7 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert!(matches!(&tasks[0].1.item.mode, SessionMode::Headless));
         assert_eq!(
-            tasks[0].1.item.agent_config.system_prompt.as_deref(),
+            tasks[0].1.item.system_prompt.as_deref(),
             Some("deploy to production")
         );
     }
@@ -7825,12 +7828,10 @@ mod tests {
             Username::from("alice"),
             None,
             None,
-            AgentConfig::new(
-                None,
-                Some("claude-3".to_string()),
-                Some("full test".to_string()),
-                Some(mcp_config),
-            ),
+            None,
+            Some("claude-3".to_string()),
+            Some("full test".to_string()),
+            Some(mcp_config),
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -11322,7 +11323,7 @@ mod tests {
 
         let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
         assert_eq!(mode["type"], "headless");
-        // Headless is unit-like — the prompt lives on agent_config.system_prompt.
+        // Headless is unit-like — the prompt lives on Session::system_prompt.
         assert!(mode.get("prompt").is_none_or(|v| v.is_null()));
 
         let mount_spec = parse_json(row.mount_spec.as_deref().expect("mount_spec is non-null"));
@@ -11346,12 +11347,13 @@ mod tests {
                 .as_deref()
                 .expect("agent_config is non-null"),
         );
-        assert!(agent_config["agent_name"].is_null());
-        // PR-1: `spawn_task()` puts the prompt on `agent_config.system_prompt`.
+        // `agent_name`, `model`, `mcp_config` skip serialize when None so they
+        // are omitted from the on-disk JSON entirely; `system_prompt` carries
+        // the spawn_task() prompt onto the column.
+        assert!(agent_config.get("agent_name").is_none_or(|v| v.is_null()));
         assert_eq!(agent_config["system_prompt"], "test prompt");
-        // spawn_task() sets model: None, mcp_config: None
-        assert!(agent_config["model"].is_null());
-        assert!(agent_config["mcp_config"].is_null());
+        assert!(agent_config.get("model").is_none_or(|v| v.is_null()));
+        assert!(agent_config.get("mcp_config").is_none_or(|v| v.is_null()));
 
         assert!(
             row.resumed_from.is_none(),
@@ -11406,7 +11408,7 @@ mod tests {
                 },
             ],
         );
-        session.agent_config.model = Some("gpt-4o".to_string());
+        session.model = Some("gpt-4o".to_string());
 
         let (sid, _) = store
             .add_session(session, Utc::now(), &ActorRef::test())

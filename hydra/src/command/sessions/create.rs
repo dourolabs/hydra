@@ -334,9 +334,7 @@ mod tests {
     use httpmock::prelude::*;
     use hydra_common::{
         repositories::{ListRepositoriesResponse, Repository, RepositoryRecord},
-        sessions::{
-            AgentConfig, CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord,
-        },
+        sessions::{CreateSessionResponse, ListSessionsResponse, Session, SessionSummaryRecord},
         task_status::{Status, TaskError},
         users::Username,
     };
@@ -354,7 +352,10 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             MountSpec::default(),
             None,
             HashMap::new(),

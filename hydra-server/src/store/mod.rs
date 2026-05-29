@@ -35,7 +35,7 @@ pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
 pub use crate::domain::sessions::{
-    AgentConfig, InteractiveOptions, Session, SessionEvent, SessionEventSummary, SessionMode,
+    InteractiveOptions, Session, SessionEvent, SessionEventSummary, SessionMode,
 };
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
@@ -195,16 +195,92 @@ pub(crate) fn dual_write_mount_spec_json(
     })
 }
 
-/// Build the JSON value persisted to `tasks_v2.agent_config` for a session on
-/// dual-write inserts. Now reads directly from `session.agent_config`.
+/// The four flat agent fields decoded from the `tasks_v2.agent_config`
+/// JSON column: `(agent_name, model, system_prompt, mcp_config)`.
+/// Used by per-store row-to-domain decoders to populate the matching
+/// direct fields on [`Session`].
+pub(crate) type StoredAgentFields = (
+    Option<hydra_common::api::v1::agents::AgentName>,
+    Option<String>,
+    Option<String>,
+    Option<hydra_common::api::v1::sessions::McpConfig>,
+);
+
+/// Parse [`StoredAgentFields`] out of the `tasks_v2.agent_config` JSON
+/// column on read. The on-disk shape is a single object whose keys are
+/// `agent_name`, `model`, `system_prompt`, `mcp_config`. Missing keys /
+/// `null` values produce `None`; an invalid `agent_name` shape (e.g.
+/// `"bad/name"`) is surfaced as an error via [`AgentName`]'s deserializer
+/// per `/designs/actor-system-overhaul.md` §3.4.
+pub(crate) fn read_stored_agent_fields(
+    json: &serde_json::Value,
+) -> Result<StoredAgentFields, StoreError> {
+    fn missing_or_null(v: Option<&serde_json::Value>) -> bool {
+        matches!(v, None | Some(serde_json::Value::Null))
+    }
+
+    let agent_name_v = json.get("agent_name");
+    let agent_name = if missing_or_null(agent_name_v) {
+        None
+    } else {
+        Some(
+            serde_json::from_value(agent_name_v.unwrap().clone()).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize agent_name: {e}"))
+            })?,
+        )
+    };
+    let model = json
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let system_prompt = json
+        .get("system_prompt")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let mcp_config_v = json.get("mcp_config");
+    let mcp_config = if missing_or_null(mcp_config_v) {
+        None
+    } else {
+        Some(mcp_config_v.unwrap().clone())
+    };
+    Ok((agent_name, model, system_prompt, mcp_config))
+}
+
+/// Build the JSON value persisted to `tasks_v2.agent_config` for a session
+/// on dual-write inserts. The four agent fields now live as flat fields on
+/// `Session`; the on-disk JSON shape is preserved (a single object with
+/// `agent_name`, `model`, `system_prompt`, `mcp_config` keys) so the
+/// schema column is untouched.
 pub(crate) fn dual_write_agent_config_json(
     session: &Session,
 ) -> Result<serde_json::Value, StoreError> {
-    serde_json::to_value(&session.agent_config).map_err(|e| {
-        StoreError::Internal(format!(
-            "failed to serialize agent_config for dual-write: {e}"
-        ))
-    })
+    let mut obj = serde_json::Map::new();
+    if let Some(agent_name) = &session.agent_name {
+        obj.insert(
+            "agent_name".to_string(),
+            serde_json::to_value(agent_name).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to serialize agent_name for dual-write: {e}"
+                ))
+            })?,
+        );
+    }
+    if let Some(model) = &session.model {
+        obj.insert(
+            "model".to_string(),
+            serde_json::Value::String(model.clone()),
+        );
+    }
+    if let Some(system_prompt) = &session.system_prompt {
+        obj.insert(
+            "system_prompt".to_string(),
+            serde_json::Value::String(system_prompt.clone()),
+        );
+    }
+    if let Some(mcp_config) = &session.mcp_config {
+        obj.insert("mcp_config".to_string(), mcp_config.clone());
+    }
+    Ok(serde_json::Value::Object(obj))
 }
 
 /// Build the JSON value persisted to `tasks_v2.mode` for a session on

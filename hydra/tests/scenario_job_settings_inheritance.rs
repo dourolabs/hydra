@@ -58,7 +58,7 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
 
     // Verify model is inherited.
     assert_eq!(
-        job.session.agent_config.model.as_deref(),
+        job.session.model.as_deref(),
         Some("claude-opus-4-20250514"),
         "spawned task should inherit the model from job settings"
     );

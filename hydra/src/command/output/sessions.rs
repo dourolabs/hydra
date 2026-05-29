@@ -417,9 +417,7 @@ mod tests {
         conversation_id: Option<hydra_common::ConversationId>,
         usage: Option<hydra_common::api::v1::sessions::TokenUsage>,
     ) -> Session {
-        use hydra_common::api::v1::sessions::{
-            AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
-        };
+        use hydra_common::api::v1::sessions::{MountItem, MountSpec, RelativePath, SessionMode};
         let mode = match conversation_id {
             Some(id) => SessionMode::Interactive {
                 conversation_id: id,
@@ -438,7 +436,10 @@ mod tests {
             "alice".into(),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             mount_spec,
             None,
             std::collections::HashMap::new(),

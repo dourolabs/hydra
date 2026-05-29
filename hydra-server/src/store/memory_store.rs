@@ -483,12 +483,7 @@ impl MemoryStore {
 
             if let Some(term) = search_term.as_deref() {
                 let matches_id = task_id.as_ref().to_lowercase().contains(term);
-                let prompt = latest
-                    .item
-                    .agent_config
-                    .system_prompt
-                    .as_deref()
-                    .unwrap_or_default();
+                let prompt = latest.item.system_prompt.as_deref().unwrap_or_default();
                 let matches_prompt = prompt.to_lowercase().contains(term);
                 let matches_status = format!("{:?}", latest.item.status)
                     .to_lowercase()
@@ -2647,13 +2642,16 @@ mod tests {
     }
 
     fn spawn_task_with_prompt(prompt: &str) -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         Session::new(
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::new(None, None, Some(prompt.to_string()), None),
+            None,
+            None,
+            Some(prompt.to_string()),
+            None,
             mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             Some("hydra-worker:latest".to_string()),
             HashMap::new(),
@@ -3728,15 +3726,9 @@ mod tests {
         let versions = store.get_session_versions(&task_id).await.unwrap();
         assert_eq!(version_numbers(&versions), vec![1, 2]);
         assert!(matches!(&versions[0].item.mode, SessionMode::Headless));
-        assert_eq!(
-            versions[0].item.agent_config.system_prompt.as_deref(),
-            Some("v1")
-        );
+        assert_eq!(versions[0].item.system_prompt.as_deref(), Some("v1"));
         assert!(matches!(&versions[1].item.mode, SessionMode::Headless));
-        assert_eq!(
-            versions[1].item.agent_config.system_prompt.as_deref(),
-            Some("v2")
-        );
+        assert_eq!(versions[1].item.system_prompt.as_deref(), Some("v2"));
     }
 
     #[tokio::test]
@@ -3787,7 +3779,7 @@ mod tests {
 
         let mut updated = task.clone();
         updated.mode = crate::domain::sessions::SessionMode::Headless;
-        updated.agent_config.system_prompt = Some("v2".to_string());
+        updated.system_prompt = Some("v2".to_string());
         store
             .update_session(&task_id, updated, &ActorRef::test())
             .await
@@ -3814,7 +3806,7 @@ mod tests {
 
         let mut running = store.get_session(&task_id, false).await.unwrap().item;
         running.mode = crate::domain::sessions::SessionMode::Headless;
-        running.agent_config.system_prompt = Some("v3".to_string());
+        running.system_prompt = Some("v3".to_string());
         store
             .update_session(&task_id, running, &ActorRef::test())
             .await

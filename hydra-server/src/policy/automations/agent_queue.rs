@@ -613,12 +613,15 @@ mod tests {
         image: Option<&str>,
         env_vars: HashMap<String, String>,
     ) -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         Session::new(
             Username::from("test-creator"),
             spawned_from,
             None,
-            AgentConfig::new(None, None, Some(prompt.to_string()), None),
+            None,
+            None,
+            Some(prompt.to_string()),
+            None,
             mount_spec_from_create_request(bundle, None),
             image.map(str::to_string),
             env_vars,
@@ -701,12 +704,12 @@ mod tests {
                 mode,
                 spawned_from,
                 env_vars,
-                agent_config,
+                system_prompt,
                 ..
             } = task;
 
             assert!(matches!(&mode, SessionMode::Headless));
-            assert_eq!(agent_config.system_prompt.as_deref(), Some("Fix the issue"));
+            assert_eq!(system_prompt.as_deref(), Some("Fix the issue"));
             spawned_from_issue_ids.insert(spawned_from);
             issue_ids.insert(env_vars.get(ISSUE_ID_ENV_VAR).cloned());
             assert_eq!(
@@ -2296,7 +2299,6 @@ mod tests {
         let session_id = result.into_session_id().expect("should spawn a session");
         let session = handles.state.get_session(&session_id).await?;
         let mcp_config = session
-            .agent_config
             .mcp_config
             .expect("session should have mcp_config populated");
         let expected: serde_json::Value = serde_json::from_str(mcp_json).unwrap();
@@ -2331,7 +2333,7 @@ mod tests {
 
         let session_id = result.into_session_id().expect("should spawn a session");
         let session = handles.state.get_session(&session_id).await?;
-        assert!(session.agent_config.mcp_config.is_none());
+        assert!(session.mcp_config.is_none());
 
         Ok(())
     }
@@ -2371,7 +2373,7 @@ mod tests {
         let session_id = result.into_session_id().expect("should spawn a session");
         let session = handles.state.get_session(&session_id).await?;
         assert!(
-            session.agent_config.mcp_config.is_none(),
+            session.mcp_config.is_none(),
             "mcp_config should be None when document is missing"
         );
 
@@ -2726,8 +2728,20 @@ mod tests {
             "mount_spec must match across paths"
         );
         assert_eq!(
-            session_a.agent_config, session_b.agent_config,
-            "agent_config must match across paths"
+            session_a.agent_name, session_b.agent_name,
+            "agent_name must match across paths"
+        );
+        assert_eq!(
+            session_a.model, session_b.model,
+            "model must match across paths"
+        );
+        assert_eq!(
+            session_a.system_prompt, session_b.system_prompt,
+            "system_prompt must match across paths"
+        );
+        assert_eq!(
+            session_a.mcp_config, session_b.mcp_config,
+            "mcp_config must match across paths"
         );
         assert_eq!(
             session_a.mode, session_b.mode,

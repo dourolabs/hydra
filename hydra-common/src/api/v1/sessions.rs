@@ -65,51 +65,6 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: u64,
 }
 
-/// Per-session knobs that the worker hands to the model wrapper.
-///
-/// Spelled out as its own struct (not flattened into `Session`) so each
-/// field carries a single, unambiguous meaning. `system_prompt` is
-/// resolved server-side from the agent definition; historical rows
-/// loaded through the legacy backfill path leave it `None`.
-///
-/// Phase 2 of the actor-system overhaul
-/// (`/designs/actor-system-overhaul.md` §3.4) retypes `agent_name`
-/// from `Option<String>` to `Option<AgentName>` so the
-/// agent-vs-adhoc discriminant on a session is a validated type, not
-/// a free string. Historic rows with a malformed `agent_name` will
-/// fail to deserialize loudly — that's the design's intended Phase-2
-/// backfill story.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct AgentConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<AgentName>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp_config: Option<McpConfig>,
-}
-
-impl AgentConfig {
-    pub fn new(
-        agent_name: Option<AgentName>,
-        model: Option<String>,
-        system_prompt: Option<String>,
-        mcp_config: Option<McpConfig>,
-    ) -> Self {
-        Self {
-            agent_name,
-            model,
-            system_prompt,
-            mcp_config,
-        }
-    }
-}
-
 /// First-class discriminant for the two kinds of sessions Hydra runs.
 ///
 /// A session is in exactly one mode at a time; making the mode an enum
@@ -123,7 +78,7 @@ impl AgentConfig {
 #[non_exhaustive]
 pub enum SessionMode {
     /// One-shot headless task. The prompt is sourced from
-    /// `Session::agent_config.system_prompt`.
+    /// `Session::system_prompt`.
     Headless,
     /// Interactive session attached to a conversation.
     Interactive {
@@ -183,8 +138,22 @@ pub struct Session {
     pub resumed_from: Option<SessionId>,
 
     // === Universal agent inputs ===
-    #[serde(default)]
-    pub agent_config: AgentConfig,
+    //
+    // Phase 2 of the actor-system overhaul
+    // (`/designs/actor-system-overhaul.md` §3.4) retypes `agent_name`
+    // from `Option<String>` to `Option<AgentName>` so the
+    // agent-vs-adhoc discriminant on a session is a validated type, not
+    // a free string. Historic rows with a malformed `agent_name` fail
+    // to deserialize loudly — that's the design's intended Phase-2
+    // backfill story.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<AgentName>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_config: Option<McpConfig>,
     /// Server-supplied mount layout. Mandatory per design §1.2 / §1.3 — no
     /// serde default; deserialization fails loudly if the field is missing.
     pub mount_spec: MountSpec,
@@ -233,7 +202,10 @@ impl Session {
         creator: Username,
         spawned_from: Option<IssueId>,
         resumed_from: Option<SessionId>,
-        agent_config: AgentConfig,
+        agent_name: Option<AgentName>,
+        model: Option<String>,
+        system_prompt: Option<String>,
+        mcp_config: Option<McpConfig>,
         mount_spec: MountSpec,
         image: Option<String>,
         env_vars: HashMap<String, String>,
@@ -253,7 +225,10 @@ impl Session {
             creator,
             spawned_from,
             resumed_from,
-            agent_config,
+            agent_name,
+            model,
+            system_prompt,
+            mcp_config,
             mount_spec,
             image,
             env_vars,
@@ -287,8 +262,8 @@ fn default_status() -> Status {
     Status::Created
 }
 
-/// Caller-facing selector for how to build the resulting
-/// [`Session::agent_config`].
+/// Caller-facing selector for how to populate the agent-related fields
+/// (`agent_name`, `system_prompt`, `mcp_config`) on the resulting [`Session`].
 ///
 /// `Named` defers to the server: the request carries only the agent name,
 /// and `AppState::create_session` looks up the agent row to resolve the
@@ -299,6 +274,10 @@ fn default_status() -> Status {
 ///
 /// The two variants are exclusive: there is no "Named with prompt
 /// override" middle ground. See `i-mnmvcxmd` for the design rationale.
+///
+/// Invariant: no variant wraps an `AgentConfig`-shaped value — the four
+/// agent fields are flat inside each variant. After [[d-qqyemua]] §0 the
+/// `AgentConfig` wrapper type does not exist anywhere in the workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -696,11 +675,7 @@ pub struct SessionSummary {
 
 impl From<&Session> for SessionSummary {
     fn from(session: &Session) -> Self {
-        let raw_prompt = session
-            .agent_config
-            .system_prompt
-            .as_deref()
-            .unwrap_or_default();
+        let raw_prompt = session.system_prompt.as_deref().unwrap_or_default();
         let prompt = if raw_prompt.chars().count() > 20 {
             let mut s: String = raw_prompt.chars().take(20).collect();
             s.push_str("...");
@@ -1182,12 +1157,10 @@ mod tests {
             Username::from("alice"),
             Some(IssueId::new()),
             None,
-            AgentConfig::new(
-                None,
-                Some("claude-3".to_string()),
-                Some(prompt.to_string()),
-                None,
-            ),
+            None,
+            Some("claude-3".to_string()),
+            Some(prompt.to_string()),
+            None,
             test_mount_spec(),
             Some("worker:latest".to_string()),
             HashMap::from([("KEY".to_string(), "val".to_string())]),
@@ -1396,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn session_serializes_agent_config_mcp_config() {
+    fn session_serializes_top_level_mcp_config() {
         let mcp_config = serde_json::json!({
             "mcpServers": {
                 "playwright": {
@@ -1406,13 +1379,17 @@ mod tests {
             }
         });
         let mut session = make_test_session("mcp test");
-        session.agent_config.mcp_config = Some(mcp_config.clone());
+        session.mcp_config = Some(mcp_config.clone());
 
         let json = serde_json::to_value(&session).unwrap();
-        assert_eq!(json["agent_config"].get("mcp_config").unwrap(), &mcp_config);
+        assert_eq!(json.get("mcp_config").unwrap(), &mcp_config);
+        assert!(
+            json.get("agent_config").is_none(),
+            "AgentConfig wrapper must not appear in serialized Session"
+        );
 
         let deserialized: Session = serde_json::from_value(json).unwrap();
-        assert_eq!(deserialized.agent_config.mcp_config, Some(mcp_config));
+        assert_eq!(deserialized.mcp_config, Some(mcp_config));
     }
 
     #[test]
@@ -1420,7 +1397,7 @@ mod tests {
         let headless = SessionMode::Headless;
         let h_json = serde_json::to_value(&headless).unwrap();
         assert_eq!(h_json["type"], "headless");
-        // Headless is unit-like; the prompt lives on agent_config.system_prompt.
+        // Headless is unit-like; the prompt lives on Session::system_prompt.
         assert!(h_json.get("prompt").is_none());
         let parsed: SessionMode = serde_json::from_value(h_json).unwrap();
         assert_eq!(parsed, headless);
@@ -1440,54 +1417,31 @@ mod tests {
         assert_eq!(parsed, interactive);
     }
 
-    #[test]
-    fn agent_config_round_trips() {
-        let cfg = AgentConfig::new(
-            Some(AgentName::try_new("agent-x").unwrap()),
-            Some("gpt-4o".to_string()),
-            Some("you are helpful".to_string()),
-            Some(serde_json::json!({"servers": {}})),
-        );
-        let json = serde_json::to_value(&cfg).unwrap();
-        let parsed: AgentConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed, cfg);
-    }
-
     // ---------------------------------------------------------------------
     // Phase 2 (`/designs/actor-system-overhaul.md` §3.4):
-    // `AgentConfig.agent_name` is now `Option<AgentName>`. The
-    // deserializer must accept the validated form (incl. `null`) and
-    // reject malformed historic values — that's the design's intended
-    // "re-validate on read" backfill strategy.
+    // `Session.agent_name` is `Option<AgentName>`. The deserializer must
+    // accept the validated form (incl. `null`) and reject malformed historic
+    // values — that's the design's intended "re-validate on read" backfill
+    // strategy. After [[d-qqyemua]] §0 the field lives directly on `Session`
+    // rather than under a nested `agent_config` wrapper.
     // ---------------------------------------------------------------------
 
     #[test]
-    fn agent_config_accepts_none_agent_name_on_deserialize() {
-        let json = serde_json::json!({
-            "agent_name": null,
-            "model": "gpt-4o",
-        });
-        let cfg: AgentConfig = serde_json::from_value(json).unwrap();
-        assert!(cfg.agent_name.is_none());
-        assert_eq!(cfg.model.as_deref(), Some("gpt-4o"));
+    fn session_accepts_none_agent_name_on_deserialize() {
+        let mut json = serde_json::to_value(make_test_session("prompt")).unwrap();
+        json.as_object_mut().unwrap().remove("agent_name");
+        json["model"] = serde_json::json!("gpt-4o");
+        let session: Session = serde_json::from_value(json).unwrap();
+        assert!(session.agent_name.is_none());
+        assert_eq!(session.model.as_deref(), Some("gpt-4o"));
     }
 
     #[test]
-    fn agent_config_accepts_missing_agent_name_on_deserialize() {
-        // Field is `#[serde(default)]` so the absence of the key is
-        // equivalent to `null`; both produce `None` without error.
-        let json = serde_json::json!({"model": "gpt-4o"});
-        let cfg: AgentConfig = serde_json::from_value(json).unwrap();
-        assert!(cfg.agent_name.is_none());
-    }
-
-    #[test]
-    fn agent_config_rejects_invalid_agent_name_on_deserialize() {
+    fn session_rejects_invalid_agent_name_on_deserialize() {
         // `bad/name` contains `/`, which `AgentName::try_new` rejects.
-        // Pre-Phase-2 this slipped through as a free `String`; now it
-        // fails fast at the deserialization boundary.
-        let json = serde_json::json!({"agent_name": "bad/name"});
-        let result: Result<AgentConfig, _> = serde_json::from_value(json);
+        let mut json = serde_json::to_value(make_test_session("prompt")).unwrap();
+        json["agent_name"] = serde_json::json!("bad/name");
+        let result: Result<Session, _> = serde_json::from_value(json);
         assert!(
             result.is_err(),
             "expected agent_name 'bad/name' to fail validation, got {result:?}"
@@ -1495,9 +1449,10 @@ mod tests {
     }
 
     #[test]
-    fn agent_config_rejects_whitespace_agent_name_on_deserialize() {
-        let json = serde_json::json!({"agent_name": "bad name"});
-        let result: Result<AgentConfig, _> = serde_json::from_value(json);
+    fn session_rejects_whitespace_agent_name_on_deserialize() {
+        let mut json = serde_json::to_value(make_test_session("prompt")).unwrap();
+        json["agent_name"] = serde_json::json!("bad name");
+        let result: Result<Session, _> = serde_json::from_value(json);
         assert!(
             result.is_err(),
             "expected agent_name 'bad name' to fail validation, got {result:?}"
@@ -1505,9 +1460,10 @@ mod tests {
     }
 
     #[test]
-    fn agent_config_rejects_empty_agent_name_on_deserialize() {
-        let json = serde_json::json!({"agent_name": ""});
-        let result: Result<AgentConfig, _> = serde_json::from_value(json);
+    fn session_rejects_empty_agent_name_on_deserialize() {
+        let mut json = serde_json::to_value(make_test_session("prompt")).unwrap();
+        json["agent_name"] = serde_json::json!("");
+        let result: Result<Session, _> = serde_json::from_value(json);
         assert!(
             result.is_err(),
             "expected empty agent_name to fail validation, got {result:?}"
@@ -1656,27 +1612,29 @@ mod tests {
     }
 
     #[test]
-    fn worker_context_serializes_session_agent_config_mcp_config() {
+    fn worker_context_serializes_top_level_session_mcp_config() {
         let mcp_config = serde_json::json!({
             "mcpServers": {
                 "browser": {"command": "mcp-browser"}
             }
         });
         let mut session = make_test_session("test prompt");
-        session.agent_config.mcp_config = Some(mcp_config.clone());
+        session.mcp_config = Some(mcp_config.clone());
         let context = WorkerContext::new(session, HashMap::new(), None, None);
 
         let json = serde_json::to_value(&context).unwrap();
         assert_eq!(
-            json["session"]["agent_config"].get("mcp_config").unwrap(),
-            &mcp_config
+            json["session"].get("mcp_config").unwrap(),
+            &mcp_config,
+            "mcp_config must serialize as a direct Session field, not nested under agent_config",
+        );
+        assert!(
+            json["session"].get("agent_config").is_none(),
+            "AgentConfig wrapper must not appear in serialized Session",
         );
 
         let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
-        assert_eq!(
-            deserialized.session.agent_config.mcp_config,
-            Some(mcp_config)
-        );
+        assert_eq!(deserialized.session.mcp_config, Some(mcp_config));
     }
 
     #[test]

@@ -112,13 +112,16 @@ mod tests {
             Utc::now(),
             {
                 use hydra_common::api::v1::sessions::{
-                    AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
+                    MountItem, MountSpec, RelativePath, SessionMode,
                 };
                 Session::new(
                     Username::from("test-creator"),
                     None,
                     None,
-                    AgentConfig::default(),
+                    None,
+                    None,
+                    None,
+                    None,
                     MountSpec::new(
                         RelativePath::new("repo").unwrap(),
                         vec![MountItem::Documents {

@@ -77,14 +77,15 @@ mod tests {
     }
 
     fn test_session_for_list() -> Session {
-        use hydra_common::api::v1::sessions::{
-            AgentConfig, MountItem, MountSpec, RelativePath, SessionMode,
-        };
+        use hydra_common::api::v1::sessions::{MountItem, MountSpec, RelativePath, SessionMode};
         Session::new(
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             MountSpec::new(
                 RelativePath::new("repo").unwrap(),
                 vec![MountItem::Documents {

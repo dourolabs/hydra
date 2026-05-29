@@ -2163,13 +2163,16 @@ mod tests {
         status: Status,
         last_message: Option<String>,
     ) -> crate::store::Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         crate::store::Session {
             creator: crate::domain::users::Username::from("test-user"),
             spawned_from: None,
             resumed_from: None,
-            agent_config: AgentConfig::default(),
+            agent_name: None,
+            model: None,
+            system_prompt: None,
+            mcp_config: None,
             mount_spec: mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -2871,14 +2874,17 @@ mod tests {
     }
 
     async fn add_dummy_session(store: &StoreWithEvents) -> SessionId {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         use crate::store::Session as StoreSession;
         let session = StoreSession {
             creator: crate::domain::users::Username::from("test-user"),
             spawned_from: None,
             resumed_from: None,
-            agent_config: AgentConfig::default(),
+            agent_name: None,
+            model: None,
+            system_prompt: None,
+            mcp_config: None,
             mount_spec: mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,

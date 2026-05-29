@@ -3,8 +3,8 @@ import type { AgentName } from "./AgentName";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
- * Caller-facing selector for how to build the resulting
- * [`Session::agent_config`].
+ * Caller-facing selector for how to populate the agent-related fields
+ * (`agent_name`, `system_prompt`, `mcp_config`) on the resulting [`Session`].
  *
  * `Named` defers to the server: the request carries only the agent name,
  * and `AppState::create_session` looks up the agent row to resolve the
@@ -15,6 +15,10 @@ import type { JsonValue } from "./serde_json/JsonValue";
  *
  * The two variants are exclusive: there is no "Named with prompt
  * override" middle ground. See `i-mnmvcxmd` for the design rationale.
+ *
+ * Invariant: no variant wraps an `AgentConfig`-shaped value — the four
+ * agent fields are flat inside each variant. After [[d-qqyemua]] §0 the
+ * `AgentConfig` wrapper type does not exist anywhere in the workspace.
  */
 export type AgentSpec =
   | { type: "named"; name: AgentName }

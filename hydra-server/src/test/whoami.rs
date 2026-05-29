@@ -124,13 +124,12 @@ async fn whoami_returns_adhoc_identity_for_adhoc_actor() -> anyhow::Result<()> {
 #[tokio::test]
 async fn whoami_returns_agent_identity_for_agent_session() -> anyhow::Result<()> {
     use crate::app::test_helpers::sample_task;
-    use crate::domain::sessions::AgentConfig;
     use hydra_common::api::v1::agents::AgentName;
 
     let handles = test_state_handles();
     let agent_name = AgentName::try_new("swe").unwrap();
     let mut task = sample_task();
-    task.agent_config = AgentConfig::new(Some(agent_name.clone()), None, None, None);
+    task.agent_name = Some(agent_name.clone());
 
     let (session_id, _) = handles
         .store

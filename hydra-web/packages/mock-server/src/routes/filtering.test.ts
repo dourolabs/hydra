@@ -42,17 +42,16 @@ function makePatch(overrides: Partial<Patch> = {}): Patch {
 function makeSession(
   overrides: Partial<Session> & { prompt?: string } = {},
 ): Session {
-  // `prompt` was a top-level Session field pre-PR-2; it now lives on
-  // `agent_config.system_prompt`. Accept it as a convenience override and
-  // funnel it into the agent_config so call sites stay terse.
+  // `prompt` was a top-level Session field pre-PR-2 and briefly lived
+  // on `agent_config.system_prompt` under PR-1's wrapper; after [[d-qqyemua]] §0
+  // it is just `Session.system_prompt`. Accept it as a convenience override.
   const { prompt, ...rest } = overrides;
   const mode: Session["mode"] = rest.mode ?? { type: "headless" };
-  const agentConfig: Session["agent_config"] = rest.agent_config ?? {
-    system_prompt: prompt ?? "Default task prompt",
-  };
+  const systemPrompt: string | null | undefined =
+    rest.system_prompt ?? prompt ?? "Default task prompt";
   return {
     creator: "testuser",
-    agent_config: agentConfig,
+    system_prompt: systemPrompt,
     mount_spec: { working_dir: "repo", mounts: [] },
     status: "pending" as Status,
     creation_time: new Date().toISOString(),

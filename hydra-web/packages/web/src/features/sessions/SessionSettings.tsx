@@ -36,7 +36,7 @@ function formatMountSpec(mountSpec: MountSpec): string {
 }
 
 function promptOf(task: Session): string | null {
-  return task.agent_config.system_prompt ?? null;
+  return task.system_prompt ?? null;
 }
 
 function formatError(error: Session["error"]): string | null {
@@ -93,8 +93,8 @@ export function SessionSettings({ task }: SessionSettingsProps) {
     entries.push({ label: "Image", value: task.image });
   }
 
-  if (task.agent_config.model) {
-    entries.push({ label: "Model", value: task.agent_config.model });
+  if (task.model) {
+    entries.push({ label: "Model", value: task.model });
   }
 
   if (task.cpu_limit) {

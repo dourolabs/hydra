@@ -540,7 +540,7 @@ mod tests {
         status: TaskStatus,
         conversation_id: Option<ConversationId>,
     ) -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
@@ -553,7 +553,10 @@ mod tests {
             Username::from("creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             None,
             std::collections::HashMap::new(),
@@ -607,7 +610,7 @@ mod tests {
         sessions
             .into_iter()
             .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
-            .map(|(_, s)| s.item.resolved_prompt().to_string())
+            .map(|(_, s)| s.item.system_prompt.clone().unwrap_or_default())
     }
 
     #[tokio::test]
@@ -1222,7 +1225,7 @@ mod tests {
         // conversation. Today's other resume-flow tests cover the
         // `ConversationEvent::Resumed` side-channel but not the session
         // field itself.
-        use crate::domain::sessions::{AgentConfig, SessionMode as DomainSessionMode};
+        use crate::domain::sessions::SessionMode as DomainSessionMode;
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
 
@@ -1239,7 +1242,10 @@ mod tests {
             Username::from("creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             None,
             std::collections::HashMap::new(),

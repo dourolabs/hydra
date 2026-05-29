@@ -1024,13 +1024,16 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
 
     // Create a task owned by the test creator
     let session = {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         Session {
             creator: creator.clone(),
             spawned_from: None,
             resumed_from: None,
-            agent_config: AgentConfig::default(),
+            agent_name: None,
+            model: None,
+            system_prompt: None,
+            mcp_config: None,
             mount_spec: mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,

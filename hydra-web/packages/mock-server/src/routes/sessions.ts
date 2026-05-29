@@ -19,18 +19,19 @@ import type {
   WorkerContext,
   Status,
   MountItem,
-  AgentConfig,
   AgentSpec,
+  AgentName,
+  JsonValue,
 } from "@hydra/api";
 
 // `Session` lost its top-level `prompt` / `interactive` / `model` fields in
-// Phase D step 13 (PR-2); the equivalents now live on `session.mode` and
-// `session.agent_config`. These helpers narrow the discriminated union so
-// the mock-server's filtering / summary / context paths keep working
-// against the post-PR-2 wire shape. They also fall back to the legacy
-// fields when present (seed.json fixtures still use the pre-PR-2 shape;
-// the Rust deserializer has the same tolerance via a custom `Deserialize`
-// impl).
+// Phase D step 13 (PR-2). Headless/Interactive sessions now carry the
+// system prompt directly on `session.system_prompt`. These helpers narrow
+// the discriminated union so the mock-server's filtering / summary /
+// context paths keep working against the post-PR-2 wire shape. They also
+// fall back to the legacy fields when present (seed.json fixtures still
+// use the pre-PR-2 shape; the Rust deserializer has the same tolerance
+// via a custom `Deserialize` impl).
 type LegacySession = Session & {
   prompt?: string;
   interactive?: { conversation_id?: string } | null;
@@ -39,7 +40,7 @@ type LegacySession = Session & {
 function promptOf(session: Session): string {
   const legacy = session as LegacySession;
   if (session.mode?.type === "headless" || session.mode?.type === "interactive") {
-    return session.agent_config?.system_prompt ?? "";
+    return session.system_prompt ?? "";
   }
   return legacy.prompt ?? "";
 }
@@ -50,10 +51,17 @@ export function conversationIdOf(session: Session): string | null {
   return legacy.interactive?.conversation_id ?? null;
 }
 
+interface LoweredAgentFields {
+  agent_name: AgentName | null;
+  model: string | null;
+  system_prompt: string | null;
+  mcp_config: JsonValue | null;
+}
+
 function lowerAgentSpec(
   spec: AgentSpec,
   model: string | null,
-): AgentConfig {
+): LoweredAgentFields {
   if (spec.type === "named") {
     return {
       agent_name: spec.name,
@@ -147,7 +155,6 @@ export function createInteractiveSessionForConversation(
   const id = generateId("session");
   const task: Session = {
     mode: { type: "interactive", conversation_id: conversationId },
-    agent_config: {},
     mount_spec: {
       working_dir: "repo",
       mounts: [
@@ -227,19 +234,18 @@ export function createSessionRoutes(store: Store): Hono {
             ] as MountItem[],
           }
         : body.mount_spec;
-    // Lower the `AgentSpec` request enum into the resolved
-    // `AgentConfig` stored on `Session.agent_config`. The mock
-    // does not load agent rows, so a `Named` request stamps the
-    // name onto `agent_config.agent_name` and leaves
+    // Lower the `AgentSpec` request enum into the four flat agent
+    // fields on `Session`. The mock does not load agent rows, so a
+    // `Named` request stamps the name onto `agent_name` and leaves
     // `system_prompt` / `mcp_config` unresolved — production
     // hydra-server fills these from the agent row.
-    const agentConfig: AgentConfig = lowerAgentSpec(
-      body.agent_config,
-      body.model ?? null,
-    );
+    const agentFields = lowerAgentSpec(body.agent_config, body.model ?? null);
     const task: Session = {
       mode: body.mode,
-      agent_config: agentConfig,
+      agent_name: agentFields.agent_name,
+      model: agentFields.model,
+      system_prompt: agentFields.system_prompt,
+      mcp_config: agentFields.mcp_config,
       mount_spec: mountSpec,
       spawned_from: body.spawned_from,
       resumed_from: body.resumed_from,

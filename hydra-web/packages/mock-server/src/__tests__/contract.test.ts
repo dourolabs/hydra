@@ -219,7 +219,7 @@ describe("Sessions", () => {
     const fetched = await client.getSession(sessionId);
     expect(fetched.session_id).toBe(sessionId);
     expect(fetched.session.mode).toEqual({ type: "headless" });
-    expect(fetched.session.agent_config?.system_prompt).toBe(
+    expect(fetched.session.system_prompt).toBe(
       "Contract test session prompt",
     );
     expect(fetched.session.status).toBe("pending");
@@ -265,7 +265,7 @@ describe("Sessions", () => {
     const created = await client.createSession(sessionPayload);
     const ctx = await client.getSessionContext(created.session_id);
     expect(ctx.session.mode.type).toBe("headless");
-    expect(ctx.session.agent_config?.system_prompt).toBe(
+    expect(ctx.session.system_prompt).toBe(
       "Contract test session prompt",
     );
     const firstItem = ctx.session.mount_spec.mounts[0];

@@ -31,8 +31,8 @@ impl std::error::Error for AgentNameError {}
 /// to free-string agent names. `AgentName` is the carrier for
 /// [`crate::actor_ref::ActorId::Agent`] and
 /// [`crate::principal::Principal::Agent`]. In Phase 1 it is introduced
-/// as a separate newtype; Phase 2 will retype `AgentConfig.name` from
-/// `Option<String>` to `Option<AgentName>`.
+/// as a separate newtype; Phase 2 retypes the agent-name field on
+/// `Session` from `Option<String>` to `Option<AgentName>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
@@ -43,7 +43,7 @@ pub struct AgentName(String);
 // Hand-rolled `Deserialize` so the validation in `try_new` (no
 // whitespace / slash / empty) runs on the read path too. Phase 2 of
 // `/designs/actor-system-overhaul.md` (§3.4) makes this the moment
-// where historical malformed `AgentConfig.agent_name` values surface
+// where historical malformed `Session.agent_name` values surface
 // as loud deserialization errors instead of silently passing through.
 impl<'de> Deserialize<'de> for AgentName {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

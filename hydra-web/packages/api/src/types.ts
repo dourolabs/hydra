@@ -8,7 +8,7 @@ export type { AssigneeRef } from "./generated/AssigneeRef";
 export type { ActorRef } from "./generated/ActorRef";
 export type { Action } from "./generated/Action";
 export type { ActionStyle } from "./generated/ActionStyle";
-export type { AgentConfig } from "./generated/AgentConfig";
+export type { AgentName } from "./generated/AgentName";
 export type { AgentRecord } from "./generated/AgentRecord";
 export type { AgentSpec } from "./generated/AgentSpec";
 export type { AgentResponse } from "./generated/AgentResponse";

@@ -551,13 +551,16 @@ mod tests {
     }
 
     fn test_session(prompt: &str) -> crate::store::Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         crate::store::Session::new(
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::new(None, None, Some(prompt.to_string()), None),
+            None,
+            None,
+            Some(prompt.to_string()),
+            None,
             mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             None,
             std::collections::HashMap::new(),

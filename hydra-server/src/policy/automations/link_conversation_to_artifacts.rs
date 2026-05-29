@@ -245,7 +245,7 @@ mod tests {
         spawned_from: Option<IssueId>,
         conversation_id: Option<ConversationId>,
     ) -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         use crate::routes::sessions::mount_spec_from_create_request;
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
@@ -259,7 +259,10 @@ mod tests {
             creator: Username::from("test-creator"),
             spawned_from,
             resumed_from: None,
-            agent_config: AgentConfig::default(),
+            agent_name: None,
+            model: None,
+            system_prompt: None,
+            mcp_config: None,
             mount_spec: mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,

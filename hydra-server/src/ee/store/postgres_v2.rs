@@ -902,9 +902,8 @@ impl PostgresStoreV2 {
         // in every row (backfilled by PR-1, dual-written since PR-2).
         let mount_spec = serde_json::from_value(row.mount_spec.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
-        let agent_config = serde_json::from_value(row.agent_config.clone()).map_err(|e| {
-            StoreError::Internal(format!("failed to deserialize agent_config: {e}"))
-        })?;
+        let (agent_name, model, system_prompt, mcp_config) =
+            crate::store::read_stored_agent_fields(&row.agent_config)?;
         let mode = serde_json::from_value(row.mode.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mode: {e}")))?;
         let resumed_from = row
@@ -920,7 +919,10 @@ impl PostgresStoreV2 {
             creator: Username::from(row.creator.as_str()),
             spawned_from,
             resumed_from,
-            agent_config,
+            agent_name,
+            model,
+            system_prompt,
+            mcp_config,
             mount_spec,
             image: row.image.clone(),
             env_vars,
@@ -5417,12 +5419,15 @@ mod tests {
     }
 
     fn sample_session() -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         Session::new(
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -5441,12 +5446,15 @@ mod tests {
 
     /// Session with creator and other fields set for round-trip tests.
     fn session_with_creator_for_round_trip() -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         Session::new(
             Username::from("alice"),
             None,
             None,
-            AgentConfig::new(None, Some("model-v1".to_string()), None, None),
+            None,
+            Some("model-v1".to_string()),
+            None,
+            None,
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -5480,13 +5488,16 @@ mod tests {
 
     /// Session with every optional field set so serialization round-trip can assert full equality.
     fn sample_session_all_fields() -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         let mcp_config = serde_json::json!({"mcpServers": {"playwright": {"command": "npx", "args": ["@anthropic/mcp-playwright"]}}});
         let mut session = Session::new(
             Username::from("bob"),
             None,
             None,
-            AgentConfig::new(None, Some("model-x".to_string()), None, Some(mcp_config)),
+            None,
+            Some("model-x".to_string()),
+            None,
+            Some(mcp_config),
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -5807,12 +5818,12 @@ mod tests {
         );
         assert_eq!(fetched.item.mode, task.mode);
         assert_eq!(fetched.item.image, task.image);
-        assert_eq!(fetched.item.agent_config.model, task.agent_config.model);
+        assert_eq!(fetched.item.model, task.model);
         assert_eq!(fetched.version, 1);
 
         let mut updated = fetched.item.clone();
         updated.mode = crate::domain::sessions::SessionMode::Headless;
-        updated.agent_config.system_prompt = Some("updated prompt".to_string());
+        updated.system_prompt = Some("updated prompt".to_string());
         store
             .update_session(&task_id, updated.clone(), &ActorRef::test())
             .await
@@ -5828,7 +5839,7 @@ mod tests {
             crate::domain::sessions::SessionMode::Headless
         ));
         assert_eq!(
-            fetched2.item.agent_config.system_prompt.as_deref(),
+            fetched2.item.system_prompt.as_deref(),
             Some("updated prompt")
         );
         assert_eq!(fetched2.version, 2);
@@ -8867,7 +8878,7 @@ mod tests {
     // ---- Session event log + state ----
 
     fn interactive_session(conversation_id: Option<ConversationId>) -> Session {
-        use crate::domain::sessions::{AgentConfig, SessionMode};
+        use crate::domain::sessions::SessionMode;
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
@@ -8880,7 +8891,10 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             crate::routes::sessions::mount_spec_from_create_request(
                 hydra_common::api::v1::sessions::Bundle::None,
                 None,
@@ -9662,11 +9676,16 @@ mod tests {
         assert_eq!(mounts[1]["target"], "documents");
 
         let agent_config = agent_config.expect("agent_config is non-null");
-        assert!(agent_config["agent_name"].is_null());
-        assert!(agent_config["system_prompt"].is_null());
-        // sample_session() leaves model and mcp_config as None.
-        assert!(agent_config["model"].is_null());
-        assert!(agent_config["mcp_config"].is_null());
+        // After inlining, the dual-write helper omits keys whose values
+        // are `None`; sample_session() leaves all four agent fields unset.
+        assert!(agent_config.get("agent_name").is_none_or(|v| v.is_null()));
+        assert!(
+            agent_config
+                .get("system_prompt")
+                .is_none_or(|v| v.is_null())
+        );
+        assert!(agent_config.get("model").is_none_or(|v| v.is_null()));
+        assert!(agent_config.get("mcp_config").is_none_or(|v| v.is_null()));
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -9707,7 +9726,7 @@ mod tests {
             rev: "main".to_string(),
         };
         session.mount_spec = crate::routes::sessions::mount_spec_from_create_request(bundle, None);
-        session.agent_config.model = Some("gpt-4o".to_string());
+        session.model = Some("gpt-4o".to_string());
 
         let (sid, _) = store
             .add_session(session, Utc::now(), &ActorRef::test())

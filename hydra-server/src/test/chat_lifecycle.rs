@@ -1693,7 +1693,7 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
     // resolved the prompt document body into the session's `prompt` field.
     let session = store.get_session(&session_id, false).await?.item;
     assert_eq!(
-        session.resolved_prompt(),
+        session.system_prompt.as_deref().unwrap_or_default(),
         "you are a chat agent",
         "session prompt should be the resolved agent prompt body"
     );

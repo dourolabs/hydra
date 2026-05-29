@@ -272,7 +272,7 @@ async fn dual_write_session_event(
 mod tests {
     use super::*;
     use crate::app::test_helpers::state_with_default_model;
-    use crate::domain::sessions::{AgentConfig, Session, SessionMode};
+    use crate::domain::sessions::{Session, SessionMode};
     use crate::domain::task_status::Status as DomainStatus;
     use crate::domain::users::Username;
     use crate::routes::sessions::mount_spec_from_create_request;
@@ -285,7 +285,10 @@ mod tests {
             Username::from("test-creator"),
             None,
             None,
-            AgentConfig::default(),
+            None,
+            None,
+            None,
+            None,
             mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
             Some("worker:latest".to_string()),
             HashMap::new(),
