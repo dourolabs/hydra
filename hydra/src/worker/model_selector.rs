@@ -178,9 +178,7 @@ impl ModelSelector {
     }
 }
 
-/// Translate the legacy generic `SessionResume` into Claude's native
-/// shape. Used by older call sites that haven't migrated to
-/// `NativeResume` yet; kept for back-compat.
+/// Translate a generic `SessionResume` into Claude's native shape.
 #[allow(dead_code)]
 fn claude_resume_from_generic(r: SessionResume) -> ClaudeResume {
     match r {

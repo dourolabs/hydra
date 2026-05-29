@@ -4,10 +4,6 @@
 //! narrow newtype that exposes typed `send` / `recv` for [`WorkerMessage`] /
 //! [`ServerMessage`] only, so the dispatch layer ([`crate::worker::ModelSelector`])
 //! sees the message vocabulary and not the HTTP / tungstenite stack.
-//!
-//! This module lands as inert library code in PR-1. PR-3 wires it into
-//! `worker_run.rs` and `model_selector.rs` and removes the
-//! [`crate::worker::relay_adapter`] path.
 
 use anyhow::{anyhow, Context, Result};
 use futures::{Sink, SinkExt, Stream, StreamExt};
