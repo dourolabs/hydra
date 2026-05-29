@@ -45,10 +45,33 @@ enum Entry {
         /// user_message }` and suppresses the redundant `Event` push for
         /// that one message.
         pending_first_message: Option<String>,
+        /// Tracks whether the worker has finished its Phase-1 negotiation
+        /// from the server's perspective. While `Negotiating`, the relay
+        /// dual-writes events to the session log but holds them in
+        /// `buffered` (instead of forwarding via `to_worker`), so a worker
+        /// strictly matching `Transcript` / `FirstMessage` after sending
+        /// `RequestTranscript` / `Ready` does not see a pre-Phase-1
+        /// `Event` push.
+        phase: ConnectionPhase,
     },
     PendingConnection {
         pending: Vec<PendingItem>,
     },
+}
+
+/// Server-side view of "is this connection past Phase-1?". The relay route
+/// promotes the entry from [`ConnectionPhase::Negotiating`] to
+/// [`ConnectionPhase::Ready`] once it has sent the phase-1-completing
+/// message to the worker (`FirstMessage` for fresh / resume sessions,
+/// `CatchUp` for mid-session reconnects).
+enum ConnectionPhase {
+    /// Worker is still in Phase 1 / 2. Inbound events from the chat-relay
+    /// senders are dual-written to the session log and buffered here until
+    /// the route calls `mark_ready`.
+    Negotiating { buffered: Vec<ServerMessage> },
+    /// Worker is in Phase 3. Inbound events forward via `to_worker`
+    /// immediately.
+    Ready,
 }
 
 /// A pending event held alongside the actor that originated it so the
@@ -97,7 +120,6 @@ impl ChatRelayMap {
         enum Decision {
             Active {
                 session_id: SessionId,
-                to_worker: mpsc::Sender<ServerMessage>,
                 /// `Some(agent_prompt)` iff this UserMessage should be folded
                 /// into a `FirstMessage`. `None` for any other event, or when
                 /// no first-message is pending.
@@ -115,8 +137,8 @@ impl ChatRelayMap {
             match entry.value_mut() {
                 Entry::ActiveConnection {
                     session_id,
-                    to_worker,
                     pending_first_message,
+                    ..
                 } => {
                     let prompt = if matches!(event, ApiSessionEvent::UserMessage { .. })
                         && pending_first_message.is_some()
@@ -127,7 +149,6 @@ impl ChatRelayMap {
                     };
                     Decision::Active {
                         session_id: session_id.clone(),
-                        to_worker: to_worker.clone(),
                         pending_first_prompt: prompt,
                     }
                 }
@@ -151,7 +172,6 @@ impl ChatRelayMap {
             }
             Decision::Active {
                 session_id,
-                to_worker,
                 pending_first_prompt,
             } => {
                 let event_index = match dual_write_session_event(
@@ -188,10 +208,76 @@ impl ChatRelayMap {
                     }
                     (_, event) => ServerMessage::Event { event, event_index },
                 };
-                to_worker
-                    .send(outbound)
-                    .await
-                    .map_err(|_| SendEventError::ChannelClosed)
+
+                // Re-acquire the entry to decide forward vs buffer. The
+                // phase may have transitioned between dual-write and now;
+                // that's tolerated.
+                enum Forward {
+                    Send(ServerMessage),
+                    SendAndFlush {
+                        first: ServerMessage,
+                        rest: Vec<ServerMessage>,
+                    },
+                    None,
+                }
+                let (to_worker_opt, forward) = {
+                    match self.inner.get_mut(conversation_id) {
+                        Some(mut entry) => match entry.value_mut() {
+                            Entry::ActiveConnection {
+                                to_worker, phase, ..
+                            } => match phase {
+                                ConnectionPhase::Negotiating { buffered } => {
+                                    if matches!(outbound, ServerMessage::FirstMessage { .. }) {
+                                        // Folding produced a FirstMessage:
+                                        // phase-1 completes here. Drain the
+                                        // buffer and transition to Ready so
+                                        // the FirstMessage is followed by
+                                        // any queued Events in order.
+                                        let rest: Vec<ServerMessage> = std::mem::take(buffered);
+                                        *phase = ConnectionPhase::Ready;
+                                        (
+                                            Some(to_worker.clone()),
+                                            Forward::SendAndFlush {
+                                                first: outbound,
+                                                rest,
+                                            },
+                                        )
+                                    } else {
+                                        buffered.push(outbound);
+                                        (None, Forward::None)
+                                    }
+                                }
+                                ConnectionPhase::Ready => {
+                                    (Some(to_worker.clone()), Forward::Send(outbound))
+                                }
+                            },
+                            Entry::PendingConnection { .. } => (None, Forward::None),
+                        },
+                        None => (None, Forward::None),
+                    }
+                };
+
+                match (forward, to_worker_opt) {
+                    (Forward::None, _) => Ok(()),
+                    (Forward::Send(msg), Some(to_worker)) => to_worker
+                        .send(msg)
+                        .await
+                        .map_err(|_| SendEventError::ChannelClosed),
+                    (Forward::SendAndFlush { first, rest }, Some(to_worker)) => {
+                        to_worker
+                            .send(first)
+                            .await
+                            .map_err(|_| SendEventError::ChannelClosed)?;
+                        for m in rest {
+                            to_worker
+                                .send(m)
+                                .await
+                                .map_err(|_| SendEventError::ChannelClosed)?;
+                        }
+                        Ok(())
+                    }
+                    (Forward::Send(_) | Forward::SendAndFlush { .. }, None) => Ok(()),
+                }
             }
         }
     }
@@ -227,6 +313,9 @@ impl ChatRelayMap {
                     session_id: session_id.clone(),
                     to_worker: to_worker.clone(),
                     pending_first_message: None,
+                    phase: ConnectionPhase::Negotiating {
+                        buffered: Vec::new(),
+                    },
                 });
             // `or_insert_with` either inserted a fresh ActiveConnection
             // (drained = []) or returned a pre-existing entry that we now
@@ -238,6 +327,9 @@ impl ChatRelayMap {
                     session_id: session_id.clone(),
                     to_worker,
                     pending_first_message: None,
+                    phase: ConnectionPhase::Negotiating {
+                        buffered: Vec::new(),
+                    },
                 },
             );
             match previous {
@@ -252,12 +344,13 @@ impl ChatRelayMap {
         // dual-write its event in parallel. The session log assigns
         // versions in arrival order, so its event may interleave
         // between drained items on the log; live worker order is still
-        // preserved because the relay route forwards `drained_events`
-        // synchronously before entering the bidirectional loop. A
-        // later `Reconnecting` catch-up could replay the log out of
-        // strict FIFO with the pending vec — the race window is tiny
-        // (same user driving send_message and the worker socket), and
-        // strict cross-source FIFO is left to future work.
+        // preserved because the drained items are prepended into the
+        // entry's `Negotiating { buffered }` buffer below before
+        // `mark_ready` flushes. A later `Reconnecting` catch-up could
+        // replay the log out of strict FIFO with the pending vec — the
+        // race window is tiny (same user driving send_message and the
+        // worker socket), and strict cross-source FIFO is left to
+        // future work.
         let mut drained_events = Vec::with_capacity(drained.len());
         for item in drained {
             match dual_write_session_event(store, &session_id, item.event.clone(), item.actor).await
@@ -271,7 +364,96 @@ impl ChatRelayMap {
                 }
             }
         }
+
+        // Install the drained events into the Negotiating buffer so that
+        // they're held until the relay route calls `mark_ready` (after
+        // sending the phase-1-completing `FirstMessage` to the worker).
+        // Any events that arrived via concurrent
+        // `send_event_to_conversation` calls between the swap above and
+        // here are already at the tail of `buffered`; prepend the drained
+        // items to preserve "queued before connect" → "live" FIFO from
+        // the worker's perspective.
+        if !drained_events.is_empty() {
+            if let Some(mut entry) = self.inner.get_mut(&conversation_id) {
+                if let Entry::ActiveConnection {
+                    phase: ConnectionPhase::Negotiating { buffered },
+                    ..
+                } = entry.value_mut()
+                {
+                    let prepend: Vec<ServerMessage> = drained_events
+                        .iter()
+                        .cloned()
+                        .map(|(event, event_index)| ServerMessage::Event { event, event_index })
+                        .collect();
+                    let mut combined = prepend;
+                    combined.append(buffered);
+                    *buffered = combined;
+                }
+                // If the phase has already transitioned to `Ready` (e.g.
+                // a concurrent fold flushed the buffer), the drained
+                // events are kept only on the returned vec — the caller
+                // is responsible for forwarding them in that uncommon
+                // race. Today no caller exercises that path.
+            }
+        }
+
         drained_events
+    }
+
+    /// Transition the entry's [`ConnectionPhase`] from `Negotiating` to
+    /// `Ready` and return the events that were buffered during
+    /// negotiation. The relay route calls this after sending the
+    /// phase-1-completing message to the worker (`FirstMessage` for
+    /// fresh / resume sessions, `CatchUp` for reconnects) and forwards
+    /// the returned messages on the worker WebSocket in order.
+    ///
+    /// `dedupe_user_message` should be `Some(content)` iff the route
+    /// already delivered a `UserMessage` with that exact content to the
+    /// worker as part of the phase-1-completing message (e.g. folded
+    /// into `FirstMessage.user_message`). The first buffered `Event`
+    /// `UserMessage` with matching content is then removed from the
+    /// returned buffer to avoid duplicate delivery. If the buffer holds
+    /// no matching event (e.g. the fold drew from a prior session's
+    /// log), nothing is removed.
+    ///
+    /// Returns an empty vec if the entry is already `Ready`, or if no
+    /// entry exists.
+    pub fn mark_ready(
+        &self,
+        conversation_id: &ConversationId,
+        dedupe_user_message: Option<&str>,
+    ) -> Vec<ServerMessage> {
+        let mut entry = match self.inner.get_mut(conversation_id) {
+            Some(e) => e,
+            None => return Vec::new(),
+        };
+        match entry.value_mut() {
+            Entry::ActiveConnection { phase, .. } => match phase {
+                ConnectionPhase::Negotiating { buffered } => {
+                    let mut drained = std::mem::take(buffered);
+                    if let Some(target) = dedupe_user_message {
+                        if let Some(pos) = drained.iter().position(|m| {
+                            matches!(
+                                m,
+                                ServerMessage::Event {
+                                    event: ApiSessionEvent::UserMessage { content, .. },
+                                    ..
+                                } if content == target
+                            )
+                        }) {
+                            drained.remove(pos);
+                        }
+                    }
+                    *phase = ConnectionPhase::Ready;
+                    drained
+                }
+                ConnectionPhase::Ready => Vec::new(),
+            },
+            Entry::PendingConnection { .. } => {
+                warn!(%conversation_id, "mark_ready called on PendingConnection; ignoring");
+                Vec::new()
+            }
+        }
     }
 
     /// Stash a pending `agent_prompt` on the conversation's active entry
@@ -309,6 +491,18 @@ impl ChatRelayMap {
                 false
             }
         }
+    }
+
+    #[cfg(test)]
+    fn phase_is_ready(&self, conversation_id: &ConversationId) -> Option<bool> {
+        self.inner
+            .get(conversation_id)
+            .and_then(|entry| match entry.value() {
+                Entry::ActiveConnection { phase, .. } => {
+                    Some(matches!(phase, ConnectionPhase::Ready))
+                }
+                Entry::PendingConnection { .. } => None,
+            })
     }
 
     /// Remove the entry entirely. Called when a worker WebSocket
@@ -499,9 +693,9 @@ mod tests {
 
     #[tokio::test]
     async fn send_event_to_conversation_delivers_to_active() {
-        // After set_active flips the entry, a subsequent send must
-        // deliver on the worker channel directly AND dual-write to the
-        // session log.
+        // After set_active flips the entry and mark_ready promotes the
+        // phase out of Negotiating, a subsequent send must deliver on
+        // the worker channel directly AND dual-write to the session log.
         use crate::domain::sessions::SessionEvent as DomainSessionEvent;
         let state = state_with_default_model("default-model");
         let map = ChatRelayMap::new();
@@ -524,6 +718,8 @@ mod tests {
             )
             .await;
         assert!(drained.is_empty(), "no events queued before set_active");
+        let flushed = map.mark_ready(&conversation_id, None);
+        assert!(flushed.is_empty(), "nothing buffered for an empty drain");
 
         let event = user_msg("hello");
         map.send_event_to_conversation(
@@ -681,6 +877,10 @@ mod tests {
                 &state.store,
             )
             .await;
+        // The fresh path stashes pending_first_message before mark_ready,
+        // so leave the entry in Negotiating here — the fold + flush path
+        // is exercised by `negotiating_fold_flushes_buffer` below.
+        let _ = map.mark_ready(&conversation_id, None);
 
         let stashed = map.set_pending_first_message(&conversation_id, "be helpful".to_string());
         assert!(stashed, "set_pending_first_message must succeed on Active");
@@ -758,6 +958,7 @@ mod tests {
                 &state.store,
             )
             .await;
+        let _ = map.mark_ready(&conversation_id, None);
 
         map.set_pending_first_message(&conversation_id, "still-pending".to_string());
 
@@ -794,5 +995,306 @@ mod tests {
         .unwrap();
         let received = rx.recv().await.unwrap();
         assert!(matches!(received, ServerMessage::FirstMessage { .. }));
+    }
+
+    #[tokio::test]
+    async fn set_active_starts_in_negotiating_phase() {
+        // After set_active, the phase is Negotiating: the route hasn't
+        // yet sent FirstMessage/CatchUp, so inbound events must NOT
+        // forward to to_worker until mark_ready is called.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let (tx, mut rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(conversation_id.clone(), session_id, tx, &state.store)
+            .await;
+        assert_eq!(map.phase_is_ready(&conversation_id), Some(false));
+
+        // Sending an event right now must buffer, not forward.
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("buffered"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "Negotiating phase must NOT forward events to to_worker"
+        );
+
+        // mark_ready promotes to Ready and returns the buffered events.
+        let flushed = map.mark_ready(&conversation_id, None);
+        assert_eq!(map.phase_is_ready(&conversation_id), Some(true));
+        assert_eq!(flushed.len(), 1);
+        assert!(matches!(
+            &flushed[0],
+            ServerMessage::Event {
+                event: ApiSessionEvent::UserMessage { content, .. }, ..
+            } if content == "buffered"
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_active_buffers_drained_pending_for_replay() {
+        // When set_active drains a non-empty PendingConnection, the
+        // drained Events should land in the Negotiating buffer (in FIFO
+        // order) — NOT immediately forwarded to to_worker — so the
+        // worker doesn't see Event pushes before its Phase-1 reply has
+        // arrived.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        // Queue some events while no worker is connected.
+        for content in ["a", "b", "c"] {
+            map.send_event_to_conversation(
+                &conversation_id,
+                user_msg(content),
+                &state.store,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let (tx, mut rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(conversation_id.clone(), session_id, tx, &state.store)
+            .await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "set_active must buffer drained events, not forward them pre-Phase-1"
+        );
+
+        // mark_ready returns them in order for the route to ship over
+        // the WS after FirstMessage/CatchUp.
+        let flushed = map.mark_ready(&conversation_id, None);
+        let contents: Vec<&str> = flushed
+            .iter()
+            .filter_map(|m| match m {
+                ServerMessage::Event {
+                    event: ApiSessionEvent::UserMessage { content, .. },
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(contents, vec!["a", "b", "c"]);
+    }
+
+    #[tokio::test]
+    async fn mark_ready_dedupes_first_user_message_when_folded() {
+        // When the relay route folds the first drained UserMessage into
+        // FirstMessage.user_message, mark_ready must NOT replay that
+        // same UserMessage as an Event — otherwise the worker would
+        // receive the content twice.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        for content in ["msg1", "msg2"] {
+            map.send_event_to_conversation(
+                &conversation_id,
+                user_msg(content),
+                &state.store,
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        }
+        let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(conversation_id.clone(), session_id, tx, &state.store)
+            .await;
+
+        // Pretend the route folded msg1 into FirstMessage.
+        let flushed = map.mark_ready(&conversation_id, Some("msg1"));
+        let contents: Vec<&str> = flushed
+            .iter()
+            .filter_map(|m| match m {
+                ServerMessage::Event {
+                    event: ApiSessionEvent::UserMessage { content, .. },
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            contents,
+            vec!["msg2"],
+            "matching UserMessage must be removed from the flushed buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_ready_does_not_dedupe_non_matching_content() {
+        // When the route folds a UserMessage that lives in a *prior*
+        // session's log (e.g. on resume the conversation's original
+        // first message comes from the old session), the current
+        // session's buffer does NOT hold an Event with that content.
+        // `mark_ready` must then leave all buffered Events intact.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("new-turn"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+        let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(conversation_id.clone(), session_id, tx, &state.store)
+            .await;
+
+        // Pretend the route folded a different UserMessage from a
+        // prior-session log into FirstMessage.
+        let flushed = map.mark_ready(&conversation_id, Some("prior-session-message"));
+        let contents: Vec<&str> = flushed
+            .iter()
+            .filter_map(|m| match m {
+                ServerMessage::Event {
+                    event: ApiSessionEvent::UserMessage { content, .. },
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            contents,
+            vec!["new-turn"],
+            "non-matching dedup content must NOT remove any buffered events"
+        );
+    }
+
+    #[tokio::test]
+    async fn negotiating_fold_flushes_buffer_after_first_message() {
+        // The fresh-path stash case: handle_ready couldn't find a first
+        // UserMessage, so it stashed `pending_first_message` and the
+        // entry stayed in Negotiating. When the user POST eventually
+        // arrives, send_event_to_conversation folds it into
+        // FirstMessage, transitions to Ready, and flushes any buffered
+        // events afterwards — in order, FirstMessage first.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let (tx, mut rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(conversation_id.clone(), session_id, tx, &state.store)
+            .await;
+        // Stash, mimicking handle_ready's "no first user message yet" path.
+        assert!(map.set_pending_first_message(&conversation_id, "prompt".to_string()));
+
+        // An AssistantMessage racing in DURING Negotiating goes to the
+        // buffer (doesn't consume pending_first_message).
+        map.send_event_to_conversation(
+            &conversation_id,
+            assistant_msg("tail-end"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            rx.try_recv().is_err(),
+            "AssistantMessage must remain buffered while Negotiating"
+        );
+
+        // The user POST arrives — folds + transitions + flushes.
+        map.send_event_to_conversation(
+            &conversation_id,
+            user_msg("real-first"),
+            &state.store,
+            ActorRef::test(),
+        )
+        .await
+        .unwrap();
+
+        let first = rx.recv().await.expect("FirstMessage must arrive");
+        assert_eq!(
+            first,
+            ServerMessage::FirstMessage {
+                agent_prompt: "prompt".to_string(),
+                user_message: "real-first".to_string(),
+            }
+        );
+        let second = rx.recv().await.expect("buffered Assistant must follow");
+        assert!(matches!(
+            second,
+            ServerMessage::Event {
+                event: ApiSessionEvent::AssistantMessage { .. },
+                ..
+            }
+        ));
+        assert_eq!(map.phase_is_ready(&conversation_id), Some(true));
+    }
+
+    #[tokio::test]
+    async fn mark_ready_is_noop_on_ready_phase() {
+        // mark_ready called twice is safe: the second call returns an
+        // empty vec and leaves the phase Ready.
+        let state = state_with_default_model("default-model");
+        let map = ChatRelayMap::new();
+        let conversation_id = ConversationId::new();
+
+        let session = interactive_session(&conversation_id, DomainStatus::Running);
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let (tx, _rx) = mpsc::channel(TO_WORKER_CAPACITY);
+        let _ = map
+            .set_active(conversation_id.clone(), session_id, tx, &state.store)
+            .await;
+        let _ = map.mark_ready(&conversation_id, None);
+        let second = map.mark_ready(&conversation_id, None);
+        assert!(second.is_empty());
+        assert_eq!(map.phase_is_ready(&conversation_id), Some(true));
     }
 }
