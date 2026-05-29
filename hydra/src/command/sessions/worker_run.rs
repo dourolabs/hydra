@@ -9,10 +9,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
-    api::v1::{
-        conversations::{ServerMessage, WorkerMessage},
-        sessions::{SessionEvent, SessionModeKind},
-    },
+    api::v1::sessions::SessionModeKind,
     constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{MountSpec, WorkerContext},
@@ -24,8 +21,7 @@ use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::util::format_thousands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
-use crate::worker::relay_adapter::{spawn_relay_pump, RelayAdapter};
-use crate::worker::report::{NativeResume, RunReport, TokenUsage};
+use crate::worker::report::{RunReport, TokenUsage};
 use crate::worker::socket::WorkerSocket;
 use crate::{
     client::{ConflictError, HydraClientInterface},
@@ -162,42 +158,14 @@ pub async fn run(
             }
             Ok(mut selector) => {
                 let ws_stream = client.connect_relay_websocket(&job).await?;
-                let mut ws = WorkerSocket::new(ws_stream);
+                let ws = WorkerSocket::new(ws_stream);
 
-                let phase1 = phase1_negotiate(&mut selector, &mut ws, &job).await;
-                let run_result = match phase1 {
-                    Err(err) => Err(err),
-                    Ok((resume, primer)) => {
-                        let first_message = phase2_ready(&mut ws).await;
-                        match first_message {
-                            Err(err) => Err(err),
-                            Ok((agent_prompt, user_message)) => {
-                                let prompt =
-                                    concat_first_message(&primer, &agent_prompt, &user_message);
-                                if interactive {
-                                    log_status("Phase: interactive agent execution — starting");
-                                    let RelayAdapter {
-                                        input_rx,
-                                        output_tx,
-                                        pump,
-                                    } = spawn_relay_pump(ws);
-                                    let report = selector
-                                        .run_interactive(input_rx, output_tx, &job, &prompt, resume)
-                                        .await;
-                                    let _ = pump.await;
-                                    report
-                                } else {
-                                    log_status("Phase: agent execution — starting");
-                                    let (output_tx, output_rx) = tokio::sync::mpsc::channel(32);
-                                    let pump = spawn_headless_output_pump(ws, output_rx);
-                                    let report = selector.run(&prompt, resume).await;
-                                    drop(output_tx);
-                                    let _ = pump.await;
-                                    report
-                                }
-                            }
-                        }
-                    }
+                let run_result = if interactive {
+                    log_status("Phase: interactive agent execution — starting");
+                    selector.drive_interactive(ws).await
+                } else {
+                    log_status("Phase: agent execution — starting");
+                    selector.drive_headless(ws).await
                 };
 
                 match run_result {
@@ -279,217 +247,6 @@ pub async fn run(
         Err(err)
     } else {
         Ok(())
-    }
-}
-
-/// Phase 1 — context negotiation. Sends `Fresh`, awaits `ResumeContext`,
-/// attempts native materialization, and on failure asks for the prior
-/// session's transcript as primer text. Returns the resolved
-/// `NativeResume` (if any) and the primer-event list (may be empty).
-async fn phase1_negotiate<S>(
-    selector: &mut ModelSelector,
-    ws: &mut WorkerSocket<S>,
-    _job: &SessionId,
-) -> Result<(Option<NativeResume>, Vec<SessionEvent>)>
-where
-    S: futures::Sink<
-            tokio_tungstenite::tungstenite::Message,
-            Error = tokio_tungstenite::tungstenite::Error,
-        > + futures::Stream<
-            Item = std::result::Result<
-                tokio_tungstenite::tungstenite::Message,
-                tokio_tungstenite::tungstenite::Error,
-            >,
-        > + Unpin,
-{
-    ws.send(WorkerMessage::Fresh).await?;
-    let resume_ctx = ws
-        .recv()
-        .await?
-        .ok_or_else(|| anyhow!("ws closed before ResumeContext"))?;
-    let (resume_blob, prior_session_id) = match resume_ctx {
-        ServerMessage::ResumeContext {
-            resume_blob,
-            prior_session_id,
-        } => (resume_blob, prior_session_id),
-        other => return Err(anyhow!("expected ResumeContext, got {other:?}")),
-    };
-
-    // Try native materialization first; on Err, fall back to transcript replay.
-    let (native, need_transcript) = match resume_blob {
-        Some(bytes) => match selector.try_materialize(&bytes).await {
-            Ok(native) => (Some(native), false),
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    prior_session_id = ?prior_session_id,
-                    "native resume materialization failed; falling back to transcript replay",
-                );
-                (None, prior_session_id.is_some())
-            }
-        },
-        None => (None, prior_session_id.is_some()),
-    };
-
-    // Per design §1.4 / §6: when native materialization succeeded the
-    // worker emits `SessionEvent::Resumed` exactly once on its session
-    // log.
-    if native.is_some() {
-        if let Some(from) = prior_session_id.clone() {
-            ws.send(WorkerMessage::Event {
-                event: SessionEvent::Resumed {
-                    from_session_id: from,
-                    timestamp: chrono::Utc::now(),
-                },
-            })
-            .await?;
-        }
-    }
-
-    let primer = if need_transcript {
-        if let Some(prior) = prior_session_id {
-            ws.send(WorkerMessage::RequestTranscript {
-                prior_session_id: prior,
-            })
-            .await?;
-            let resp = ws
-                .recv()
-                .await?
-                .ok_or_else(|| anyhow!("ws closed before Transcript"))?;
-            match resp {
-                ServerMessage::Transcript { events } => events,
-                other => return Err(anyhow!("expected Transcript, got {other:?}")),
-            }
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    Ok((native, primer))
-}
-
-/// Phase 2 — send `Ready`, await `FirstMessage`, return its contents.
-async fn phase2_ready<S>(ws: &mut WorkerSocket<S>) -> Result<(String, String)>
-where
-    S: futures::Sink<
-            tokio_tungstenite::tungstenite::Message,
-            Error = tokio_tungstenite::tungstenite::Error,
-        > + futures::Stream<
-            Item = std::result::Result<
-                tokio_tungstenite::tungstenite::Message,
-                tokio_tungstenite::tungstenite::Error,
-            >,
-        > + Unpin,
-{
-    ws.send(WorkerMessage::Ready).await?;
-    let msg = ws
-        .recv()
-        .await?
-        .ok_or_else(|| anyhow!("ws closed before FirstMessage"))?;
-    match msg {
-        ServerMessage::FirstMessage {
-            agent_prompt,
-            user_message,
-        } => Ok((agent_prompt, user_message)),
-        other => Err(anyhow!("expected FirstMessage, got {other:?}")),
-    }
-}
-
-/// Concatenate the optional primer (from a transcript-replay fallback),
-/// the agent prompt, and the user message into one model-input string,
-/// collapsing empty pieces.
-fn concat_first_message(
-    primer_events: &[SessionEvent],
-    agent_prompt: &str,
-    user_message: &str,
-) -> String {
-    let primer = primer_to_text(primer_events);
-    let base = match (agent_prompt, user_message) {
-        ("", "") => String::new(),
-        ("", u) => u.to_string(),
-        (p, "") => p.to_string(),
-        (p, u) => format!("{p}\n\n{u}"),
-    };
-    if primer.is_empty() {
-        base
-    } else if base.is_empty() {
-        primer
-    } else {
-        format!("{primer}\n\n{base}")
-    }
-}
-
-fn primer_to_text(events: &[SessionEvent]) -> String {
-    let mut out = String::new();
-    for e in events {
-        match e {
-            SessionEvent::UserMessage { content, .. } => {
-                if !out.is_empty() {
-                    out.push_str("\n\n");
-                }
-                out.push_str("User: ");
-                out.push_str(content);
-            }
-            SessionEvent::AssistantMessage { content, .. } => {
-                if !out.is_empty() {
-                    out.push_str("\n\n");
-                }
-                out.push_str("Assistant: ");
-                out.push_str(content);
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-/// Headless mode has no inbound messages, so we just drain the
-/// per-wrapper output channel into WorkerMessage::Event frames.
-fn spawn_headless_output_pump<S>(
-    mut ws: WorkerSocket<S>,
-    mut output_rx: tokio::sync::mpsc::Receiver<crate::worker::report::WorkerEvent>,
-) -> tokio::task::JoinHandle<()>
-where
-    S: futures::Sink<
-            tokio_tungstenite::tungstenite::Message,
-            Error = tokio_tungstenite::tungstenite::Error,
-        > + futures::Stream<
-            Item = std::result::Result<
-                tokio_tungstenite::tungstenite::Message,
-                tokio_tungstenite::tungstenite::Error,
-            >,
-        > + Unpin
-        + Send
-        + 'static,
-{
-    tokio::spawn(async move {
-        while let Some(event) = output_rx.recv().await {
-            if let Some(api_event) = worker_event_to_session_event(event) {
-                let _ = ws.send(WorkerMessage::Event { event: api_event }).await;
-            }
-        }
-    })
-}
-
-fn worker_event_to_session_event(
-    event: crate::worker::report::WorkerEvent,
-) -> Option<SessionEvent> {
-    use crate::worker::report::WorkerEvent;
-    match event {
-        WorkerEvent::AssistantText { text } => Some(SessionEvent::AssistantMessage {
-            content: text,
-            timestamp: chrono::Utc::now(),
-        }),
-        WorkerEvent::ToolUse { tool_name, payload } => Some(SessionEvent::ToolUse {
-            tool_name,
-            payload,
-            timestamp: chrono::Utc::now(),
-        }),
-        WorkerEvent::Usage { .. } | WorkerEvent::SessionInit { .. } | WorkerEvent::Raw { .. } => {
-            None
-        }
     }
 }
 
@@ -804,17 +561,6 @@ mod tests {
         assert_eq!(env.get("FORCE_COLOR").map(String::as_str), Some("0"));
         assert_eq!(env.get("CLICOLOR_FORCE").map(String::as_str), Some("1"));
         assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
-    }
-
-    #[test]
-    fn concat_first_message_collapses_empty_pieces() {
-        assert_eq!(concat_first_message(&[], "", ""), "");
-        assert_eq!(concat_first_message(&[], "prompt", ""), "prompt");
-        assert_eq!(concat_first_message(&[], "", "user"), "user");
-        assert_eq!(
-            concat_first_message(&[], "prompt", "user"),
-            "prompt\n\nuser"
-        );
     }
 
     #[tokio::test(start_paused = true)]

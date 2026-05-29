@@ -16,7 +16,6 @@ use anyhow::{anyhow, Context, Result};
 use hydra_common::{
     api::v1::conversations::SessionStatePayload,
     constants::{ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN},
-    SessionId,
 };
 use tempfile::TempDir;
 use tokio::{
@@ -387,12 +386,10 @@ impl Claude {
     ///   a best-effort signal: we keep reading Claude's stdout (so the JSONL
     ///   transcript on disk remains complete) but stop sending events.
     /// * Stdout EOF (Claude exited) is the natural end.
-    #[allow(clippy::too_many_arguments)]
     pub async fn run_interactive(
         &mut self,
         mut input: mpsc::Receiver<ClaudeUserMessage>,
         output: mpsc::Sender<ClaudeEvent>,
-        session_id: &SessionId,
         prompt: &str,
         resume: Option<ClaudeResume>,
     ) -> Result<RunReport> {
@@ -400,7 +397,6 @@ impl Claude {
         // agent-prompt prepend to the first `WorkerInputMessage` before we
         // ever see it. Kept on the signature for symmetry with `run`.
         let _ = prompt;
-        let _ = session_id;
 
         let resume_uuid = match resume {
             Some(ClaudeResume::SessionId(uuid)) => Some(uuid),
