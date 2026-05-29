@@ -274,9 +274,8 @@ async fn spawn_session(
             );
         }
 
-        // The worker emits `SessionEvent::Resumed` exactly once on its
-        // session log after `try_materialize` succeeds (design §6 / §1.4).
-        // The dual-write that used to happen here is gone; the
+        // `SessionEvent::Resumed` is emitted by the worker post-
+        // `try_materialize` (design §6 / §1.4); the
         // `ConversationEvent::Resumed` appended above is the only
         // server-side Resumed write.
     }

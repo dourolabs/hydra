@@ -639,10 +639,9 @@ impl<'de> Deserialize<'de> for MountItem {
 ///
 /// Carries everything the worker needs to set up its execution
 /// environment, plus enough metadata (`session_id`, `mode_kind`) to drive
-/// the websocket lifecycle. Per the WS-only redesign, anything the
-/// model itself sees (system prompt, transcript, resume blob) travels
-/// over the relay websocket instead — see
-/// `designs/sessions-worker-run-interface.md` §1.2.
+/// the websocket lifecycle. Anything the model itself sees (system
+/// prompt, transcript, resume blob) travels over the relay websocket —
+/// see `designs/sessions-worker-run-interface.md` §1.2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

@@ -333,8 +333,7 @@ where
 
     // Per design §1.4 / §6: when native materialization succeeded the
     // worker emits `SessionEvent::Resumed` exactly once on its session
-    // log. The server-side dual-write at `spawn_conversation_sessions`
-    // is gone; this is the sole source.
+    // log.
     if native.is_some() {
         if let Some(from) = prior_session_id.clone() {
             ws.send(WorkerMessage::Event {
