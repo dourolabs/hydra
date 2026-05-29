@@ -14,7 +14,7 @@ use axum::{
 use futures::{SinkExt, StreamExt, stream::SplitSink};
 use hydra_common::ConversationId;
 use hydra_common::SessionId;
-use hydra_common::api::v1::conversations::{ServerMessage, WorkerMessage};
+use hydra_common::api::v1::conversations::{CatchUpEvent, ServerMessage, WorkerMessage};
 use hydra_common::api::v1::sessions::SessionEvent;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -212,7 +212,7 @@ async fn handle_fresh_path(
     // Register the active connection so subsequent UserMessages on this
     // conversation reach us via the relay. Headless sessions skip this.
     let (to_worker, mut to_worker_rx) = mpsc::channel::<ServerMessage>(TO_WORKER_CAPACITY);
-    let mut drained_pending: Vec<SessionEvent> = Vec::new();
+    let mut drained_pending: Vec<(SessionEvent, usize)> = Vec::new();
     if let Some(conv_id) = conversation_id.as_ref() {
         drained_pending = state
             .chat_relay_map
@@ -226,11 +226,11 @@ async fn handle_fresh_path(
     // pending_first_message — drained messages here are the rare case
     // where a UserMessage arrived before set_active.)
     let mut drained_user_messages: Vec<String> = Vec::new();
-    for event in drained_pending {
+    for (event, event_index) in drained_pending {
         if let SessionEvent::UserMessage { content, .. } = &event {
             drained_user_messages.push(content.clone());
         }
-        let msg = ServerMessage::Event { event };
+        let msg = ServerMessage::Event { event, event_index };
         if !send_json(&mut ws_sender, &msg).await {
             cleanup(&state, conversation_id.as_ref());
             return;
@@ -368,7 +368,7 @@ async fn handle_reconnecting_path(
     state: AppState,
     session_id: SessionId,
     session: crate::domain::sessions::Session,
-    last_received_session_event_index: usize,
+    last_received_session_event_index: Option<usize>,
     actor_ref: ActorRef,
 ) {
     let events =
@@ -394,8 +394,8 @@ async fn handle_reconnecting_path(
             .chat_relay_map
             .set_active(conv_id.clone(), session_id.clone(), to_worker, &state.store)
             .await;
-        for event in drained {
-            let msg = ServerMessage::Event { event };
+        for (event, event_index) in drained {
+            let msg = ServerMessage::Event { event, event_index };
             if !send_json(&mut ws_sender, &msg).await {
                 cleanup(&state, conversation_id.as_ref());
                 return;
@@ -648,13 +648,28 @@ async fn collect_transcript(
 async fn collect_session_events_after(
     state: &AppState,
     session_id: &SessionId,
-    last_index: usize,
-) -> Result<Vec<SessionEvent>, StoreError> {
+    last_index: Option<usize>,
+) -> Result<Vec<CatchUpEvent>, StoreError> {
+    // Per the wire contract, `event_index` is the per-session
+    // `VersionNumber` (1-based, monotonic) returned by
+    // `append_session_event`. A `last_index = Some(N)` means the worker
+    // has seen events up to and including index N; the server returns
+    // events with index > N. `None` returns the whole log.
+    let threshold = last_index.unwrap_or(0);
     let events = state.store.get_session_events(session_id).await?;
     Ok(events
         .into_iter()
-        .skip(last_index + 1)
-        .map(|v| v.item.into())
+        .filter_map(|v| {
+            let event_index = v.version as usize;
+            if event_index > threshold {
+                Some(CatchUpEvent {
+                    event: v.item.into(),
+                    event_index,
+                })
+            } else {
+                None
+            }
+        })
         .collect())
 }
 

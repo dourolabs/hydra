@@ -277,7 +277,7 @@ async fn worker_handshake(
                 Vec::new()
             }
         }
-        ServerMessage::CatchUp { events } => events.clone(),
+        ServerMessage::CatchUp { events } => events.iter().map(|e| e.event.clone()).collect(),
         other => anyhow::bail!("expected ResumeContext or CatchUp, got {other:?}"),
     };
     Ok(HandshakeOutcome { events, raw })
@@ -466,6 +466,7 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
             m,
             ServerMessage::Event {
                 event: SessionEvent::UserMessage { content, .. },
+                ..
             } if content == "hello"
         )
     });
@@ -707,7 +708,8 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         matches!(
             m,
             ServerMessage::Event {
-                event: SessionEvent::UserMessage { content, .. }
+                event: SessionEvent::UserMessage { content, .. },
+                ..
             } if content == "second user message"
         )
     });
@@ -896,7 +898,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     assert!(
         drained.iter().any(|m| matches!(
             m,
-            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. } }
+            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. }, .. }
                 if content == msg1
         )),
         "msg1 should arrive as a drained pending live Event, got {drained:?}"
@@ -929,7 +931,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     assert!(
         forwarded.iter().any(|m| matches!(
             m,
-            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. } }
+            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. }, .. }
                 if content == msg2
         )),
         "worker #1 should receive msg2 via the relay, got {forwarded:?}"
@@ -961,7 +963,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     assert!(
         forwarded.iter().any(|m| matches!(
             m,
-            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. } }
+            ServerMessage::Event { event: SessionEvent::UserMessage { content, .. }, .. }
                 if content == msg3
         )),
         "worker #1 should receive msg3 via the relay, got {forwarded:?}"
@@ -1135,7 +1137,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     let event_forwards: Vec<&SessionEvent> = received_after_resume
         .iter()
         .filter_map(|m| match m {
-            ServerMessage::Event { event } => Some(event),
+            ServerMessage::Event { event, .. } => Some(event),
             _ => None,
         })
         .collect();
@@ -1549,7 +1551,7 @@ async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Resul
     let catch_up_text = worker_handshake_raw(
         &mut ws,
         WorkerMessage::Reconnecting {
-            last_received_session_event_index: 0,
+            last_received_session_event_index: Some(0),
         },
     )
     .await?;
@@ -1732,6 +1734,7 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
                 m,
                 ServerMessage::Event {
                     event: SessionEvent::UserMessage { content, .. },
+                    ..
                 } if content == "hello"
             )
         })
@@ -2308,7 +2311,8 @@ async fn first_message_fresh_interactive_no_greet_stashes_pending_then_delivers_
         matches!(
             m,
             ServerMessage::Event {
-                event: SessionEvent::UserMessage { content, .. }
+                event: SessionEvent::UserMessage { content, .. },
+                ..
             } if content == "delayed hi"
         )
     });
@@ -2366,6 +2370,220 @@ async fn first_inbound_other_than_fresh_or_reconnecting_is_protocol_error() -> a
         first_message_count, 0,
         "an out-of-order Ready as the first inbound must NOT produce a FirstMessage; \
          got {msgs:?}"
+    );
+
+    Ok(())
+}
+
+/// Worker-side mid-session reconnect (i-wfpazngu): a Phase-3 worker drops
+/// its WS, reopens with `WorkerMessage::Reconnecting { ... }`, and must
+/// receive a `CatchUp` slice containing ONLY events past the supplied
+/// index — both UserMessages it didn't yet see AND any other-variant
+/// dual-writes in between (AssistantMessage etc.). After the reconnect,
+/// live forwarding of new user messages resumes on the new socket and
+/// nothing already delivered on the old socket gets replayed.
+#[tokio::test]
+async fn reconnecting_returns_catch_up_strictly_after_supplied_index() -> anyhow::Result<()> {
+    use crate::domain::sessions::SessionEvent as DomainSessionEvent;
+    init_test_tracing();
+
+    let (state, store) = state_with_idle_timeout_secs(60);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let http = test_client();
+
+    // Create a conversation; the worker connects fresh.
+    let created: Conversation = http
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    // Phase 1+2 + Phase-3 entry: a Fresh worker handshakes and reads the
+    // drained pending "hello" (queued by the conversation create above)
+    // as a live `Event` frame. Capture its `event_index` so the
+    // Reconnecting handshake can pick up strictly past it.
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    let live = drain_server_messages(&mut ws, Duration::from_secs(2)).await?;
+    let mut latest_index: Option<usize> = None;
+    let mut saw_hello = false;
+    for m in &live {
+        if let ServerMessage::Event {
+            event: SessionEvent::UserMessage { content, .. },
+            event_index,
+        } = m
+        {
+            assert_eq!(content, "hello");
+            saw_hello = true;
+            latest_index = Some(latest_index.map_or(*event_index, |p: usize| p.max(*event_index)));
+        }
+    }
+    assert!(
+        saw_hello,
+        "drained pending UserMessage was not delivered to the worker; got {live:?}"
+    );
+    let drop_index = latest_index.expect("expected at least one Event to set running max");
+
+    // Send a second user message; the worker receives it (and the
+    // event_index increments).
+    http.post(format!(
+        "{}/v1/conversations/{conversation_id}/messages",
+        server.base_url()
+    ))
+    .json(&SendMessageRequest {
+        content: "second".to_string(),
+    })
+    .send()
+    .await?
+    .error_for_status()?;
+    let second_forwarded = drain_server_messages(&mut ws, Duration::from_secs(2)).await?;
+    let second_index = second_forwarded
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. },
+                event_index,
+            } if content == "second" => Some(*event_index),
+            _ => None,
+        })
+        .expect("second user message must be forwarded with an event_index");
+    assert!(
+        second_index > drop_index,
+        "second event_index ({second_index}) must be > drop_index ({drop_index})"
+    );
+
+    // Drop the WS mid-session AND simulate other-variant session-event
+    // writes that the worker did NOT see — these must be returned in the
+    // CatchUp slice (filtered server-side strictly by `event_index >
+    // last_received`), but the worker's filter-and-re-inject logic
+    // discards them so the model never sees a replay.
+    drop(ws);
+    let actor = ActorRef::test();
+    store
+        .append_session_event(
+            &session_id,
+            DomainSessionEvent::AssistantMessage {
+                content: "intermediate assistant reply".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            &actor,
+        )
+        .await?;
+    store
+        .append_session_event(
+            &session_id,
+            DomainSessionEvent::UserMessage {
+                content: "third while disconnected".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            &actor,
+        )
+        .await?;
+
+    // Brief poll: the chat_relay map's `disconnect` may run on the
+    // background task that owned the dropped socket. Wait until the
+    // relay is no longer registering an active session for the
+    // conversation before reopening.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while state
+        .chat_relay_map
+        .active_session_id(&conversation_id)
+        .is_some()
+    {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    // Reconnect: ask for events past `second_index`. The server must
+    // ONLY include events with `event_index > second_index` (the two
+    // appends above), and must NOT replay "hello" or "second".
+    let mut ws2 = connect_relay(&server.base_url(), &session_id).await?;
+    let handshake = worker_handshake(
+        &mut ws2,
+        WorkerMessage::Reconnecting {
+            last_received_session_event_index: Some(second_index),
+        },
+    )
+    .await?;
+    let catch_up_contents: Vec<(String, Option<String>)> = handshake
+        .events
+        .iter()
+        .map(|e| match e {
+            SessionEvent::UserMessage { content, .. } => {
+                ("user".to_string(), Some(content.clone()))
+            }
+            SessionEvent::AssistantMessage { content, .. } => {
+                ("assistant".to_string(), Some(content.clone()))
+            }
+            other => (format!("{other:?}"), None),
+        })
+        .collect();
+    assert!(
+        !handshake.events.iter().any(
+            |e| matches!(e, SessionEvent::UserMessage { content, .. } if content == "hello"
+                || content == "second")
+        ),
+        "events delivered before the drop must NOT reappear in CatchUp; got {catch_up_contents:?}"
+    );
+    let saw_intermediate_assistant = handshake.events.iter().any(|e| matches!(
+        e,
+        SessionEvent::AssistantMessage { content, .. } if content == "intermediate assistant reply"
+    ));
+    let saw_third_user = handshake.events.iter().any(|e| {
+        matches!(
+            e,
+            SessionEvent::UserMessage { content, .. } if content == "third while disconnected"
+        )
+    });
+    assert!(
+        saw_intermediate_assistant,
+        "AssistantMessage written between drop and reconnect must appear in CatchUp; \
+         got {catch_up_contents:?}"
+    );
+    assert!(
+        saw_third_user,
+        "UserMessage written between drop and reconnect must appear in CatchUp; \
+         got {catch_up_contents:?}"
+    );
+
+    // After the reconnect, send one more user message and verify the
+    // new socket receives it via the standard `Event` path — and that
+    // no event delivered before the drop reappears here.
+    http.post(format!(
+        "{}/v1/conversations/{conversation_id}/messages",
+        server.base_url()
+    ))
+    .json(&SendMessageRequest {
+        content: "after-reconnect".to_string(),
+    })
+    .send()
+    .await?
+    .error_for_status()?;
+    let post_reconnect = drain_server_messages(&mut ws2, Duration::from_secs(2)).await?;
+    let mut after_reconnect_user_contents: Vec<String> = Vec::new();
+    for m in &post_reconnect {
+        if let ServerMessage::Event {
+            event: SessionEvent::UserMessage { content, .. },
+            ..
+        } = m
+        {
+            after_reconnect_user_contents.push(content.clone());
+        }
+    }
+    assert_eq!(
+        after_reconnect_user_contents,
+        vec!["after-reconnect".to_string()],
+        "exactly one new user message should arrive after the reconnect; got {post_reconnect:?}"
     );
 
     Ok(())

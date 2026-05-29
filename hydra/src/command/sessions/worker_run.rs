@@ -21,6 +21,7 @@ use crate::command::sessions::mounts::orchestrator::run_phase;
 use crate::util::format_thousands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
+use crate::worker::relay_adapter::ReconnectFn;
 use crate::worker::report::{RunReport, TokenUsage};
 use crate::worker::socket::WorkerSocket;
 use crate::{
@@ -162,7 +163,15 @@ pub async fn run(
 
                 let run_result = if interactive {
                     log_status("Phase: interactive agent execution — starting");
-                    selector.drive_interactive(ws).await
+                    let client_for_reconnect = Arc::clone(&client);
+                    let reconnect: ReconnectFn<_> = Arc::new(move |sid| {
+                        let client = client_for_reconnect.clone();
+                        Box::pin(async move {
+                            let stream = client.connect_relay_websocket(&sid).await?;
+                            Ok(WorkerSocket::new(stream))
+                        })
+                    });
+                    selector.drive_interactive(ws, job.clone(), reconnect).await
                 } else {
                     log_status("Phase: agent execution — starting");
                     selector.drive_headless(ws).await

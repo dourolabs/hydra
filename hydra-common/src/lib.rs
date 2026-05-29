@@ -303,5 +303,6 @@ mod ts_export {
             .expect("SearchConversationsQuery");
         crate::conversations::WorkerMessage::export_all(&cfg).expect("WorkerMessage");
         crate::conversations::ServerMessage::export_all(&cfg).expect("ServerMessage");
+        crate::conversations::CatchUpEvent::export_all(&cfg).expect("CatchUpEvent");
     }
 }

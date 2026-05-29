@@ -154,7 +154,31 @@ impl ChatRelayMap {
                 to_worker,
                 pending_first_prompt,
             } => {
-                dual_write_session_event(store, &session_id, event.clone(), actor).await;
+                let event_index = match dual_write_session_event(
+                    store,
+                    &session_id,
+                    event.clone(),
+                    actor,
+                )
+                .await
+                {
+                    Some(idx) => idx,
+                    None => {
+                        // The dual-write failed: the session-event log is
+                        // the source of truth for `event_index`, so we
+                        // cannot forward a fabricated index to the worker
+                        // (it would corrupt the worker's running max for
+                        // a future `Reconnecting`). Skip the forward and
+                        // continue; the worker stays connected and a
+                        // later send may succeed.
+                        warn!(
+                            %conversation_id,
+                            %session_id,
+                            "skipping worker forward — dual-write returned no event_index",
+                        );
+                        return Ok(());
+                    }
+                };
                 let outbound = match (pending_first_prompt, event) {
                     (Some(agent_prompt), ApiSessionEvent::UserMessage { content, .. }) => {
                         ServerMessage::FirstMessage {
@@ -162,7 +186,7 @@ impl ChatRelayMap {
                             user_message: content,
                         }
                     }
-                    (_, event) => ServerMessage::Event { event },
+                    (_, event) => ServerMessage::Event { event, event_index },
                 };
                 to_worker
                     .send(outbound)
@@ -194,7 +218,7 @@ impl ChatRelayMap {
         session_id: SessionId,
         to_worker: mpsc::Sender<ServerMessage>,
         store: &StoreWithEvents,
-    ) -> Vec<ApiSessionEvent> {
+    ) -> Vec<(ApiSessionEvent, usize)> {
         let drained: Vec<PendingItem> = {
             let mut entry = self
                 .inner
@@ -236,8 +260,16 @@ impl ChatRelayMap {
         // strict cross-source FIFO is left to future work.
         let mut drained_events = Vec::with_capacity(drained.len());
         for item in drained {
-            dual_write_session_event(store, &session_id, item.event.clone(), item.actor).await;
-            drained_events.push(item.event);
+            match dual_write_session_event(store, &session_id, item.event.clone(), item.actor).await
+            {
+                Some(event_index) => drained_events.push((item.event, event_index)),
+                None => {
+                    warn!(
+                        %session_id,
+                        "skipping drained pending event — dual-write returned no event_index",
+                    );
+                }
+            }
         }
         drained_events
     }
@@ -298,16 +330,19 @@ impl ChatRelayMap {
     }
 }
 
-/// Dual-write an event to the session's event log. Errors are logged
-/// and swallowed: the worker's own write of the equivalent event
-/// remains the source of truth during the dual-write phase, and a
-/// transient store failure must not tear down the relay.
+/// Dual-write an event to the session's event log. Returns the per-session
+/// `VersionNumber` assigned by the store (as a `usize`, used by callers as
+/// the `event_index` they ship to the worker over the relay). Returns
+/// `None` on a try_into / store failure: callers must skip the worker
+/// forward in that case, since the worker tracks indices for the
+/// reconnect-and-resume protocol and a fabricated index would corrupt its
+/// running max.
 async fn dual_write_session_event(
     store: &StoreWithEvents,
     session_id: &SessionId,
     event: ApiSessionEvent,
     actor: ActorRef,
-) {
+) -> Option<usize> {
     let domain_event: SessionEvent = match event.try_into() {
         Ok(e) => e,
         Err(_) => {
@@ -315,7 +350,7 @@ async fn dual_write_session_event(
                 %session_id,
                 "dual-write skipped: unknown SessionEvent variant",
             );
-            return;
+            return None;
         }
     };
     let preview = domain_event.preview();
@@ -330,6 +365,7 @@ async fn dual_write_session_event(
                 event = %preview,
                 "dual-write SessionEvent appended",
             );
+            Some(version as usize)
         }
         Err(err) => {
             warn!(
@@ -338,6 +374,7 @@ async fn dual_write_session_event(
                 error = %err,
                 "dual-write SessionEvent failed",
             );
+            None
         }
     }
 }
@@ -445,13 +482,19 @@ mod tests {
             .await;
 
         let drained_contents: Vec<String> = drained
-            .into_iter()
-            .map(|e| match e {
-                ApiSessionEvent::UserMessage { content, .. } => content,
+            .iter()
+            .map(|(e, _)| match e {
+                ApiSessionEvent::UserMessage { content, .. } => content.clone(),
                 other => panic!("unexpected drained variant: {other:?}"),
             })
             .collect();
         assert_eq!(drained_contents, vec!["first", "second", "third"]);
+
+        // Each drained item is paired with the per-session event_index
+        // assigned by the dual-write — versions start at 1 and increase
+        // monotonically, so this slice is `[1, 2, 3]`.
+        let indices: Vec<usize> = drained.iter().map(|(_, idx)| *idx).collect();
+        assert_eq!(indices, vec![1, 2, 3]);
     }
 
     #[tokio::test]
@@ -493,7 +536,13 @@ mod tests {
         .unwrap();
 
         let received = rx.recv().await.expect("worker channel must receive event");
-        assert_eq!(received, ServerMessage::Event { event });
+        assert_eq!(
+            received,
+            ServerMessage::Event {
+                event,
+                event_index: 1,
+            }
+        );
 
         // Dual-write hit the session log.
         let events = state.store.get_session_events(&session_id).await.unwrap();
@@ -665,21 +714,24 @@ mod tests {
         .await
         .unwrap();
         let received = rx.recv().await.unwrap();
+        let (timestamp, event_index) = match &received {
+            ServerMessage::Event {
+                event: ApiSessionEvent::UserMessage { timestamp, .. },
+                event_index,
+            } => (*timestamp, *event_index),
+            other => panic!("expected Event UserMessage, got {other:?}"),
+        };
         assert_eq!(
             received,
             ServerMessage::Event {
                 event: ApiSessionEvent::UserMessage {
                     content: "again".to_string(),
-                    timestamp: match received {
-                        ServerMessage::Event {
-                            event: ApiSessionEvent::UserMessage { timestamp: ts, .. },
-                            ..
-                        } => ts,
-                        _ => unreachable!(),
-                    }
-                }
+                    timestamp,
+                },
+                event_index,
             }
         );
+        assert!(event_index >= 1, "event_index must be assigned");
     }
 
     #[tokio::test]
@@ -720,7 +772,16 @@ mod tests {
         .unwrap();
 
         let received = rx.recv().await.unwrap();
-        assert_eq!(received, ServerMessage::Event { event: assistant });
+        match received {
+            ServerMessage::Event {
+                event: ref got,
+                event_index,
+            } => {
+                assert_eq!(got, &assistant);
+                assert!(event_index >= 1, "event_index must be assigned");
+            }
+            other => panic!("expected Event AssistantMessage, got {other:?}"),
+        }
 
         // Pending prompt still set: a later UserMessage folds it.
         map.send_event_to_conversation(

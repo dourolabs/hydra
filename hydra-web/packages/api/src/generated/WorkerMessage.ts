@@ -11,4 +11,10 @@ import type { SessionId } from "./SessionId";
  * is awaiting `FirstMessage`. Phase 3 carries session events and
  * session-state uploads.
  */
-export type WorkerMessage = { "type": "fresh" } | { "type": "reconnecting", last_received_session_event_index: number, } | { "type": "request_transcript", prior_session_id: SessionId, } | { "type": "ready" } | { "type": "event", event: SessionEvent, } | { "type": "session_state_upload", data: number[], };
+export type WorkerMessage =
+  | { type: "fresh" }
+  | { type: "reconnecting"; last_received_session_event_index?: number | null }
+  | { type: "request_transcript"; prior_session_id: SessionId }
+  | { type: "ready" }
+  | { type: "event"; event: SessionEvent }
+  | { type: "session_state_upload"; data: number[] };
