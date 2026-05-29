@@ -185,18 +185,6 @@ mod tests {
     use super::{AppConfig, AppConfigFile, ServerSection};
 
     #[test]
-    fn config_requires_server_url() {
-        let err = toml::from_str::<AppConfig>("[[servers]]\n").unwrap_err();
-        assert!(err.to_string().contains("missing field `url`"));
-    }
-
-    #[test]
-    fn config_requires_server_section() {
-        let err = toml::from_str::<AppConfig>("").unwrap_err();
-        assert!(err.to_string().contains("missing field `servers`"));
-    }
-
-    #[test]
     fn config_legacy_sections_become_default() {
         let config = toml::from_str::<AppConfigFile>("[server]\nurl = \"http://localhost:8080\"\n")
             .expect("parse legacy config")

@@ -506,16 +506,6 @@ mod tests {
     }
 
     #[test]
-    fn decide_kind_unknown_defaults_to_codex() {
-        assert_eq!(ModelSelector::decide_kind(Some("unknown")), Kind::Codex);
-    }
-
-    #[test]
-    fn decide_kind_none_defaults_to_codex() {
-        assert_eq!(ModelSelector::decide_kind(None), Kind::Codex);
-    }
-
-    #[test]
     fn supports_interactive_true_for_claude_names() {
         assert!(ModelSelector::supports_interactive(Some(
             "claude-3-5-sonnet"

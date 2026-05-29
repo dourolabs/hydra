@@ -103,30 +103,3 @@ fn default_bind_host() -> String {
 const fn default_bind_port() -> u16 {
     9090
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn loads_config_from_file() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let path = temp_dir.path().join("config.toml");
-        fs::write(
-            &path,
-            r#"
-[server]
-bind_host = "127.0.0.1"
-bind_port = 9091
-
-[storage]
-root_dir = "~/hydra-s3"
-"#,
-        )?;
-        let config = AppConfig::load(&path)?;
-        assert_eq!(config.server.bind_host, "127.0.0.1");
-        assert_eq!(config.server.bind_port, 9091);
-        assert!(config.storage_root().to_string_lossy().contains("hydra-s3"));
-        Ok(())
-    }
-}

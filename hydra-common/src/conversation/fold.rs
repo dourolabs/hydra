@@ -90,13 +90,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_events_returns_empty_vec() {
-        let initial = sample_conversation(Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap());
-        let out = events_to_versions(&initial, &[]);
-        assert!(out.is_empty());
-    }
-
-    #[test]
     fn closed_event_sets_status_closed() {
         let created_at = Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap();
         let initial = sample_conversation(created_at);

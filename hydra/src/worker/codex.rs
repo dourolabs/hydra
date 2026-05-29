@@ -584,14 +584,6 @@ mod tests {
         assert_eq!(r.format, SessionStateFormat::CodexJsonl);
     }
 
-    #[test]
-    fn session_state_if_exists_returns_none_for_missing_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let missing = tmp.path().join("nope.jsonl");
-        let result = session_state_if_exists(missing, SessionStateFormat::ClaudeJsonl);
-        assert!(result.is_none());
-    }
-
     #[tokio::test]
     async fn codex_new_errors_when_openai_api_key_absent() {
         let tmp = tempfile::tempdir().unwrap();

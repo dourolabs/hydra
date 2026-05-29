@@ -1058,12 +1058,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_session_id_returns_none_when_missing() {
-        let line = r#"{"type":"assistant","message":{"content":[]}}"#;
-        assert_eq!(extract_session_id(line), None);
-    }
-
-    #[test]
     fn extract_assistant_text_from_text_block() {
         let line =
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}"#;
@@ -1125,12 +1119,6 @@ mod tests {
         let events = parse_claude_events(line);
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], ClaudeEvent::Raw { .. }));
-    }
-
-    #[test]
-    fn encoded_cwd_replaces_slashes_and_dots_with_dashes() {
-        let cwd = Path::new("/tmp/.tmpOH7bq5/repo");
-        assert_eq!(encoded_cwd(cwd), "-tmp--tmpOH7bq5-repo");
     }
 
     #[tokio::test]

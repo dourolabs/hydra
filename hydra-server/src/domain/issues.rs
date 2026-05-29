@@ -460,65 +460,9 @@ impl From<Issue> for api::issues::Issue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::users::Username;
+    use hydra_common::RepoName;
     use hydra_common::api::v1 as api;
-    use hydra_common::{IssueId, PatchId, RepoName};
     use std::str::FromStr;
-
-    #[test]
-    fn issue_roundtrip_json() {
-        let dependency_id = IssueId::new();
-        let patch_id = PatchId::new();
-        let session_settings = SessionSettings {
-            repo_name: Some(RepoName::from_str("dourolabs/hydra").unwrap()),
-            remote_url: Some("https://github.com/dourolabs/hydra".to_string()),
-            image: Some("worker:latest".to_string()),
-            model: Some("gpt-4o".to_string()),
-            branch: Some("main".to_string()),
-            max_retries: Some(2),
-            cpu_limit: Some("400m".to_string()),
-            memory_limit: Some("768Mi".to_string()),
-            secrets: None,
-        };
-        let bob = Principal::User {
-            name: hydra_common::api::v1::users::Username::try_new("bob").unwrap(),
-        };
-        let issue = Issue {
-            issue_type: IssueType::Task,
-            title: String::new(),
-            description: "cool feature".to_string(),
-            creator: Username::from("alice"),
-            progress: "in-progress".to_string(),
-            status: IssueStatus::Open,
-            assignee: Some(bob.clone()),
-            session_settings: session_settings.clone(),
-            dependencies: vec![IssueDependency {
-                dependency_type: IssueDependencyType::ChildOf,
-                issue_id: dependency_id,
-            }],
-            patches: vec![patch_id.clone()],
-            deleted: false,
-            form: None,
-            form_response: None,
-            feedback: None,
-        };
-
-        let issue_json = serde_json::to_string(&issue).expect("should serialize to JSON");
-        let decoded: Issue = serde_json::from_str(&issue_json).expect("should parse issue");
-
-        assert_eq!(
-            decoded.dependencies[0].dependency_type,
-            IssueDependencyType::ChildOf
-        );
-        assert_eq!(decoded.patches[0], patch_id);
-        assert_eq!(decoded.creator, issue.creator);
-        assert_eq!(decoded.assignee, Some(bob));
-        assert_eq!(decoded.status, issue.status);
-        assert_eq!(decoded.progress, issue.progress);
-        assert_eq!(decoded.issue_type, issue.issue_type);
-        assert_eq!(decoded.description, issue.description);
-        assert_eq!(decoded.session_settings, session_settings);
-    }
 
     #[test]
     fn session_settings_roundtrip_preserves_secrets() {

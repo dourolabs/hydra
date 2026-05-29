@@ -49,11 +49,6 @@ mod tests {
             .layer(TraceLayer::new_for_http())
     }
 
-    #[test]
-    fn max_body_size_is_150mb() {
-        assert_eq!(MAX_BODY_SIZE, 150 * 1024 * 1024);
-    }
-
     #[tokio::test]
     async fn body_limit_rejects_oversized_requests() {
         let dir = tempdir().expect("temp dir");

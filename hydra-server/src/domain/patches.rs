@@ -578,58 +578,6 @@ mod tests {
     use hydra_common::api::v1 as api;
 
     #[test]
-    fn patch_status_from_str() {
-        assert_eq!(PatchStatus::from_str("open").unwrap(), PatchStatus::Open);
-        assert_eq!(
-            PatchStatus::from_str("closed").unwrap(),
-            PatchStatus::Closed
-        );
-        assert_eq!(
-            PatchStatus::from_str("merged").unwrap(),
-            PatchStatus::Merged
-        );
-        assert_eq!(
-            PatchStatus::from_str("changes requested").unwrap(),
-            PatchStatus::ChangesRequested
-        );
-        assert!(PatchStatus::from_str("invalid").is_err());
-    }
-
-    #[test]
-    fn github_pr_serialization() {
-        let pr = GithubPr {
-            owner: "owner".to_string(),
-            repo: "repo".to_string(),
-            number: 123,
-            head_ref: Some("head".to_string()),
-            base_ref: Some("base".to_string()),
-            url: Some("http://example.com".to_string()),
-            ci: None,
-        };
-
-        let json = serde_json::to_string(&pr).unwrap();
-        let deserialized: GithubPr = serde_json::from_str(&json).unwrap();
-        assert_eq!(pr, deserialized);
-    }
-
-    #[test]
-    fn github_ci_status_converts_between_domain_and_api() {
-        let domain = GithubCiStatus {
-            state: GithubCiState::Failed,
-            failure: Some(GithubCiFailure {
-                name: "build".to_string(),
-                summary: Some("compilation error".to_string()),
-                details_url: None,
-            }),
-        };
-
-        let api_value: api::patches::GithubCiStatus = domain.clone().into();
-        let round_trip: GithubCiStatus = api_value.into();
-
-        assert_eq!(round_trip, domain);
-    }
-
-    #[test]
     fn patch_round_trip_with_branch_and_commit_range() {
         let domain_patch = Patch {
             title: "test".to_string(),

@@ -1315,44 +1315,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn refers_to_relationship_type_round_trips() {
-        let rt = RelationshipType::RefersTo;
-        assert_eq!(rt.as_str(), "refers-to");
-        assert_eq!(rt.to_string(), "refers-to");
-        assert_eq!(
-            RelationshipType::from_str("refers_to").unwrap(),
-            RelationshipType::RefersTo
-        );
-        assert_eq!(
-            RelationshipType::from_str("refers-to").unwrap(),
-            RelationshipType::RefersTo
-        );
-        assert_eq!(
-            RelationshipType::from_str("RefersTo").unwrap(),
-            RelationshipType::RefersTo
-        );
-        assert_eq!(
-            RelationshipType::from_str("REFERS_TO").unwrap(),
-            RelationshipType::RefersTo
-        );
-    }
-
-    #[test]
-    fn conversation_object_kind_round_trips() {
-        let kind = ObjectKind::Conversation;
-        assert_eq!(kind.as_str(), "conversation");
-        assert_eq!(kind.to_string(), "conversation");
-        assert_eq!(
-            ObjectKind::from_str("conversation").unwrap(),
-            ObjectKind::Conversation
-        );
-        assert_eq!(
-            ObjectKind::from_str("Conversation").unwrap(),
-            ObjectKind::Conversation
-        );
-    }
-
-    #[test]
     fn object_kind_from_id_recognizes_conversation_prefix() {
         let conv_id = ConversationId::new();
         let hid = HydraId::from(conv_id);

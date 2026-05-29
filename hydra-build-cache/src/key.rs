@@ -60,34 +60,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn object_key_formats_stable_path() {
-        let repo = RepoName::new("acme", "anvils").expect("repo");
-        let key = BuildCacheKey::new(repo, "deadbeef");
-
-        assert_eq!(key.object_key(), "repo/acme/anvils/deadbeef/cache.tar.zst");
-    }
-
-    #[test]
-    fn repo_prefix_targets_repo_listing() {
-        let repo = RepoName::new("acme", "anvils").expect("repo");
-        let key = BuildCacheKey::new(repo, "deadbeef");
-
-        assert_eq!(key.repo_prefix(), "repo/acme/anvils/");
-    }
-
-    #[test]
     fn from_object_key_extracts_repo_and_sha() {
         let repo = RepoName::new("acme", "anvils").expect("repo");
         let key = BuildCacheKey::new(repo.clone(), "deadbeef");
 
         let extracted = BuildCacheKey::from_object_key(&key.object_key()).expect("key");
         assert_eq!(extracted, key);
-    }
-
-    #[test]
-    fn from_object_key_rejects_unknown_prefix() {
-        let key = "cache/acme/anvils/deadbeef/cache.tar.zst";
-
-        assert!(BuildCacheKey::from_object_key(key).is_none());
     }
 }

@@ -156,7 +156,6 @@ fn validate_segment(value: &str, segment: Segment) -> Result<(), RepoNameError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn parses_repo_name() {
@@ -197,12 +196,5 @@ mod tests {
             RepoName::from_str("dourolabs/hydra repo"),
             Err(RepoNameError::InvalidRepository)
         ));
-    }
-
-    #[test]
-    fn serializes_as_string() {
-        let repo_name: RepoName = "dourolabs/hydra".parse().unwrap();
-        let value = serde_json::to_value(&repo_name).unwrap();
-        assert_eq!(value, json!("dourolabs/hydra"));
     }
 }

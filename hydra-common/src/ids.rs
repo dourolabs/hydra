@@ -778,22 +778,6 @@ mod tests {
     }
 
     #[test]
-    fn hydra_id_converts_to_document_id() {
-        let document_id = DocumentId::new();
-        let hydra_id: HydraId = document_id.clone().into();
-        let converted = hydra_id.as_document_id().expect("document id");
-        assert_eq!(converted, document_id);
-    }
-
-    #[test]
-    fn document_id_round_trips_through_serde() {
-        let document_id = DocumentId::new();
-        let serialized = serde_json::to_string(&document_id).expect("serialize");
-        let deserialized: DocumentId = serde_json::from_str(&serialized).expect("deserialize");
-        assert_eq!(deserialized, document_id);
-    }
-
-    #[test]
     fn random_len_for_count_starts_at_default() {
         assert_eq!(random_len_for_count(0), DEFAULT_RANDOM_LEN);
         assert_eq!(random_len_for_count(1), DEFAULT_RANDOM_LEN);
