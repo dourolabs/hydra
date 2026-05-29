@@ -696,8 +696,10 @@ mod sqlite {
         issue_to_actor_id: &HashMap<String, Value>,
         counts: &mut Counts,
     ) -> Result<()> {
-        let select_sql =
-            format!("SELECT {pk_sql} AS __pk, actor FROM {table} WHERE actor IS NOT NULL");
+        let select_sql = format!(
+            "SELECT {}, actor FROM {table} WHERE actor IS NOT NULL",
+            pk_cols_for(pk_sql).join(", ")
+        );
         let rows = sqlx::query(&select_sql)
             .fetch_all(pool)
             .await
@@ -742,8 +744,9 @@ mod sqlite {
         counts: &mut Counts,
     ) -> Result<()> {
         let select_sql = format!(
-            "SELECT {pk_sql} AS __pk, {column} AS payload FROM {table} \
-             WHERE {column} IS NOT NULL"
+            "SELECT {}, {column} AS payload FROM {table} \
+             WHERE {column} IS NOT NULL",
+            pk_cols_for(pk_sql).join(", ")
         );
         let rows = sqlx::query(&select_sql)
             .fetch_all(pool)
@@ -767,6 +770,15 @@ mod sqlite {
         Ok(())
     }
 
+    fn pk_cols_for(pk_sql: &str) -> Vec<&'static str> {
+        match pk_sql {
+            "id" => vec!["id"],
+            "(session_id, version_number)" => vec!["session_id", "version_number"],
+            "(id, version_number)" => vec!["id", "version_number"],
+            other => panic!("unsupported pk_sql expression for sqlite: {other}"),
+        }
+    }
+
     async fn exec_pk_update(
         pool: &SqlitePool,
         table: &'static str,
@@ -778,7 +790,7 @@ mod sqlite {
         // sqlx::sqlite can't express tuple equality directly, so we
         // dispatch on the shape of pk_sql.
         if pk_sql == "id" {
-            let id: String = row.try_get("__pk")?;
+            let id: String = row.try_get("id")?;
             let sql = format!("UPDATE {table} SET {column} = ?1 WHERE id = ?2");
             sqlx::query(&sql)
                 .bind(new_value)
