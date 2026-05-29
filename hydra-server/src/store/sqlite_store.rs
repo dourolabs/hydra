@@ -60,7 +60,7 @@ const TABLE_CONVERSATION_EVENTS: &str = "conversation_events";
 const TABLE_SESSION_EVENTS: &str = "session_events";
 const TABLE_SESSION_STATE: &str = "session_state";
 
-static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
+pub static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 
 /// Run the combined SQL+Rust migration sequence against `pool` up to (and
 /// including) `up_to`, or to HEAD when `up_to == None`. The production
