@@ -39,19 +39,100 @@ use tokio_tungstenite::tungstenite;
 /// Install a process-wide tracing subscriber that routes events through
 /// `print!` so `cargo test -- --nocapture` surfaces the
 /// upload/store/catch-up instrumentation in `relay.rs`. Idempotent across
-/// many tests in the same process.
+/// many tests in the same process. Also installs a [`log_capture::CaptureLayer`]
+/// so tests can assert on emitted log messages.
 fn init_test_tracing() {
     use std::sync::Once;
+    use tracing_subscriber::layer::SubscriberExt;
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        let _ = tracing_subscriber::fmt()
-            .with_test_writer()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-            )
-            .try_init();
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        let fmt_layer = tracing_subscriber::fmt::layer().with_test_writer();
+        let subscriber = tracing_subscriber::Registry::default()
+            .with(filter)
+            .with(fmt_layer)
+            .with(log_capture::CaptureLayer);
+        let _ = tracing::subscriber::set_global_default(subscriber);
     });
+}
+
+/// In-memory `tracing` capture used by the close-frame integration test
+/// (and available to any future test that needs to assert on log output).
+/// Events are recorded process-wide with their `session_id` field (if any)
+/// extracted so tests can filter by their own session id and avoid
+/// cross-talk with parallel tests.
+mod log_capture {
+    use std::sync::{LazyLock, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing::{Event, Subscriber};
+    use tracing_subscriber::layer::{Context, Layer};
+
+    static CAPTURED: LazyLock<Mutex<Vec<CapturedEvent>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+    #[derive(Clone, Debug)]
+    pub struct CapturedEvent {
+        pub session_id: Option<String>,
+        pub message: String,
+    }
+
+    pub struct CaptureLayer;
+
+    impl<S: Subscriber> Layer<S> for CaptureLayer {
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+            let mut visitor = EventVisitor::default();
+            event.record(&mut visitor);
+            CAPTURED.lock().unwrap().push(CapturedEvent {
+                session_id: visitor.session_id,
+                message: visitor.message,
+            });
+        }
+    }
+
+    #[derive(Default)]
+    struct EventVisitor {
+        session_id: Option<String>,
+        message: String,
+    }
+
+    impl Visit for EventVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            // `tracing` wraps `%foo`/`?foo` field values in a `DisplayValue`
+            // or `DebugValue` whose Debug impl forwards to the underlying
+            // Display/Debug formatter. Capturing via `{:?}` works for both.
+            match field.name() {
+                "message" => {
+                    use std::fmt::Write;
+                    let _ = write!(self.message, "{value:?}");
+                }
+                "session_id" => {
+                    self.session_id = Some(format!("{value:?}"));
+                }
+                _ => {}
+            }
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            match field.name() {
+                "message" => self.message.push_str(value),
+                "session_id" => self.session_id = Some(value.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    /// Snapshot all captured events whose `session_id` field matches the
+    /// given id (compared as string). Returns the messages, in capture
+    /// order. Other tests' events are filtered out by the session id.
+    pub fn messages_for_session(session_id: &str) -> Vec<String> {
+        CAPTURED
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.session_id.as_deref().is_some_and(|s| s == session_id))
+            .map(|e| e.message.clone())
+            .collect()
+    }
 }
 
 /// Test helper for short idle timeout: build an `AppState` whose JobSection
@@ -2723,6 +2804,88 @@ async fn close_conversation_sends_end_session_and_awaits_clean_disconnect() -> a
             .active_session_id(&conversation_id)
             .is_none(),
         "relay entry must be dropped after the worker closes the WS"
+    );
+
+    Ok(())
+}
+
+/// Regression test for [[i-wybmzqxv]]: after a graceful worker shutdown,
+/// the server-side `pump_phase3` must exit via the `Message::Close(_)` arm
+/// (`info!("WebSocket closed by worker")`) rather than the `Some(Err(_))`
+/// arm (`error!("WebSocket error in Phase 3")`), which is what tungstenite
+/// surfaces when the worker tears down the TCP connection without a Close
+/// frame ("Connection reset without closing handshake"). This validates
+/// the `WorkerSocket::close()` invocation added at the tail of both
+/// `drive_headless` and `drive_interactive` in `hydra::worker::model_selector`.
+///
+/// Implementation note: this is the "in-memory equivalent" the issue's AC#3
+/// allowed — the fake worker mirrors the production worker's post-cleanup
+/// behaviour (Close frame then drop), and we assert on captured server logs
+/// rather than scraping process stderr. Filtering captured events by the
+/// test's own `session_id` field avoids cross-talk with parallel tests.
+#[tokio::test]
+async fn worker_close_frame_yields_clean_phase3_exit_log() -> anyhow::Result<()> {
+    init_test_tracing();
+
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state, store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let session_id = find_session_for_conversation(&store, &created.conversation_id).await;
+
+    // Connect as fake worker, complete Phase-1 and Phase-2, then mirror the
+    // production drive_* sequence: send the unified-cleanup frames followed by
+    // a `Close(None)` frame, then drop the WS.
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _catch_up = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    send_worker_message(&mut ws, WorkerMessage::Ready).await?;
+    // Drain the pre-Ready queued user message so it doesn't sit in the
+    // server-side buffer when we close.
+    let _ = drain_server_messages(&mut ws, Duration::from_millis(200)).await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: SessionEvent::Closed {
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    ws.send(tungstenite::Message::Close(None)).await?;
+    drop(ws);
+
+    // Poll briefly for the server's pump_phase3 to record its exit arm.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let sid_str = session_id.to_string();
+    let messages = loop {
+        let msgs = log_capture::messages_for_session(&sid_str);
+        if msgs.iter().any(|m| m == "WebSocket closed by worker") {
+            break msgs;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for 'WebSocket closed by worker' log line for session {sid_str}; \
+                 captured: {msgs:?}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(
+        !messages.iter().any(|m| m == "WebSocket error in Phase 3"),
+        "no 'WebSocket error in Phase 3' line should fire on a clean Close-frame shutdown; \
+         captured: {messages:?}"
     );
 
     Ok(())
