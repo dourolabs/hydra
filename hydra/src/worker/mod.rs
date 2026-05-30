@@ -6,6 +6,8 @@ pub(crate) mod reaper;
 pub mod relay_adapter;
 pub mod report;
 pub mod socket;
+#[cfg(test)]
+mod ws_test_util;
 
 pub use claude::{ClaudeEvent, ClaudeResume, ClaudeUserMessage};
 pub use codex::CodexResume;

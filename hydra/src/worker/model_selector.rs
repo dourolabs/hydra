@@ -397,6 +397,14 @@ fn build_session_state_payload(report: &RunReport) -> Option<SessionStatePayload
 /// arrives before the `Closed` event so the server commits state before
 /// marking the log closed. `EndSessionAck` is the very last frame so the
 /// server-side waiter (PR-2) can know its termination request was honored.
+///
+/// Note: only the natural-exit paths reach this helper. If
+/// `run_with_native` / `run_interactive_with_native` returns `Err`, the
+/// `drive_*` callers propagate via `?` and cleanup is skipped entirely
+/// (no `Closed` event, no ack). That is intentional — on a failed run
+/// `report.session_state` is `None` so the upload would no-op anyway,
+/// and the server-side disconnect fallback caps the log when the WS
+/// drops.
 async fn send_unified_cleanup<S>(
     ws: &mut WorkerSocket<S>,
     report: &RunReport,
@@ -1072,80 +1080,8 @@ mod tests {
     mod unified_cleanup {
         use super::*;
         use crate::worker::report::{RunReport, SessionStateFormat, SessionStateRef, TokenUsage};
-        use futures::SinkExt;
+        use crate::worker::ws_test_util::{collect_worker_msgs, duplex, push_server_msg};
         use std::io::Write;
-        use tokio_tungstenite::tungstenite;
-
-        type WsFrame = std::result::Result<tungstenite::Message, tungstenite::Error>;
-        type WsSender = futures::channel::mpsc::UnboundedSender<WsFrame>;
-        type WsReceiver = futures::channel::mpsc::UnboundedReceiver<WsFrame>;
-
-        struct TestStream {
-            rx: futures::channel::mpsc::UnboundedReceiver<WsFrame>,
-            tx: futures::channel::mpsc::UnboundedSender<WsFrame>,
-        }
-        impl futures::Stream for TestStream {
-            type Item = WsFrame;
-            fn poll_next(
-                mut self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Option<Self::Item>> {
-                std::pin::Pin::new(&mut self.rx).poll_next(cx)
-            }
-        }
-        impl futures::Sink<tungstenite::Message> for TestStream {
-            type Error = tungstenite::Error;
-            fn poll_ready(
-                self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-                std::task::Poll::Ready(Ok(()))
-            }
-            fn start_send(
-                self: std::pin::Pin<&mut Self>,
-                item: tungstenite::Message,
-            ) -> std::result::Result<(), Self::Error> {
-                self.tx
-                    .unbounded_send(Ok(item))
-                    .map_err(|_| tungstenite::Error::ConnectionClosed)
-            }
-            fn poll_flush(
-                self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-                std::task::Poll::Ready(Ok(()))
-            }
-            fn poll_close(
-                self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-                self.tx.close_channel();
-                std::task::Poll::Ready(Ok(()))
-            }
-        }
-
-        fn duplex() -> (WorkerSocket<TestStream>, WsSender, WsReceiver) {
-            let (server_tx, worker_rx) = futures::channel::mpsc::unbounded::<WsFrame>();
-            let (worker_tx, server_rx) = futures::channel::mpsc::unbounded::<WsFrame>();
-            let ws = WorkerSocket::new(TestStream {
-                rx: worker_rx,
-                tx: worker_tx,
-            });
-            (ws, server_tx, server_rx)
-        }
-
-        async fn collect_worker_msgs(server_rx: &mut WsReceiver) -> Vec<WorkerMessage> {
-            use futures::StreamExt;
-            let mut out = Vec::new();
-            while let Some(Ok(frame)) = server_rx.next().await {
-                if let tungstenite::Message::Text(text) = frame {
-                    if let Ok(msg) = serde_json::from_str::<WorkerMessage>(&text) {
-                        out.push(msg);
-                    }
-                }
-            }
-            out
-        }
 
         fn report_with_state(transcript_bytes: &[u8]) -> (tempfile::NamedTempFile, RunReport) {
             let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
@@ -1172,13 +1108,12 @@ mod tests {
 
         #[tokio::test]
         async fn build_session_state_payload_skips_when_no_state_ref() {
-            let mut report = RunReport {
+            let report = RunReport {
                 last_message: String::new(),
                 usage: TokenUsage::default(),
                 model_session_id: Some("sess".to_string()),
                 session_state: None,
             };
-            report.session_state = None;
             assert!(build_session_state_payload(&report).is_none());
         }
 
@@ -1305,11 +1240,7 @@ mod tests {
             let (mut ws, mut server_tx, _server_rx) = duplex();
             // Push EndSession before the drain is called so it's immediately
             // in the buffer.
-            let json = serde_json::to_string(&ServerMessage::EndSession).unwrap();
-            server_tx
-                .send(Ok(tungstenite::Message::Text(json)))
-                .await
-                .unwrap();
+            push_server_msg(&mut server_tx, &ServerMessage::EndSession).await;
             assert!(drain_end_session_headless(&mut ws).await);
         }
 

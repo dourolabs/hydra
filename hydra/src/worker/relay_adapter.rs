@@ -390,26 +390,7 @@ fn worker_event_to_session_event(event: WorkerEvent) -> Option<SessionEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::SinkExt;
-
-    /// A minimal sink+stream duplex over futures channels for unit tests.
-    type WsFrame = std::result::Result<tungstenite::Message, tungstenite::Error>;
-    type WsSender = futures::channel::mpsc::UnboundedSender<WsFrame>;
-    type WsReceiver = futures::channel::mpsc::UnboundedReceiver<WsFrame>;
-
-    fn duplex() -> (WorkerSocket<TestStream>, WsSender, WsReceiver) {
-        let (server_tx, worker_rx) = futures::channel::mpsc::unbounded::<
-            std::result::Result<tungstenite::Message, tungstenite::Error>,
-        >();
-        let (worker_tx, server_rx) = futures::channel::mpsc::unbounded::<
-            std::result::Result<tungstenite::Message, tungstenite::Error>,
-        >();
-        let ws = WorkerSocket::new(TestStream {
-            rx: worker_rx,
-            tx: worker_tx,
-        });
-        (ws, server_tx, server_rx)
-    }
+    use crate::worker::ws_test_util::{collect_worker_msgs, duplex, push_server_msg, TestStream};
 
     /// A `ReconnectFn` that always errors — the pump treats this as
     /// "reconnect not available", and exits after exhausting attempts.
@@ -426,81 +407,6 @@ mod tests {
                 ))
             })
         })
-    }
-
-    struct TestStream {
-        rx: futures::channel::mpsc::UnboundedReceiver<
-            std::result::Result<tungstenite::Message, tungstenite::Error>,
-        >,
-        tx: futures::channel::mpsc::UnboundedSender<
-            std::result::Result<tungstenite::Message, tungstenite::Error>,
-        >,
-    }
-
-    impl futures::Stream for TestStream {
-        type Item = std::result::Result<tungstenite::Message, tungstenite::Error>;
-        fn poll_next(
-            mut self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Option<Self::Item>> {
-            std::pin::Pin::new(&mut self.rx).poll_next(cx)
-        }
-    }
-
-    impl futures::Sink<tungstenite::Message> for TestStream {
-        type Error = tungstenite::Error;
-        fn poll_ready(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-        fn start_send(
-            self: std::pin::Pin<&mut Self>,
-            item: tungstenite::Message,
-        ) -> std::result::Result<(), Self::Error> {
-            self.tx
-                .unbounded_send(Ok(item))
-                .map_err(|_| tungstenite::Error::ConnectionClosed)
-        }
-        fn poll_flush(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-            std::task::Poll::Ready(Ok(()))
-        }
-        fn poll_close(
-            self: std::pin::Pin<&mut Self>,
-            _cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-            self.tx.close_channel();
-            std::task::Poll::Ready(Ok(()))
-        }
-    }
-
-    /// Helper: serialize a `ServerMessage` and shove it onto the
-    /// server-side sender so the pump observes it as inbound.
-    async fn push_server_msg(server_tx: &mut WsSender, msg: &ServerMessage) {
-        let json = serde_json::to_string(msg).unwrap();
-        server_tx
-            .send(Ok(tungstenite::Message::Text(json)))
-            .await
-            .unwrap();
-    }
-
-    /// Helper: collect everything the worker sent on its outbound WS
-    /// (`WorkerMessage` frames) until the server-side receiver closes.
-    async fn collect_worker_msgs(server_rx: &mut WsReceiver) -> Vec<WorkerMessage> {
-        use futures::StreamExt;
-        let mut out = Vec::new();
-        while let Some(Ok(frame)) = server_rx.next().await {
-            if let tungstenite::Message::Text(text) = frame {
-                if let Ok(msg) = serde_json::from_str::<WorkerMessage>(&text) {
-                    out.push(msg);
-                }
-            }
-        }
-        out
     }
 
     #[tokio::test]
@@ -521,11 +427,7 @@ mod tests {
             },
             event_index: 1,
         };
-        let json = serde_json::to_string(&event).unwrap();
-        server_tx
-            .send(Ok(tungstenite::Message::Text(json)))
-            .await
-            .unwrap();
+        push_server_msg(&mut server_tx, &event).await;
 
         let got = input_rx.recv().await.unwrap();
         assert_eq!(got.content, "hi");
