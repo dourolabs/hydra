@@ -14,7 +14,7 @@ use anyhow::{anyhow, Result};
 use futures::{Sink, Stream};
 use hydra_common::api::v1::{
     conversations::{ServerMessage, WorkerMessage},
-    sessions::SessionEvent,
+    sessions::{ResumeSource, SessionEvent},
 };
 use hydra_common::SessionId;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -166,41 +166,13 @@ impl ModelSelector {
             None => (None, prior_session_id.is_some()),
         };
 
-        // Per design §1.4 / §6: when native materialization succeeded the
-        // worker emits `SessionEvent::Resumed` exactly once on its session
-        // log.
-        if native.is_some() {
-            if let Some(from) = prior_session_id.clone() {
-                ws.send(WorkerMessage::Event {
-                    event: SessionEvent::Resumed {
-                        from_session_id: from,
-                        timestamp: chrono::Utc::now(),
-                    },
-                })
-                .await?;
-            }
-        }
-
-        let primer = if need_transcript {
-            if let Some(prior) = prior_session_id {
-                ws.send(WorkerMessage::RequestTranscript {
-                    prior_session_id: prior,
-                })
-                .await?;
-                let resp = ws
-                    .recv()
-                    .await?
-                    .ok_or_else(|| anyhow!("ws closed before Transcript"))?;
-                match resp {
-                    ServerMessage::Transcript { events } => events,
-                    other => return Err(anyhow!("expected Transcript, got {other:?}")),
-                }
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
+        let primer = emit_resumed_and_collect_primer(
+            ws,
+            native.is_some(),
+            prior_session_id,
+            need_transcript,
+        )
+        .await?;
 
         Ok((native, primer))
     }
@@ -313,6 +285,67 @@ impl ModelSelector {
         tracing::warn!(model = %raw, "ModelSelector: model name unrecognized, defaulting to Codex");
         Kind::Codex
     }
+}
+
+/// Phase 1 — resume-side effects. Per design §1.4 / §6 the worker emits
+/// `SessionEvent::Resumed` exactly once on its session log whenever it
+/// actually restored from a prior session. Both the native-materialization
+/// path and the transcript-replay fallback are observable; the `source`
+/// field on the event distinguishes them. The emit is gated on
+/// `prior_session_id.is_some()` so a truly fresh session (no predecessor)
+/// stays silent. When the new worker must replay the prior transcript as
+/// primer text, this also performs the `RequestTranscript`/`Transcript`
+/// round-trip and returns the events.
+///
+/// Extracted from [`ModelSelector::phase1_negotiate`] so unit tests can
+/// drive it without standing up a real [`Claude`]/[`Codex`] wrapper. The
+/// per-wrapper `try_materialize_resume` decision is summarised here by the
+/// boolean `native_present` parameter.
+async fn emit_resumed_and_collect_primer<S>(
+    ws: &mut WorkerSocket<S>,
+    native_present: bool,
+    prior_session_id: Option<SessionId>,
+    need_transcript: bool,
+) -> Result<Vec<SessionEvent>>
+where
+    S: Sink<tungstenite::Message, Error = tungstenite::Error>
+        + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+        + Unpin,
+{
+    let (primer, emit_source) = match (need_transcript, prior_session_id.clone()) {
+        (true, Some(prior)) => {
+            ws.send(WorkerMessage::RequestTranscript {
+                prior_session_id: prior,
+            })
+            .await?;
+            let resp = ws
+                .recv()
+                .await?
+                .ok_or_else(|| anyhow!("ws closed before Transcript"))?;
+            let events = match resp {
+                ServerMessage::Transcript { events } => events,
+                other => return Err(anyhow!("expected Transcript, got {other:?}")),
+            };
+            (events, Some(ResumeSource::Transcript))
+        }
+        _ if native_present && prior_session_id.is_some() => {
+            (Vec::new(), Some(ResumeSource::Native))
+        }
+        _ => (Vec::new(), None),
+    };
+
+    if let (Some(from), Some(source)) = (prior_session_id, emit_source) {
+        ws.send(WorkerMessage::Event {
+            event: SessionEvent::Resumed {
+                from_session_id: from,
+                source,
+                timestamp: chrono::Utc::now(),
+            },
+        })
+        .await?;
+    }
+
+    Ok(primer)
 }
 
 /// Phase 2 — send `Ready`, await `FirstMessage`, return its contents.
@@ -732,5 +765,200 @@ mod tests {
         let msg = claude_rx.recv().await.unwrap();
         assert_eq!(msg.content, "hello");
         assert!(claude_rx.recv().await.is_none());
+    }
+
+    // ---------------------------------------------------------------------
+    // emit_resumed_and_collect_primer — covers the dual-path Resumed emit
+    // (per design §1.4 / §6) end-to-end against a real `WorkerSocket`
+    // wired to an in-memory duplex. Replaces the "fake-worker" shape that
+    // existed before [[i-eaawhkqo]]: that earlier harness silently dropped
+    // the transcript-replay Resumed emit, which was the bug surfaced in
+    // [[i-mnjxuojq]] / [[i-hnrdnsfb]].
+    // ---------------------------------------------------------------------
+
+    use crate::worker::socket::WorkerSocket;
+    use futures::channel::mpsc as futures_mpsc;
+    use futures::{Sink, StreamExt};
+    use hydra_common::api::v1::conversations::{ServerMessage, WorkerMessage};
+    use hydra_common::api::v1::sessions::ResumeSource;
+    use hydra_common::SessionId;
+    use tokio_tungstenite::tungstenite;
+
+    type WsFrame = std::result::Result<tungstenite::Message, tungstenite::Error>;
+    type WsRx = futures_mpsc::UnboundedReceiver<WsFrame>;
+    type WsTx = futures_mpsc::UnboundedSender<WsFrame>;
+
+    /// Sink+Stream duplex over `futures::channel::mpsc`, used to back a
+    /// `WorkerSocket` in tests.
+    struct TestStream {
+        rx: WsRx,
+        tx: WsTx,
+    }
+
+    impl futures::Stream for TestStream {
+        type Item = std::result::Result<tungstenite::Message, tungstenite::Error>;
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            std::pin::Pin::new(&mut self.rx).poll_next(cx)
+        }
+    }
+
+    impl Sink<tungstenite::Message> for TestStream {
+        type Error = tungstenite::Error;
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn start_send(
+            self: std::pin::Pin<&mut Self>,
+            item: tungstenite::Message,
+        ) -> std::result::Result<(), Self::Error> {
+            self.tx
+                .unbounded_send(Ok(item))
+                .map_err(|_| tungstenite::Error::ConnectionClosed)
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+            self.tx.close_channel();
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Builds a `WorkerSocket` and the raw server-side half of the
+    /// duplex; the server half is used to push canned `ServerMessage`s and
+    /// inspect outgoing `WorkerMessage`s.
+    fn paired() -> (WorkerSocket<TestStream>, WsRx, WsTx) {
+        let (w_tx, s_rx) = futures_mpsc::unbounded();
+        let (s_tx, w_rx) = futures_mpsc::unbounded();
+        let worker = WorkerSocket::new(TestStream { rx: w_rx, tx: w_tx });
+        (worker, s_rx, s_tx)
+    }
+
+    async fn next_worker_msg(s_rx: &mut WsRx) -> WorkerMessage {
+        let frame = s_rx
+            .next()
+            .await
+            .expect("worker sent no frame")
+            .expect("frame error");
+        let text = match frame {
+            tungstenite::Message::Text(t) => t,
+            other => panic!("expected text frame, got {other:?}"),
+        };
+        serde_json::from_str(&text).expect("parse WorkerMessage")
+    }
+
+    async fn push_server_msg(s_tx: &WsTx, msg: &ServerMessage) {
+        let json = serde_json::to_string(msg).unwrap();
+        s_tx.unbounded_send(Ok(tungstenite::Message::Text(json)))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn emit_resumed_native_path_sends_resumed_with_native_source() {
+        let (mut worker, mut s_rx, _s_tx) = paired();
+        let prior = SessionId::new();
+
+        let primer = emit_resumed_and_collect_primer(&mut worker, true, Some(prior.clone()), false)
+            .await
+            .unwrap();
+
+        assert!(
+            primer.is_empty(),
+            "native path must not return primer events"
+        );
+        match next_worker_msg(&mut s_rx).await {
+            WorkerMessage::Event {
+                event:
+                    SessionEvent::Resumed {
+                        from_session_id,
+                        source,
+                        ..
+                    },
+            } => {
+                assert_eq!(from_session_id, prior);
+                assert_eq!(source, ResumeSource::Native);
+            }
+            other => panic!("expected Resumed{{Native}}, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn emit_resumed_transcript_path_requests_transcript_then_emits_resumed_transcript() {
+        let (mut worker, mut s_rx, s_tx) = paired();
+        let prior = SessionId::new();
+        let canned = vec![SessionEvent::UserMessage {
+            content: "msg1".to_string(),
+            timestamp: chrono::Utc::now(),
+        }];
+
+        // The helper sends RequestTranscript first; reply with canned events.
+        let primer_handle = {
+            let prior = prior.clone();
+            tokio::spawn(async move {
+                emit_resumed_and_collect_primer(&mut worker, false, Some(prior), true)
+                    .await
+                    .unwrap()
+            })
+        };
+
+        // 1. Worker sends RequestTranscript.
+        match next_worker_msg(&mut s_rx).await {
+            WorkerMessage::RequestTranscript { prior_session_id } => {
+                assert_eq!(prior_session_id, prior);
+            }
+            other => panic!("expected RequestTranscript, got {other:?}"),
+        }
+        // 2. Server replies with the transcript.
+        push_server_msg(
+            &s_tx,
+            &ServerMessage::Transcript {
+                events: canned.clone(),
+            },
+        )
+        .await;
+        // 3. Worker emits Resumed{Transcript}.
+        match next_worker_msg(&mut s_rx).await {
+            WorkerMessage::Event {
+                event:
+                    SessionEvent::Resumed {
+                        from_session_id,
+                        source,
+                        ..
+                    },
+            } => {
+                assert_eq!(from_session_id, prior);
+                assert_eq!(source, ResumeSource::Transcript);
+            }
+            other => panic!("expected Resumed{{Transcript}}, got {other:?}"),
+        }
+        let primer = primer_handle.await.unwrap();
+        assert_eq!(primer, canned, "primer must be the transcript replay");
+    }
+
+    #[tokio::test]
+    async fn emit_resumed_fresh_session_emits_nothing() {
+        let (mut worker, mut s_rx, _s_tx) = paired();
+
+        // No predecessor session: helper must not send anything.
+        let primer = emit_resumed_and_collect_primer(&mut worker, false, None, false)
+            .await
+            .unwrap();
+        assert!(primer.is_empty());
+        // Close the sender side so `next` returns None instead of hanging.
+        drop(_s_tx);
+        drop(worker);
+        assert!(s_rx.next().await.is_none(), "no frames must be sent");
     }
 }

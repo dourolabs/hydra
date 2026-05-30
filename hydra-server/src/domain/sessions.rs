@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use hydra_common::ActorId;
 use hydra_common::api::v1 as api;
 use hydra_common::api::v1::agents::AgentName;
-use hydra_common::api::v1::sessions::{McpConfig, MountSpec, TokenUsage};
+use hydra_common::api::v1::sessions::{McpConfig, MountSpec, ResumeSource, TokenUsage};
 use hydra_common::{ConversationId, IssueId, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -454,6 +454,7 @@ pub enum SessionEvent {
     /// The model-context state was loaded from a prior session.
     Resumed {
         from_session_id: SessionId,
+        source: ResumeSource,
         timestamp: DateTime<Utc>,
     },
     /// Session is closed — no further events will be appended.
@@ -525,9 +526,11 @@ impl TryFrom<api::sessions::SessionEvent> for SessionEvent {
             }
             api::sessions::SessionEvent::Resumed {
                 from_session_id,
+                source,
                 timestamp,
             } => SessionEvent::Resumed {
                 from_session_id,
+                source,
                 timestamp,
             },
             api::sessions::SessionEvent::Closed { timestamp } => SessionEvent::Closed { timestamp },
@@ -560,9 +563,11 @@ impl From<SessionEvent> for api::sessions::SessionEvent {
             }
             SessionEvent::Resumed {
                 from_session_id,
+                source,
                 timestamp,
             } => api::sessions::SessionEvent::Resumed {
                 from_session_id,
+                source,
                 timestamp,
             },
             SessionEvent::Closed { timestamp } => api::sessions::SessionEvent::Closed { timestamp },
@@ -717,9 +722,19 @@ mod tests {
     }
 
     #[test]
-    fn session_event_resumed_round_trips_through_domain() {
+    fn session_event_resumed_native_round_trips_through_domain() {
         round_trip_session_event(api::sessions::SessionEvent::Resumed {
             from_session_id: SessionId::new(),
+            source: api::sessions::ResumeSource::Native,
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_resumed_transcript_round_trips_through_domain() {
+        round_trip_session_event(api::sessions::SessionEvent::Resumed {
+            from_session_id: SessionId::new(),
+            source: api::sessions::ResumeSource::Transcript,
             timestamp: Utc::now(),
         });
     }

@@ -300,7 +300,12 @@ describe("ChatPage 2-pane layout", () => {
       { type: "user_message", content: "q1", timestamp: "2026-04-01T09:01:00Z" },
       { type: "assistant_message", content: "a1", timestamp: "2026-04-01T09:02:00Z" },
       { type: "suspending", reason: "ctx", timestamp: "2026-04-01T09:30:00Z" },
-      { type: "resumed", from_session_id: "t-first", timestamp: "2026-04-01T10:00:30Z" },
+      {
+        type: "resumed",
+        from_session_id: "t-first",
+        source: "transcript",
+        timestamp: "2026-04-01T10:00:30Z",
+      },
       { type: "user_message", content: "q2", timestamp: "2026-04-01T10:05:00Z" },
       { type: "assistant_message", content: "a2", timestamp: "2026-04-01T10:10:00Z" },
     ];

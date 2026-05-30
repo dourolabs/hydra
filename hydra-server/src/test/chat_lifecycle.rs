@@ -1913,11 +1913,17 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     // Suspending all happen on s1; UserMessage("follow-up") may land on s1
     // (relay still connected) or s2 depending on relay-map timing — either
     // is acceptable. `Resumed` is no longer dual-written by the server (it
-    // moved to the worker post-`try_materialize` per the WS-only lifecycle
-    // redesign); this fake-worker-driven test never emits it, so the
-    // session log shows zero `SessionEvent::Resumed`. Closed is appended
-    // after /close and lands on the latest session for the conversation
-    // (s2).
+    // moved to the worker per the WS-only lifecycle redesign); the worker
+    // now emits `SessionEvent::Resumed { source }` on BOTH the
+    // native-materialization path (`source = Native`) and the
+    // transcript-replay fallback (`source = Transcript`), so any real
+    // worker driving a close→reopen flow will produce one Resumed on
+    // s2. This fake-worker-driven test never reaches that emit site, so
+    // the session log here still shows zero `SessionEvent::Resumed` —
+    // the symmetric-worker behaviour is exercised in
+    // [`super::worker_emits_resumed_on_both_native_and_transcript_paths`].
+    // Closed is appended after /close and lands on the latest session
+    // for the conversation (s2).
     let s1_events: Vec<DomainSessionEvent> = store
         .get_session_events(&s1)
         .await?
