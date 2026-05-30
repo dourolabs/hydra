@@ -4016,17 +4016,6 @@ impl ReadOnlyStore for SqliteStore {
         Ok(conversations)
     }
 
-    async fn get_conversation_versions(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
-        let snapshot = self.get_conversation(id, false).await?;
-        let events = self.get_conversation_events(id).await?;
-        Ok(crate::store::fold_conversation_versions(
-            id, &snapshot, &events,
-        ))
-    }
-
     async fn get_conversation_events(
         &self,
         id: &ConversationId,
@@ -10072,68 +10061,6 @@ mod tests {
         assert_eq!(events[0].version, 1);
         assert_eq!(events[1].item, event2);
         assert_eq!(events[1].version, 2);
-    }
-
-    #[tokio::test]
-    async fn get_conversation_versions_folds_events_into_snapshots() {
-        let store = create_test_store().await;
-        let (id, _) = store
-            .add_conversation(sample_conversation(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        // No events yet -> empty.
-        let versions = store.get_conversation_versions(&id).await.unwrap();
-        assert!(versions.is_empty());
-
-        let ts1 = Utc::now();
-        store
-            .append_conversation_event(
-                &id,
-                ConversationEvent::Suspending {
-                    reason: "idle".to_string(),
-                    timestamp: ts1,
-                },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        let ts2 = Utc::now();
-        store
-            .append_conversation_event(
-                &id,
-                ConversationEvent::Closed { timestamp: ts2 },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        let events = store.get_conversation_events(&id).await.unwrap();
-        let versions = store.get_conversation_versions(&id).await.unwrap();
-
-        assert_eq!(versions.len(), events.len());
-        for (v, e) in versions.iter().zip(events.iter()) {
-            assert_eq!(v.version, e.version);
-            assert_eq!(v.timestamp, e.timestamp);
-            assert_eq!(v.actor, e.actor);
-            assert_eq!(v.creation_time, e.creation_time);
-        }
-        assert_eq!(
-            versions.last().unwrap().item.status,
-            crate::domain::conversations::ConversationStatus::Closed
-        );
-        assert_eq!(
-            versions[0].item.status,
-            crate::domain::conversations::ConversationStatus::Idle
-        );
-    }
-
-    #[tokio::test]
-    async fn get_conversation_versions_not_found_for_missing_conversation() {
-        let store = create_test_store().await;
-        let id = ConversationId::new();
-        let err = store.get_conversation_versions(&id).await.unwrap_err();
-        assert!(matches!(err, StoreError::ConversationNotFound(_)));
     }
 
     #[tokio::test]

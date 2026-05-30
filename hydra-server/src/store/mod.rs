@@ -719,23 +719,6 @@ pub trait ReadOnlyStore: Send + Sync {
         id: &ConversationId,
     ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError>;
 
-    /// Retrieves all snapshot versions of a conversation, in event order.
-    ///
-    /// Each returned [`Versioned<Conversation>`] is the post-event snapshot of
-    /// the conversation after the corresponding event in
-    /// [`get_conversation_events`] was applied; the entry's `version`,
-    /// `timestamp`, `actor`, and `creation_time` come from that event. See
-    /// [`hydra_common::conversation::fold::events_to_versions`] for the
-    /// canonical fold semantics shared with CLI consumers.
-    ///
-    /// Conversations with no events return an empty vector. Soft-deleted
-    /// conversations return [`StoreError::ConversationNotFound`], matching the
-    /// behavior of [`get_conversation_events`].
-    async fn get_conversation_versions(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Vec<Versioned<Conversation>>, StoreError>;
-
     /// Returns event summaries for multiple conversations in a single batch
     /// operation.
     ///
@@ -1264,48 +1247,6 @@ pub(crate) fn object_kind_from_id(id: &HydraId) -> Result<ObjectKind, StoreError
 pub struct ConversationEventSummary {
     pub event_count: usize,
     pub last_event_preview: Option<String>,
-}
-
-/// Shared helper used by every [`Store::get_conversation_versions`] impl to
-/// fold a domain-typed conversation snapshot + event stream into the per-event
-/// versioned snapshots produced by
-/// [`hydra_common::conversation::fold::events_to_versions`]. Domain→API and
-/// API→domain conversions are handled here so each store impl is one line.
-pub(crate) fn fold_conversation_versions(
-    id: &ConversationId,
-    snapshot: &Versioned<Conversation>,
-    events: &[Versioned<ConversationEvent>],
-) -> Vec<Versioned<Conversation>> {
-    use hydra_common::api::v1::conversations as api;
-    let initial_api: api::Conversation =
-        snapshot
-            .item
-            .to_api(id.clone(), snapshot.creation_time, snapshot.timestamp);
-    let api_events: Vec<Versioned<api::ConversationEvent>> = events
-        .iter()
-        .map(|v| {
-            Versioned::with_optional_actor(
-                v.item.clone().into(),
-                v.version,
-                v.timestamp,
-                v.actor.clone(),
-                v.creation_time,
-            )
-        })
-        .collect();
-    let api_versions =
-        hydra_common::conversation::fold::events_to_versions(&initial_api, &api_events);
-    // Preserve `deleted` from the source snapshot: events do not toggle it,
-    // and the api → domain `From` impl resets it to false.
-    let deleted = snapshot.item.deleted;
-    api_versions
-        .into_iter()
-        .map(|v| {
-            let mut conv: Conversation = v.item.into();
-            conv.deleted = deleted;
-            Versioned::with_optional_actor(conv, v.version, v.timestamp, v.actor, v.creation_time)
-        })
-        .collect()
 }
 
 pub use memory_store::MemoryStore;
