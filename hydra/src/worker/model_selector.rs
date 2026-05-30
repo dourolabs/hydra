@@ -105,6 +105,9 @@ impl ModelSelector {
         // include `EndSessionAck`. The cleanup runs unconditionally.
         let end_session_requested = drain_end_session_headless(&mut ws).await;
         send_unified_cleanup(&mut ws, &report, end_session_requested).await;
+        if let Err(err) = ws.close().await {
+            tracing::warn!(error = %err, "cleanup: failed to send WS Close frame");
+        }
         Ok(report)
     }
 
@@ -148,6 +151,9 @@ impl ModelSelector {
         });
         if let Some(mut ws) = ws {
             send_unified_cleanup(&mut ws, &report, end_session_requested).await;
+            if let Err(err) = ws.close().await {
+                tracing::warn!(error = %err, "cleanup: failed to send WS Close frame");
+            }
         }
         Ok(report)
     }
@@ -395,13 +401,18 @@ fn build_session_state_payload(report: &RunReport) -> Option<SessionStatePayload
 /// `EndSession`-driven paths so the resumer sees `session_state` regardless
 /// of how the worker shut down. Order matters: the `SessionStateUpload`
 /// arrives before the `Closed` event so the server commits state before
-/// marking the log closed. `EndSessionAck` is the very last frame so the
-/// server-side waiter (PR-2) can know its termination request was honored.
+/// marking the log closed. `EndSessionAck` is the very last `WorkerMessage`
+/// frame so the server-side waiter (PR-2) can know its termination request
+/// was honored. After this helper returns, the `drive_*` callers drive a
+/// `WorkerSocket::close` so the server's `pump_phase3` observes the
+/// WebSocket Close-frame arm (`info!("WebSocket closed by worker")`) rather
+/// than tungstenite reporting an abrupt TCP teardown as a protocol error
+/// (`error!("WebSocket error in Phase 3")`).
 ///
 /// Note: only the natural-exit paths reach this helper. If
 /// `run_with_native` / `run_interactive_with_native` returns `Err`, the
-/// `drive_*` callers propagate via `?` and cleanup is skipped entirely
-/// (no `Closed` event, no ack). That is intentional — on a failed run
+/// `drive_*` callers propagate via `?` and cleanup (including the Close
+/// frame) is skipped entirely. That is intentional — on a failed run
 /// `report.session_state` is `None` so the upload would no-op anyway,
 /// and the server-side disconnect fallback caps the log when the WS
 /// drops.

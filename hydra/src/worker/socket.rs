@@ -75,6 +75,21 @@ where
     pub fn into_inner(self) -> S {
         self.inner
     }
+
+    /// Send a `Close` frame, then drive the underlying sink to completion so
+    /// the server sees a clean WebSocket shutdown handshake instead of a TCP
+    /// reset. Best-effort: callers should log on failure but otherwise
+    /// continue, since the meaningful work is already done by the time we
+    /// reach this point.
+    pub async fn close(mut self) -> Result<()> {
+        self.inner
+            .send(tungstenite::Message::Close(None))
+            .await
+            .map_err(|e| anyhow!("WorkerSocket close: send Close frame failed: {e}"))?;
+        SinkExt::close(&mut self.inner)
+            .await
+            .map_err(|e| anyhow!("WorkerSocket close: sink close failed: {e}"))
+    }
 }
 
 #[cfg(test)]
@@ -231,6 +246,25 @@ mod tests {
             .await
             .unwrap();
         assert!(worker.recv().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn close_emits_close_frame_to_server() {
+        let (worker, mut server) = paired_sockets();
+        worker.close().await.expect("close ok");
+        let frame = server
+            .inner
+            .next()
+            .await
+            .expect("expected Close frame")
+            .expect("frame error");
+        assert!(
+            matches!(frame, tungstenite::Message::Close(_)),
+            "expected Close frame, got {frame:?}"
+        );
+        // After the Close handshake is driven to completion the server-side
+        // stream observes EOF as the next read.
+        assert!(server.inner.next().await.is_none());
     }
 
     #[tokio::test]
