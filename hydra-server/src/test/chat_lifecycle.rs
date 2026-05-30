@@ -2632,3 +2632,182 @@ async fn reconnecting_returns_catch_up_strictly_after_supplied_index() -> anyhow
 
     Ok(())
 }
+
+/// PR-2 graceful End Chat path: when a worker is connected to the relay
+/// at the time of `/v1/conversations/:id/close`, the server must
+///
+/// 1. push `ServerMessage::EndSession` onto the worker's relay channel
+///    (instead of immediately calling `job_engine.kill_job`),
+/// 2. wait until the worker completes its unified end-of-session sequence
+///    (`SessionStateUpload` → `Closed` event → `EndSessionAck` → WS close),
+/// 3. observe the WS close as the implicit ack (relay map entry drops),
+/// 4. revoke session-scoped auth tokens (parity with `kill.rs`), and
+/// 5. return the closed conversation.
+///
+/// This pins the wire-protocol shape, the "disconnect IS the ack"
+/// semantics, and the token-revocation parity all in one test.
+#[tokio::test]
+async fn close_conversation_sends_end_session_and_awaits_clean_disconnect() -> anyhow::Result<()> {
+    use crate::domain::actors::Actor;
+    use crate::domain::users::Username;
+    use crate::test_utils::register_actor_and_token;
+    use hydra_common::ActorId;
+
+    init_test_tracing();
+    let (state, store) = state_with_idle_timeout_secs(60);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let client = test_client();
+
+    // Create the conversation and connect a fake worker through Phase 1/2.
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    let mut ws = connect_relay(&server.base_url(), &session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    send_worker_message(&mut ws, WorkerMessage::Ready).await?;
+    // Drain Phase-2 traffic (FirstMessage etc.) so the next `ws.next()`
+    // call only sees Phase-3 frames.
+    let _ = drain_server_messages(&mut ws, Duration::from_millis(500)).await?;
+
+    // Register a session-scoped auth token so the parity check has
+    // something to flip on the graceful-success branch.
+    let (actor, auth_token) = Actor::new_from_actor_id(
+        ActorId::Adhoc(session_id.clone()),
+        Username::from("graceful-close-test"),
+        None,
+    );
+    register_actor_and_token(store.as_ref(), &actor, &auth_token, Some(&session_id)).await?;
+    let prefix = format!("{}:", actor.name());
+    let raw_token = auth_token
+        .strip_prefix(&prefix)
+        .expect("auth token must carry actor-name prefix");
+    let token_hash = Actor::hash_auth_token(raw_token);
+    let pre_close = store
+        .get_auth_token_by_hash(&token_hash)
+        .await?
+        .expect("session token must exist pre-close");
+    assert!(
+        !pre_close.is_revoked,
+        "session token must be live before /close fires"
+    );
+
+    // POST /close in a background task; the foreground task plays the
+    // worker side of the unified cleanup-and-close protocol on the WS.
+    let base = server.base_url();
+    let conv_for_close = conversation_id.clone();
+    let close_handle = tokio::spawn(async move {
+        let close_client = test_client();
+        close_client
+            .post(format!("{base}/v1/conversations/{conv_for_close}/close"))
+            .send()
+            .await
+            .and_then(|resp| resp.error_for_status())
+    });
+
+    // Expect EndSession on the WS within the graceful deadline (10s).
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(tungstenite::Message::Text(t))) => {
+                    if let Ok(ServerMessage::EndSession) = serde_json::from_str(&t) {
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                    // Tolerate any Phase-3 traffic the server may still
+                    // emit (none expected on this short test) and keep
+                    // reading.
+                }
+                Some(Ok(_)) => {}
+                Some(Err(err)) => anyhow::bail!("ws error before EndSession: {err}"),
+                None => anyhow::bail!("ws closed before EndSession arrived"),
+            }
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("server did not send EndSession within deadline"))??;
+
+    // Worker side: emit the unified cleanup sequence (PR-1's contract),
+    // then close the WS — the server's `pump_phase3 → cleanup` will drop
+    // the relay entry, which is what `close_conversation` polls for.
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::SessionStateUpload {
+            data: serde_json::to_vec(&SessionStatePayload::V1 {
+                session_id: "graceful-close-test-session".to_string(),
+                transcript: Some(b"transcript-bytes".to_vec()),
+            })?,
+        },
+    )
+    .await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: SessionEvent::Closed {
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    send_worker_message(&mut ws, WorkerMessage::EndSessionAck).await?;
+    ws.send(tungstenite::Message::Close(None)).await?;
+    drop(ws);
+
+    // /close must complete with 2xx within the graceful deadline.
+    let close_resp = tokio::time::timeout(Duration::from_secs(15), close_handle).await???;
+    let closed: Conversation = close_resp.json().await?;
+    assert_eq!(closed.status, ConversationStatus::Closed);
+
+    // Conversation log gained the Closed lifecycle event.
+    let events: Vec<ConversationEvent> = client
+        .get(format!(
+            "{}/v1/conversations/{conversation_id}/events",
+            server.base_url()
+        ))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert!(
+        matches!(events.last(), Some(ConversationEvent::Closed { .. })),
+        "Closed must be the latest conversation event, got {events:?}"
+    );
+
+    // Worker uploaded session_state before the WS closed — this is the
+    // PR-1 contract that PR-2's graceful path exercises end-to-end.
+    let stored_state = store.get_session_state(&session_id).await?;
+    assert!(
+        stored_state.is_some(),
+        "graceful close must let the worker upload session_state before disconnect"
+    );
+
+    // Auth tokens minted by this session are revoked (parity with kill.rs).
+    let post_close = store
+        .get_auth_token_by_hash(&token_hash)
+        .await?
+        .expect("session token row must still exist post-close");
+    assert!(
+        post_close.is_revoked,
+        "session tokens must be revoked after a graceful close (parity with kill.rs)"
+    );
+
+    // Sanity: the relay entry was dropped by the worker's WS close.
+    assert!(
+        state
+            .chat_relay_map
+            .active_session_id(&conversation_id)
+            .is_none(),
+        "relay entry must be dropped after the worker closes the WS"
+    );
+
+    Ok(())
+}

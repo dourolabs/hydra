@@ -12,10 +12,25 @@ use hydra_common::{
     ConversationId, Versioned,
     api::v1::{agents::AgentName, sessions as api_sessions, sessions::SearchSessionsQuery},
 };
+use std::time::Duration;
 use thiserror::Error;
 use tracing::{info, warn};
 
 use super::app_state::AppState;
+
+/// Bounded deadline for the graceful End Chat path in
+/// [`AppState::close_conversation`]. After sending `ServerMessage::EndSession`
+/// the server waits up to this long for the worker to upload its session
+/// state, ack, and close the WS (observed as the relay entry going away).
+/// On timeout it falls back to `job_engine.kill_job` so a stuck worker
+/// cannot block End Chat.
+const GRACEFUL_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Poll cadence for the active-session-id deadline poll. The shortest
+/// observable end-to-end shutdown today is bounded by the worker's final
+/// `SessionStateUpload` + `Closed` + `EndSessionAck` round-trip, so a
+/// 100ms cadence keeps wall-clock overhead negligible without busy-looping.
+const GRACEFUL_CLOSE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Error)]
 pub enum CreateConversationError {
@@ -312,15 +327,84 @@ impl AppState {
             }
         }
 
-        // Kill the worker if one is currently relaying this conversation.
-        // If no entry is present, no worker is connected and no kill is needed.
+        // Drive the active worker (if any) through graceful shutdown.
+        // Send `ServerMessage::EndSession` over the relay and await the
+        // worker's clean WS close (which `relay.rs::cleanup` mirrors as
+        // the relay entry being dropped). If the worker doesn't disconnect
+        // within `GRACEFUL_CLOSE_TIMEOUT`, fall back to `kill_job` — the
+        // pre-graceful behavior — so stuck workers can't block End Chat.
         if let Some(session_id) = self.chat_relay_map.active_session_id(conversation_id) {
-            match self.job_engine.kill_job(&session_id).await {
-                Ok(()) => {
-                    info!(conversation_id = %conversation_id, session_id = %session_id, "killed active session");
+            let sent = self.chat_relay_map.send_end_session(conversation_id);
+            if sent {
+                info!(
+                    conversation_id = %conversation_id,
+                    session_id = %session_id,
+                    "sent EndSession; awaiting worker WS close"
+                );
+            } else {
+                warn!(
+                    conversation_id = %conversation_id,
+                    session_id = %session_id,
+                    "send_end_session found no live to_worker channel; will fall back to kill_job"
+                );
+            }
+            let exited_cleanly = sent && {
+                let conv_id = conversation_id.clone();
+                let chat_relay_map = self.chat_relay_map.clone();
+                let poll_fut = async move {
+                    loop {
+                        if chat_relay_map.active_session_id(&conv_id).is_none() {
+                            return true;
+                        }
+                        tokio::time::sleep(GRACEFUL_CLOSE_POLL_INTERVAL).await;
+                    }
+                };
+                tokio::time::timeout(GRACEFUL_CLOSE_TIMEOUT, poll_fut)
+                    .await
+                    .unwrap_or(false)
+            };
+
+            if exited_cleanly {
+                info!(
+                    conversation_id = %conversation_id,
+                    session_id = %session_id,
+                    "worker exited cleanly after EndSession"
+                );
+                // Revoke tokens minted by this session so any inflight
+                // request from the dying container fails at `require_auth`.
+                // `kill_session` does this in its own success branch; the
+                // natural-exit path has no automation that does the
+                // equivalent, so we explicitly do it here to keep parity
+                // with the `kill_job` fallback below.
+                if let Err(err) = self.store.revoke_auth_tokens_for_session(&session_id).await {
+                    warn!(
+                        conversation_id = %conversation_id,
+                        session_id = %session_id,
+                        error = %err,
+                        "failed to revoke session tokens after graceful close"
+                    );
                 }
-                Err(err) => {
-                    warn!(conversation_id = %conversation_id, session_id = %session_id, error = %err, "failed to kill session (may already be stopped)");
+            } else {
+                warn!(
+                    conversation_id = %conversation_id,
+                    session_id = %session_id,
+                    "worker did not exit within {GRACEFUL_CLOSE_TIMEOUT:?} after EndSession; falling back to kill_job"
+                );
+                match self.job_engine.kill_job(&session_id).await {
+                    Ok(()) => {
+                        info!(conversation_id = %conversation_id, session_id = %session_id, "killed active session");
+                    }
+                    Err(err) => {
+                        warn!(conversation_id = %conversation_id, session_id = %session_id, error = %err, "failed to kill session (may already be stopped)");
+                    }
+                }
+                if let Err(err) = self.store.revoke_auth_tokens_for_session(&session_id).await {
+                    warn!(
+                        conversation_id = %conversation_id,
+                        session_id = %session_id,
+                        error = %err,
+                        "failed to revoke session tokens after kill_job fallback"
+                    );
                 }
             }
         }
