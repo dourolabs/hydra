@@ -128,16 +128,11 @@ pub async fn run(
                 .get_conversation(&id)
                 .await
                 .with_context(|| format!("failed to fetch conversation '{id}'"))?;
-            let events = client
-                .get_conversation_events(&id)
-                .await
-                .with_context(|| format!("failed to fetch events for conversation '{id}'"))?;
 
             let mut buffer = Vec::new();
             render(
                 ConversationView {
                     conversation: &conversation,
-                    events: &events,
                 },
                 context.output_format,
                 &mut buffer,
@@ -166,7 +161,6 @@ pub async fn run(
             render(
                 ConversationView {
                     conversation: &conversation,
-                    events: &[],
                 },
                 context.output_format,
                 &mut buffer,
@@ -184,7 +178,6 @@ pub async fn run(
             render(
                 ConversationView {
                     conversation: &conversation,
-                    events: &[],
                 },
                 context.output_format,
                 &mut buffer,
@@ -201,7 +194,6 @@ pub async fn run(
             render(
                 ConversationView {
                     conversation: &conversation,
-                    events: &[],
                 },
                 context.output_format,
                 &mut buffer,

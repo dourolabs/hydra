@@ -2259,20 +2259,6 @@
       "updated_at": "2026-04-01T10:15:00.000Z"
     }
   },
-  "conversation_events": {
-    "c-seed00002": [
-      {
-        "type": "closed",
-        "timestamp": "2026-05-08T10:15:00.000Z"
-      }
-    ],
-    "c-seed00006": [
-      {
-        "type": "closed",
-        "timestamp": "2026-05-09T11:20:00.000Z"
-      }
-    ]
-  },
   "session_events": {
     "t-seed00016": [
       {

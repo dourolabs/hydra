@@ -1,4 +1,4 @@
-use crate::domain::conversations::{Conversation, ConversationEvent};
+use crate::domain::conversations::Conversation;
 use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
@@ -21,8 +21,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
-    SessionId, VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId,
+    VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -56,7 +56,6 @@ const TABLE_AUTH_TOKENS: &str = "auth_tokens";
 const TABLE_USER_SECRETS: &str = "user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "object_relationships";
 const TABLE_CONVERSATIONS: &str = "conversations";
-const TABLE_CONVERSATION_EVENTS: &str = "conversation_events";
 const TABLE_SESSION_EVENTS: &str = "session_events";
 const TABLE_SESSION_STATE: &str = "session_state";
 
@@ -244,16 +243,6 @@ struct ConversationRow {
     updated_at: String,
     #[sqlx(default)]
     creation_time: Option<String>,
-}
-
-#[derive(sqlx::FromRow)]
-struct ConversationEventRow {
-    #[allow(dead_code)]
-    id: String,
-    version_number: i64,
-    event_data: String,
-    actor: Option<String>,
-    created_at: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -4020,50 +4009,48 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         id: &ConversationId,
     ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
-        let snapshot = self.get_conversation(id, false).await?;
-        let events = self.get_conversation_events(id).await?;
-        Ok(crate::store::fold_conversation_versions(
-            id, &snapshot, &events,
-        ))
-    }
-
-    async fn get_conversation_events(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        // Verify conversation exists
-        let _conv = self.get_conversation(id, false).await?;
-
-        let rows = sqlx::query_as::<_, ConversationEventRow>(&format!(
-            "SELECT id, version_number, event_data, actor, created_at
-             FROM {TABLE_CONVERSATION_EVENTS}
+        let rows = sqlx::query_as::<_, ConversationRow>(&format!(
+            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at,
+             (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
+             FROM {TABLE_CONVERSATIONS}
              WHERE id = ?1
-             ORDER BY version_number ASC"
+             ORDER BY version_number"
         ))
         .bind(id.as_ref())
         .fetch_all(&self.pool)
         .await
         .map_err(map_sqlx_error)?;
 
-        let mut events = Vec::with_capacity(rows.len());
-        for row in rows {
-            let event: ConversationEvent = serde_json::from_str(&row.event_data).map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize conversation event: {e}"))
-            })?;
+        if rows.is_empty() {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in &rows {
             let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal("invalid version number for conversation event".to_string())
+                StoreError::Internal(format!(
+                    "invalid version number stored for conversation '{}'",
+                    row.id
+                ))
             })?;
+            let conversation = Self::row_to_conversation(row)?;
             let timestamp = parse_sqlite_timestamp(&row.created_at)?;
-            events.push(Versioned::with_optional_actor(
-                event,
+            let creation_time = row
+                .creation_time
+                .as_deref()
+                .map(parse_sqlite_timestamp)
+                .transpose()?
+                .unwrap_or(timestamp);
+            results.push(Versioned::with_optional_actor(
+                conversation,
                 version,
                 timestamp,
                 parse_actor_json_string(row.actor.as_deref())?,
-                timestamp,
+                creation_time,
             ));
         }
 
-        Ok(events)
+        Ok(results)
     }
 
     async fn get_conversation_event_summaries(
@@ -4076,8 +4063,6 @@ impl ReadOnlyStore for SqliteStore {
 
         // Query 1: Chat-text SessionEvent count per conversation_id —
         // summed across every live session linked to the conversation.
-        // ConversationEvents are lifecycle-only post Phase E step 18 and
-        // do not contribute to the count.
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let count_sql = format!(
             "SELECT t.conversation_id AS conversation_id, COUNT(*) AS event_count \
@@ -5213,65 +5198,6 @@ impl Store for SqliteStore {
         tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(next_version)
-    }
-
-    async fn append_conversation_event(
-        &self,
-        id: &ConversationId,
-        event: ConversationEvent,
-        actor: &ActorRef,
-    ) -> Result<ConversationEventId, StoreError> {
-        // Verify conversation exists
-        let _conv = self.get_conversation(id, false).await?;
-
-        // Get next event version number for this conversation
-        let latest_event_version = self
-            .fetch_latest_version_number(TABLE_CONVERSATION_EVENTS, id.as_ref())
-            .await?
-            .unwrap_or(0);
-        let next_version = latest_event_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!(
-                "event version number overflow for conversation '{id}'"
-            ))
-        })?;
-
-        // Event index is version - 1 (0-based)
-        let event_index = usize::try_from(next_version.saturating_sub(1)).map_err(|_| {
-            StoreError::Internal(format!("event index overflow for conversation '{id}'"))
-        })?;
-
-        let event_data = serde_json::to_string(&event).map_err(|e| {
-            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
-        })?;
-        let event_type = match &event {
-            ConversationEvent::Suspending { .. } => "suspending",
-            ConversationEvent::Resumed { .. } => "resumed",
-            ConversationEvent::Closed { .. } => "closed",
-        };
-        let actor_json = actor_to_json_string(actor);
-        let version_i64 = i64::try_from(next_version).map_err(|_| {
-            StoreError::Internal(format!(
-                "event version number overflow for conversation '{id}'"
-            ))
-        })?;
-
-        sqlx::query(&format!(
-            "INSERT INTO {TABLE_CONVERSATION_EVENTS} (id, version_number, event_type, event_data, actor)
-             VALUES (?1, ?2, ?3, ?4, ?5)"
-        ))
-        .bind(id.as_ref())
-        .bind(version_i64)
-        .bind(event_type)
-        .bind(&event_data)
-        .bind(&actor_json)
-        .execute(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        Ok(ConversationEventId {
-            conversation_id: id.clone(),
-            event_index,
-        })
     }
 
     async fn append_session_event(
@@ -10037,95 +9963,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conversation_events_round_trip() {
-        let store = create_test_store().await;
-        let conversation = sample_conversation();
-        let (id, _) = store
-            .add_conversation(conversation, &ActorRef::test())
-            .await
-            .unwrap();
-
-        let event1 = ConversationEvent::Suspending {
-            reason: "idle".to_string(),
-            timestamp: Utc::now(),
-        };
-        let eid1 = store
-            .append_conversation_event(&id, event1.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(eid1.conversation_id, id);
-        assert_eq!(eid1.event_index, 0);
-
-        let event2 = ConversationEvent::Closed {
-            timestamp: Utc::now(),
-        };
-        let eid2 = store
-            .append_conversation_event(&id, event2.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(eid2.conversation_id, id);
-        assert_eq!(eid2.event_index, 1);
-
-        let events = store.get_conversation_events(&id).await.unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].item, event1);
-        assert_eq!(events[0].version, 1);
-        assert_eq!(events[1].item, event2);
-        assert_eq!(events[1].version, 2);
-    }
-
-    #[tokio::test]
-    async fn get_conversation_versions_folds_events_into_snapshots() {
+    async fn get_conversation_versions_returns_one_row_per_update() {
+        use crate::domain::conversations::ConversationStatus;
         let store = create_test_store().await;
         let (id, _) = store
             .add_conversation(sample_conversation(), &ActorRef::test())
             .await
             .unwrap();
 
-        // No events yet -> empty.
+        // After insert, exactly one version exists (the create row).
         let versions = store.get_conversation_versions(&id).await.unwrap();
-        assert!(versions.is_empty());
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[0].item.status, ConversationStatus::Active);
 
-        let ts1 = Utc::now();
+        // Each `update_conversation` adds a new versioned row carrying the
+        // current status. This is the new lifecycle log.
+        let mut updated = versions[0].item.clone();
+        updated.status = ConversationStatus::Idle;
         store
-            .append_conversation_event(
-                &id,
-                ConversationEvent::Suspending {
-                    reason: "idle".to_string(),
-                    timestamp: ts1,
-                },
-                &ActorRef::test(),
-            )
+            .update_conversation(&id, updated, &ActorRef::test())
             .await
             .unwrap();
-        let ts2 = Utc::now();
+        let mut updated2 = store.get_conversation(&id, false).await.unwrap().item;
+        updated2.status = ConversationStatus::Closed;
         store
-            .append_conversation_event(
-                &id,
-                ConversationEvent::Closed { timestamp: ts2 },
-                &ActorRef::test(),
-            )
+            .update_conversation(&id, updated2, &ActorRef::test())
             .await
             .unwrap();
 
-        let events = store.get_conversation_events(&id).await.unwrap();
         let versions = store.get_conversation_versions(&id).await.unwrap();
-
-        assert_eq!(versions.len(), events.len());
-        for (v, e) in versions.iter().zip(events.iter()) {
-            assert_eq!(v.version, e.version);
-            assert_eq!(v.timestamp, e.timestamp);
-            assert_eq!(v.actor, e.actor);
-            assert_eq!(v.creation_time, e.creation_time);
-        }
+        assert_eq!(versions.len(), 3);
+        let statuses: Vec<ConversationStatus> = versions.iter().map(|v| v.item.status).collect();
         assert_eq!(
-            versions.last().unwrap().item.status,
-            crate::domain::conversations::ConversationStatus::Closed
+            statuses,
+            vec![
+                ConversationStatus::Active,
+                ConversationStatus::Idle,
+                ConversationStatus::Closed,
+            ]
         );
-        assert_eq!(
-            versions[0].item.status,
-            crate::domain::conversations::ConversationStatus::Idle
-        );
+        let version_numbers: Vec<_> = versions.iter().map(|v| v.version).collect();
+        assert_eq!(version_numbers, vec![1, 2, 3]);
     }
 
     #[tokio::test]
@@ -10218,19 +10097,6 @@ mod tests {
         let results = store.list_conversations(&query).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.item.title, Some("Meeting notes".to_string()),);
-    }
-
-    #[tokio::test]
-    async fn conversation_events_on_nonexistent_conversation() {
-        let store = create_test_store().await;
-        let fake_id = ConversationId::new();
-        let event = ConversationEvent::Closed {
-            timestamp: Utc::now(),
-        };
-        let result = store
-            .append_conversation_event(&fake_id, event, &ActorRef::test())
-            .await;
-        assert!(matches!(result, Err(StoreError::ConversationNotFound(_))));
     }
 
     #[tokio::test]
@@ -10829,10 +10695,6 @@ mod tests {
     #[tokio::test]
     async fn get_conversation_event_summaries_sources_preview_from_chat_text() {
         let store = create_test_store().await;
-        let (conv_only_lifecycle, _) = store
-            .add_conversation(sample_conversation(), &ActorRef::test())
-            .await
-            .unwrap();
         let (conv_user_only, _) = store
             .add_conversation(sample_conversation(), &ActorRef::test())
             .await
@@ -10850,30 +10712,7 @@ mod tests {
             .await
             .unwrap();
 
-        // 1. Lifecycle-only ConversationEvents: event_count > 0, preview None.
-        store
-            .append_conversation_event(
-                &conv_only_lifecycle,
-                ConversationEvent::Suspending {
-                    reason: "sigterm".to_string(),
-                    timestamp: Utc::now(),
-                },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        store
-            .append_conversation_event(
-                &conv_only_lifecycle,
-                ConversationEvent::Closed {
-                    timestamp: Utc::now(),
-                },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        // 2. Single UserMessage from a single session.
+        // Single UserMessage from a single session.
         let (sid_user_only, _) = store
             .add_session(
                 interactive_session(Some(conv_user_only.clone())),
@@ -10894,7 +10733,7 @@ mod tests {
             .await
             .unwrap();
 
-        // 3. UserMessage then AssistantMessage in one session — Assistant wins.
+        // UserMessage then AssistantMessage in one session — Assistant wins.
         let (sid_chat, _) = store
             .add_session(
                 interactive_session(Some(conv_user_then_assistant.clone())),
@@ -10925,19 +10764,7 @@ mod tests {
             )
             .await
             .unwrap();
-        // Add a later lifecycle ConversationEvent — must NOT bleed into preview.
-        store
-            .append_conversation_event(
-                &conv_user_then_assistant,
-                ConversationEvent::Closed {
-                    timestamp: Utc::now(),
-                },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        // 4. Chat-text in older session; tool-use + lifecycle in newer session.
+        // Chat-text in older session; tool-use + lifecycle in newer session.
         // The newer session's events are skipped — older session wins because
         // it has the only chat-text candidate.
         let t_old = Utc::now() - Duration::seconds(60);
@@ -10994,7 +10821,6 @@ mod tests {
 
         let summaries = store
             .get_conversation_event_summaries(&[
-                conv_only_lifecycle.clone(),
                 conv_user_only.clone(),
                 conv_user_then_assistant.clone(),
                 conv_cross_session.clone(),
@@ -11003,10 +10829,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Lifecycle-only ConversationEvents don't contribute to event_count,
-        // and the conversation has no sessions → omitted entirely.
-        assert!(!summaries.contains_key(&conv_only_lifecycle));
-
         let s = summaries.get(&conv_user_only).expect("user-only conv");
         assert_eq!(s.event_count, 1);
         assert_eq!(s.last_event_preview.as_deref(), Some("User: hello"));
@@ -11014,8 +10836,7 @@ mod tests {
         let s = summaries
             .get(&conv_user_then_assistant)
             .expect("user+assistant conv");
-        // 2 chat-text events across the single linked session; the lifecycle
-        // ConversationEvent is excluded.
+        // 2 chat-text events across the single linked session.
         assert_eq!(s.event_count, 2);
         assert_eq!(s.last_event_preview.as_deref(), Some("Assistant: hey"));
 

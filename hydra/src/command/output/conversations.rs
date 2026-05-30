@@ -2,34 +2,20 @@ use std::io::Write;
 
 use anyhow::Result;
 use hydra_common::api::v1::conversations::{
-    Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
-    ConversationSummary as ApiConversationSummary,
+    Conversation as ApiConversation, ConversationSummary as ApiConversationSummary,
 };
 
 use super::Render;
 
 pub struct ConversationView<'a> {
     pub conversation: &'a ApiConversation,
-    pub events: &'a [ApiConversationEvent],
 }
 
 pub struct ConversationSummaryRecords<'a>(pub &'a [ApiConversationSummary]);
 
 impl Render for ConversationView<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
-        #[derive(serde::Serialize)]
-        struct ConversationWithEvents<'a> {
-            #[serde(flatten)]
-            conversation: &'a ApiConversation,
-            events: &'a [ApiConversationEvent],
-        }
-        serde_json::to_writer(
-            &mut *writer,
-            &ConversationWithEvents {
-                conversation: self.conversation,
-                events: self.events,
-            },
-        )?;
+        serde_json::to_writer(&mut *writer, self.conversation)?;
         writer.write_all(b"\n")?;
         writer.flush()?;
         Ok(())
@@ -55,27 +41,6 @@ impl Render for ConversationView<'_> {
         writeln!(writer, "Creator: {}", self.conversation.creator)?;
         writeln!(writer, "Created: {}", self.conversation.created_at)?;
         writeln!(writer, "Updated: {}", self.conversation.updated_at)?;
-
-        if !self.events.is_empty() {
-            writeln!(writer)?;
-            writeln!(writer, "Transcript:")?;
-            for event in self.events {
-                match event {
-                    ApiConversationEvent::Suspending { reason, timestamp } => {
-                        writeln!(writer, "  [{timestamp}] suspending: {reason}")?;
-                    }
-                    ApiConversationEvent::Resumed {
-                        session_id,
-                        timestamp,
-                    } => {
-                        writeln!(writer, "  [{timestamp}] resumed: session {session_id}")?;
-                    }
-                    ApiConversationEvent::Closed { timestamp } => {
-                        writeln!(writer, "  [{timestamp}] closed")?;
-                    }
-                }
-            }
-        }
         writer.flush()?;
         Ok(())
     }

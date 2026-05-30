@@ -6,14 +6,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-pub struct ConversationEventId {
-    pub conversation_id: ConversationId,
-    pub event_index: usize,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -46,38 +38,6 @@ pub enum ConversationStatus {
     Active,
     Idle,
     Closed,
-}
-
-/// Lifecycle-only conversation events. Chat content (user/assistant messages)
-/// has moved to [`SessionEvent`] — see
-/// `designs/sessions-orthogonality-redesign.md` §3.2 and Phase E step 18.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ConversationEvent {
-    Suspending {
-        reason: String,
-        timestamp: DateTime<Utc>,
-    },
-    Resumed {
-        session_id: SessionId,
-        timestamp: DateTime<Utc>,
-    },
-    Closed {
-        timestamp: DateTime<Utc>,
-    },
-}
-
-impl ConversationEvent {
-    /// The event's own wall-clock timestamp.
-    pub fn timestamp(&self) -> DateTime<Utc> {
-        match self {
-            ConversationEvent::Suspending { timestamp, .. } => *timestamp,
-            ConversationEvent::Resumed { timestamp, .. } => *timestamp,
-            ConversationEvent::Closed { timestamp } => *timestamp,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,41 +313,6 @@ pub struct CatchUpEvent {
 mod tests {
     use super::*;
     use std::str::FromStr;
-
-    #[test]
-    fn conversation_event_suspending_round_trip() {
-        let event = ConversationEvent::Suspending {
-            reason: "idle_timeout".to_string(),
-            timestamp: Utc::now(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let deserialized: ConversationEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, deserialized);
-        assert!(json.contains(r#""type":"suspending""#));
-    }
-
-    #[test]
-    fn conversation_event_resumed_round_trip() {
-        let event = ConversationEvent::Resumed {
-            session_id: SessionId::new(),
-            timestamp: Utc::now(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let deserialized: ConversationEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, deserialized);
-        assert!(json.contains(r#""type":"resumed""#));
-    }
-
-    #[test]
-    fn conversation_event_closed_round_trip() {
-        let event = ConversationEvent::Closed {
-            timestamp: Utc::now(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let deserialized: ConversationEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, deserialized);
-        assert!(json.contains(r#""type":"closed""#));
-    }
 
     #[test]
     fn conversation_status_round_trip() {

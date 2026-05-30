@@ -10,7 +10,6 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use hydra_common::actor_ref::ActorRef;
 use hydra_common::api::v1::conversations::Conversation as ApiConversation;
-use hydra_common::conversation::events_to_versions;
 use hydra_common::documents::DocumentVersionRecord;
 use hydra_common::graph::{GraphView, ObjectKind, VerbosityLevel};
 use hydra_common::issues::IssueVersionRecord;
@@ -300,10 +299,9 @@ impl<'a> VersionView<'a> {
 /// Fetch the full version history of a node from the server.
 ///
 /// `kind` must match the prefix of `id`; this is asserted in debug builds and
-/// errored on in release builds. Conversation versions are derived client-side
-/// by fetching the initial snapshot via `GET /v1/conversations/:id` plus the
-/// event stream via `GET /v1/conversations/:id/events`, then folded via
-/// [`hydra_common::conversation::events_to_versions`].
+/// errored on in release builds. Conversation versions come from
+/// `GET /v1/conversations/:id/versions` and are returned by the server as a
+/// `Vec<Versioned<Conversation>>` — one row per status transition.
 pub async fn fetch_versions(
     client: &dyn HydraClientInterface,
     kind: ObjectKind,
@@ -335,21 +333,7 @@ pub async fn fetch_versions(
             let conv_id = id.as_conversation_id().ok_or_else(|| {
                 anyhow!("id '{id}' does not match expected kind 'conversation' (c- prefix)")
             })?;
-            let initial = client.get_conversation(&conv_id).await?;
-            let events = client.get_conversation_events(&conv_id).await?;
-            // The CLI-facing events endpoint strips off versioning, so we
-            // synthesize `Versioned<ConversationEvent>` wrappers using the
-            // event index + inline timestamp before folding into snapshots.
-            let creation_time = initial.created_at;
-            let versioned_events: Vec<Versioned<_>> = events
-                .into_iter()
-                .enumerate()
-                .map(|(i, event)| {
-                    let ts = event.timestamp();
-                    Versioned::new(event, (i + 1) as VersionNumber, ts, creation_time)
-                })
-                .collect();
-            let snapshots = events_to_versions(&initial, &versioned_events);
+            let snapshots = client.get_conversation_versions(&conv_id).await?;
             Ok(VersionedNode::Conversation(snapshots))
         }
     }

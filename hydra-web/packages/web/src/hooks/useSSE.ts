@@ -32,7 +32,6 @@ const ENTITY_EVENT_TYPES = [
   "label_deleted",
   "conversation_created",
   "conversation_updated",
-  "conversation_event_created",
 ] as const;
 
 const MAX_BACKOFF_MS = 15_000;
@@ -174,7 +173,6 @@ function invalidatePageAndTreeCaches(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["labels"] });
   // Conversations
   qc.invalidateQueries({ queryKey: ["conversations"] });
-  qc.invalidateQueries({ queryKey: ["conversationEvents"] });
   // Chat page Related tab caches
   qc.invalidateQueries({ queryKey: ["chatRelated"] });
 }
@@ -312,19 +310,10 @@ export function useSSE(): SSEConnectionState {
       } else if (entity_type === "label" || eventType.startsWith("label_")) {
         queryClient.invalidateQueries({ queryKey: ["labels"] });
       } else if (entity_type === "conversation" || eventType.startsWith("conversation_")) {
-        if (eventType === "conversation_event_created") {
-          // Invalidate conversation events list for this conversation
-          queryClient.invalidateQueries({ queryKey: ["conversationEvents", entity_id] });
-          // Invalidate conversation detail so status badge updates
-          queryClient.invalidateQueries({ queryKey: ["conversation", entity_id] });
-          // Also invalidate the conversations list since event counts / previews change
-          queryClient.invalidateQueries({ queryKey: ["conversations"] });
-        } else {
-          // conversation_created or conversation_updated
-          const record = entity as unknown as ConversationSummary;
-          queryClient.invalidateQueries({ queryKey: ["conversation", entity_id] });
-          upsertBatchConversation(queryClient, entity_id, record);
-        }
+        // conversation_created or conversation_updated
+        const record = entity as unknown as ConversationSummary;
+        queryClient.invalidateQueries({ queryKey: ["conversation", entity_id] });
+        upsertBatchConversation(queryClient, entity_id, record);
       }
     },
     [queryClient],

@@ -64,7 +64,9 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
         .context("apply remaining sqlite migrations past the last baseline")?;
 
     assert_session_events_actor_rewrites(&pool).await?;
-    assert_conversation_events_actor_rewrites(&pool).await?;
+    // The `conversation_events` table was dropped along with the
+    // `ConversationEvent` removal — there is nothing to assert against
+    // post-migration.
     assert_store_level_session_events_smoke(&pool).await?;
 
     Ok(())
@@ -188,77 +190,6 @@ async fn expect_session_event_actor(
     if got != expected {
         bail!(
             "session_events({session_id}, {version_number}).actor: \
-             expected {expected:?}; got {got:?}"
-        );
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// actor_variant_cleanup rewrite assertions — conversation_events
-// ---------------------------------------------------------------------------
-
-async fn assert_conversation_events_actor_rewrites(pool: &SqlitePool) -> Result<()> {
-    expect_conversation_event_actor(
-        pool,
-        "c-actclean",
-        1,
-        Some(serde_json::json!({
-            "Authenticated": {"actor_id": {"Adhoc": {"session_id": "s-cesessx"}}}
-        })),
-    )
-    .await?;
-    expect_conversation_event_actor(
-        pool,
-        "c-actclean",
-        2,
-        Some(serde_json::json!({
-            "Authenticated": {"actor_id": {"User": {"name": "alice"}}}
-        })),
-    )
-    .await?;
-    expect_conversation_event_actor(
-        pool,
-        "c-actclean",
-        3,
-        Some(serde_json::json!({
-            "Authenticated": {"actor_id": external_legacy("definitely not an actor")}
-        })),
-    )
-    .await?;
-    expect_conversation_event_actor(pool, "c-actclean", 4, None).await?;
-    Ok(())
-}
-
-async fn expect_conversation_event_actor(
-    pool: &SqlitePool,
-    conversation_id: &str,
-    version_number: i64,
-    expected: Option<serde_json::Value>,
-) -> Result<()> {
-    let row = sqlx::query(
-        "SELECT actor FROM conversation_events \
-         WHERE id = ?1 AND version_number = ?2",
-    )
-    .bind(conversation_id)
-    .bind(version_number)
-    .fetch_one(pool)
-    .await
-    .with_context(|| {
-        format!("read conversation_events.actor for ({conversation_id}, {version_number})")
-    })?;
-    let raw: Option<String> = row.try_get("actor")?;
-    let got: Option<serde_json::Value> = raw
-        .map(|s| serde_json::from_str(&s))
-        .transpose()
-        .with_context(|| {
-            format!(
-                "decode conversation_events.actor JSON for ({conversation_id}, {version_number})"
-            )
-        })?;
-    if got != expected {
-        bail!(
-            "conversation_events({conversation_id}, {version_number}).actor: \
              expected {expected:?}; got {got:?}"
         );
     }

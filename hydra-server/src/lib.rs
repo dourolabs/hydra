@@ -398,8 +398,12 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
                 .delete(routes::conversations::delete_conversation),
         )
         .route(
-            "/v1/conversations/:conversation_id/events",
-            get(routes::conversations::get_conversation_events),
+            "/v1/conversations/:conversation_id/versions",
+            get(routes::conversations::list_conversation_versions),
+        )
+        .route(
+            "/v1/conversations/:conversation_id/versions/:version_number",
+            get(routes::conversations::get_conversation_version),
         )
         .route(
             "/v1/conversations/:conversation_id/messages",

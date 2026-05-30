@@ -380,7 +380,7 @@ impl From<Session> for api::sessions::Session {
 /// Domain twin of [`api::sessions::SessionEvent`]. Append-only log of
 /// model-context events for a session — the transcript the model "sees" is the
 /// projection of this log onto `UserMessage` and `AssistantMessage` variants in
-/// insertion order. Mirrors [`super::conversations::ConversationEvent`].
+/// insertion order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionEvent {
@@ -529,9 +529,7 @@ impl From<SessionEvent> for api::sessions::SessionEvent {
     }
 }
 
-/// Domain twin of [`api::sessions::SessionEventSummary`]. Mirrors
-/// `ConversationEventSummary` so the eventual session-event store methods can
-/// return the same shape per session.
+/// Domain twin of [`api::sessions::SessionEventSummary`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEventSummary {
     pub event_count: usize,

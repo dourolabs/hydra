@@ -10,8 +10,8 @@ use crate::{
 };
 use hydra_common::agents::UpsertAgentRequest;
 use hydra_common::api::v1::conversations::{
-    Conversation, ConversationEvent, ConversationStatus, ConversationSummary,
-    CreateConversationRequest, SendMessageRequest, UpdateConversationRequest,
+    Conversation, ConversationStatus, ConversationSummary, CreateConversationRequest,
+    SendMessageRequest, UpdateConversationRequest,
 };
 use hydra_common::api::v1::sessions::{ListSessionsResponse, SearchSessionsQuery};
 use hydra_common::{ConversationId, SessionId};
@@ -238,7 +238,7 @@ async fn create_conversation_with_unknown_agent_name_returns_400() -> anyhow::Re
 }
 
 #[tokio::test]
-async fn create_conversation_without_message_starts_with_zero_events() -> anyhow::Result<()> {
+async fn create_conversation_without_message_starts_active() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -272,18 +272,6 @@ async fn create_conversation_without_message_starts_with_zero_events() -> anyhow
     })
     .await
     .expect("expected create_conversation to spawn a session");
-
-    let events: Vec<serde_json::Value> = client
-        .get(format!(
-            "{}/v1/conversations/{}/events",
-            server.base_url(),
-            conversation.conversation_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(events.is_empty(), "expected zero events, got {events:?}");
 
     Ok(())
 }
@@ -383,7 +371,8 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
 }
 
 #[tokio::test]
-async fn get_conversation_events_returns_events() -> anyhow::Result<()> {
+async fn list_conversation_versions_returns_single_active_version_for_fresh_conversation()
+-> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -403,7 +392,7 @@ async fn get_conversation_events_returns_events() -> anyhow::Result<()> {
 
     let response = client
         .get(format!(
-            "{}/v1/conversations/{}/events",
+            "{}/v1/conversations/{}/versions",
             server.base_url(),
             created.conversation_id
         ))
@@ -411,13 +400,13 @@ async fn get_conversation_events_returns_events() -> anyhow::Result<()> {
         .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
-    // The conversation events log holds only lifecycle events post-Phase-E
-    // step 18 (chat content moved to `SessionEvent`); a freshly-created
-    // conversation has no lifecycle entries yet.
-    let events: Vec<serde_json::Value> = response.json().await?;
+    let versions: Vec<hydra_common::Versioned<Conversation>> = response.json().await?;
+    // A fresh conversation has exactly the create row in Active status.
+    assert!(!versions.is_empty(), "expected at least one version");
     assert!(
-        events.is_empty(),
-        "expected no lifecycle events, got {events:?}"
+        versions
+            .iter()
+            .all(|v| v.item.status == ConversationStatus::Active)
     );
 
     Ok(())
@@ -464,21 +453,6 @@ async fn send_message_returns_event() -> anyhow::Result<()> {
         }
         other => panic!("expected UserMessage, got {other:?}"),
     }
-
-    // Chat content lives on the per-session SessionEvent log post-Phase-E
-    // step 18; the conversation events log is for lifecycle only and is
-    // empty for a freshly-created, never-suspended conversation.
-    let events: Vec<serde_json::Value> = client
-        .get(format!(
-            "{}/v1/conversations/{}/events",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert_eq!(events.len(), 0);
 
     Ok(())
 }
@@ -544,19 +518,14 @@ async fn send_message_to_closed_conversation_auto_resumes() -> anyhow::Result<()
         hydra_common::api::v1::conversations::ConversationStatus::Active
     );
 
-    // Wait for the resume-on-send to settle: the automation appends a
-    // `Resumed` event and spawns a second session asynchronously. Because the
-    // spawn is async, the *order* of `Resumed` vs the new `UserMessage` is
-    // no longer guaranteed in the event log — the test only verifies both
-    // are present.
-    // Wait for the Resumed event on the conversation lifecycle log; the new
-    // UserMessage (`back from the dead`) lives on the per-session
-    // SessionEvent log post-Phase-E step 18 and the test only asserts on
-    // the conversation lifecycle here.
+    // Wait for the resume-on-send to settle: the automation spawns a second
+    // session asynchronously. After it settles, the conversation has at
+    // least two sessions linked to it (the closed-out original plus the new
+    // resumption session).
     let _ = poll_until(POLL_TIMEOUT, || async {
-        let events: Vec<ConversationEvent> = client
+        let sessions: ListSessionsResponse = client
             .get(format!(
-                "{}/v1/conversations/{}/events",
+                "{}/v1/sessions?conversation_id={}",
                 server.base_url(),
                 created.conversation_id
             ))
@@ -566,13 +535,10 @@ async fn send_message_to_closed_conversation_auto_resumes() -> anyhow::Result<()
             .json()
             .await
             .ok()?;
-        events
-            .iter()
-            .any(|e| matches!(e, ConversationEvent::Resumed { .. }))
-            .then_some(events)
+        (sessions.sessions.len() >= 2).then_some(sessions)
     })
     .await
-    .expect("expected a Resumed event after resume-on-send");
+    .expect("expected a second session to spawn after resume-on-send");
 
     Ok(())
 }
@@ -723,15 +689,14 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify all lifecycle events are recorded. Chat-content events
-    // (user_message) live on the per-session SessionEvent log post-Phase-E
-    // step 18 — only lifecycle events (closed, resumed) appear here. The
-    // resume produces a `Resumed` event asynchronously via the automation,
-    // so poll until it appears.
-    let events = poll_until(POLL_TIMEOUT, || async {
-        let events: Vec<serde_json::Value> = client
+    // The resume flow is asynchronous: the automation flips the conversation
+    // back to Active and spawns a second session in response. Poll until that
+    // settles, then verify the status sequence on the versions endpoint
+    // includes the Idle/Closed → Active transition.
+    let versions = poll_until(POLL_TIMEOUT, || async {
+        let versions: Vec<hydra_common::Versioned<Conversation>> = client
             .get(format!(
-                "{}/v1/conversations/{}/events",
+                "{}/v1/conversations/{}/versions",
                 server.base_url(),
                 created.conversation_id
             ))
@@ -741,17 +706,28 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
             .json()
             .await
             .ok()?;
-        events
-            .iter()
-            .any(|e| e["type"] == "resumed")
-            .then_some(events)
+        // The expected post-resume sequence ends in Active; both Closed and
+        // Active must appear at some point in the lifecycle.
+        let statuses: Vec<_> = versions.iter().map(|v| v.item.status).collect();
+        if statuses.contains(&ConversationStatus::Closed)
+            && versions.last().map(|v| v.item.status) == Some(ConversationStatus::Active)
+        {
+            Some(versions)
+        } else {
+            None
+        }
     })
     .await
-    .expect("expected a Resumed event in the event log after resume");
-    let closed_count = events.iter().filter(|e| e["type"] == "closed").count();
-    let resumed_count = events.iter().filter(|e| e["type"] == "resumed").count();
-    assert_eq!(closed_count, 1, "got events: {events:?}");
-    assert_eq!(resumed_count, 1, "got events: {events:?}");
+    .expect("expected the conversation to transition through Closed back to Active");
+    assert!(
+        versions
+            .iter()
+            .any(|v| v.item.status == ConversationStatus::Closed)
+    );
+    assert_eq!(
+        versions.last().unwrap().item.status,
+        ConversationStatus::Active
+    );
 
     Ok(())
 }
@@ -1082,26 +1058,6 @@ async fn send_message_to_closed_conversation_spawns_exactly_one_resume_session()
     assert_eq!(
         count, 2,
         "exactly one NEW session must be spawned by the Closed→Active flip; got {count}"
-    );
-
-    // Exactly one Resumed event in the log; OLD main would have appended
-    // two.
-    let events: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{conversation_id}/events",
-            server.base_url()
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    let resumed_count = events
-        .iter()
-        .filter(|e| matches!(e, ConversationEvent::Resumed { .. }))
-        .count();
-    assert_eq!(
-        resumed_count, 1,
-        "exactly one Resumed event must be appended by the Closed→Active flip; got {resumed_count}"
     );
 
     Ok(())

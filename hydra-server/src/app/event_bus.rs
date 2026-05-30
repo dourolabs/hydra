@@ -1,4 +1,4 @@
-use crate::domain::conversations::{Conversation, ConversationEvent};
+use crate::domain::conversations::Conversation;
 use crate::domain::{
     actors::{Actor, ActorRef},
     agents::Agent,
@@ -20,8 +20,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, LabelId, PatchId, RepoName,
-    SessionId, VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, LabelId, PatchId, RepoName, SessionId, VersionNumber,
+    Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -68,11 +68,6 @@ pub enum MutationPayload {
         new: Conversation,
         actor: ActorRef,
     },
-    ConversationEvent {
-        conversation_id: ConversationId,
-        event: ConversationEvent,
-        actor: ActorRef,
-    },
     SessionEvent {
         session_id: SessionId,
         event: SessionEvent,
@@ -94,7 +89,6 @@ impl MutationPayload {
             | MutationPayload::Document { actor, .. }
             | MutationPayload::Label { actor, .. }
             | MutationPayload::Conversation { actor, .. }
-            | MutationPayload::ConversationEvent { actor, .. }
             | MutationPayload::SessionEvent { actor, .. }
             | MutationPayload::SessionState { actor, .. } => actor,
         }
@@ -121,7 +115,6 @@ pub enum EventType {
     LabelDeleted,
     ConversationCreated,
     ConversationUpdated,
-    ConversationEventCreated,
     SessionEventCreated,
     SessionStateUpdated,
 }
@@ -248,13 +241,6 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
-    ConversationEventCreated {
-        seq: u64,
-        conversation_id: ConversationId,
-        version: u64,
-        timestamp: DateTime<Utc>,
-        payload: Arc<MutationPayload>,
-    },
     SessionEventCreated {
         seq: u64,
         session_id: SessionId,
@@ -290,7 +276,6 @@ impl ServerEvent {
             | ServerEvent::LabelDeleted { seq, .. }
             | ServerEvent::ConversationCreated { seq, .. }
             | ServerEvent::ConversationUpdated { seq, .. }
-            | ServerEvent::ConversationEventCreated { seq, .. }
             | ServerEvent::SessionEventCreated { seq, .. }
             | ServerEvent::SessionStateUpdated { seq, .. } => *seq,
         }
@@ -315,7 +300,6 @@ impl ServerEvent {
             | ServerEvent::LabelDeleted { payload, .. }
             | ServerEvent::ConversationCreated { payload, .. }
             | ServerEvent::ConversationUpdated { payload, .. }
-            | ServerEvent::ConversationEventCreated { payload, .. }
             | ServerEvent::SessionEventCreated { payload, .. }
             | ServerEvent::SessionStateUpdated { payload, .. } => payload,
         }
@@ -352,7 +336,6 @@ impl ServerEvent {
             ServerEvent::LabelDeleted { .. } => EventType::LabelDeleted,
             ServerEvent::ConversationCreated { .. } => EventType::ConversationCreated,
             ServerEvent::ConversationUpdated { .. } => EventType::ConversationUpdated,
-            ServerEvent::ConversationEventCreated { .. } => EventType::ConversationEventCreated,
             ServerEvent::SessionEventCreated { .. } => EventType::SessionEventCreated,
             ServerEvent::SessionStateUpdated { .. } => EventType::SessionStateUpdated,
         }
@@ -630,21 +613,6 @@ impl EventBus {
         payload: Arc<MutationPayload>,
     ) {
         self.send(ServerEvent::ConversationUpdated {
-            seq: self.next_seq(),
-            conversation_id,
-            version,
-            timestamp: Utc::now(),
-            payload,
-        });
-    }
-
-    pub fn emit_conversation_event_created(
-        &self,
-        conversation_id: ConversationId,
-        version: u64,
-        payload: Arc<MutationPayload>,
-    ) {
-        self.send(ServerEvent::ConversationEventCreated {
             seq: self.next_seq(),
             conversation_id,
             version,
@@ -1087,30 +1055,6 @@ impl StoreWithEvents {
         self.event_bus
             .emit_conversation_updated(id.clone(), version, payload);
         Ok(version)
-    }
-
-    pub async fn append_conversation_event_with_actor(
-        &self,
-        id: &ConversationId,
-        event: ConversationEvent,
-        actor: ActorRef,
-    ) -> Result<ConversationEventId, StoreError> {
-        let event_clone = event.clone();
-        let result = self
-            .inner
-            .append_conversation_event(id, event, &actor)
-            .await?;
-        let payload = Arc::new(MutationPayload::ConversationEvent {
-            conversation_id: id.clone(),
-            event: event_clone,
-            actor,
-        });
-        self.event_bus.emit_conversation_event_created(
-            id.clone(),
-            result.event_index as u64,
-            payload,
-        );
-        Ok(result)
     }
 
     pub async fn append_session_event_with_actor(
@@ -1712,13 +1656,6 @@ impl ReadOnlyStore for StoreWithEvents {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         self.inner.list_conversations(query).await
-    }
-
-    async fn get_conversation_events(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        self.inner.get_conversation_events(id).await
     }
 
     async fn get_conversation_versions(

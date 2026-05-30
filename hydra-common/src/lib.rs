@@ -5,7 +5,6 @@ pub mod actor_ref;
 pub mod api;
 pub mod build_cache;
 pub mod constants;
-pub mod conversation;
 pub mod document_path;
 pub mod github;
 pub mod graph;
@@ -31,7 +30,6 @@ pub use api::v1::{
     version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
-pub use conversations::ConversationEventId;
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
     ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, PatchId, SessionId,
@@ -85,7 +83,6 @@ mod ts_export {
         crate::SessionId::export_all(&cfg).expect("SessionId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
-        crate::ConversationEventId::export_all(&cfg).expect("ConversationEventId");
         crate::Rgb::export_all(&cfg).expect("Rgb");
         crate::RepoName::export_all(&cfg).expect("RepoName");
         crate::ActorId::export_all(&cfg).expect("ActorId");
@@ -295,7 +292,6 @@ mod ts_export {
         crate::conversations::Conversation::export_all(&cfg).expect("Conversation");
         crate::conversations::ConversationSummary::export_all(&cfg).expect("ConversationSummary");
         crate::conversations::ConversationStatus::export_all(&cfg).expect("ConversationStatus");
-        crate::conversations::ConversationEvent::export_all(&cfg).expect("ConversationEvent");
         crate::conversations::CreateConversationRequest::export_all(&cfg)
             .expect("CreateConversationRequest");
         crate::conversations::SendMessageRequest::export_all(&cfg).expect("SendMessageRequest");

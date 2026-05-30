@@ -8,7 +8,7 @@ use super::{
     AuthTokenRow, ConversationEventSummary, ReadOnlyStore, Session, SessionEvent,
     SessionEventSummary, Status, Store, StoreError, TaskStatusLog,
 };
-use crate::domain::conversations::{Conversation, ConversationEvent};
+use crate::domain::conversations::Conversation;
 use crate::domain::{
     actors::{Actor, ActorRef},
     agents::Agent,
@@ -27,8 +27,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
-    SessionId, VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId,
+    VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -76,8 +76,6 @@ pub struct MemoryStore {
         DashMap<(HydraId, super::RelationshipType, HydraId), super::ObjectRelationship>,
     /// Maps conversation IDs to their versioned Conversation data
     conversations: DashMap<ConversationId, Vec<Versioned<Conversation>>>,
-    /// Maps conversation IDs to their versioned events
-    conversation_events: DashMap<ConversationId, Vec<Versioned<ConversationEvent>>>,
     /// Maps session IDs to their versioned session events. Each entry pairs
     /// the event with the monotonic `next_session_event_seq` value assigned
     /// at append time, which serves as the global ordering primitive used by
@@ -112,7 +110,6 @@ impl MemoryStore {
             user_secrets: DashMap::new(),
             object_relationships: DashMap::new(),
             conversations: DashMap::new(),
-            conversation_events: DashMap::new(),
             session_events: DashMap::new(),
             session_state: DashMap::new(),
             next_session_event_seq: AtomicU64::new(1),
@@ -1629,29 +1626,14 @@ impl ReadOnlyStore for MemoryStore {
         Ok(paginated)
     }
 
-    async fn get_conversation_events(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        if !self.conversations.contains_key(id) {
-            return Err(StoreError::ConversationNotFound(id.clone()));
-        }
-        Ok(self
-            .conversation_events
-            .get(id)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_default())
-    }
-
     async fn get_conversation_versions(
         &self,
         id: &ConversationId,
     ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
-        let snapshot = self.get_conversation(id, false).await?;
-        let events = self.get_conversation_events(id).await?;
-        Ok(crate::store::fold_conversation_versions(
-            id, &snapshot, &events,
-        ))
+        self.conversations
+            .get(id)
+            .map(|entry| entry.value().clone())
+            .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))
     }
 
     async fn get_conversation_event_summaries(
@@ -1664,8 +1646,6 @@ impl ReadOnlyStore for MemoryStore {
             // chat-text events (UserMessage / AssistantMessage). ToolUse,
             // Suspending, Resumed, and Closed are excluded — they are
             // bookkeeping rather than messages the user sees in the column.
-            // ConversationEvents are lifecycle-only post Phase E step 18 and
-            // do not contribute to the count.
             //
             // While we're walking sessions, also pick the most recent
             // chat-text event for `last_event_preview`. Sessions are ordered
@@ -2460,32 +2440,6 @@ impl Store for MemoryStore {
             creation_time,
         ));
         Ok(next_version)
-    }
-
-    async fn append_conversation_event(
-        &self,
-        id: &ConversationId,
-        event: ConversationEvent,
-        actor: &ActorRef,
-    ) -> Result<ConversationEventId, StoreError> {
-        if !self.conversations.contains_key(id) {
-            return Err(StoreError::ConversationNotFound(id.clone()));
-        }
-        let mut events = self.conversation_events.entry(id.clone()).or_default();
-        let event_index = events.len();
-        let next_version = Self::next_version(&events);
-        let now = Utc::now();
-        events.push(Versioned::with_actor(
-            event,
-            next_version,
-            now,
-            actor.clone(),
-            now,
-        ));
-        Ok(ConversationEventId {
-            conversation_id: id.clone(),
-            event_index,
-        })
     }
 
     async fn append_session_event(
@@ -7962,8 +7916,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn append_and_get_conversation_events() {
-        use crate::domain::conversations::ConversationEvent;
+    async fn get_conversation_versions_returns_one_row_per_update() {
+        use crate::domain::conversations::ConversationStatus;
 
         let store = MemoryStore::new();
         let (id, _) = store
@@ -7971,93 +7925,37 @@ mod tests {
             .await
             .unwrap();
 
-        // Initially no events
-        let events = store.get_conversation_events(&id).await.unwrap();
-        assert!(events.is_empty());
-
-        let event = ConversationEvent::Suspending {
-            reason: "idle".to_string(),
-            timestamp: Utc::now(),
-        };
-        let v1 = store
-            .append_conversation_event(&id, event, &test_actor())
-            .await
-            .unwrap();
-        assert_eq!(v1.conversation_id, id);
-        assert_eq!(v1.event_index, 0);
-
-        let event2 = ConversationEvent::Closed {
-            timestamp: Utc::now(),
-        };
-        let v2 = store
-            .append_conversation_event(&id, event2, &test_actor())
-            .await
-            .unwrap();
-        assert_eq!(v2.conversation_id, id);
-        assert_eq!(v2.event_index, 1);
-
-        // Verify persistence
-        let events = store.get_conversation_events(&id).await.unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].version, 1);
-        assert_eq!(events[1].version, 2);
-    }
-
-    #[tokio::test]
-    async fn get_conversation_versions_folds_events_into_snapshots() {
-        use crate::domain::conversations::{ConversationEvent, ConversationStatus};
-
-        let store = MemoryStore::new();
-        let (id, _) = store
-            .add_conversation(sample_conversation(), &test_actor())
-            .await
-            .unwrap();
-
-        // No events yet -> empty result.
+        // After insert, exactly one version exists (the create row).
         let versions = store.get_conversation_versions(&id).await.unwrap();
-        assert!(versions.is_empty());
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version, 1);
 
-        let ts1 = Utc::now();
+        // Each `update_conversation` appends a new row carrying the
+        // current status (the new lifecycle log).
+        let mut updated = versions[0].item.clone();
+        updated.status = ConversationStatus::Idle;
         store
-            .append_conversation_event(
-                &id,
-                ConversationEvent::Suspending {
-                    reason: "idle".to_string(),
-                    timestamp: ts1,
-                },
-                &test_actor(),
-            )
+            .update_conversation(&id, updated, &test_actor())
             .await
             .unwrap();
-        let ts2 = Utc::now();
+        let mut updated2 = store.get_conversation(&id, false).await.unwrap().item;
+        updated2.status = ConversationStatus::Closed;
         store
-            .append_conversation_event(
-                &id,
-                ConversationEvent::Closed { timestamp: ts2 },
-                &test_actor(),
-            )
+            .update_conversation(&id, updated2, &test_actor())
             .await
             .unwrap();
 
-        let events = store.get_conversation_events(&id).await.unwrap();
         let versions = store.get_conversation_versions(&id).await.unwrap();
-
-        // One snapshot per event, with versions / timestamps lifted from the events.
-        assert_eq!(versions.len(), events.len());
-        for (v, e) in versions.iter().zip(events.iter()) {
-            assert_eq!(v.version, e.version);
-            assert_eq!(v.timestamp, e.timestamp);
-            assert_eq!(v.actor, e.actor);
-            assert_eq!(v.creation_time, e.creation_time);
-        }
-
-        // Final snapshot reflects the Closed event.
+        assert_eq!(versions.len(), 3);
+        let statuses: Vec<ConversationStatus> = versions.iter().map(|v| v.item.status).collect();
         assert_eq!(
-            versions.last().unwrap().item.status,
-            ConversationStatus::Closed
+            statuses,
+            vec![
+                ConversationStatus::Active,
+                ConversationStatus::Idle,
+                ConversationStatus::Closed,
+            ]
         );
-        // Mid-stream snapshot for the Suspending event is Idle.
-        assert_eq!(versions[0].item.status, ConversationStatus::Idle);
     }
 
     #[tokio::test]
@@ -8069,7 +7967,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_conversation_versions_rejects_deleted_conversation() {
+    async fn get_conversation_versions_returns_versions_for_deleted_conversation() {
+        // get_conversation_versions returns all versions regardless of the
+        // deleted flag — callers that want the deleted filter should use
+        // get_conversation separately.
         let store = MemoryStore::new();
         let (id, _) = store
             .add_conversation(sample_conversation(), &test_actor())
@@ -8081,8 +7982,9 @@ mod tests {
             .update_conversation(&id, deleted, &test_actor())
             .await
             .unwrap();
-        let err = store.get_conversation_versions(&id).await.unwrap_err();
-        assert!(matches!(err, StoreError::ConversationNotFound(_)));
+        let versions = store.get_conversation_versions(&id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert!(versions.last().unwrap().item.deleted);
     }
 
     #[tokio::test]
@@ -8213,7 +8115,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_conversation_event_summaries_ignores_lifecycle_conversation_events() {
+    async fn get_conversation_event_summaries_omits_conversations_with_no_chat_text() {
         let store = MemoryStore::new();
         let (id1, _) = store
             .add_conversation(sample_conversation(), &test_actor())
@@ -8223,62 +8125,15 @@ mod tests {
             .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
-        let (id3, _) = store
-            .add_conversation(sample_conversation(), &test_actor())
-            .await
-            .unwrap();
 
-        // Conversation 1: 2 lifecycle ConversationEvents and no sessions.
-        // event_count counts chat-text SessionEvents only, so lifecycle
-        // ConversationEvents (Suspending / Closed) do not contribute. With no
-        // sessions, the result is omitted from the map.
-        store
-            .append_conversation_event(
-                &id1,
-                ConversationEvent::Suspending {
-                    reason: "idle".to_string(),
-                    timestamp: chrono::Utc::now(),
-                },
-                &test_actor(),
-            )
-            .await
-            .unwrap();
-        store
-            .append_conversation_event(
-                &id1,
-                ConversationEvent::Closed {
-                    timestamp: chrono::Utc::now(),
-                },
-                &test_actor(),
-            )
-            .await
-            .unwrap();
-
-        // Conversation 2: 1 lifecycle ConversationEvent, no sessions.
-        store
-            .append_conversation_event(
-                &id2,
-                ConversationEvent::Suspending {
-                    reason: "sigterm".to_string(),
-                    timestamp: chrono::Utc::now(),
-                },
-                &test_actor(),
-            )
-            .await
-            .unwrap();
-
-        // Conversation 3: nothing at all.
-
+        // Neither conversation has any linked sessions or chat-text events,
+        // so neither appears in the summary map.
         let summaries = store
-            .get_conversation_event_summaries(&[id1.clone(), id2.clone(), id3.clone()])
+            .get_conversation_event_summaries(&[id1.clone(), id2.clone()])
             .await
             .unwrap();
-
-        // None of the three conversations have any chat-text SessionEvents,
-        // so none of them appear in the summary map.
         assert!(!summaries.contains_key(&id1));
         assert!(!summaries.contains_key(&id2));
-        assert!(!summaries.contains_key(&id3));
     }
 
     #[tokio::test]
@@ -8473,16 +8328,6 @@ mod tests {
                 &sid,
                 SessionEvent::UserMessage {
                     content: "first".to_string(),
-                    timestamp: Utc::now(),
-                },
-                &test_actor(),
-            )
-            .await
-            .unwrap();
-        store
-            .append_conversation_event(
-                &conv,
-                ConversationEvent::Closed {
                     timestamp: Utc::now(),
                 },
                 &test_actor(),

@@ -353,9 +353,6 @@ fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
         }
         | ServerEvent::ConversationUpdated {
             conversation_id, ..
-        }
-        | ServerEvent::ConversationEventCreated {
-            conversation_id, ..
         } => ("conversations", EntityId::Conversation(conversation_id)),
 
         ServerEvent::SessionEventCreated { session_id, .. }
@@ -511,11 +508,6 @@ async fn serialize_entity(
             };
             let api_conv = new.to_api(conversation_id, creation_time, timestamp);
             serde_json::to_value(api_conv).ok()?
-        }
-        MutationPayload::ConversationEvent { event, .. } => {
-            let api_event: hydra_common::api::v1::conversations::ConversationEvent =
-                event.clone().into();
-            serde_json::to_value(api_event).ok()?
         }
         MutationPayload::SessionEvent { event, .. } => {
             let api_event: hydra_common::api::v1::sessions::SessionEvent = event.clone().into();
@@ -755,20 +747,6 @@ async fn server_event_to_sse(
         } => (
             SseEventType::ConversationUpdated,
             "conversation",
-            conversation_id.to_string(),
-            *version,
-            *timestamp,
-            payload,
-        ),
-        ServerEvent::ConversationEventCreated {
-            conversation_id,
-            version,
-            timestamp,
-            payload,
-            ..
-        } => (
-            SseEventType::ConversationEventCreated,
-            "conversation_event",
             conversation_id.to_string(),
             *version,
             *timestamp,

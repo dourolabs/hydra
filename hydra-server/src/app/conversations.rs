@@ -2,7 +2,7 @@ use crate::{
     app::AgentError,
     domain::{
         actors::ActorRef,
-        conversations::{Conversation, ConversationEvent, ConversationStatus},
+        conversations::{Conversation, ConversationStatus},
         sessions::SessionEvent,
         users::Username,
     },
@@ -239,92 +239,64 @@ impl AppState {
             return Ok(versioned);
         }
 
-        // Append Closed event
-        let event = ConversationEvent::Closed {
+        // Write the lifecycle `SessionEvent::Closed` onto the conversation's
+        // active session. At this point the worker is still alive (we kill
+        // it below), so the active relay entry — and the session it points
+        // to — is the right target. We resolve the session without an
+        // active-state filter: a `Closed` may land after the worker session
+        // has already gone terminal (e.g. the worker exited before the user
+        // clicked close), and we still want the event on its log. Prefer
+        // the actively-connected session; fall back to the most-recent
+        // session of any status.
+        let session_event = SessionEvent::Closed {
             timestamp: chrono::Utc::now(),
         };
-        self.store
-            .append_conversation_event_with_actor(conversation_id, event.clone(), actor_ref.clone())
-            .await
-            .map_err(|source| CloseConversationError::Store { source })?;
-
-        // Dual-write the equivalent SessionEvent onto the conversation's
-        // active session (Phase C step 7 of the sessions-orthogonality
-        // redesign). At this point the worker is still alive (we kill it
-        // below), so the active relay entry — and the session it points to
-        // — is the right target.
-        //
-        // The match keeps a full arm for each lifecycle variant even though
-        // close emits `Closed` in practice — other lifecycle write paths
-        // may grow into this surface later. `Resumed` is `None` here
-        // because the producing session id is the new session and the
-        // prior `from_session_id` only exists in the spawn automation,
-        // which writes that `SessionEvent::Resumed` directly.
-        let session_event = match &event {
-            ConversationEvent::Suspending { reason, timestamp } => Some(SessionEvent::Suspending {
-                reason: reason.clone(),
-                timestamp: *timestamp,
-            }),
-            ConversationEvent::Closed { timestamp } => Some(SessionEvent::Closed {
-                timestamp: *timestamp,
-            }),
-            ConversationEvent::Resumed { .. } => None,
-        };
-        if let Some(session_event) = session_event {
-            // Resolve the session backing this conversation without an
-            // active-state filter: a lifecycle `Closed` may land after the
-            // worker session has already gone terminal (e.g. the worker
-            // exited before the user clicked close), and we still want the
-            // event on its log. Prefer the actively-connected session
-            // (which by definition is the one currently relaying); fall
-            // back to the most-recent session of any status.
-            let resolved_session_id = match self.chat_relay_map.active_session_id(conversation_id) {
-                Some(id) => Some(id),
-                None => {
-                    let mut query = SearchSessionsQuery::default();
-                    query.conversation_id = Some(conversation_id.clone());
-                    self.store()
-                        .list_sessions(&query)
-                        .await
-                        .ok()
-                        .and_then(|sessions| {
-                            sessions
-                                .into_iter()
-                                .max_by_key(|(_, v)| v.creation_time)
-                                .map(|(id, _)| id)
-                        })
-                }
-            };
-            if let Some(session_id) = resolved_session_id {
-                let preview = session_event.preview();
-                match self
-                    .store
-                    .append_session_event_with_actor(&session_id, session_event, actor_ref.clone())
+        let resolved_session_id = match self.chat_relay_map.active_session_id(conversation_id) {
+            Some(id) => Some(id),
+            None => {
+                let mut query = SearchSessionsQuery::default();
+                query.conversation_id = Some(conversation_id.clone());
+                self.store()
+                    .list_sessions(&query)
                     .await
-                {
-                    Ok(version) => {
-                        info!(
-                            %session_id,
-                            version,
-                            event = %preview,
-                            "dual-write SessionEvent appended",
-                        );
-                    }
-                    Err(err) => {
-                        warn!(
-                            %session_id,
-                            event = %preview,
-                            error = %err,
-                            "dual-write SessionEvent failed",
-                        );
-                    }
-                }
-            } else {
-                warn!(
-                    %conversation_id,
-                    "dual-write SessionEvent skipped: no session linked to conversation yet"
-                );
+                    .ok()
+                    .and_then(|sessions| {
+                        sessions
+                            .into_iter()
+                            .max_by_key(|(_, v)| v.creation_time)
+                            .map(|(id, _)| id)
+                    })
             }
+        };
+        if let Some(session_id) = resolved_session_id {
+            let preview = session_event.preview();
+            match self
+                .store
+                .append_session_event_with_actor(&session_id, session_event, actor_ref.clone())
+                .await
+            {
+                Ok(version) => {
+                    info!(
+                        %session_id,
+                        version,
+                        event = %preview,
+                        "SessionEvent appended",
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        %session_id,
+                        event = %preview,
+                        error = %err,
+                        "SessionEvent append failed",
+                    );
+                }
+            }
+        } else {
+            warn!(
+                %conversation_id,
+                "SessionEvent::Closed skipped: no session linked to conversation yet"
+            );
         }
 
         // Drive the active worker (if any) through graceful shutdown.
@@ -496,13 +468,8 @@ mod tests {
             test_helpers::{poll_until, start_test_automation_runner, state_with_default_model},
         },
         domain::{
-            actors::ActorRef,
-            agents::Agent,
-            conversations::{ConversationEvent, ConversationStatus},
-            documents::Document,
-            issues::SessionSettings,
-            sessions::Session,
-            users::Username,
+            actors::ActorRef, agents::Agent, conversations::ConversationStatus,
+            documents::Document, issues::SessionSettings, sessions::Session, users::Username,
         },
         policy::automations::agent_queue::AGENT_NAME_ENV_VAR,
     };
@@ -592,25 +559,29 @@ mod tests {
         );
     }
 
-    /// Wait for a `Resumed` event to appear in the conversation's event log
-    /// and return the session_id it references.
-    async fn wait_for_resumed_event(
+    /// Wait for a resume to settle (a second session linked to the
+    /// conversation appears after the initial one) and return its id.
+    async fn wait_for_resumed_session(
         state: &AppState,
         conversation_id: &ConversationId,
+        prior_session_id: &hydra_common::SessionId,
     ) -> hydra_common::SessionId {
         poll_until(POLL_TIMEOUT, || async {
-            let events = state
+            let sessions = state
                 .store()
-                .get_conversation_events(conversation_id)
+                .list_sessions(&SearchSessionsQuery::default())
                 .await
                 .unwrap();
-            events.into_iter().rev().find_map(|e| match e.item {
-                ConversationEvent::Resumed { session_id, .. } => Some(session_id),
-                _ => None,
-            })
+            sessions
+                .into_iter()
+                .filter(|(id, s)| {
+                    s.item.conversation_id() == Some(conversation_id) && id != prior_session_id
+                })
+                .max_by_key(|(_, s)| s.creation_time)
+                .map(|(id, _)| id)
         })
         .await
-        .expect("expected a Resumed event to appear")
+        .expect("expected a new session for the resumed conversation to appear")
     }
 
     /// Register an agent and an accompanying prompt document.
@@ -941,15 +912,18 @@ mod tests {
             "conversation session should have conversation_id set"
         );
 
-        let events = state
+        // A fresh conversation starts in Active. The store keeps one row per
+        // version; no status transitions yet means a single version.
+        let versions = state
             .store()
-            .get_conversation_events(&conversation_id)
+            .get_conversation_versions(&conversation_id)
             .await
             .unwrap();
         assert!(
-            events.is_empty(),
-            "expected zero events on a fresh conversation, got {}",
-            events.len()
+            versions
+                .iter()
+                .all(|v| v.item.status == ConversationStatus::Active),
+            "every version of a fresh conversation should be Active, got {versions:?}",
         );
     }
 
@@ -1007,18 +981,19 @@ mod tests {
             "expected the trailing event to be the new UserMessage, got {:?}",
             last.item
         );
-        // No Resumed event on an already-Active conversation in the
-        // conversation events log either.
-        let conv_events = state
+        // An already-Active conversation does not undergo an extra status
+        // transition on send_message — the version sequence ends in Active
+        // with no intermediate flip.
+        let versions = state
             .store()
-            .get_conversation_events(&conversation_id)
+            .get_conversation_versions(&conversation_id)
             .await
             .unwrap();
         assert!(
-            !conv_events
+            versions
                 .iter()
-                .any(|e| matches!(e.item, ConversationEvent::Resumed { .. })),
-            "no Resumed event should be appended when conversation is already Active"
+                .all(|v| v.item.status == ConversationStatus::Active),
+            "no non-Active status should be observed when conversation is already Active, got {versions:?}",
         );
 
         let versioned = state
@@ -1085,13 +1060,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Wait for the resume-on-send to settle: the automation appends a
-        // Resumed event on the conversation log and spawns a second session.
-        // The new UserMessage lands on the new session's SessionEvent log
-        // when the worker connects (set_active drains pending events into
-        // the new session's log) — simulate that worker connection here.
+        // Wait for the resume-on-send to settle: the automation spawns a
+        // second session. The new UserMessage lands on the new session's
+        // SessionEvent log when the worker connects (set_active drains
+        // pending events into the new session's log) — simulate that
+        // worker connection here.
         use crate::domain::sessions::SessionEvent as DomainSessionEvent;
-        let resumed_session_id = wait_for_resumed_event(&state, &conversation_id).await;
+        let resumed_session_id =
+            wait_for_resumed_session(&state, &conversation_id, &initial_session_id).await;
         wait_for_session_count(&state, &conversation_id, 2).await;
         let _worker_rx =
             simulate_worker_connect(&state, &conversation_id, &resumed_session_id).await;
@@ -1127,7 +1103,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_message_from_closed_sets_conversation_resume_from() {
+    async fn send_message_from_closed_spawns_session_with_resumed_from_lineage() {
         let state = state_with_default_model("default-model");
         let _runner = start_test_automation_runner(&state);
         register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
@@ -1162,18 +1138,6 @@ mod tests {
         .await;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // The automation captures the resume snapshot at the position just
-        // after the most recent Closed event. We sample the event count here
-        // — which currently equals the index after Closed — so the value
-        // matches regardless of whether the racing UserMessage append lands
-        // before or after the automation fires.
-        let events_before_resume = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap();
-        let expected_resume_from = events_before_resume.len();
-
         state
             .send_message(
                 &conversation_id,
@@ -1184,7 +1148,9 @@ mod tests {
             .await
             .unwrap();
 
-        let resumed_session_id = wait_for_resumed_event(&state, &conversation_id).await;
+        wait_for_session_count(&state, &conversation_id, 2).await;
+        let resumed_session_id =
+            wait_for_resumed_session(&state, &conversation_id, &initial_session_id).await;
         let session = state
             .store()
             .get_session(&resumed_session_id, false)
@@ -1195,9 +1161,9 @@ mod tests {
             "session should be interactive"
         );
         assert_eq!(
-            session.item.mode.conversation_resume_from(),
-            Some(expected_resume_from),
-            "conversation_resume_from should equal index just after the most recent Closed"
+            session.item.resumed_from.as_ref(),
+            Some(&initial_session_id),
+            "resumed_from must point at the most-recently-created prior session"
         );
     }
 
@@ -1516,9 +1482,9 @@ mod tests {
         // before we assert on it.
         let _initial = session_for_conversation(&state, &conversation_id).await;
 
-        let events_before = state
+        let versions_before = state
             .store()
-            .get_conversation_events(&conversation_id)
+            .get_conversation_versions(&conversation_id)
             .await
             .unwrap();
         let versioned_before = state
@@ -1550,15 +1516,15 @@ mod tests {
         // then verify the conversation log and the conversation record are
         // unchanged.
         tokio::time::sleep(Duration::from_millis(150)).await;
-        let events_after = state
+        let versions_after = state
             .store()
-            .get_conversation_events(&conversation_id)
+            .get_conversation_versions(&conversation_id)
             .await
             .unwrap();
         assert_eq!(
-            events_after.len(),
-            events_before.len(),
-            "forbidden send_message must not append events",
+            versions_after.len(),
+            versions_before.len(),
+            "forbidden send_message must not change the conversation version log",
         );
         // The forbidden caller's content must not appear on either log.
         let session_id = session_id_for_conversation(&state, &conversation_id).await;

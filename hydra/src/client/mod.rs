@@ -7,9 +7,9 @@ use futures::{stream, Stream, StreamExt};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::conversations::{
-        Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
-        ConversationSummary as ApiConversationSummary, CreateConversationRequest,
-        SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
+        Conversation as ApiConversation, ConversationSummary as ApiConversationSummary,
+        CreateConversationRequest, SearchConversationsQuery, SendMessageRequest,
+        UpdateConversationRequest,
     },
     api::v1::error::ApiErrorBody,
     api::v1::events::EventsQuery,
@@ -360,10 +360,15 @@ pub trait HydraClientInterface: Send + Sync {
         conversation_id: &ConversationId,
         request: &SendMessageRequest,
     ) -> Result<hydra_common::api::v1::sessions::SessionEvent>;
-    async fn get_conversation_events(
+    async fn get_conversation_versions(
         &self,
         conversation_id: &ConversationId,
-    ) -> Result<Vec<ApiConversationEvent>>;
+    ) -> Result<Vec<hydra_common::Versioned<ApiConversation>>>;
+    async fn get_conversation_version(
+        &self,
+        conversation_id: &ConversationId,
+        version: hydra_common::RelativeVersionNumber,
+    ) -> Result<hydra_common::Versioned<ApiConversation>>;
     async fn close_conversation(&self, conversation_id: &ConversationId)
         -> Result<ApiConversation>;
     async fn list_conversations(
@@ -2008,27 +2013,53 @@ impl HydraClient {
             .context("failed to decode send message response")
     }
 
-    /// Call `GET /v1/conversations/:id/events` to list conversation events.
-    pub async fn get_conversation_events(
+    /// Call `GET /v1/conversations/:id/versions` to list the full version
+    /// history of a conversation (one snapshot per status transition).
+    pub async fn get_conversation_versions(
         &self,
         conversation_id: &ConversationId,
-    ) -> Result<Vec<ApiConversationEvent>> {
-        let path = format!("/v1/conversations/{conversation_id}/events");
+    ) -> Result<Vec<hydra_common::Versioned<ApiConversation>>> {
+        let path = format!("/v1/conversations/{conversation_id}/versions");
         let url = self.endpoint(&path)?;
         let response = self
             .authed(self.http.get(url))
             .send()
             .await
-            .context("failed to fetch conversation events")?
+            .context("failed to fetch conversation versions")?
             .error_for_status_with_body(
-                "hydra-server returned an error while fetching conversation events",
+                "hydra-server returned an error while fetching conversation versions",
             )
             .await?;
 
         response
-            .json::<Vec<ApiConversationEvent>>()
+            .json::<Vec<hydra_common::Versioned<ApiConversation>>>()
             .await
-            .context("failed to decode conversation events response")
+            .context("failed to decode conversation versions response")
+    }
+
+    /// Call `GET /v1/conversations/:id/versions/:version` to fetch a single
+    /// versioned conversation snapshot.
+    pub async fn get_conversation_version(
+        &self,
+        conversation_id: &ConversationId,
+        version: hydra_common::RelativeVersionNumber,
+    ) -> Result<hydra_common::Versioned<ApiConversation>> {
+        let path = format!("/v1/conversations/{conversation_id}/versions/{version}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch conversation version")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while fetching conversation version",
+            )
+            .await?;
+
+        response
+            .json::<hydra_common::Versioned<ApiConversation>>()
+            .await
+            .context("failed to decode conversation version response")
     }
 
     /// Call `POST /v1/conversations/:id/close` to close a conversation.
@@ -2600,11 +2631,19 @@ impl HydraClientInterface for HydraClient {
         HydraClient::send_message(self, conversation_id, request).await
     }
 
-    async fn get_conversation_events(
+    async fn get_conversation_versions(
         &self,
         conversation_id: &ConversationId,
-    ) -> Result<Vec<ApiConversationEvent>> {
-        HydraClient::get_conversation_events(self, conversation_id).await
+    ) -> Result<Vec<hydra_common::Versioned<ApiConversation>>> {
+        HydraClient::get_conversation_versions(self, conversation_id).await
+    }
+
+    async fn get_conversation_version(
+        &self,
+        conversation_id: &ConversationId,
+        version: hydra_common::RelativeVersionNumber,
+    ) -> Result<hydra_common::Versioned<ApiConversation>> {
+        HydraClient::get_conversation_version(self, conversation_id, version).await
     }
 
     async fn close_conversation(

@@ -11,7 +11,6 @@ import {
 } from "./sessions.js";
 import type {
   Conversation,
-  ConversationEvent,
   ConversationStatus,
   ConversationSummary,
   CreateConversationRequest,
@@ -21,34 +20,6 @@ import type {
 
 const COLLECTION = "conversations";
 const SSE_PREFIX = "conversation";
-
-// Per-conversation event log. Kept module-local (parallel to routes/secrets.ts)
-// so that loadSeedData can reset it via clearConversationEvents.
-const conversationEvents = new Map<string, ConversationEvent[]>();
-
-export function clearConversationEvents(): void {
-  conversationEvents.clear();
-}
-
-export function setConversationEvents(
-  conversationId: string,
-  events: ConversationEvent[],
-): void {
-  conversationEvents.set(conversationId, [...events]);
-}
-
-function getEvents(conversationId: string): ConversationEvent[] {
-  return conversationEvents.get(conversationId) ?? [];
-}
-
-function appendEvent(conversationId: string, event: ConversationEvent): void {
-  const existing = conversationEvents.get(conversationId);
-  if (existing) {
-    existing.push(event);
-  } else {
-    conversationEvents.set(conversationId, [event]);
-  }
-}
 
 function chatTextPreview(content: string, prefix: string): string {
   const MAX_LEN = 100;
@@ -61,8 +32,7 @@ function chatTextPreview(content: string, prefix: string): string {
  * Aggregate chat-text events (user_message / assistant_message) across
  * every session linked to `conversationId`. Returns the total count and
  * the preview of the most recent chat-text event found — matching the
- * backend's `ConversationEventSummary` semantics. ConversationEvents are
- * lifecycle-only and do not contribute.
+ * backend's `ConversationEventSummary` semantics.
  */
 function chatTextSummaryFor(
   store: Store,
@@ -191,16 +161,6 @@ export function createConversationRoutes(store: Store): Hono {
     return c.json(entry.data);
   });
 
-  // GET /v1/conversations/:id/events
-  app.get("/v1/conversations/:id/events", (c) => {
-    const id = c.req.param("id");
-    const entry = store.get<Conversation>(COLLECTION, id);
-    if (!entry) {
-      return c.json({ error: `conversation '${id}' not found` }, 404);
-    }
-    return c.json(getEvents(id));
-  });
-
   // POST /v1/conversations
   app.post("/v1/conversations", async (c) => {
     const body = await c.req.json<CreateConversationRequest>().catch(() => ({} as CreateConversationRequest));
@@ -258,23 +218,9 @@ export function createConversationRoutes(store: Store): Hono {
       return c.json({ error: `conversation '${id}' not found` }, 404);
     }
     const now = new Date().toISOString();
-    appendEvent(id, { type: "closed", timestamp: now });
     const updated: Conversation = { ...entry.data, status: "closed", updated_at: now };
     store.update<Conversation>(COLLECTION, id, updated, SSE_PREFIX);
     return c.json(null);
-  });
-
-  // POST /v1/conversations/:id/resume
-  app.post("/v1/conversations/:id/resume", (c) => {
-    const id = c.req.param("id");
-    const entry = store.get<Conversation>(COLLECTION, id);
-    if (!entry) {
-      return c.json({ error: `conversation '${id}' not found` }, 404);
-    }
-    const now = new Date().toISOString();
-    const updated: Conversation = { ...entry.data, status: "active", updated_at: now };
-    store.update<Conversation>(COLLECTION, id, updated, SSE_PREFIX);
-    return c.json(updated);
   });
 
   return app;

@@ -672,8 +672,13 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn fresh_pool() -> SqlitePool {
+        // Migrate up to (but excluding) the `conversation_events` DROP at
+        // 20260604000000 so the legacy source table is still present for
+        // the migrate-events backfill these tests exercise.
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
-        SqliteStore::run_migrations(&pool).await.unwrap();
+        crate::store::sqlite_store::run_migrations(&pool, Some(20_260_603_010_000))
+            .await
+            .unwrap();
         pool
     }
 

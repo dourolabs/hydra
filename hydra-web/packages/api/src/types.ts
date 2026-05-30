@@ -161,8 +161,6 @@ export type { WorkerContext } from "./generated/WorkerContext";
 
 // Conversations
 export type { Conversation } from "./generated/Conversation";
-export type { ConversationEvent } from "./generated/ConversationEvent";
-export type { ConversationEventId } from "./generated/ConversationEventId";
 export type { ConversationId } from "./generated/ConversationId";
 export type { ConversationStatus } from "./generated/ConversationStatus";
 export type { ConversationSummary } from "./generated/ConversationSummary";

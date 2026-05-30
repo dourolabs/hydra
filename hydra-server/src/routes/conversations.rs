@@ -9,7 +9,7 @@ use axum::{
     http::request::Parts,
 };
 use hydra_common::{
-    ConversationId,
+    ConversationId, Versioned,
     api::v1::{ApiError, conversations as api_conversations},
 };
 use tracing::{error, info};
@@ -137,27 +137,113 @@ pub async fn get_conversation(
     Ok(Json(api_conversation))
 }
 
-pub async fn get_conversation_events(
+pub async fn list_conversation_versions(
     State(state): State<AppState>,
     ConversationIdPath(conversation_id): ConversationIdPath,
-) -> Result<Json<Vec<api_conversations::ConversationEvent>>, ApiError> {
-    info!(conversation_id = %conversation_id, "get_conversation_events invoked");
+) -> Result<Json<Vec<Versioned<api_conversations::Conversation>>>, ApiError> {
+    info!(conversation_id = %conversation_id, "list_conversation_versions invoked");
 
-    let events = state
+    let versions = state
         .store()
-        .get_conversation_events(&conversation_id)
+        .get_conversation_versions(&conversation_id)
         .await
         .map_err(map_conversation_error)?;
 
-    let api_events: Vec<api_conversations::ConversationEvent> =
-        events.into_iter().map(|v| v.item.into()).collect();
+    let api_versions: Vec<Versioned<api_conversations::Conversation>> = versions
+        .into_iter()
+        .map(|v| {
+            let item = v
+                .item
+                .to_api(conversation_id.clone(), v.creation_time, v.timestamp);
+            Versioned::with_optional_actor(item, v.version, v.timestamp, v.actor, v.creation_time)
+        })
+        .collect();
 
     info!(
         conversation_id = %conversation_id,
-        returned = api_events.len(),
-        "get_conversation_events completed"
+        returned = api_versions.len(),
+        "list_conversation_versions completed"
     );
-    Ok(Json(api_events))
+    Ok(Json(api_versions))
+}
+
+#[derive(Debug, Clone)]
+pub struct ConversationVersionPath {
+    pub conversation_id: ConversationId,
+    pub version: hydra_common::RelativeVersionNumber,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for ConversationVersionPath
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path((conversation_id, version)) = Path::<(
+            ConversationId,
+            hydra_common::RelativeVersionNumber,
+        )>::from_request_parts(parts, state)
+        .await
+        .map_err(|rejection| ApiError::bad_request(rejection.to_string()))?;
+
+        Ok(Self {
+            conversation_id,
+            version,
+        })
+    }
+}
+
+pub async fn get_conversation_version(
+    State(state): State<AppState>,
+    ConversationVersionPath {
+        conversation_id,
+        version: raw_version,
+    }: ConversationVersionPath,
+) -> Result<Json<Versioned<api_conversations::Conversation>>, ApiError> {
+    info!(
+        conversation_id = %conversation_id,
+        raw_version = raw_version.as_i64(),
+        "get_conversation_version invoked"
+    );
+    let versions = state
+        .store()
+        .get_conversation_versions(&conversation_id)
+        .await
+        .map_err(map_conversation_error)?;
+
+    let max_version = versions.iter().map(|v| v.version).max().unwrap_or(0);
+    let version = super::resolve_version(
+        raw_version,
+        max_version,
+        "conversation",
+        conversation_id.as_ref(),
+    )?;
+
+    let entry = versions
+        .into_iter()
+        .find(|entry| entry.version == version)
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "conversation '{conversation_id}' version {version} not found"
+            ))
+        })?;
+
+    let item = entry.item.to_api(
+        conversation_id.clone(),
+        entry.creation_time,
+        entry.timestamp,
+    );
+    let response = Versioned::with_optional_actor(
+        item,
+        entry.version,
+        entry.timestamp,
+        entry.actor,
+        entry.creation_time,
+    );
+    info!(conversation_id = %conversation_id, version, "get_conversation_version completed");
+    Ok(Json(response))
 }
 
 pub async fn send_message(
@@ -293,7 +379,6 @@ fn map_close_conversation_error(err: CloseConversationError) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::conversations::ConversationEvent as DomainEvent;
     use hydra_common::ConversationId;
 
     #[test]
@@ -311,22 +396,5 @@ mod tests {
         let api_err = map_conversation_error(err);
         assert_eq!(api_err.status().as_u16(), 500);
         assert!(api_err.message().contains("db broke"));
-    }
-
-    #[test]
-    fn event_preview_suspending() {
-        let event = DomainEvent::Suspending {
-            reason: "idle_timeout".to_string(),
-            timestamp: chrono::Utc::now(),
-        };
-        assert_eq!(event.preview(), "Suspending: idle_timeout");
-    }
-
-    #[test]
-    fn event_preview_closed() {
-        let event = DomainEvent::Closed {
-            timestamp: chrono::Utc::now(),
-        };
-        assert_eq!(event.preview(), "Closed");
     }
 }

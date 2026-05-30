@@ -10,12 +10,10 @@ import type {
   Repository,
   AgentRecord,
   Conversation,
-  ConversationEvent,
   SessionEvent,
   UserSummary,
 } from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
-import { clearConversationEvents, setConversationEvents } from "./routes/conversations.js";
 import { clearSessionEvents, setSessionEvents } from "./routes/sessions.js";
 import { clearSeededRelations, addSeededRelation } from "./routes/relations.js";
 
@@ -66,7 +64,6 @@ interface SeedData {
   labels?: Record<string, LabelData>;
   label_associations?: LabelAssociationSeed[];
   conversations?: Record<string, Conversation>;
-  conversation_events?: Record<string, ConversationEvent[]>;
   session_events?: Record<string, SessionEvent[]>;
   relations?: RelationSeed[];
 }
@@ -147,7 +144,6 @@ function normalizePatch(patch: Patch): Patch {
 export function loadSeedData(store: Store): void {
   store.clear();
   clearAssociations();
-  clearConversationEvents();
   clearSessionEvents();
   clearSeededRelations();
 
@@ -207,14 +203,6 @@ export function loadSeedData(store: Store): void {
     }
   }
 
-  let conversationEventCount = 0;
-  if (seed.conversation_events) {
-    for (const [id, events] of Object.entries(seed.conversation_events)) {
-      setConversationEvents(id, events);
-      conversationEventCount += events.length;
-    }
-  }
-
   let sessionEventCount = 0;
   if (seed.session_events) {
     for (const [id, events] of Object.entries(seed.session_events)) {
@@ -241,7 +229,6 @@ export function loadSeedData(store: Store): void {
     `${Object.keys(seed.agents).length} agents, ` +
     `${labelCount} labels, ` +
     `${conversationCount} conversations, ` +
-    `${conversationEventCount} conversation events, ` +
     `${sessionEventCount} session events, ` +
     `${relationCount} relations`,
   );
