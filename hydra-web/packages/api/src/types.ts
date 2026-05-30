@@ -169,5 +169,3 @@ export type { ConversationSummary } from "./generated/ConversationSummary";
 export type { CreateConversationRequest } from "./generated/CreateConversationRequest";
 export type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
 export type { SendMessageRequest } from "./generated/SendMessageRequest";
-export type { ServerMessage } from "./generated/ServerMessage";
-export type { WorkerMessage } from "./generated/WorkerMessage";
