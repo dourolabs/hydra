@@ -190,40 +190,6 @@ pub async fn get_session(
     Ok(Json(record))
 }
 
-pub async fn get_session_events(
-    State(state): State<AppState>,
-    SessionIdPath(session_id): SessionIdPath,
-) -> Result<Json<Vec<v1::sessions::SessionEvent>>, ApiError> {
-    info!(session_id = %session_id, "get_session_events invoked");
-
-    let events = state
-        .store()
-        .get_session_events(&session_id)
-        .await
-        .map_err(|err| match err {
-            StoreError::SessionNotFound(_) => {
-                error!(session_id = %session_id, "session not found");
-                ApiError::not_found(format!("session '{session_id}' not found"))
-            }
-            other => {
-                error!(session_id = %session_id, error = %other, "failed to load session events");
-                ApiError::internal(format!(
-                    "Failed to load session events '{session_id}': {other}"
-                ))
-            }
-        })?;
-
-    let api_events: Vec<v1::sessions::SessionEvent> =
-        events.into_iter().map(|v| v.item.into()).collect();
-
-    info!(
-        session_id = %session_id,
-        returned = api_events.len(),
-        "get_session_events completed"
-    );
-    Ok(Json(api_events))
-}
-
 pub async fn list_session_versions(
     State(state): State<AppState>,
     SessionIdPath(session_id): SessionIdPath,
