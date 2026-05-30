@@ -1,9 +1,6 @@
 use crate::domain::actors::{Actor, ActorRef};
 use crate::{
-    app::{
-        AppState, CloseConversationError, CreateConversationError, ResumeConversationError,
-        SendMessageError,
-    },
+    app::{AppState, CloseConversationError, CreateConversationError, SendMessageError},
     store::StoreError,
 };
 use axum::{
@@ -252,29 +249,6 @@ pub async fn delete_conversation(
     Ok(Json(api_conversation))
 }
 
-pub async fn resume_conversation(
-    State(state): State<AppState>,
-    Extension(actor): Extension<Actor>,
-    ConversationIdPath(conversation_id): ConversationIdPath,
-) -> Result<Json<api_conversations::Conversation>, ApiError> {
-    info!(conversation_id = %conversation_id, "resume_conversation invoked");
-
-    let actor_ref = ActorRef::from(&actor);
-    let versioned = state
-        .resume_conversation(&conversation_id, actor_ref)
-        .await
-        .map_err(map_resume_conversation_error)?;
-
-    let api_conversation = versioned.item.to_api(
-        conversation_id.clone(),
-        versioned.creation_time,
-        versioned.timestamp,
-    );
-
-    info!(conversation_id = %conversation_id, "resume_conversation completed");
-    Ok(Json(api_conversation))
-}
-
 fn map_create_conversation_error(err: CreateConversationError) -> ApiError {
     match err {
         CreateConversationError::Store { source } => map_conversation_error(source),
@@ -313,15 +287,6 @@ fn map_send_message_error(err: SendMessageError) -> ApiError {
 fn map_close_conversation_error(err: CloseConversationError) -> ApiError {
     match err {
         CloseConversationError::Store { source } => map_conversation_error(source),
-    }
-}
-
-fn map_resume_conversation_error(err: ResumeConversationError) -> ApiError {
-    match err {
-        ResumeConversationError::Store { source } => map_conversation_error(source),
-        ResumeConversationError::AlreadyActive => {
-            ApiError::conflict("conversation is already active".to_string())
-        }
     }
 }
 

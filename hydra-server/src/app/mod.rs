@@ -26,9 +26,7 @@ use tokio::sync::{Mutex, RwLock};
 
 pub use agents::AgentError;
 pub use app_state::{AppState, DeviceSession, default_policy_config};
-pub use conversations::{
-    CloseConversationError, CreateConversationError, ResumeConversationError, SendMessageError,
-};
+pub use conversations::{CloseConversationError, CreateConversationError, SendMessageError};
 pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use hydra_common::repositories::{Repository, RepositoryRecord};

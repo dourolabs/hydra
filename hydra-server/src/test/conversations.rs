@@ -657,128 +657,6 @@ async fn close_already_closed_conversation_is_idempotent() -> anyhow::Result<()>
 }
 
 #[tokio::test]
-async fn resume_conversation_creates_new_session() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
-    let client = test_client();
-
-    let create_request = CreateConversationRequest {
-        message: Some("Hello".to_string()),
-        agent_name: None,
-        session_settings: None,
-    };
-    let created: Conversation = client
-        .post(format!("{}/v1/conversations", server.base_url()))
-        .json(&create_request)
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    // Close the conversation
-    client
-        .post(format!(
-            "{}/v1/conversations/{}/close",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?;
-
-    // Resume it
-    let response = client
-        .post(format!(
-            "{}/v1/conversations/{}/resume",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?;
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let resumed: Conversation = response.json().await?;
-    assert_eq!(
-        resumed.status,
-        hydra_common::api::v1::conversations::ConversationStatus::Active
-    );
-
-    // Wait for the resume to settle — the automation appends the Resumed
-    // event and spawns the second session asynchronously.
-    let resumed_session_id = poll_until(POLL_TIMEOUT, || async {
-        let events: Vec<ConversationEvent> = client
-            .get(format!(
-                "{}/v1/conversations/{}/events",
-                server.base_url(),
-                created.conversation_id
-            ))
-            .send()
-            .await
-            .ok()?
-            .json()
-            .await
-            .ok()?;
-        events.iter().rev().find_map(|e| match e {
-            ConversationEvent::Resumed { session_id, .. } => Some(session_id.clone()),
-            _ => None,
-        })
-    })
-    .await
-    .expect("expected a Resumed event after /resume");
-    let sessions: ListSessionsResponse = client
-        .get(format!("{}/v1/sessions", server.base_url()))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(
-        sessions
-            .sessions
-            .iter()
-            .any(|s| s.session_id == resumed_session_id),
-        "resumed session_id should appear in the sessions list"
-    );
-    assert!(
-        sessions.sessions.len() >= 2,
-        "resume should produce a second session in addition to the original (got {})",
-        sessions.sessions.len()
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn resume_active_conversation_returns_409() -> anyhow::Result<()> {
-    let server = spawn_test_server().await?;
-    let client = test_client();
-
-    let create_request = CreateConversationRequest {
-        message: Some("Hello".to_string()),
-        agent_name: None,
-        session_settings: None,
-    };
-    let created: Conversation = client
-        .post(format!("{}/v1/conversations", server.base_url()))
-        .json(&create_request)
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    // Try to resume an already-active conversation — should fail with 409
-    let response = client
-        .post(format!(
-            "{}/v1/conversations/{}/resume",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?;
-
-    assert_eq!(response.status(), StatusCode::CONFLICT);
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
@@ -827,18 +705,10 @@ async fn full_lifecycle_create_message_close_resume_message() -> anyhow::Result<
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // 4. Resume
-    let response = client
-        .post(format!(
-            "{}/v1/conversations/{}/resume",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::OK);
-
-    // 5. Send another message after resume
+    // 4. Send another message after close — `send_message` flips a
+    //    non-Active conversation back to Active and the
+    //    SpawnConversationSessionsAutomation appends the Resumed event +
+    //    spawns the new session.
     let msg_request = SendMessageRequest {
         content: "After resume".to_string(),
     };
