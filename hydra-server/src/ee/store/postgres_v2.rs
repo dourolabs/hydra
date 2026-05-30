@@ -3,7 +3,7 @@
 //! This store implementation uses the v2 tables with proper column definitions
 //! instead of JSONB payloads, providing better query performance and type safety.
 
-use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+use crate::domain::conversations::{Conversation, ConversationStatus};
 use crate::store::status_to_db_str;
 use crate::{
     domain::{
@@ -36,8 +36,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
-    Rgb, SessionId, VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, Rgb, SessionId,
+    VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -158,7 +158,6 @@ const TABLE_AUTH_TOKENS: &str = "metis.auth_tokens";
 const TABLE_USER_SECRETS: &str = "metis.user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 const TABLE_CONVERSATIONS_V2: &str = "metis.conversations_v2";
-const TABLE_CONVERSATION_EVENTS_V2: &str = "metis.conversation_events_v2";
 const TABLE_SESSION_EVENTS_V2: &str = "metis.session_events_v2";
 const TABLE_SESSION_STATE_V2: &str = "metis.session_state_v2";
 
@@ -1493,18 +1492,6 @@ struct ConversationRow {
     updated_at: DateTime<Utc>,
     #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
-}
-
-#[derive(sqlx::FromRow)]
-struct ConversationEventRow {
-    #[allow(dead_code)]
-    id: i64,
-    #[allow(dead_code)]
-    conversation_id: String,
-    version_number: i64,
-    event_data: Value,
-    actor: Option<Value>,
-    created_at: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3830,48 +3817,38 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         id: &ConversationId,
     ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
-        let snapshot = self.get_conversation(id, false).await?;
-        let events = self.get_conversation_events(id).await?;
-        Ok(crate::store::fold_conversation_versions(
-            id, &snapshot, &events,
-        ))
-    }
-
-    async fn get_conversation_events(
-        &self,
-        id: &ConversationId,
-    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        // Ensure conversation exists (exclude deleted)
-        self.get_conversation(id, false).await?;
-
         let query = format!(
-            "SELECT id, conversation_id, version_number, event_data, actor, created_at \
-             FROM {TABLE_CONVERSATION_EVENTS_V2} \
-             WHERE conversation_id = $1 \
-             ORDER BY id"
+            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
+             FROM {TABLE_CONVERSATIONS_V2} \
+             WHERE id = $1 \
+             ORDER BY version_number"
         );
-        let rows = sqlx::query_as::<_, ConversationEventRow>(&query)
+        let rows = sqlx::query_as::<_, ConversationRow>(&query)
             .bind(id.as_ref())
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
 
+        if rows.is_empty() {
+            return Err(StoreError::ConversationNotFound(id.clone()));
+        }
+
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
             let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal(
-                    "invalid version number stored for conversation event".to_string(),
-                )
+                StoreError::Internal(format!(
+                    "invalid version number stored for conversation '{}'",
+                    row.id
+                ))
             })?;
-            let event: ConversationEvent = serde_json::from_value(row.event_data).map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize conversation event: {e}"))
-            })?;
+            let conversation = Self::row_to_conversation(&row)?;
             results.push(Versioned::with_optional_actor(
-                event,
+                conversation,
                 version,
                 row.created_at,
                 parse_actor_json(row.actor)?,
-                row.created_at,
+                row.creation_time.unwrap_or(row.created_at),
             ));
         }
 
@@ -3890,8 +3867,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         // Query 1: Chat-text SessionEvent count per conversation_id —
         // summed across every live session linked to the conversation.
-        // ConversationEvents are lifecycle-only post Phase E step 18 and
-        // do not contribute to the count.
         let count_query = format!(
             "SELECT t.conversation_id AS conversation_id, COUNT(*) AS event_count \
              FROM {TABLE_SESSION_EVENTS_V2} e \
@@ -5060,96 +5035,6 @@ impl Store for PostgresStoreV2 {
         .await?;
 
         Ok(next_version)
-    }
-
-    async fn append_conversation_event(
-        &self,
-        id: &ConversationId,
-        event: ConversationEvent,
-        actor: &ActorRef,
-    ) -> Result<ConversationEventId, StoreError> {
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
-
-        // Ensure conversation exists
-        let _ = {
-            let query = format!(
-                "SELECT version_number FROM {TABLE_CONVERSATIONS_V2} \
-                 WHERE id = $1 AND is_latest = true FOR SHARE"
-            );
-            sqlx::query_scalar::<_, i64>(&query)
-                .bind(id.as_ref())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(map_sqlx_error)?
-                .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?
-        };
-
-        // Get next event version and event_index atomically within the transaction.
-        // Lock existing event rows to serialize concurrent appends. The UNIQUE
-        // constraint on (conversation_id, version_number) provides a safety net.
-        let _lock_rows = {
-            let query = format!(
-                "SELECT id FROM {TABLE_CONVERSATION_EVENTS_V2} \
-                 WHERE conversation_id = $1 FOR UPDATE"
-            );
-            sqlx::query_scalar::<_, i64>(&query)
-                .bind(id.as_ref())
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(map_sqlx_error)?
-        };
-        let latest_event_version = {
-            let query = format!(
-                "SELECT COALESCE(MAX(version_number), 0) FROM {TABLE_CONVERSATION_EVENTS_V2} \
-                 WHERE conversation_id = $1"
-            );
-            sqlx::query_scalar::<_, i64>(&query)
-                .bind(id.as_ref())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(map_sqlx_error)?
-        };
-        let next_version = VersionNumber::try_from(latest_event_version + 1).map_err(|_| {
-            StoreError::Internal(format!(
-                "version number overflow for conversation event '{id}'"
-            ))
-        })?;
-        let event_index = latest_event_version as usize;
-
-        let event_data = serde_json::to_value(&event).map_err(|e| {
-            StoreError::Internal(format!("failed to serialize conversation event: {e}"))
-        })?;
-        let event_type = match &event {
-            ConversationEvent::Suspending { .. } => "suspending",
-            ConversationEvent::Resumed { .. } => "resumed",
-            ConversationEvent::Closed { .. } => "closed",
-        };
-        let actor_json = actor_to_json(actor);
-
-        let query = format!(
-            "INSERT INTO {TABLE_CONVERSATION_EVENTS_V2} \
-             (conversation_id, version_number, event_type, event_data, actor) \
-             VALUES ($1, $2, $3, $4, $5)"
-        );
-        sqlx::query(&query)
-            .bind(id.as_ref())
-            .bind(
-                i64::try_from(next_version)
-                    .map_err(|_| StoreError::Internal("version number overflow".to_string()))?,
-            )
-            .bind(event_type)
-            .bind(&event_data)
-            .bind(&actor_json)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        tx.commit().await.map_err(map_sqlx_error)?;
-
-        Ok(ConversationEventId {
-            conversation_id: id.clone(),
-            event_index,
-        })
     }
 
     async fn append_session_event(
@@ -8607,7 +8492,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn conversation_round_trip_v2(pool: PgStorePool) {
-        use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+        use crate::domain::conversations::{Conversation, ConversationStatus};
         use hydra_common::api::v1::conversations::SearchConversationsQuery;
 
         let store = PostgresStoreV2::new(pool);
@@ -8677,32 +8562,14 @@ mod tests {
         assert_eq!(fetched2.item.title.as_deref(), Some("Updated title"));
         assert_eq!(fetched2.item.status, ConversationStatus::Idle);
 
-        // -- Append events --
-        let event1 = ConversationEvent::Suspending {
-            reason: "idle".to_string(),
-            timestamp: Utc::now(),
-        };
-        let ev1_id = store
-            .append_conversation_event(&conv_id, event1.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(ev1_id.conversation_id, conv_id);
-        assert_eq!(ev1_id.event_index, 0);
-
-        let event2 = ConversationEvent::Closed {
-            timestamp: Utc::now(),
-        };
-        let ev2_id = store
-            .append_conversation_event(&conv_id, event2.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(ev2_id.conversation_id, conv_id);
-        assert_eq!(ev2_id.event_index, 1);
-
-        let events = store.get_conversation_events(&conv_id).await.unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].item, event1);
-        assert_eq!(events[1].item, event2);
+        // -- get_conversation_versions returns one row per update --
+        let versions = store.get_conversation_versions(&conv_id).await.unwrap();
+        assert_eq!(versions.len(), 2);
+        let statuses: Vec<_> = versions.iter().map(|v| v.item.status).collect();
+        assert_eq!(
+            statuses,
+            vec![ConversationStatus::Active, ConversationStatus::Idle]
+        );
 
         // -- Deletion filtering --
         let deleted_conv = Conversation {
@@ -9165,10 +9032,6 @@ mod tests {
     #[ignore]
     async fn conversation_event_summaries_sources_preview_from_chat_text_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let (conv_only_lifecycle, _) = store
-            .add_conversation(sample_conversation("alice"), &ActorRef::test())
-            .await
-            .unwrap();
         let (conv_user_only, _) = store
             .add_conversation(sample_conversation("alice"), &ActorRef::test())
             .await
@@ -9186,30 +9049,7 @@ mod tests {
             .await
             .unwrap();
 
-        // 1. Lifecycle-only ConversationEvents → event_count > 0, preview None.
-        store
-            .append_conversation_event(
-                &conv_only_lifecycle,
-                ConversationEvent::Suspending {
-                    reason: "sigterm".to_string(),
-                    timestamp: Utc::now(),
-                },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        store
-            .append_conversation_event(
-                &conv_only_lifecycle,
-                ConversationEvent::Closed {
-                    timestamp: Utc::now(),
-                },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        // 2. Single UserMessage in a single session.
+        // Single UserMessage in a single session.
         let (sid_user_only, _) = store
             .add_session(
                 interactive_session(Some(conv_user_only.clone())),
@@ -9230,8 +9070,7 @@ mod tests {
             .await
             .unwrap();
 
-        // 3. UserMessage then AssistantMessage in one session — Assistant wins.
-        // Followed by a lifecycle ConversationEvent, which must not bleed in.
+        // UserMessage then AssistantMessage in one session — Assistant wins.
         let (sid_chat, _) = store
             .add_session(
                 interactive_session(Some(conv_user_then_assistant.clone())),
@@ -9262,18 +9101,7 @@ mod tests {
             )
             .await
             .unwrap();
-        store
-            .append_conversation_event(
-                &conv_user_then_assistant,
-                ConversationEvent::Closed {
-                    timestamp: Utc::now(),
-                },
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        // 4. Chat-text in older session, only tool/lifecycle in newer session.
+        // Chat-text in older session, only tool/lifecycle in newer session.
         let t_old = Utc::now() - chrono::Duration::seconds(60);
         let (sid_old, _) = store
             .add_session(
@@ -9327,7 +9155,6 @@ mod tests {
 
         let summaries = store
             .get_conversation_event_summaries(&[
-                conv_only_lifecycle.clone(),
                 conv_user_only.clone(),
                 conv_user_then_assistant.clone(),
                 conv_cross_session.clone(),
@@ -9336,10 +9163,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Lifecycle-only ConversationEvents don't contribute to event_count,
-        // and the conversation has no sessions → omitted entirely.
-        assert!(!summaries.contains_key(&conv_only_lifecycle));
-
         let s = summaries.get(&conv_user_only).expect("user-only conv");
         assert_eq!(s.event_count, 1);
         assert_eq!(s.last_event_preview.as_deref(), Some("User: hello"));
@@ -9347,8 +9170,7 @@ mod tests {
         let s = summaries
             .get(&conv_user_then_assistant)
             .expect("user+assistant conv");
-        // 2 chat-text events across the single linked session; the lifecycle
-        // ConversationEvent is excluded.
+        // 2 chat-text events across the single linked session.
         assert_eq!(s.event_count, 2);
         assert_eq!(s.last_event_preview.as_deref(), Some("Assistant: hey"));
 

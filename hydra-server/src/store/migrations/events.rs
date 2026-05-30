@@ -237,6 +237,13 @@ mod sqlite {
     use sqlx::{Row, SqlitePool};
 
     pub async fn run(pool: &SqlitePool) -> Result<()> {
+        // The source table is dropped at version 20260604000000. Once
+        // it's gone there is no historical data left to backfill, and
+        // the migration runs unconditionally on every server boot — so
+        // short-circuit before issuing a query against a missing table.
+        if !table_exists(pool, "conversation_events").await? {
+            return Ok(());
+        }
         // Conversations to process: any with at least one message event.
         let conv_ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT id FROM conversation_events \
@@ -251,6 +258,16 @@ mod sqlite {
             process_conversation(pool, &conv_id).await?;
         }
         Ok(())
+    }
+
+    async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1")
+                .bind(name)
+                .fetch_optional(pool)
+                .await
+                .with_context(|| format!("check sqlite_master for table {name}"))?;
+        Ok(row.is_some())
     }
 
     async fn process_conversation(pool: &SqlitePool, conv_id: &str) -> Result<()> {
@@ -475,6 +492,13 @@ mod postgres {
     use sqlx::{PgPool, Row};
 
     pub async fn run(pool: &PgPool) -> Result<()> {
+        // The source table is dropped at version 20260604000000. Once
+        // it's gone there is no historical data left to backfill, and
+        // the migration runs unconditionally on every server boot — so
+        // short-circuit before issuing a query against a missing table.
+        if !table_exists(pool, "conversation_events_v2").await? {
+            return Ok(());
+        }
         let conv_ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT conversation_id FROM metis.conversation_events_v2 \
              WHERE event_type IN ('user_message', 'assistant_message') \
@@ -488,6 +512,18 @@ mod postgres {
             process_conversation(pool, &conv_id).await?;
         }
         Ok(())
+    }
+
+    async fn table_exists(pool: &PgPool, name: &str) -> Result<bool> {
+        let row: Option<(bool,)> = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'metis' AND table_name = $1)",
+        )
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("check information_schema.tables for metis.{name}"))?;
+        Ok(row.map(|(b,)| b).unwrap_or(false))
     }
 
     async fn process_conversation(pool: &PgPool, conv_id: &str) -> Result<()> {
@@ -672,8 +708,13 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn fresh_pool() -> SqlitePool {
+        // Migrate up to (but excluding) the `conversation_events` DROP at
+        // 20260604000000 so the legacy source table is still present for
+        // the migrate-events backfill these tests exercise.
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
-        SqliteStore::run_migrations(&pool).await.unwrap();
+        crate::store::sqlite_store::run_migrations(&pool, Some(20_260_603_010_000))
+            .await
+            .unwrap();
         pool
     }
 

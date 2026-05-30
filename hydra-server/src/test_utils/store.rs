@@ -1,4 +1,4 @@
-use crate::domain::conversations::{Conversation, ConversationEvent};
+use crate::domain::conversations::Conversation;
 use crate::{
     domain::{
         actors::{Actor, ActorRef},
@@ -24,8 +24,8 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::{
-    ConversationEventId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName,
-    SessionId, VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId,
+    VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -349,13 +349,6 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn get_conversation_events(
-        &self,
-        _id: &ConversationId,
-    ) -> Result<Vec<Versioned<ConversationEvent>>, StoreError> {
-        fail()
-    }
-
     async fn get_conversation_versions(
         &self,
         _id: &ConversationId,
@@ -659,15 +652,6 @@ impl Store for FailingStore {
         _conversation: Conversation,
         _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        fail()
-    }
-
-    async fn append_conversation_event(
-        &self,
-        _id: &ConversationId,
-        _event: ConversationEvent,
-        _actor: &ActorRef,
-    ) -> Result<ConversationEventId, StoreError> {
         fail()
     }
 

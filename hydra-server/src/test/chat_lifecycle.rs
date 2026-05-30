@@ -26,8 +26,8 @@ use hydra_common::{
     ConversationId, SessionId,
     api::v1::{
         conversations::{
-            Conversation, ConversationEvent, ConversationStatus, CreateConversationRequest,
-            SendMessageRequest, ServerMessage, SessionStatePayload, WorkerMessage,
+            Conversation, ConversationStatus, CreateConversationRequest, SendMessageRequest,
+            ServerMessage, SessionStatePayload, WorkerMessage,
         },
         sessions::{ListSessionsResponse, SessionEvent, WorkerContext},
     },
@@ -153,30 +153,35 @@ async fn find_new_session_for_conversation(
     }
 }
 
-/// Poll the events endpoint until a `Resumed` event appears, then return its
-/// session_id.
+/// Poll the sessions list until a session other than `exclude` appears for
+/// `conversation_id`, then return its id.
 async fn poll_resumed_session_id(
     client: &reqwest::Client,
     base_url: &str,
     conversation_id: &ConversationId,
+    exclude: &SessionId,
 ) -> Option<SessionId> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let events: Vec<ConversationEvent> = client
+        let response: Option<ListSessionsResponse> = client
             .get(format!(
-                "{base_url}/v1/conversations/{conversation_id}/events"
+                "{base_url}/v1/sessions?conversation_id={conversation_id}"
             ))
             .send()
             .await
             .ok()?
             .json()
             .await
-            .ok()?;
-        if let Some(id) = events.iter().rev().find_map(|e| match e {
-            ConversationEvent::Resumed { session_id, .. } => Some(session_id.clone()),
-            _ => None,
-        }) {
-            return Some(id);
+            .ok();
+        if let Some(list) = response {
+            if let Some(record) = list
+                .sessions
+                .into_iter()
+                .filter(|s| &s.session_id != exclude)
+                .max_by_key(|s| s.session.creation_time)
+            {
+                return Some(record.session_id);
+            }
         }
         if tokio::time::Instant::now() >= deadline {
             return None;
@@ -511,24 +516,6 @@ async fn worker_suspending_transitions_conversation_to_idle_and_stores_session_s
     .await?;
     assert_eq!(idle.status, ConversationStatus::Idle);
 
-    // Verify the Suspending event was appended.
-    let events: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{}/events",
-            server.base_url(),
-            created.conversation_id
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, ConversationEvent::Suspending { reason, .. } if reason == "idle_timeout")),
-        "expected a Suspending event in the conversation history, got {events:?}"
-    );
-
     // Verify session_state was persisted via the store API.
     let stored_state = store.get_session_state(&session_id).await?;
     assert_eq!(
@@ -639,31 +626,30 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
         .await?;
     assert_eq!(active.status, ConversationStatus::Active);
 
-    // Find the Resumed event's session_id — that's the new session. The
-    // automation spawns the new session and appends `Resumed`
+    // The automation spawns a new session for the resumed conversation
     // asynchronously, so poll until it shows up.
-    let resumed_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
-        .await
-        .expect("expected a Resumed event after implicit resume via /messages");
+    let resumed_session_id = poll_resumed_session_id(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        &initial_session_id,
+    )
+    .await
+    .expect("expected a new session after implicit resume via /messages");
     assert_ne!(
         resumed_session_id, initial_session_id,
         "resume must create a brand-new session"
     );
 
-    // Inspect the resumed session's resume hint: conversation_resume_from
-    // should equal the conversation-event-log index just after the most
-    // recent Suspending. Post-Phase-E step 18 the conversation events log
-    // holds only lifecycle events, so at suspend the only event is the
-    // Suspending itself → index just after = 1.
     let resumed_session = store.get_session(&resumed_session_id, false).await?.item;
     assert!(
         resumed_session.is_interactive(),
         "resumed session must be interactive"
     );
     assert_eq!(
-        resumed_session.mode.conversation_resume_from(),
-        Some(1),
-        "conversation_resume_from should equal pre-Resumed event count"
+        resumed_session.resumed_from.as_ref(),
+        Some(&initial_session_id),
+        "resumed_from must point at the prior session"
     );
 
     // Step 3: connect as the new worker, passing the real worker's value of
@@ -760,6 +746,7 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
         .json()
         .await?;
     let conversation_id = created.conversation_id.clone();
+    let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
 
     // Send a follow-up message (no worker connected — message is queued).
     client
@@ -822,11 +809,15 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
     assert_eq!(active.status, ConversationStatus::Active);
 
     // Wait for the spawn-conversation-sessions automation to produce the
-    // new session and append the Resumed event (both happen async on the
-    // bus); the Resumed event carries the new session id.
-    let new_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
-        .await
-        .expect("expected a Resumed event after implicit resume via /messages");
+    // new session.
+    let new_session_id = poll_resumed_session_id(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        &initial_session_id,
+    )
+    .await
+    .expect("expected a new session after implicit resume via /messages");
 
     let sessions_after: ListSessionsResponse = client
         .get(format!("{}/v1/sessions", server.base_url()))
@@ -845,27 +836,11 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
         new_session.is_interactive(),
         "resumed session must be interactive"
     );
-    assert!(
-        new_session.mode.conversation_resume_from().is_some(),
-        "conversation_resume_from must be set on a session created by implicit resume"
+    assert_eq!(
+        new_session.resumed_from.as_ref(),
+        Some(&initial_session_id),
+        "resumed_from must point at the prior session"
     );
-
-    // Sanity-check the event sequence end-to-end.
-    let events: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{conversation_id}/events",
-            server.base_url()
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    // The conversation events log holds only lifecycle events post-Phase-E
-    // step 18 (chat content lives on `SessionEvent`). Expected: Closed,
-    // Resumed.
-    assert_eq!(events.len(), 2, "unexpected event sequence: {events:?}");
-    assert!(matches!(events[0], ConversationEvent::Closed { .. }));
-    assert!(matches!(events[1], ConversationEvent::Resumed { .. }));
 
     Ok(())
 }
@@ -1056,27 +1031,10 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         .json()
         .await?;
     assert_eq!(closed.status, ConversationStatus::Closed);
-    let events_after_close: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{conversation_id}/events",
-            server.base_url()
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(
-        matches!(
-            events_after_close.last(),
-            Some(ConversationEvent::Closed { .. })
-        ),
-        "Closed event should be appended by /close, got {events_after_close:?}"
-    );
 
     // Step 5: implicit resume via /messages with msg4 — flipping the
     // conversation back to Active and queueing msg4 for delivery to the
-    // new worker. The automation spawns the new session and appends a
-    // Resumed event.
+    // new worker. The automation spawns the new session.
     client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/messages",
@@ -1088,19 +1046,22 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         .send()
         .await?
         .error_for_status()?;
-    let new_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
-        .await
-        .expect("expected a Resumed event after implicit resume via /messages");
+    let new_session_id = poll_resumed_session_id(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        &initial_session_id,
+    )
+    .await
+    .expect("expected a new session after implicit resume via /messages");
     assert_ne!(
         new_session_id, initial_session_id,
         "resume must create a brand-new session"
     );
 
-    // Step 6: connect fake-worker #2 and handshake as Fresh with the
-    // resume_from_event_index value the real worker would send (the
-    // conversation_resume_from on the resumed session). The server must
-    // ignore that value and return the full prior event log so the new
-    // worker can reconstruct context.
+    // Step 6: connect fake-worker #2 and handshake as Fresh. The server
+    // returns the full prior event log so the new worker can reconstruct
+    // context.
     let new_session = store.get_session(&new_session_id, false).await?.item;
     assert!(
         new_session.is_interactive(),
@@ -1228,35 +1189,17 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "exactly 3 assistant messages in insertion order, no duplicates"
     );
 
-    // Lifecycle events still live on the conversation log.
-    let final_events: Vec<ConversationEvent> = client
+    // The conversation must end up Active after the resume.
+    let final_conv: Conversation = client
         .get(format!(
-            "{}/v1/conversations/{conversation_id}/events",
+            "{}/v1/conversations/{conversation_id}",
             server.base_url()
         ))
         .send()
         .await?
         .json()
         .await?;
-    let suspending_count = final_events
-        .iter()
-        .filter(|e| matches!(e, ConversationEvent::Suspending { .. }))
-        .count();
-    let closed_count = final_events
-        .iter()
-        .filter(|e| matches!(e, ConversationEvent::Closed { .. }))
-        .count();
-    let resumed_count = final_events
-        .iter()
-        .filter(|e| matches!(e, ConversationEvent::Resumed { .. }))
-        .count();
-    assert_eq!(
-        (suspending_count, closed_count, resumed_count),
-        (1, 1, 1),
-        "exactly one Suspending, one Closed, one Resumed event in the final \
-         history; got Suspending={suspending_count}, Closed={closed_count}, \
-         Resumed={resumed_count}"
-    );
+    assert_eq!(final_conv.status, ConversationStatus::Active);
 
     Ok(())
 }
@@ -1328,8 +1271,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
 
     // Step 3: implicit resume via /messages — flipping the Closed
     // conversation back to Active and queueing the trigger message. The
-    // automation spawns a new session with conversation_resume_from set
-    // to the event count snapshotted at this point.
+    // automation spawns a new session.
     client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/messages",
@@ -1341,9 +1283,14 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         .send()
         .await?
         .error_for_status()?;
-    let new_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
-        .await
-        .expect("expected a Resumed event after implicit resume via /messages");
+    let new_session_id = poll_resumed_session_id(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        &initial_session_id,
+    )
+    .await
+    .expect("expected a new session after implicit resume via /messages");
     assert_ne!(
         new_session_id, initial_session_id,
         "resume must create a brand-new session"
@@ -1353,10 +1300,11 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         new_session.is_interactive(),
         "resumed session must be interactive"
     );
-    let _events_len_at_resume = new_session
-        .mode
-        .conversation_resume_from()
-        .expect("conversation_resume_from must be set on a session created by implicit resume");
+    assert_eq!(
+        new_session.resumed_from.as_ref(),
+        Some(&initial_session_id),
+        "resumed_from must point at the prior session"
+    );
 
     // Step 4: connect fake-worker #2 with the real worker's
     // resume_from_event_index value. The server must return the FULL event
@@ -1900,45 +1848,28 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
 
     // ---- Assertions ----
 
-    // ConversationEvent log (lifecycle only post-Phase-E step 18).
-    let convo_events = store.get_conversation_events(&conversation_id).await?;
-    let convo_suspending: usize = convo_events
-        .iter()
-        .filter(|e| {
-            matches!(
-                e.item,
-                crate::domain::conversations::ConversationEvent::Suspending { .. }
-            )
-        })
-        .count();
-    let convo_resumed: usize = convo_events
-        .iter()
-        .filter(|e| {
-            matches!(
-                e.item,
-                crate::domain::conversations::ConversationEvent::Resumed { .. }
-            )
-        })
-        .count();
-    let convo_closed: usize = convo_events
-        .iter()
-        .filter(|e| {
-            matches!(
-                e.item,
-                crate::domain::conversations::ConversationEvent::Closed { .. }
-            )
-        })
-        .count();
-    assert_eq!(convo_suspending, 1, "convo Suspending count");
-    assert_eq!(convo_resumed, 1, "convo Resumed count");
-    assert_eq!(convo_closed, 1, "convo Closed count");
+    // The conversation's status-transition log carries the lifecycle: each
+    // `update_conversation` call (transparent flips inside send_message,
+    // `flip_conversation_to_idle`, and `close_conversation`) creates a new
+    // versioned row. We expect at least one Idle and one Closed.
+    let versions = store.get_conversation_versions(&conversation_id).await?;
+    let statuses: Vec<_> = versions.iter().map(|v| v.item.status).collect::<Vec<_>>();
+    assert!(
+        statuses.contains(&crate::domain::conversations::ConversationStatus::Idle),
+        "expected an Idle version in the lifecycle, got {statuses:?}",
+    );
+    assert!(
+        statuses.contains(&crate::domain::conversations::ConversationStatus::Closed),
+        "expected a Closed version in the lifecycle, got {statuses:?}",
+    );
 
-    // SessionEvent log: the dual-write puts each ConversationEvent on the
-    // active session. UserMessage("hello") and the assistant reply + the
-    // Suspending all happen on s1; UserMessage("follow-up") may land on s1
-    // (relay still connected) or s2 depending on relay-map timing — either
-    // is acceptable. `Resumed` is no longer dual-written by the server (it
-    // moved to the worker per the WS-only lifecycle redesign); the worker
+    // SessionEvent log: the dual-write puts the lifecycle SessionEvent
+    // (Closed) on the active session. UserMessage("hello") and the
+    // assistant reply + the Suspending all happen on s1;
+    // UserMessage("follow-up") may land on s1 (relay still connected) or
+    // s2 depending on relay-map timing — either is acceptable. `Resumed`
+    // is no longer dual-written by the server (it moved to the worker per
+    // the WS-only lifecycle redesign); the worker
     // now emits `SessionEvent::Resumed { source }` on BOTH the
     // native-materialization path (`source = Native`) and the
     // transcript-replay fallback (`source = Transcript`), so any real
@@ -2766,21 +2697,6 @@ async fn close_conversation_sends_end_session_and_awaits_clean_disconnect() -> a
     let close_resp = tokio::time::timeout(Duration::from_secs(15), close_handle).await???;
     let closed: Conversation = close_resp.json().await?;
     assert_eq!(closed.status, ConversationStatus::Closed);
-
-    // Conversation log gained the Closed lifecycle event.
-    let events: Vec<ConversationEvent> = client
-        .get(format!(
-            "{}/v1/conversations/{conversation_id}/events",
-            server.base_url()
-        ))
-        .send()
-        .await?
-        .json()
-        .await?;
-    assert!(
-        matches!(events.last(), Some(ConversationEvent::Closed { .. })),
-        "Closed must be the latest conversation event, got {events:?}"
-    );
 
     // Worker uploaded session_state before the WS closed — this is the
     // PR-1 contract that PR-2's graceful path exercises end-to-end.

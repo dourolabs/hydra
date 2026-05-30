@@ -23,9 +23,9 @@ use hydra::client::{HydraClientInterface, LogStream, RelayWebSocket};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::conversations::{
-        Conversation as ApiConversation, ConversationEvent as ApiConversationEvent,
-        ConversationSummary as ApiConversationSummary, CreateConversationRequest,
-        SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
+        Conversation as ApiConversation, ConversationSummary as ApiConversationSummary,
+        CreateConversationRequest, SearchConversationsQuery, SendMessageRequest,
+        UpdateConversationRequest,
     },
     api::v1::events::EventsQuery,
     api::v1::labels::{
@@ -443,11 +443,21 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.send_message(conversation_id, request).await
     }
 
-    async fn get_conversation_events(
+    async fn get_conversation_versions(
         &self,
         conversation_id: &ConversationId,
-    ) -> Result<Vec<ApiConversationEvent>> {
-        self.inner.get_conversation_events(conversation_id).await
+    ) -> Result<Vec<hydra_common::Versioned<ApiConversation>>> {
+        self.inner.get_conversation_versions(conversation_id).await
+    }
+
+    async fn get_conversation_version(
+        &self,
+        conversation_id: &ConversationId,
+        version: hydra_common::RelativeVersionNumber,
+    ) -> Result<hydra_common::Versioned<ApiConversation>> {
+        self.inner
+            .get_conversation_version(conversation_id, version)
+            .await
     }
 
     async fn close_conversation(

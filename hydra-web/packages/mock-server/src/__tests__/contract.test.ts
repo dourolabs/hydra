@@ -317,39 +317,11 @@ describe("Conversations", () => {
     await resetServer();
   });
 
-  // The frontend no longer reads chat content from
-  // GET /v1/conversations/:id/events (the legacy `ConversationEvent` path was
-  // retired in Phase E step 18), so HydraApiClient does not expose a method
-  // for it. The mock-server still serves the lifecycle-only route, so this
-  // helper hits it directly to keep the route under contract coverage.
-  async function fetchConversationEvents(
-    conversationId: string,
-  ): Promise<Response> {
-    return originalFetch(
-      `${baseUrl}/v1/conversations/${encodeURIComponent(conversationId)}/events`,
-      { headers: { Authorization: "Bearer dev-token-12345" } },
-    );
-  }
-
-  async function expectConversationEvents(
-    conversationId: string,
-  ): Promise<Array<{ type: string }>> {
-    const resp = await fetchConversationEvents(conversationId);
-    expect(resp.status).toBe(200);
-    return (await resp.json()) as Array<{ type: string }>;
-  }
-
   it("seed conversation chat is reachable via the linked session's events", async () => {
     const conversation = await client.getConversation("c-seed00001");
     expect(conversation.conversation_id).toBe("c-seed00001");
     expect(conversation.title).toBe("Welcome to Hydra");
     expect(conversation.status).toBe("active");
-
-    // ConversationEvent is lifecycle-only after the SessionEvent migration;
-    // an active conversation that has not been suspended/closed has no
-    // entries. Chat content lives on the linked session.
-    const events = await expectConversationEvents("c-seed00001");
-    expect(events).toEqual([]);
 
     const linked = await client.listSessions({ conversation_id: "c-seed00001" });
     expect(linked.sessions.length).toBeGreaterThan(0);
@@ -363,55 +335,21 @@ describe("Conversations", () => {
     const list = await client.listConversations();
 
     // c-seed00001 (active) is backed by session t-seed00016 which carries 2
-    // user_message + 2 assistant_message events. Lifecycle conversation events
-    // are not counted.
+    // user_message + 2 assistant_message events.
     const active = list.find((c) => c.conversation_id === "c-seed00001");
     expect(active).toBeDefined();
     expect(active!.event_count).toBe(4);
     expect(active!.last_event_preview).toMatch(/^Assistant: /);
 
     // c-seed00002 (closed) is backed by session t-seed00017 with 1
-    // user_message + 1 assistant_message. The seed's `closed`
-    // ConversationEvent does not bump the count.
+    // user_message + 1 assistant_message.
     const closed = list.find((c) => c.conversation_id === "c-seed00002");
     expect(closed).toBeDefined();
     expect(closed!.event_count).toBe(2);
     expect(closed!.last_event_preview).toMatch(/^Assistant: /);
   });
 
-  it("event_count sums across multiple sessions linked to a conversation", async () => {
-    // Regression test for the chat-list "Messages" column counting only the
-    // latest session. Drive the resume-on-send path so the conversation ends
-    // up with two distinct sessions, each carrying chat-text events.
-    const created = await client.createConversation({ message: "first" });
-    const cid = created.conversation_id;
-
-    // The initial create + message yields one session with one user_message.
-    const initialList = await client.listConversations();
-    const initialSummary = initialList.find((c) => c.conversation_id === cid);
-    expect(initialSummary?.event_count).toBe(1);
-
-    // Close, then send again — the mock-server's send path spawns a fresh
-    // session when none is live for the conversation. (For determinism we
-    // assert the multi-session shape via listSessions below.)
-    await client.closeConversation(cid);
-    await client.resumeConversation(cid);
-    await client.sendMessage(cid, { content: "second" });
-    await client.sendMessage(cid, { content: "third" });
-
-    const linked = await client.listSessions({ conversation_id: cid });
-    expect(linked.sessions.length).toBeGreaterThanOrEqual(1);
-
-    // After the writes, the count must reflect every chat-text event across
-    // every linked session — three user_messages total in this scenario.
-    const list = await client.listConversations();
-    const summary = list.find((c) => c.conversation_id === cid);
-    expect(summary).toBeDefined();
-    expect(summary!.event_count).toBe(3);
-    expect(summary!.last_event_preview).toBe("User: third");
-  });
-
-  it("round-trip: create → get → list → send → events → close → resume", async () => {
+  it("round-trip: create → get → list → send → close", async () => {
     const created = await client.createConversation({ message: "Initial hello" });
     expect(created.conversation_id).toMatch(/^c-/);
     expect(created.status).toBe("active");
@@ -443,23 +381,11 @@ describe("Conversations", () => {
       content: "Follow-up",
     });
 
-    // The conversation event log is lifecycle-only: send does not write
-    // here.
-    const convEventsBeforeClose = await expectConversationEvents(cid);
-    expect(convEventsBeforeClose).toEqual([]);
-
-    // close sets status to closed and appends a closed event to the
-    // conversation log.
+    // close sets status to closed; the status transition is observable on
+    // the conversation snapshot itself (no separate event log).
     await client.closeConversation(cid);
     const afterClose = await client.getConversation(cid);
     expect(afterClose.status).toBe("closed");
-    const closedEvents = await expectConversationEvents(cid);
-    expect(closedEvents[closedEvents.length - 1].type).toBe("closed");
-
-    // resume flips back to active
-    const resumed = await client.resumeConversation(cid);
-    expect(resumed.status).toBe("active");
-    expect(resumed.conversation_id).toBe(cid);
   });
 
   it("filters list by status and q", async () => {
@@ -476,8 +402,6 @@ describe("Conversations", () => {
 
   it("GET on unknown id returns 404", async () => {
     await expect(client.getConversation("c-does-not-exist")).rejects.toBeInstanceOf(ApiError);
-    const resp = await fetchConversationEvents("c-does-not-exist");
-    expect(resp.status).toBe(404);
   });
 
   it("dev/reset restores seed conversation and clears transient ones", async () => {
@@ -490,10 +414,8 @@ describe("Conversations", () => {
     // Seed is back
     const seed = await client.getConversation("c-seed00001");
     expect(seed.conversation_id).toBe("c-seed00001");
-    // c-seed00006 is a closed seed conversation — its `closed` lifecycle
-    // event proves the conversation_events map was repopulated by reset.
-    const seedEvents = await expectConversationEvents("c-seed00006");
-    expect(seedEvents.some((e) => e.type === "closed")).toBe(true);
+    const closedSeed = await client.getConversation("c-seed00006");
+    expect(closedSeed.status).toBe("closed");
 
     // Transient one is gone
     await expect(client.getConversation(cid)).rejects.toBeInstanceOf(ApiError);

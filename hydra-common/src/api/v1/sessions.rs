@@ -966,11 +966,8 @@ pub enum ResumeSource {
 
 /// Append-only log of model-context events for a session. The transcript the
 /// model "sees" is the projection of this log onto `UserMessage` and
-/// `AssistantMessage` variants in insertion order.
-///
-/// Mirrors [`ConversationEvent`](crate::conversations::ConversationEvent) so
-/// the same store / cache / SSE plumbing can be reused once Phase B wires the
-/// new storage in. See `/designs/sessions-orthogonality-redesign.md` §3.2.
+/// `AssistantMessage` variants in insertion order. See
+/// `/designs/sessions-orthogonality-redesign.md` §3.2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -1037,10 +1034,8 @@ impl SessionEvent {
     }
 }
 
-/// Summary of session events for batch fetching — mirrors the
-/// `ConversationEventSummary` shape used by the existing conversation read
-/// paths so the eventual `get_session_event_summaries` store method can return
-/// the same minimal shape per session.
+/// Summary of session events for batch fetching, returned by
+/// `get_session_event_summaries`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

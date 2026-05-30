@@ -616,14 +616,19 @@ mod sqlite {
             &mut counts,
         )
         .await?;
-        rewrite_actor_ref_column(
-            pool,
-            "conversation_events",
-            "(id, version_number)",
-            &issue_to_actor,
-            &mut counts,
-        )
-        .await?;
+        // `conversation_events` is dropped at version 20260604000000.
+        // On a second invocation (server boot re-runs the full Rust
+        // registry) the table is gone, so guard the rewrite.
+        if table_exists(pool, "conversation_events").await? {
+            rewrite_actor_ref_column(
+                pool,
+                "conversation_events",
+                "(id, version_number)",
+                &issue_to_actor,
+                &mut counts,
+            )
+            .await?;
+        }
 
         // Bare `ActorId` column: `actors_v2.actor_id`.
         rewrite_actor_id_column(
@@ -643,6 +648,16 @@ mod sqlite {
 
         log_counts(&counts);
         Ok(())
+    }
+
+    async fn table_exists(pool: &SqlitePool, name: &str) -> Result<bool> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1")
+                .bind(name)
+                .fetch_optional(pool)
+                .await
+                .with_context(|| format!("check sqlite_master for table {name}"))?;
+        Ok(row.is_some())
     }
 
     async fn load_issue_to_actor_id(pool: &SqlitePool) -> Result<HashMap<String, Value>> {
@@ -856,14 +871,19 @@ mod postgres {
             &mut counts,
         )
         .await?;
-        rewrite_actor_ref_column(
-            pool,
-            "conversation_events_v2",
-            "(conversation_id, version_number)",
-            &issue_to_actor,
-            &mut counts,
-        )
-        .await?;
+        // `conversation_events_v2` is dropped at version 20260604000000.
+        // On a second invocation (server boot re-runs the full Rust
+        // registry) the table is gone, so guard the rewrite.
+        if table_exists(pool, "conversation_events_v2").await? {
+            rewrite_actor_ref_column(
+                pool,
+                "conversation_events_v2",
+                "(conversation_id, version_number)",
+                &issue_to_actor,
+                &mut counts,
+            )
+            .await?;
+        }
 
         rewrite_actor_id_column(
             pool,
@@ -877,6 +897,18 @@ mod postgres {
 
         log_counts(&counts);
         Ok(())
+    }
+
+    async fn table_exists(pool: &PgPool, name: &str) -> Result<bool> {
+        let row: Option<(bool,)> = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'metis' AND table_name = $1)",
+        )
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("check information_schema.tables for metis.{name}"))?;
+        Ok(row.map(|(b,)| b).unwrap_or(false))
     }
 
     async fn load_issue_to_actor_id(pool: &PgPool) -> Result<HashMap<String, Value>> {

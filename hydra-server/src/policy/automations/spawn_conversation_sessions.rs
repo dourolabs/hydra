@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
-use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+use crate::domain::conversations::{Conversation, ConversationStatus};
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
@@ -24,8 +24,8 @@ const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
 ///   transitions *into* `Active`: either on `ConversationCreated` with
 ///   `new.status == Active` (fresh) or on `ConversationUpdated` with
 ///   `old.status != Active && new.status == Active` (resume from Idle / Closed).
-///   `ConversationEventCreated` is *not* a trigger — appending a `UserMessage`
-///   to an already-Active conversation does not produce a second spawn.
+///   `SessionEventCreated` is *not* a trigger — appending a `UserMessage` to
+///   an already-Active conversation does not produce a second spawn.
 /// - **Idle-flip side.** When the companion session transitions to a terminal
 ///   status (`Complete` / `Failed`), flip the conversation `Active → Idle`.
 ///   `Closed` is preserved (manual user action).
@@ -81,7 +81,7 @@ impl Automation for SpawnConversationSessionsAutomation {
                 if new.status != ConversationStatus::Active {
                     return Ok(());
                 }
-                spawn_session(ctx, conversation_id, new, None).await?;
+                spawn_session(ctx, conversation_id, new, false).await?;
             }
             ServerEvent::ConversationUpdated {
                 conversation_id,
@@ -99,8 +99,8 @@ impl Automation for SpawnConversationSessionsAutomation {
                 {
                     return Ok(());
                 }
-                let resume_from = compute_resume_index(ctx, conversation_id).await;
-                spawn_session(ctx, conversation_id, new, resume_from).await?;
+                let is_resume = old.status != ConversationStatus::Active;
+                spawn_session(ctx, conversation_id, new, is_resume).await?;
             }
             ServerEvent::SessionUpdated { payload, .. } => {
                 let MutationPayload::Session { old, new, .. } = payload.as_ref() else {
@@ -126,10 +126,11 @@ impl Automation for SpawnConversationSessionsAutomation {
 
 /// Spawn a session for a conversation that has just entered `Active` status.
 ///
-/// `resume_from` is `Some(index)` for resume spawns (the worker should replay
-/// from that event index) and `None` for fresh spawns. When `resume_from` is
-/// `Some`, the spawned session's `conversation_resume_from` is stamped and a
-/// `Resumed` event is appended to the conversation log.
+/// `is_resume` is `true` when the parent conversation transitioned
+/// `Idle`/`Closed` → `Active` (the resume path) and `false` for fresh spawns.
+/// On the resume path the new session's `resumed_from` is stamped with the
+/// most-recently-created prior session id so the worker can pick up the
+/// transcript via `ResumeContext { prior_session_id }`.
 ///
 /// Returns `Err` for misconfiguration cases that prevent a spawn (no agent
 /// available, agent prompt missing, `create_session` fails). The runner
@@ -141,7 +142,7 @@ async fn spawn_session(
     ctx: &AutomationContext<'_>,
     conversation_id: &ConversationId,
     conversation: &Conversation,
-    resume_from: Option<usize>,
+    is_resume: bool,
 ) -> Result<(), AutomationError> {
     if conversation.deleted {
         return Ok(());
@@ -214,7 +215,7 @@ async fn spawn_session(
     // On the resume path, look up the most-recently-created prior session for
     // this conversation so we can carry the lineage edge directly through
     // `CreateSessionRequest` instead of a follow-up update.
-    let prior_session_id = if resume_from.is_some() {
+    let prior_session_id = if is_resume {
         find_prior_session_id(ctx, conversation_id).await
     } else {
         None
@@ -224,7 +225,7 @@ async fn spawn_session(
         mode: SessionMode::Interactive {
             conversation_id: conversation_id.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: resume_from,
+            conversation_resume_from: None,
             greet_user: false,
         },
         agent_config: AgentSpec::Named { name: agent_name },
@@ -253,38 +254,15 @@ async fn spawn_session(
         }
     };
 
-    if resume_from.is_some() {
-        let resumed_timestamp = chrono::Utc::now();
-        let resumed_event = ConversationEvent::Resumed {
-            session_id: session_id.clone(),
-            timestamp: resumed_timestamp,
-        };
-        if let Err(err) = ctx
-            .app_state
-            .store
-            .append_conversation_event_with_actor(conversation_id, resumed_event, actor.clone())
-            .await
-        {
-            tracing::warn!(
-                automation = AUTOMATION_NAME,
-                conversation_id = %conversation_id,
-                session_id = %session_id,
-                error = %err,
-                "failed to append Resumed event"
-            );
-        }
-
-        // `SessionEvent::Resumed` is emitted by the worker post-
-        // `try_materialize` (design §6 / §1.4); the
-        // `ConversationEvent::Resumed` appended above is the only
-        // server-side Resumed write.
-    }
+    // The conversation's `Active` status itself is now the lifecycle
+    // signal (the transition that triggered this spawn). `SessionEvent::Resumed`
+    // is emitted by the worker post-`try_materialize` (design §6 / §1.4).
 
     tracing::info!(
         automation = AUTOMATION_NAME,
         conversation_id = %conversation_id,
         session_id = %session_id,
-        resume = resume_from.is_some(),
+        resume = is_resume,
         "spawned conversation session"
     );
 
@@ -308,41 +286,6 @@ async fn find_prior_session_id(
         .into_iter()
         .max_by_key(|(_, v)| v.creation_time)
         .map(|(id, _)| id)
-}
-
-/// Compute the `conversation_resume_from` index for a resume spawn.
-///
-/// Scans events newest-to-oldest:
-///   - First `Closed` / `Suspending` found ⇒ index just after it (the worker
-///     resumes from the post-terminal boundary).
-///   - First `Resumed` found ⇒ `events.len()` (the prior resume already
-///     consumed the snapshot; start at the current end).
-///   - No marker found ⇒ `events.len()`.
-async fn compute_resume_index(
-    ctx: &AutomationContext<'_>,
-    conversation_id: &ConversationId,
-) -> Option<usize> {
-    let events = match ctx.store.get_conversation_events(conversation_id).await {
-        Ok(events) => events,
-        Err(err) => {
-            tracing::warn!(
-                automation = AUTOMATION_NAME,
-                conversation_id = %conversation_id,
-                error = %err,
-                "failed to load conversation events; resume snapshot will use events.len()"
-            );
-            return None;
-        }
-    };
-    if let Some((i, e)) = events.iter().enumerate().next_back() {
-        match &e.item {
-            ConversationEvent::Closed { .. } | ConversationEvent::Suspending { .. } => {
-                return Some(i + 1);
-            }
-            ConversationEvent::Resumed { .. } => return Some(events.len()),
-        }
-    }
-    Some(events.len())
 }
 
 /// On a session's terminal transition, flip the conversation's status from
@@ -399,7 +342,7 @@ mod tests {
     use crate::app::test_helpers::state_with_default_model;
     use crate::domain::actors::ActorRef;
     use crate::domain::agents::Agent;
-    use crate::domain::conversations::{Conversation, ConversationEvent, ConversationStatus};
+    use crate::domain::conversations::{Conversation, ConversationStatus};
     use crate::domain::documents::Document;
     use crate::domain::issues::SessionSettings;
     use crate::domain::sessions::Session;
@@ -597,49 +540,6 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         assert_eq!(sessions_for_conversation(&state, &conversation_id).await, 1);
-    }
-
-    #[tokio::test]
-    async fn does_not_spawn_on_conversation_event_created() {
-        // ConversationEventCreated is no longer in the EventFilter — but
-        // even if it leaked through, the match arm falls through to the no-op
-        // case. Verify by constructing the event explicitly.
-        let state = state_with_default_model("default-model");
-        register_agent(&state, "swe", "prompt", false).await;
-
-        let conversation = make_conversation(Some("swe"));
-        let (conversation_id, _) = state
-            .store
-            .add_conversation_with_actor(conversation, ActorRef::test())
-            .await
-            .unwrap();
-
-        let payload = Arc::new(MutationPayload::ConversationEvent {
-            conversation_id: conversation_id.clone(),
-            event: ConversationEvent::Suspending {
-                reason: "idle_timeout".to_string(),
-                timestamp: Utc::now(),
-            },
-            actor: ActorRef::test(),
-        });
-        let event = ServerEvent::ConversationEventCreated {
-            seq: 1,
-            conversation_id: conversation_id.clone(),
-            version: 1,
-            timestamp: Utc::now(),
-            payload,
-        };
-
-        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
-        let ctx = AutomationContext {
-            event: &event,
-            app_state: &state,
-            store: state.store(),
-        };
-
-        automation.execute(&ctx).await.unwrap();
-
-        assert_eq!(sessions_for_conversation(&state, &conversation_id).await, 0);
     }
 
     #[tokio::test]
@@ -1063,7 +963,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_spawn_has_no_conversation_resume_from_or_resumed_event() {
+    async fn fresh_spawn_has_no_conversation_resume_from() {
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
 
@@ -1080,112 +980,13 @@ mod tests {
         // No conversation_resume_from on a fresh spawn.
         assert!(session.is_interactive(), "session should be interactive");
         assert_eq!(session.mode.conversation_resume_from(), None);
-
-        // No Resumed event on a fresh conversation.
-        let events = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap();
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e.item, ConversationEvent::Resumed { .. })),
-            "fresh conversation should not have a Resumed event"
-        );
-    }
-
-    #[tokio::test]
-    async fn resume_spawn_sets_conversation_resume_from_and_appends_resumed_event() {
-        let state = state_with_default_model("default-model");
-        register_agent(&state, "swe", "prompt", false).await;
-
-        let conversation = make_conversation_with_status(Some("swe"), ConversationStatus::Closed);
-        let (conversation_id, _) = state
-            .store
-            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
-            .await
-            .unwrap();
-
-        // Simulate a closed conversation with prior history: Suspending then Closed.
-        state
-            .store
-            .append_conversation_event_with_actor(
-                &conversation_id,
-                ConversationEvent::Suspending {
-                    reason: "idle_timeout".into(),
-                    timestamp: Utc::now(),
-                },
-                ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        state
-            .store
-            .append_conversation_event_with_actor(
-                &conversation_id,
-                ConversationEvent::Closed {
-                    timestamp: Utc::now(),
-                },
-                ActorRef::test(),
-            )
-            .await
-            .unwrap();
-
-        // The events count just before the automation fires is the expected
-        // conversation_resume_from value (index just after Closed).
-        let expected_resume_from = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap()
-            .len();
-
-        let event = conversation_updated_event(
-            conversation_id.clone(),
-            conversation,
-            make_conversation(Some("swe")),
-        );
-        let session = run_and_get_session(&state, &conversation_id, &event).await;
-
-        assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(
-            session.mode.conversation_resume_from(),
-            Some(expected_resume_from)
-        );
-
-        let events = state
-            .store()
-            .get_conversation_events(&conversation_id)
-            .await
-            .unwrap();
-        let resumed = events
-            .iter()
-            .find_map(|e| match &e.item {
-                ConversationEvent::Resumed { session_id, .. } => Some(session_id.clone()),
-                _ => None,
-            })
-            .expect("expected a Resumed event after resume spawn");
-        // The Resumed event's session_id must match the newly-spawned session.
-        let sessions = state
-            .list_sessions_with_query(&SearchSessionsQuery::default())
-            .await
-            .unwrap();
-        let session_id = sessions
-            .into_iter()
-            .find(|(_, s)| s.item.conversation_id() == Some(&conversation_id))
-            .map(|(id, _)| id)
-            .unwrap();
-        assert_eq!(resumed, session_id);
     }
 
     #[tokio::test]
     async fn resume_spawn_sets_resumed_from_to_prior_session_id() {
         // Regression: the session-level `resumed_from` lineage edge must
         // point at the most-recently-created prior session for the
-        // conversation. Today's other resume-flow tests cover the
-        // `ConversationEvent::Resumed` side-channel but not the session
-        // field itself.
+        // conversation.
         use crate::domain::sessions::{AgentConfig, SessionMode as DomainSessionMode};
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
@@ -1252,57 +1053,6 @@ mod tests {
             .map(|(_, s)| s.item)
             .expect("expected a newly-spawned session for the conversation");
         assert_eq!(new_session.resumed_from, Some(prior_session_id));
-    }
-
-    #[tokio::test]
-    async fn resume_spawn_uses_position_after_most_recent_lifecycle_event() {
-        // `compute_resume_index` scans the conversation events log newest-to-
-        // oldest and returns the index just after the first Suspending/Closed
-        // it finds. Post-Phase-E step 18 the log carries only lifecycle
-        // events (Suspending/Resumed/Closed), so the previous "UserMessage
-        // races in after Closed" scenario no longer applies. This regression
-        // test guards the boundary-after-most-recent-lifecycle invariant
-        // directly: Suspending → Closed → Suspending yields
-        // `events.len() == 3`.
-        let state = state_with_default_model("default-model");
-        register_agent(&state, "swe", "prompt", false).await;
-
-        let conversation = make_conversation_with_status(Some("swe"), ConversationStatus::Closed);
-        let (conversation_id, _) = state
-            .store
-            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
-            .await
-            .unwrap();
-
-        for ev in [
-            ConversationEvent::Suspending {
-                reason: "idle_timeout".into(),
-                timestamp: Utc::now(),
-            },
-            ConversationEvent::Closed {
-                timestamp: Utc::now(),
-            },
-            ConversationEvent::Suspending {
-                reason: "sigterm".into(),
-                timestamp: Utc::now(),
-            },
-        ] {
-            state
-                .store
-                .append_conversation_event_with_actor(&conversation_id, ev, ActorRef::test())
-                .await
-                .unwrap();
-        }
-
-        let event = conversation_updated_event(
-            conversation_id.clone(),
-            conversation,
-            make_conversation(Some("swe")),
-        );
-        let session = run_and_get_session(&state, &conversation_id, &event).await;
-
-        assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.mode.conversation_resume_from(), Some(3));
     }
 
     #[tokio::test]

@@ -777,28 +777,6 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         }
     }
 
-    // conversation_events_v2 — Session inside Authenticated is rewritten to Adhoc.
-    let row = sqlx::query(
-        "SELECT actor::text AS pl FROM metis.conversation_events_v2 \
-         WHERE conversation_id = 'c-actclean' AND version_number = 1",
-    )
-    .fetch_one(pool)
-    .await
-    .context("read conversation_events_v2.actor for c-actclean")?;
-    let raw: Option<String> = row.get("pl");
-    let got: Option<serde_json::Value> = raw
-        .map(|s| serde_json::from_str(&s))
-        .transpose()
-        .context("decode conversation_events_v2.actor")?;
-    let expected = serde_json::json!({
-        "Authenticated": {
-            "actor_id": {"Adhoc": {"session_id": "s-cesessx"}}
-        }
-    });
-    if got != Some(expected.clone()) {
-        bail!("conversation_events_v2.actor: expected {expected}; got {got:?}");
-    }
-
     // §3.3 smoke: read every row through the store and confirm
     // `ActorRef::deserialize` accepts the rewritten payload — including
     // the new External-legacy fallback shape that catches serde drift

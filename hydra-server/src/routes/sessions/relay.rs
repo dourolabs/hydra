@@ -310,14 +310,8 @@ async fn handle_fresh_path(
                     // tolerated; the worker may begin emitting
                     // events as soon as Phase 1 completes.
                     Ok(WorkerMessage::Event { event }) => {
-                        if let Err(err) = handle_worker_event(
-                            &state,
-                            conversation_id.as_ref(),
-                            &session_id,
-                            &actor_ref,
-                            event,
-                        )
-                        .await
+                        if let Err(err) =
+                            handle_worker_event(&state, &session_id, &actor_ref, event).await
                         {
                             error!(%session_id, error = %err, "failed to handle worker event in Phase 1/2");
                         }
@@ -583,13 +577,10 @@ async fn pump_phase3(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<WorkerMessage>(&text) {
                             Ok(WorkerMessage::Event { event }) => {
-                                if let Err(err) = handle_worker_event(
-                                    &state,
-                                    conversation_id.as_ref(),
-                                    &session_id,
-                                    &actor_ref,
-                                    event,
-                                ).await {
+                                if let Err(err) =
+                                    handle_worker_event(&state, &session_id, &actor_ref, event)
+                                        .await
+                                {
                                     error!(%session_id, error = %err, "failed to handle worker event");
                                 }
                             }
@@ -777,12 +768,12 @@ async fn find_first_user_message_for_conversation(
 /// session to `Complete` / `Failed`; `SpawnConversationSessionsAutomation`
 /// then flips the conversation `Active → Idle` from that terminal transition.
 ///
-/// `Suspending` and `Closed` ARE additionally mirrored onto the conversation
-/// events log (lifecycle history); chat content (`UserMessage` /
-/// `AssistantMessage`) lives only on the session log per Phase E step 18.
+/// Chat content (`UserMessage` / `AssistantMessage`) lives only on the
+/// session log per Phase E step 18. The conversation's own status sequence
+/// (each transition is a new versioned row on `conversations` /
+/// `conversations_v2`) carries the lifecycle history.
 async fn handle_worker_event(
     state: &AppState,
-    conversation_id: Option<&ConversationId>,
     session_id: &SessionId,
     actor_ref: &ActorRef,
     event: SessionEvent,
@@ -796,37 +787,7 @@ async fn handle_worker_event(
     };
     state
         .store
-        .append_session_event_with_actor(session_id, domain_event.clone(), actor_ref.clone())
+        .append_session_event_with_actor(session_id, domain_event, actor_ref.clone())
         .await?;
-
-    // Mirror lifecycle events (Suspending / Closed) onto the conversation
-    // events log for interactive sessions.
-    if let Some(conv_id) = conversation_id {
-        if let Some(conv_event) = session_event_to_lifecycle_conversation_event(&domain_event) {
-            let _ = state
-                .store
-                .append_conversation_event_with_actor(conv_id, conv_event, actor_ref.clone())
-                .await;
-        }
-    }
     Ok(())
-}
-
-/// Map a worker-emitted [`SessionEvent`] onto the corresponding lifecycle
-/// [`crate::domain::conversations::ConversationEvent`], if any.
-fn session_event_to_lifecycle_conversation_event(
-    event: &crate::domain::sessions::SessionEvent,
-) -> Option<crate::domain::conversations::ConversationEvent> {
-    use crate::domain::conversations::ConversationEvent as ConvEvent;
-    use crate::domain::sessions::SessionEvent as SEvent;
-    match event {
-        SEvent::Suspending { reason, timestamp } => Some(ConvEvent::Suspending {
-            reason: reason.clone(),
-            timestamp: *timestamp,
-        }),
-        SEvent::Closed { timestamp } => Some(ConvEvent::Closed {
-            timestamp: *timestamp,
-        }),
-        _ => None,
-    }
 }
