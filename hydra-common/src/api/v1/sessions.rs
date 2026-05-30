@@ -16,42 +16,6 @@ use std::path::{Component, Path, PathBuf};
 /// Stored as a JSON object to remain flexible as the MCP config schema evolves.
 pub type McpConfig = Value;
 
-/// Settings that only apply when a session is running in interactive mode.
-///
-/// Present (`Some`) on an interactive session; absent (`None`) on a one-shot session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct InteractiveOptions {
-    /// Conversation this session is attached to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_id: Option<ConversationId>,
-    /// Idle timeout in seconds — the worker suspends the session after this
-    /// long without a user message.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_timeout_secs: Option<u64>,
-    /// When resuming a conversation, the event index to resume from.
-    /// Consumed by Phase 1 of the worker lifecycle when scoping the
-    /// session_events replay over the WS.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_resume_from: Option<usize>,
-}
-
-impl InteractiveOptions {
-    pub fn new(
-        conversation_id: Option<ConversationId>,
-        idle_timeout_secs: Option<u64>,
-        conversation_resume_from: Option<usize>,
-    ) -> Self {
-        Self {
-            conversation_id,
-            idle_timeout_secs,
-            conversation_resume_from,
-        }
-    }
-}
-
 /// Aggregated token totals reported by the worker at the end of a session run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

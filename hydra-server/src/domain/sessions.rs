@@ -14,17 +14,6 @@ fn default_task_status() -> Status {
     Status::Complete
 }
 
-/// Settings that only apply when a session is running in interactive mode.
-/// Retained on the domain side only as an adapter for `CreateSessionRequest`;
-/// stored sessions encode the same data through `SessionMode::Interactive`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InteractiveOptions {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_id: Option<ConversationId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conversation_resume_from: Option<usize>,
-}
-
 /// Per-session knobs handed to the model wrapper. Mirrors
 /// [`api::sessions::AgentConfig`].
 ///
@@ -269,25 +258,6 @@ impl From<Bundle> for api::sessions::Bundle {
             Bundle::None => api::sessions::Bundle::None,
             Bundle::GitRepository { url, rev } => api::sessions::Bundle::GitRepository { url, rev },
         }
-    }
-}
-
-impl From<api::sessions::InteractiveOptions> for InteractiveOptions {
-    fn from(value: api::sessions::InteractiveOptions) -> Self {
-        InteractiveOptions {
-            conversation_id: value.conversation_id,
-            conversation_resume_from: value.conversation_resume_from,
-        }
-    }
-}
-
-impl From<InteractiveOptions> for api::sessions::InteractiveOptions {
-    fn from(value: InteractiveOptions) -> Self {
-        api::sessions::InteractiveOptions::new(
-            value.conversation_id,
-            None,
-            value.conversation_resume_from,
-        )
     }
 }
 
