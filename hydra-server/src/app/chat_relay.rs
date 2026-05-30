@@ -511,6 +511,39 @@ impl ChatRelayMap {
         self.inner.remove(conversation_id);
     }
 
+    /// Push `ServerMessage::EndSession` onto the conversation's connected
+    /// worker via its `to_worker` channel. Returns `true` if a connected
+    /// worker received the message (channel was open). Returns `false`
+    /// when there is no entry, the entry is still `PendingConnection`, or
+    /// the worker's mpsc channel is closed/full.
+    ///
+    /// This is a protocol message (not a `SessionEvent`) — no dual-write
+    /// to the session log. The graceful close in `close_conversation`
+    /// uses the existing WS-close `cleanup` path as the implicit ack:
+    /// when the worker finishes the unified end-of-session sequence and
+    /// closes the WS, `pump_phase3 → cleanup` drops the relay entry, so
+    /// `active_session_id` flips to `None`.
+    pub fn send_end_session(&self, conversation_id: &ConversationId) -> bool {
+        let to_worker = match self.inner.get(conversation_id) {
+            Some(entry) => match entry.value() {
+                Entry::ActiveConnection { to_worker, .. } => to_worker.clone(),
+                Entry::PendingConnection { .. } => return false,
+            },
+            None => return false,
+        };
+        match to_worker.try_send(ServerMessage::EndSession) {
+            Ok(()) => true,
+            Err(err) => {
+                warn!(
+                    %conversation_id,
+                    error = %err,
+                    "send_end_session: to_worker channel send failed"
+                );
+                false
+            }
+        }
+    }
+
     /// Returns the session id of the currently-connected worker, or
     /// `None` if no worker is connected (i.e. no entry, or the entry is
     /// still `PendingConnection`).
