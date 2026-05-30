@@ -130,6 +130,7 @@ describe("useChatTranscript", () => {
           {
             type: "resumed",
             from_session_id: "t-first",
+            source: "transcript",
             timestamp: "2026-04-01T10:00:30Z",
           },
           { type: "user_message", content: "q2", timestamp: "2026-04-01T10:05:00Z" },

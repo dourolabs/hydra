@@ -1920,8 +1920,11 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     // worker driving a close→reopen flow will produce one Resumed on
     // s2. This fake-worker-driven test never reaches that emit site, so
     // the session log here still shows zero `SessionEvent::Resumed` —
-    // the symmetric-worker behaviour is exercised in
-    // [`super::worker_emits_resumed_on_both_native_and_transcript_paths`].
+    // the symmetric-worker behaviour is exercised in the
+    // `hydra::worker::model_selector::tests` module
+    // (`emit_resumed_native_path_sends_resumed_with_native_source`,
+    // `emit_resumed_transcript_path_requests_transcript_then_emits_resumed_transcript`,
+    // `emit_resumed_fresh_session_emits_nothing`).
     // Closed is appended after /close and lands on the latest session
     // for the conversation (s2).
     let s1_events: Vec<DomainSessionEvent> = store
