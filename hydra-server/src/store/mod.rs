@@ -35,7 +35,7 @@ pub use crate::ee::store::postgres_v2;
 pub mod sqlite_store;
 
 pub use crate::domain::sessions::{
-    AgentConfig, InteractiveOptions, Session, SessionEvent, SessionEventSummary, SessionMode,
+    AgentConfig, Session, SessionEvent, SessionEventSummary, SessionMode,
 };
 pub use crate::domain::task_status::{Status, TaskError, TaskStatusLog};
 
