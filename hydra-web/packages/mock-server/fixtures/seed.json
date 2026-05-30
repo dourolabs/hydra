@@ -2417,6 +2417,7 @@
       {
         "type": "resumed",
         "from_session_id": "t-seed00014",
+        "source": "transcript",
         "timestamp": "2026-04-01T10:00:30.000Z"
       },
       {

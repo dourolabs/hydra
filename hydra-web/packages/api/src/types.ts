@@ -105,6 +105,7 @@ export type { ReviewerGroup } from "./generated/ReviewerGroup";
 export type { RepoName } from "./generated/RepoName";
 export type { Repository } from "./generated/Repository";
 export type { RepositoryRecord } from "./generated/RepositoryRecord";
+export type { ResumeSource } from "./generated/ResumeSource";
 export type { ResyncEventData } from "./generated/ResyncEventData";
 export type { Review } from "./generated/Review";
 export type { ReviewSummary } from "./generated/ReviewSummary";

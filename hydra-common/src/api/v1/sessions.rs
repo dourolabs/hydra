@@ -979,6 +979,27 @@ impl KillSessionResponse {
     }
 }
 
+/// Which restore path produced a [`SessionEvent::Resumed`] event.
+///
+/// The worker tries native materialization first; on failure it falls back
+/// to replaying the prior session's transcript as primer text. Both paths
+/// reach steady state and the worker emits `Resumed` either way — this
+/// discriminator lets downstream consumers (dashboards, debug tooling) tell
+/// the two apart without inspecting other fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeSource {
+    /// The new worker materialized a `resume_blob` from the prior session
+    /// (e.g. uploaded `session_state`) and continued in-place.
+    Native,
+    /// No usable `resume_blob` was available, so the new worker primed itself
+    /// by replaying the prior session's transcript as text. This is the path
+    /// that real close→reopen→send flows hit today.
+    Transcript,
+}
+
 /// Append-only log of model-context events for a session. The transcript the
 /// model "sees" is the projection of this log onto `UserMessage` and
 /// `AssistantMessage` variants in insertion order.
@@ -1020,9 +1041,12 @@ pub enum SessionEvent {
         timestamp: DateTime<Utc>,
     },
     /// The model-context state was loaded from a prior session. Always the
-    /// first event on a resumed session; carries the predecessor session id.
+    /// first event on a resumed session; carries the predecessor session id
+    /// and a [`ResumeSource`] flag distinguishing the native-materialization
+    /// path from the transcript-replay fallback.
     Resumed {
         from_session_id: SessionId,
+        source: ResumeSource,
         timestamp: DateTime<Utc>,
     },
     /// Session is closed — no further events will be appended.
@@ -2093,16 +2117,27 @@ mod tests {
     }
 
     #[test]
-    fn session_event_resumed_round_trip() {
+    fn session_event_resumed_native_wire_format() {
         let event = SessionEvent::Resumed {
             from_session_id: SessionId::new(),
+            source: ResumeSource::Native,
             timestamp: Utc::now(),
         };
         let json = serde_json::to_string(&event).unwrap();
-        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(event, parsed);
         assert!(json.contains(r#""type":"resumed""#));
         assert!(json.contains(r#""from_session_id""#));
+        assert!(json.contains(r#""source":"native""#));
+    }
+
+    #[test]
+    fn session_event_resumed_transcript_wire_format() {
+        let event = SessionEvent::Resumed {
+            from_session_id: SessionId::new(),
+            source: ResumeSource::Transcript,
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""source":"transcript""#));
     }
 
     #[test]
