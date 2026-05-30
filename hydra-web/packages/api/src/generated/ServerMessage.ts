@@ -11,4 +11,5 @@ export type ServerMessage =
   | { type: "transcript"; events: Array<SessionEvent> }
   | { type: "catch_up"; events: Array<CatchUpEvent> }
   | { type: "first_message"; agent_prompt: string; user_message: string }
-  | { type: "event"; event: SessionEvent; event_index: number };
+  | { type: "event"; event: SessionEvent; event_index: number }
+  | { type: "end_session" };

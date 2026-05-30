@@ -13,7 +13,7 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 use anyhow::{anyhow, Result};
 use futures::{Sink, Stream};
 use hydra_common::api::v1::{
-    conversations::{ServerMessage, WorkerMessage},
+    conversations::{ServerMessage, SessionStatePayload, WorkerMessage},
     sessions::{ResumeSource, SessionEvent},
 };
 use hydra_common::SessionId;
@@ -22,12 +22,20 @@ use tokio_tungstenite::tungstenite;
 
 use crate::worker::claude::{Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage};
 use crate::worker::codex::Codex;
-use crate::worker::relay_adapter::{spawn_relay_pump, ReconnectFn, RelayAdapter};
+use crate::worker::relay_adapter::{spawn_relay_pump, PumpExit, ReconnectFn, RelayAdapter};
 use crate::worker::report::{
     MaterializeError, NativeResume, RunReport, SessionResume, TokenUsage, WorkerEvent,
     WorkerInputMessage,
 };
 use crate::worker::socket::WorkerSocket;
+
+/// Brief non-blocking drain duration for inbound `ServerMessage::EndSession`
+/// at the tail of `drive_headless`. Headless does not concurrently read the
+/// WS while the model runs (the per-wrapper `run` call is a single await),
+/// so any `EndSession` issued during that window sits buffered. A short
+/// poll picks it up; the tradeoff is the cost of a tiny extra wait on the
+/// natural-exit path. The unified cleanup still runs unconditionally.
+const HEADLESS_END_SESSION_DRAIN: Duration = Duration::from_millis(100);
 
 /// Routes a worker invocation to either the Claude or Codex per-model wrapper.
 ///
@@ -78,7 +86,9 @@ impl ModelSelector {
 
     /// Drive a complete headless (non-interactive) run on `ws`. Owns Phase 1
     /// (context negotiation), Phase 2 (first-message), and the per-wrapper
-    /// model invocation; returns the resulting [`RunReport`].
+    /// model invocation, plus the unified end-of-session cleanup
+    /// (`SessionStateUpload` → `Closed` event → optional `EndSessionAck`).
+    /// Returns the resulting [`RunReport`].
     pub async fn drive_headless<S>(&mut self, mut ws: WorkerSocket<S>) -> Result<RunReport>
     where
         S: Sink<tungstenite::Message, Error = tungstenite::Error>
@@ -88,14 +98,23 @@ impl ModelSelector {
         let (resume, primer) = self.phase1_negotiate(&mut ws).await?;
         let (agent_prompt, user_message) = phase2_ready(&mut ws).await?;
         let prompt = concat_first_message(&primer, &agent_prompt, &user_message);
-        self.run_with_native(&prompt, resume).await
+        let report = self.run_with_native(&prompt, resume).await?;
+        // Headless doesn't concurrently read the WS during `run_with_native`,
+        // so any `EndSession` issued during the model run is buffered. Drain
+        // it now (non-blocking-ish) before the unified cleanup so we can
+        // include `EndSessionAck`. The cleanup runs unconditionally.
+        let end_session_requested = drain_end_session_headless(&mut ws).await;
+        send_unified_cleanup(&mut ws, &report, end_session_requested).await;
+        Ok(report)
     }
 
-    /// Drive a complete interactive run on `ws`. Owns Phase 1 / Phase 2 and
+    /// Drive a complete interactive run on `ws`. Owns Phase 1 / Phase 2,
     /// then hands the socket to the [`crate::worker::relay_adapter`] pump for
-    /// Phase 3; returns the resulting [`RunReport`]. `session_id` and
-    /// `reconnect` are forwarded to the pump so it can reopen the WS on a
-    /// mid-session drop while the model is still running.
+    /// Phase 3, and finally drives the unified end-of-session cleanup
+    /// (`SessionStateUpload` → `Closed` event → optional `EndSessionAck`).
+    /// Returns the resulting [`RunReport`]. `session_id` and `reconnect`
+    /// are forwarded to the pump so it can reopen the WS on a mid-session
+    /// drop while the model is still running.
     pub async fn drive_interactive<S>(
         &mut self,
         mut ws: WorkerSocket<S>,
@@ -119,9 +138,18 @@ impl ModelSelector {
         } = spawn_relay_pump(ws, session_id, reconnect);
         let report = self
             .run_interactive_with_native(input_rx, output_tx, &prompt, resume)
-            .await;
-        let _ = pump.await;
-        report
+            .await?;
+        let PumpExit {
+            ws,
+            end_session_requested,
+        } = pump.await.unwrap_or(PumpExit {
+            ws: None,
+            end_session_requested: false,
+        });
+        if let Some(mut ws) = ws {
+            send_unified_cleanup(&mut ws, &report, end_session_requested).await;
+        }
+        Ok(report)
     }
 
     /// Phase 1 — context negotiation. Sends `Fresh`, awaits `ResumeContext`,
@@ -346,6 +374,85 @@ where
     }
 
     Ok(primer)
+}
+
+/// Build a `SessionStatePayload` from a [`RunReport`] for the unified
+/// cleanup `SessionStateUpload`. Returns `None` if the report didn't
+/// observe an on-disk session-state file or didn't extract a model
+/// session id — in either case there is nothing to upload that the
+/// resumer can use.
+fn build_session_state_payload(report: &RunReport) -> Option<SessionStatePayload> {
+    let state_ref = report.session_state.as_ref()?;
+    let session_id = report.model_session_id.clone()?;
+    let transcript = std::fs::read(&state_ref.local_path).ok();
+    Some(SessionStatePayload::V1 {
+        session_id,
+        transcript,
+    })
+}
+
+/// Unified end-of-session cleanup. Sent on BOTH the natural-exit and the
+/// `EndSession`-driven paths so the resumer sees `session_state` regardless
+/// of how the worker shut down. Order matters: the `SessionStateUpload`
+/// arrives before the `Closed` event so the server commits state before
+/// marking the log closed. `EndSessionAck` is the very last frame so the
+/// server-side waiter (PR-2) can know its termination request was honored.
+async fn send_unified_cleanup<S>(
+    ws: &mut WorkerSocket<S>,
+    report: &RunReport,
+    end_session_requested: bool,
+) where
+    S: Sink<tungstenite::Message, Error = tungstenite::Error>
+        + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+        + Unpin,
+{
+    if let Some(payload) = build_session_state_payload(report) {
+        match serde_json::to_vec(&payload) {
+            Ok(data) => {
+                if let Err(err) = ws.send(WorkerMessage::SessionStateUpload { data }).await {
+                    tracing::warn!(error = %err, "cleanup: failed to send SessionStateUpload");
+                }
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "cleanup: failed to serialize SessionStatePayload");
+            }
+        }
+    }
+    if let Err(err) = ws
+        .send(WorkerMessage::Event {
+            event: SessionEvent::Closed {
+                timestamp: chrono::Utc::now(),
+            },
+        })
+        .await
+    {
+        tracing::warn!(error = %err, "cleanup: failed to send Closed event");
+    }
+    if end_session_requested {
+        if let Err(err) = ws.send(WorkerMessage::EndSessionAck).await {
+            tracing::warn!(error = %err, "cleanup: failed to send EndSessionAck");
+        }
+    }
+}
+
+/// Best-effort headless drain of an inbound `ServerMessage::EndSession`.
+/// Returns `true` iff `EndSession` was observed. Per the design's "simple
+/// shape" for headless: no concurrent watcher during the model run; just
+/// peek after it returns.
+async fn drain_end_session_headless<S>(ws: &mut WorkerSocket<S>) -> bool
+where
+    S: Sink<tungstenite::Message, Error = tungstenite::Error>
+        + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+        + Unpin,
+{
+    match tokio::time::timeout(HEADLESS_END_SESSION_DRAIN, ws.recv()).await {
+        Ok(Ok(Some(ServerMessage::EndSession))) => true,
+        Ok(Ok(Some(other))) => {
+            tracing::warn!(?other, "headless drain: dropping unexpected ServerMessage");
+            false
+        }
+        Ok(Ok(None)) | Ok(Err(_)) | Err(_) => false,
+    }
 }
 
 /// Phase 2 — send `Ready`, await `FirstMessage`, return its contents.
@@ -960,5 +1067,257 @@ mod tests {
         drop(_s_tx);
         drop(worker);
         assert!(s_rx.next().await.is_none(), "no frames must be sent");
+    }
+
+    mod unified_cleanup {
+        use super::*;
+        use crate::worker::report::{RunReport, SessionStateFormat, SessionStateRef, TokenUsage};
+        use futures::SinkExt;
+        use std::io::Write;
+        use tokio_tungstenite::tungstenite;
+
+        type WsFrame = std::result::Result<tungstenite::Message, tungstenite::Error>;
+        type WsSender = futures::channel::mpsc::UnboundedSender<WsFrame>;
+        type WsReceiver = futures::channel::mpsc::UnboundedReceiver<WsFrame>;
+
+        struct TestStream {
+            rx: futures::channel::mpsc::UnboundedReceiver<WsFrame>,
+            tx: futures::channel::mpsc::UnboundedSender<WsFrame>,
+        }
+        impl futures::Stream for TestStream {
+            type Item = WsFrame;
+            fn poll_next(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Self::Item>> {
+                std::pin::Pin::new(&mut self.rx).poll_next(cx)
+            }
+        }
+        impl futures::Sink<tungstenite::Message> for TestStream {
+            type Error = tungstenite::Error;
+            fn poll_ready(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+            fn start_send(
+                self: std::pin::Pin<&mut Self>,
+                item: tungstenite::Message,
+            ) -> std::result::Result<(), Self::Error> {
+                self.tx
+                    .unbounded_send(Ok(item))
+                    .map_err(|_| tungstenite::Error::ConnectionClosed)
+            }
+            fn poll_flush(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+                std::task::Poll::Ready(Ok(()))
+            }
+            fn poll_close(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+                self.tx.close_channel();
+                std::task::Poll::Ready(Ok(()))
+            }
+        }
+
+        fn duplex() -> (WorkerSocket<TestStream>, WsSender, WsReceiver) {
+            let (server_tx, worker_rx) = futures::channel::mpsc::unbounded::<WsFrame>();
+            let (worker_tx, server_rx) = futures::channel::mpsc::unbounded::<WsFrame>();
+            let ws = WorkerSocket::new(TestStream {
+                rx: worker_rx,
+                tx: worker_tx,
+            });
+            (ws, server_tx, server_rx)
+        }
+
+        async fn collect_worker_msgs(server_rx: &mut WsReceiver) -> Vec<WorkerMessage> {
+            use futures::StreamExt;
+            let mut out = Vec::new();
+            while let Some(Ok(frame)) = server_rx.next().await {
+                if let tungstenite::Message::Text(text) = frame {
+                    if let Ok(msg) = serde_json::from_str::<WorkerMessage>(&text) {
+                        out.push(msg);
+                    }
+                }
+            }
+            out
+        }
+
+        fn report_with_state(transcript_bytes: &[u8]) -> (tempfile::NamedTempFile, RunReport) {
+            let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
+            tmp.write_all(transcript_bytes).expect("write");
+            let local_path = tmp.path().to_path_buf();
+            let report = RunReport {
+                last_message: "done".to_string(),
+                usage: TokenUsage::default(),
+                model_session_id: Some("sess-123".to_string()),
+                session_state: Some(SessionStateRef {
+                    local_path,
+                    format: SessionStateFormat::ClaudeJsonl,
+                }),
+            };
+            (tmp, report)
+        }
+
+        #[tokio::test]
+        async fn build_session_state_payload_skips_when_no_session_id() {
+            let (_tmp, mut report) = report_with_state(b"{}\n");
+            report.model_session_id = None;
+            assert!(build_session_state_payload(&report).is_none());
+        }
+
+        #[tokio::test]
+        async fn build_session_state_payload_skips_when_no_state_ref() {
+            let mut report = RunReport {
+                last_message: String::new(),
+                usage: TokenUsage::default(),
+                model_session_id: Some("sess".to_string()),
+                session_state: None,
+            };
+            report.session_state = None;
+            assert!(build_session_state_payload(&report).is_none());
+        }
+
+        #[tokio::test]
+        async fn build_session_state_payload_reads_transcript_bytes() {
+            let (_tmp, report) = report_with_state(b"{\"hello\":true}\n");
+            let payload = build_session_state_payload(&report).expect("payload");
+            match payload {
+                SessionStatePayload::V1 {
+                    session_id,
+                    transcript,
+                } => {
+                    assert_eq!(session_id, "sess-123");
+                    assert_eq!(transcript.as_deref(), Some(&b"{\"hello\":true}\n"[..]));
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn build_session_state_payload_missing_file_yields_none_transcript() {
+            // local_path that doesn't exist — the payload still carries a
+            // session_id so the resumer at least sees it; transcript is None
+            // and the resumer falls back to the primer path.
+            let report = RunReport {
+                last_message: String::new(),
+                usage: TokenUsage::default(),
+                model_session_id: Some("sess-x".to_string()),
+                session_state: Some(SessionStateRef {
+                    local_path: std::path::PathBuf::from("/nonexistent/transcript.jsonl"),
+                    format: SessionStateFormat::ClaudeJsonl,
+                }),
+            };
+            let payload = build_session_state_payload(&report).expect("payload");
+            match payload {
+                SessionStatePayload::V1 {
+                    session_id,
+                    transcript,
+                } => {
+                    assert_eq!(session_id, "sess-x");
+                    assert!(transcript.is_none());
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn unified_cleanup_natural_exit_sends_upload_then_closed_no_ack() {
+            let (mut ws, _server_tx, mut server_rx) = duplex();
+            let (_tmp, report) = report_with_state(b"hello\n");
+            send_unified_cleanup(&mut ws, &report, false).await;
+            drop(ws);
+            let frames = collect_worker_msgs(&mut server_rx).await;
+            // Expect exactly: SessionStateUpload, Closed event. No ack.
+            assert_eq!(frames.len(), 2, "got frames {frames:?}");
+            match &frames[0] {
+                WorkerMessage::SessionStateUpload { data } => {
+                    let payload: SessionStatePayload = serde_json::from_slice(data).unwrap();
+                    match payload {
+                        SessionStatePayload::V1 {
+                            session_id,
+                            transcript,
+                        } => {
+                            assert_eq!(session_id, "sess-123");
+                            assert_eq!(transcript.as_deref(), Some(&b"hello\n"[..]));
+                        }
+                    }
+                }
+                other => panic!("expected SessionStateUpload, got {other:?}"),
+            }
+            match &frames[1] {
+                WorkerMessage::Event {
+                    event: SessionEvent::Closed { .. },
+                } => {}
+                other => panic!("expected Closed event, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn unified_cleanup_end_session_appends_ack_after_closed() {
+            let (mut ws, _server_tx, mut server_rx) = duplex();
+            let (_tmp, report) = report_with_state(b"hello\n");
+            send_unified_cleanup(&mut ws, &report, true).await;
+            drop(ws);
+            let frames = collect_worker_msgs(&mut server_rx).await;
+            // Expect: SessionStateUpload, Closed, EndSessionAck.
+            assert_eq!(frames.len(), 3, "got frames {frames:?}");
+            assert!(matches!(
+                frames[0],
+                WorkerMessage::SessionStateUpload { .. }
+            ));
+            assert!(matches!(
+                frames[1],
+                WorkerMessage::Event {
+                    event: SessionEvent::Closed { .. }
+                }
+            ));
+            assert!(matches!(frames[2], WorkerMessage::EndSessionAck));
+        }
+
+        #[tokio::test]
+        async fn unified_cleanup_skips_upload_when_no_session_state() {
+            // No on-disk state ref and no session id — cleanup still sends
+            // the `Closed` event so the server-side log is properly capped.
+            let (mut ws, _server_tx, mut server_rx) = duplex();
+            let report = RunReport {
+                last_message: String::new(),
+                usage: TokenUsage::default(),
+                model_session_id: None,
+                session_state: None,
+            };
+            send_unified_cleanup(&mut ws, &report, false).await;
+            drop(ws);
+            let frames = collect_worker_msgs(&mut server_rx).await;
+            assert_eq!(frames.len(), 1);
+            assert!(matches!(
+                frames[0],
+                WorkerMessage::Event {
+                    event: SessionEvent::Closed { .. }
+                }
+            ));
+        }
+
+        #[tokio::test]
+        async fn drain_end_session_headless_returns_true_when_present() {
+            let (mut ws, mut server_tx, _server_rx) = duplex();
+            // Push EndSession before the drain is called so it's immediately
+            // in the buffer.
+            let json = serde_json::to_string(&ServerMessage::EndSession).unwrap();
+            server_tx
+                .send(Ok(tungstenite::Message::Text(json)))
+                .await
+                .unwrap();
+            assert!(drain_end_session_headless(&mut ws).await);
+        }
+
+        #[tokio::test]
+        async fn drain_end_session_headless_returns_false_when_absent() {
+            let (mut ws, _server_tx, _server_rx) = duplex();
+            // Nothing buffered, timeout returns false.
+            assert!(!drain_end_session_headless(&mut ws).await);
+        }
     }
 }

@@ -8,8 +8,8 @@ import type { SessionId } from "./SessionId";
  * The first message must be either `Fresh` or `Reconnecting`; the server
  * bails the connection on any other first-inbound variant. Phase 2's
  * `Ready` signals that the worker has finished context negotiation and
- * is awaiting `FirstMessage`. Phase 3 carries session events and
- * session-state uploads.
+ * is awaiting `FirstMessage`. Phase 3 carries session events,
+ * session-state uploads, and (on graceful shutdown) `EndSessionAck`.
  */
 export type WorkerMessage =
   | { type: "fresh" }
@@ -17,4 +17,5 @@ export type WorkerMessage =
   | { type: "request_transcript"; prior_session_id: SessionId }
   | { type: "ready" }
   | { type: "event"; event: SessionEvent }
-  | { type: "session_state_upload"; data: number[] };
+  | { type: "session_state_upload"; data: number[] }
+  | { type: "end_session_ack" };

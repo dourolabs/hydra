@@ -53,8 +53,23 @@ pub type ReconnectFn<S> = Arc<
         + Sync,
 >;
 
+/// Outcome of a finished relay pump. The pump hands back the open
+/// `WorkerSocket` (when the model exited naturally or `EndSession` was
+/// observed) so the caller (`ModelSelector::drive_interactive`) can issue
+/// the unified end-of-session cleanup messages (`SessionStateUpload`,
+/// `Closed` event, optional `EndSessionAck`) before closing the WS.
+pub struct PumpExit<S> {
+    /// Open WS handed back to the caller, or `None` if the WS was lost
+    /// (reconnect exhausted, or transport error after `EndSession`).
+    pub ws: Option<WorkerSocket<S>>,
+    /// Whether the pump observed an inbound `ServerMessage::EndSession`.
+    /// When `true`, the caller appends `WorkerMessage::EndSessionAck` to
+    /// the unified cleanup sequence.
+    pub end_session_requested: bool,
+}
+
 /// Handles returned by [`spawn_relay_pump`].
-pub struct RelayAdapter {
+pub struct RelayAdapter<S> {
     /// Caller-side input receiver. Carries `WorkerInputMessage`s produced from
     /// inbound `ServerMessage::Event { SessionEvent::UserMessage }`.
     /// `ModelSelector::drive_interactive` forwards this into the per-wrapper
@@ -65,9 +80,10 @@ pub struct RelayAdapter {
     /// on it; the pump forwards them onto the WebSocket.
     pub output_tx: mpsc::Sender<WorkerEvent>,
     /// Join handle for the pump task. The pump ends when either the
-    /// WebSocket closes and reconnect is exhausted, or `output_tx` is
-    /// dropped.
-    pub pump: tokio::task::JoinHandle<()>,
+    /// WebSocket closes and reconnect is exhausted, `output_tx` is
+    /// dropped (model exited), or the server sent `EndSession` and the
+    /// model has since exited.
+    pub pump: tokio::task::JoinHandle<PumpExit<S>>,
 }
 
 /// Spawn the Phase-3 pump on a `WorkerSocket` that has already completed
@@ -78,7 +94,7 @@ pub fn spawn_relay_pump<S>(
     ws: WorkerSocket<S>,
     session_id: SessionId,
     reconnect: ReconnectFn<S>,
-) -> RelayAdapter
+) -> RelayAdapter<S>
 where
     S: Sink<tungstenite::Message, Error = tungstenite::Error>
         + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
@@ -89,9 +105,8 @@ where
     let (input_tx, input_rx) = mpsc::channel::<WorkerInputMessage>(32);
     let (output_tx, output_rx) = mpsc::channel::<WorkerEvent>(32);
 
-    let pump = tokio::spawn(async move {
-        run_pump(ws, session_id, reconnect, input_tx, output_rx).await;
-    });
+    let pump =
+        tokio::spawn(async move { run_pump(ws, session_id, reconnect, input_tx, output_rx).await });
 
     RelayAdapter {
         input_rx,
@@ -106,7 +121,8 @@ async fn run_pump<S>(
     reconnect: ReconnectFn<S>,
     input_tx: mpsc::Sender<WorkerInputMessage>,
     mut output_rx: mpsc::Receiver<WorkerEvent>,
-) where
+) -> PumpExit<S>
+where
     S: Sink<tungstenite::Message, Error = tungstenite::Error>
         + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
         + Unpin,
@@ -116,6 +132,11 @@ async fn run_pump<S>(
     // any forwarded event has been seen; sent verbatim on
     // `WorkerMessage::Reconnecting`.
     let mut last_received_session_event_index: Option<usize> = None;
+    // `Some(_)` while we still forward inbound `UserMessage`s to the
+    // model; set to `None` on `ServerMessage::EndSession` to signal
+    // Claude (interactive) to observe stdin EOF and exit.
+    let mut input_tx: Option<mpsc::Sender<WorkerInputMessage>> = Some(input_tx);
+    let mut end_session_requested = false;
 
     loop {
         tokio::select! {
@@ -128,14 +149,25 @@ async fn run_pump<S>(
                                 Some(prev) => prev.max(event_index),
                             });
                         if let SessionEvent::UserMessage { content, .. } = event {
-                            if input_tx
-                                .send(WorkerInputMessage { content })
-                                .await
-                                .is_err()
-                            {
-                                break;
+                            if let Some(tx) = input_tx.as_ref() {
+                                if tx.send(WorkerInputMessage { content }).await.is_err() {
+                                    // Model is gone; nothing left to forward.
+                                    input_tx = None;
+                                }
                             }
                         }
+                    }
+                    Ok(Some(ServerMessage::EndSession)) => {
+                        // Signal the model to exit gracefully by dropping
+                        // our `input_tx`: the interactive runner sees its
+                        // input channel close and drops Claude's stdin,
+                        // which causes Claude to observe EOF and exit.
+                        // We continue draining the pump until `output_rx`
+                        // closes (model done) — only then does the caller
+                        // run the unified cleanup-and-close sequence.
+                        info!(%session_id, "relay pump observed EndSession; signaling graceful exit");
+                        end_session_requested = true;
+                        input_tx = None;
                     }
                     Ok(Some(ServerMessage::FirstMessage { .. })) => {
                         // Per design §1.5, `FirstMessage` is single-shot:
@@ -157,21 +189,32 @@ async fn run_pump<S>(
                         // exit. Otherwise the model is still running, so
                         // try to reopen the socket and resume Phase 3.
                         if output_rx.is_closed() {
-                            break;
+                            return PumpExit { ws: None, end_session_requested };
                         }
-                        match attempt_reconnect(
-                            &session_id,
-                            &reconnect,
-                            last_received_session_event_index,
-                            &input_tx,
-                        )
-                        .await
-                        {
+                        // Per design: reconnect tries to reopen whenever
+                        // the model is still running. If we already saw
+                        // EndSession and the WS dropped, returning here
+                        // skips the cleanup messages — there is no WS to
+                        // send them on, and the existing server fallback
+                        // (kill_job today, close_conversation in PR-2)
+                        // catches the disconnect.
+                        let reconnect_result = match input_tx.as_ref() {
+                            Some(tx) => attempt_reconnect(
+                                &session_id,
+                                &reconnect,
+                                last_received_session_event_index,
+                                tx,
+                            )
+                            .await,
+                            // EndSession already received — don't reopen.
+                            None => None,
+                        };
+                        match reconnect_result {
                             Some((new_ws, new_last_index)) => {
                                 ws = new_ws;
                                 last_received_session_event_index = new_last_index;
                             }
-                            None => break,
+                            None => return PumpExit { ws: None, end_session_requested },
                         }
                     }
                 }
@@ -181,11 +224,14 @@ async fn run_pump<S>(
                     Some(event) => {
                         if let Some(api_event) = worker_event_to_session_event(event) {
                             if ws.send(WorkerMessage::Event { event: api_event }).await.is_err() {
-                                break;
+                                // WS broken; if we still have a working
+                                // input_tx the reconnect arm above will
+                                // try to recover on next ws.recv() error.
+                                return PumpExit { ws: None, end_session_requested };
                             }
                         }
                     }
-                    None => break,
+                    None => return PumpExit { ws: Some(ws), end_session_requested },
                 }
             }
         }
@@ -432,6 +478,31 @@ mod tests {
         }
     }
 
+    /// Helper: serialize a `ServerMessage` and shove it onto the
+    /// server-side sender so the pump observes it as inbound.
+    async fn push_server_msg(server_tx: &mut WsSender, msg: &ServerMessage) {
+        let json = serde_json::to_string(msg).unwrap();
+        server_tx
+            .send(Ok(tungstenite::Message::Text(json)))
+            .await
+            .unwrap();
+    }
+
+    /// Helper: collect everything the worker sent on its outbound WS
+    /// (`WorkerMessage` frames) until the server-side receiver closes.
+    async fn collect_worker_msgs(server_rx: &mut WsReceiver) -> Vec<WorkerMessage> {
+        use futures::StreamExt;
+        let mut out = Vec::new();
+        while let Some(Ok(frame)) = server_rx.next().await {
+            if let tungstenite::Message::Text(text) = frame {
+                if let Ok(msg) = serde_json::from_str::<WorkerMessage>(&text) {
+                    out.push(msg);
+                }
+            }
+        }
+        out
+    }
+
     #[tokio::test]
     async fn pump_forwards_user_messages_to_input_channel() {
         let (ws, mut server_tx, _server_rx) = duplex();
@@ -462,6 +533,138 @@ mod tests {
         drop(output_tx);
         drop(server_tx);
         let _ = pump.await;
+    }
+
+    #[tokio::test]
+    async fn pump_returns_open_ws_on_natural_exit() {
+        // When `output_tx` is dropped (model exited) and no EndSession was
+        // ever received, the pump hands the WS back so the caller can
+        // issue the unified cleanup messages.
+        let (ws, _server_tx, _server_rx) = duplex();
+        let session_id = SessionId::new();
+        let RelayAdapter {
+            input_rx: _input_rx,
+            output_tx,
+            pump,
+        } = spawn_relay_pump(ws, session_id, noop_reconnect::<TestStream>());
+
+        drop(output_tx);
+        let exit = pump.await.expect("pump task panicked");
+        assert!(exit.ws.is_some(), "natural exit must hand the WS back");
+        assert!(!exit.end_session_requested);
+    }
+
+    #[tokio::test]
+    async fn pump_handles_end_session_and_signals_input_close() {
+        // On inbound `ServerMessage::EndSession` the pump (a) drops its
+        // `input_tx` so the model observes input EOF and (b) sets the
+        // `end_session_requested` flag for the caller's unified cleanup.
+        let (ws, mut server_tx, _server_rx) = duplex();
+        let session_id = SessionId::new();
+        let RelayAdapter {
+            mut input_rx,
+            output_tx,
+            pump,
+        } = spawn_relay_pump(ws, session_id, noop_reconnect::<TestStream>());
+
+        push_server_msg(&mut server_tx, &ServerMessage::EndSession).await;
+        // `input_rx.recv()` returns None once the pump drops its sender —
+        // that's the worker-side signal we propagate to Claude as stdin EOF.
+        assert!(input_rx.recv().await.is_none());
+
+        // Model exits naturally now that its input is closed.
+        drop(output_tx);
+        let exit = pump.await.expect("pump task panicked");
+        assert!(exit.end_session_requested);
+        assert!(
+            exit.ws.is_some(),
+            "EndSession-driven exit must hand the WS back for cleanup"
+        );
+    }
+
+    #[tokio::test]
+    async fn pump_returns_no_ws_when_model_gone_and_ws_closes() {
+        // If both the WS closes and `output_rx` is already closed, the
+        // pump exits without a WS and with `end_session_requested = false`.
+        let (ws, server_tx, _server_rx) = duplex();
+        let session_id = SessionId::new();
+        let RelayAdapter {
+            input_rx: _input_rx,
+            output_tx,
+            pump,
+        } = spawn_relay_pump(ws, session_id, noop_reconnect::<TestStream>());
+
+        drop(output_tx);
+        // Need both to be dropped to unwedge the pump.
+        drop(server_tx);
+        let exit = pump.await.expect("pump task panicked");
+        // Either branch (output_rx None first, or ws close first) is
+        // acceptable — both flag end_session_requested = false.
+        assert!(!exit.end_session_requested);
+        // ws may or may not be Some depending on which branch fired
+        // first; the key invariant we assert is the flag.
+        let _ = exit.ws;
+    }
+
+    #[tokio::test]
+    async fn pump_natural_exit_lets_worker_send_cleanup_on_returned_ws() {
+        // End-to-end-ish: simulate a model that emits one assistant
+        // message, then exits naturally. Verify the pump (a) forwarded
+        // the message on the WS, (b) handed the WS back, and (c) we can
+        // send cleanup frames on that returned WS that round-trip to the
+        // server side.
+        let (ws, _server_tx, mut server_rx) = duplex();
+        let session_id = SessionId::new();
+        let RelayAdapter {
+            input_rx: _input_rx,
+            output_tx,
+            pump,
+        } = spawn_relay_pump(ws, session_id, noop_reconnect::<TestStream>());
+
+        output_tx
+            .send(WorkerEvent::AssistantText {
+                text: "hello".to_string(),
+            })
+            .await
+            .unwrap();
+        drop(output_tx);
+        let exit = pump.await.expect("pump task panicked");
+        let mut ws = exit.ws.expect("WS expected on natural exit");
+
+        // Send a fake cleanup sequence on the returned WS.
+        ws.send(WorkerMessage::Event {
+            event: SessionEvent::Closed {
+                timestamp: chrono::Utc::now(),
+            },
+        })
+        .await
+        .unwrap();
+        ws.send(WorkerMessage::SessionStateUpload {
+            data: vec![1, 2, 3],
+        })
+        .await
+        .unwrap();
+        drop(ws);
+
+        let frames = collect_worker_msgs(&mut server_rx).await;
+        // First frame: the assistant message the pump forwarded.
+        match &frames[0] {
+            WorkerMessage::Event {
+                event: SessionEvent::AssistantMessage { content, .. },
+            } => assert_eq!(content, "hello"),
+            other => panic!("expected forwarded AssistantMessage, got {other:?}"),
+        }
+        // Then the cleanup frames in the order we sent them.
+        match &frames[1] {
+            WorkerMessage::Event {
+                event: SessionEvent::Closed { .. },
+            } => {}
+            other => panic!("expected Closed event, got {other:?}"),
+        }
+        match &frames[2] {
+            WorkerMessage::SessionStateUpload { data } => assert_eq!(data, &vec![1, 2, 3]),
+            other => panic!("expected SessionStateUpload, got {other:?}"),
+        }
     }
 
     #[tokio::test]

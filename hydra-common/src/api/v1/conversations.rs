@@ -221,8 +221,8 @@ pub struct SendMessageRequest {
 /// The first message must be either `Fresh` or `Reconnecting`; the server
 /// bails the connection on any other first-inbound variant. Phase 2's
 /// `Ready` signals that the worker has finished context negotiation and
-/// is awaiting `FirstMessage`. Phase 3 carries session events and
-/// session-state uploads.
+/// is awaiting `FirstMessage`. Phase 3 carries session events,
+/// session-state uploads, and (on graceful shutdown) `EndSessionAck`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -254,6 +254,11 @@ pub enum WorkerMessage {
         #[cfg_attr(feature = "ts", ts(type = "number[]"))]
         data: Vec<u8>,
     },
+    /// Phase 3 — acknowledgment that the worker has observed
+    /// `ServerMessage::EndSession` and is closing the session. Sent
+    /// immediately before the WS close, after the final
+    /// `SessionStateUpload` and `Closed` event.
+    EndSessionAck,
 }
 
 /// Payload carried inside `WorkerMessage::SessionStateUpload { data }` (as JSON
@@ -325,6 +330,12 @@ pub enum ServerMessage {
         event: SessionEvent,
         event_index: usize,
     },
+    /// Phase 3 — server requests graceful shutdown of the worker session.
+    /// The worker signals graceful exit to the model wrapper (interactive:
+    /// stdin EOF), awaits the model's natural exit, runs the unified
+    /// cleanup-and-close sequence (`SessionStateUpload` → `Closed` event →
+    /// `EndSessionAck`), and closes the WS.
+    EndSession,
 }
 
 /// A `SessionEvent` together with its per-session `event_index`. Used as
@@ -599,6 +610,24 @@ mod tests {
         assert_eq!(msg, deserialized);
         assert!(json.contains(r#""event_index":3"#));
         assert!(json.contains(r#""event_index":4"#));
+    }
+
+    #[test]
+    fn worker_message_end_session_ack_round_trip() {
+        let msg = WorkerMessage::EndSessionAck;
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: WorkerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"end_session_ack""#));
+    }
+
+    #[test]
+    fn server_message_end_session_round_trip() {
+        let msg = ServerMessage::EndSession;
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"end_session""#));
     }
 
     #[test]
