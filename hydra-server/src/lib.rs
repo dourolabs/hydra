@@ -409,10 +409,6 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/conversations/:conversation_id/close",
             post(routes::conversations::close_conversation),
         )
-        .route(
-            "/v1/conversations/:conversation_id/resume",
-            post(routes::conversations::resume_conversation),
-        )
         .route("/v1/events", get(routes::events::get_events))
         .layer(middleware::from_fn_with_state(
             state.clone(),

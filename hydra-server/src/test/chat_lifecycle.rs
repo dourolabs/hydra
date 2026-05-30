@@ -610,25 +610,41 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     )
     .await?;
 
-    // Step 2: resume the conversation. A new session is created with
-    // conversation_resume_from set to the pre-Resumed event count.
-    let resumed: Conversation = client
+    // Step 2: implicit resume — sending a message to a non-Active
+    // conversation flips status back to Active and the automation spawns a
+    // new session with conversation_resume_from set to the pre-Resumed
+    // event count. The trigger message gets queued and is delivered to
+    // the new worker folded into FirstMessage after the Phase 1
+    // handshake completes below.
+    client
         .post(format!(
-            "{}/v1/conversations/{conversation_id}/resume",
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "resume trigger".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let active: Conversation = client
+        .get(format!(
+            "{}/v1/conversations/{conversation_id}",
             server.base_url()
         ))
         .send()
         .await?
         .json()
         .await?;
-    assert_eq!(resumed.status, ConversationStatus::Active);
+    assert_eq!(active.status, ConversationStatus::Active);
 
     // Find the Resumed event's session_id — that's the new session. The
     // automation spawns the new session and appends `Resumed`
     // asynchronously, so poll until it shows up.
     let resumed_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
         .await
-        .expect("expected a Resumed event after /resume");
+        .expect("expected a Resumed event after implicit resume via /messages");
     assert_ne!(
         resumed_session_id, initial_session_id,
         "resume must create a brand-new session"
@@ -770,7 +786,9 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
         .await?;
     assert_eq!(closed.status, ConversationStatus::Closed);
 
-    // Resume: status must return to Active and a new session created.
+    // Resume implicitly by sending a message on a non-Active conversation;
+    // `send_message` flips the conversation back to Active and the
+    // automation spawns a new session.
     let sessions_before: ListSessionsResponse = client
         .get(format!("{}/v1/sessions", server.base_url()))
         .send()
@@ -779,16 +797,36 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
         .await?;
     let count_before = sessions_before.sessions.len();
 
-    let resumed: Conversation = client
+    let final_resp = client
         .post(format!(
-            "{}/v1/conversations/{conversation_id}/resume",
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "after resume".to_string(),
+        })
+        .send()
+        .await?;
+    assert_eq!(final_resp.status(), StatusCode::OK);
+
+    // Re-fetch to confirm the status flip landed.
+    let active: Conversation = client
+        .get(format!(
+            "{}/v1/conversations/{conversation_id}",
             server.base_url()
         ))
         .send()
         .await?
         .json()
         .await?;
-    assert_eq!(resumed.status, ConversationStatus::Active);
+    assert_eq!(active.status, ConversationStatus::Active);
+
+    // Wait for the spawn-conversation-sessions automation to produce the
+    // new session and append the Resumed event (both happen async on the
+    // bus); the Resumed event carries the new session id.
+    let new_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
+        .await
+        .expect("expected a Resumed event after implicit resume via /messages");
 
     let sessions_after: ListSessionsResponse = client
         .get(format!("{}/v1/sessions", server.base_url()))
@@ -802,9 +840,6 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
         sessions_after.sessions.len()
     );
 
-    // Confirm the new session is interactive and conversation_resume_from is
-    // set to the event count snapshotted by resume_conversation.
-    let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
     let new_session = store.get_session(&new_session_id, false).await?.item;
     assert!(
         new_session.is_interactive(),
@@ -812,21 +847,8 @@ async fn close_then_resume_full_lifecycle() -> anyhow::Result<()> {
     );
     assert!(
         new_session.mode.conversation_resume_from().is_some(),
-        "conversation_resume_from must be set on a session created by /resume"
+        "conversation_resume_from must be set on a session created by implicit resume"
     );
-
-    // Send a message after resume to verify the conversation continues to accept input.
-    let final_resp = client
-        .post(format!(
-            "{}/v1/conversations/{conversation_id}/messages",
-            server.base_url()
-        ))
-        .json(&SendMessageRequest {
-            content: "after resume".to_string(),
-        })
-        .send()
-        .await?;
-    assert_eq!(final_resp.status(), StatusCode::OK);
 
     // Sanity-check the event sequence end-to-end.
     let events: Vec<ConversationEvent> = client
@@ -853,12 +875,13 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
 -> anyhow::Result<()> {
     // Regression guard for the close/resume flow, adapted to the WS-only
     // Phase 1 split:
-    //   1. After /resume, the freshly-spawned worker opens `Fresh`, sees
-    //      `ResumeContext { prior_session_id }`, and requests the prior
-    //      session's transcript. That `Transcript { events }` must include
-    //      the full prior conversation history (user messages and
-    //      assistant replies plus the Suspending + Closed lifecycle
-    //      markers) so the agent can reconstruct context.
+    //   1. After the implicit resume triggered by `POST /messages`, the
+    //      freshly-spawned worker opens `Fresh`, sees `ResumeContext {
+    //      prior_session_id }`, and requests the prior session's
+    //      transcript. That `Transcript { events }` must include the
+    //      full prior conversation history (user messages and assistant
+    //      replies plus the Suspending + Closed lifecycle markers) so
+    //      the agent can reconstruct context.
     //   2. After the new worker re-attaches, the relay must forward ONLY
     //      the next new user message — not replay msg1/msg2/msg3 — so the
     //      assistant does not generate redundant replies for earlier turns.
@@ -1050,19 +1073,24 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         "Closed event should be appended by /close, got {events_after_close:?}"
     );
 
-    // Step 5: /resume; a new session is created and a Resumed event is
-    // appended.
-    let resumed: Conversation = client
+    // Step 5: implicit resume via /messages with msg4 — flipping the
+    // conversation back to Active and queueing msg4 for delivery to the
+    // new worker. The automation spawns the new session and appends a
+    // Resumed event.
+    client
         .post(format!(
-            "{}/v1/conversations/{conversation_id}/resume",
+            "{}/v1/conversations/{conversation_id}/messages",
             server.base_url()
         ))
+        .json(&SendMessageRequest {
+            content: msg4.to_string(),
+        })
         .send()
         .await?
-        .json()
-        .await?;
-    assert_eq!(resumed.status, ConversationStatus::Active);
-    let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
+        .error_for_status()?;
+    let new_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
+        .await
+        .expect("expected a Resumed event after implicit resume via /messages");
     assert_ne!(
         new_session_id, initial_session_id,
         "resume must create a brand-new session"
@@ -1128,47 +1156,31 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
         catch_up2.events[7]
     );
 
-    // Send Ready and consume the resume-path FirstMessage (which the
-    // server populates from the prior session's first user message) so
-    // the relay phase transitions to Ready before the live POST below.
+    // Step 7: send Ready and verify the queued msg4 (from Step 5's implicit
+    // resume) is the ONLY user-facing message delivered — not a replay of
+    // msg1/msg2/msg3. Since msg4 was queued before worker #2 connected,
+    // it drains during set_active and arrives as a folded FirstMessage
+    // when the phase transitions out of Negotiating.
     send_worker_message(&mut ws2, WorkerMessage::Ready).await?;
-    let _ = drain_server_messages(&mut ws2, Duration::from_millis(200)).await?;
-
-    // Step 7: send msg4 and verify the resumed relay forwards ONLY this new
-    // message — not a replay of msg1/msg2/msg3.
-    client
-        .post(format!(
-            "{}/v1/conversations/{conversation_id}/messages",
-            server.base_url()
-        ))
-        .json(&SendMessageRequest {
-            content: msg4.to_string(),
-        })
-        .send()
-        .await?
-        .error_for_status()?;
-
     let received_after_resume = drain_server_messages(&mut ws2, Duration::from_millis(500)).await?;
-    let event_forwards: Vec<&SessionEvent> = received_after_resume
+    let delivered_user_messages: Vec<&str> = received_after_resume
         .iter()
         .filter_map(|m| match m {
-            ServerMessage::Event { event, .. } => Some(event),
+            ServerMessage::FirstMessage { user_message, .. } => Some(user_message.as_str()),
+            ServerMessage::Event {
+                event: SessionEvent::UserMessage { content, .. },
+                ..
+            } => Some(content.as_str()),
             _ => None,
         })
         .collect();
     assert_eq!(
-        event_forwards.len(),
-        1,
-        "exactly one event should be forwarded to worker #2 after resume; \
-         a re-broadcast of msg1/2/3 would show up here. Got {event_forwards:?}"
+        delivered_user_messages,
+        vec![msg4],
+        "exactly one user message should be delivered to worker #2 after \
+         resume (the queued msg4); a re-broadcast of msg1/2/3 would show \
+         up here. Got {received_after_resume:?}"
     );
-    match event_forwards[0] {
-        SessionEvent::UserMessage { content, .. } => assert_eq!(
-            content, msg4,
-            "the only forwarded event must be msg4, not a replay"
-        ),
-        other => panic!("forwarded event must be msg4 UserMessage, got {other:?}"),
-    }
 
     // Final cross-check: chat content lives on the per-session `SessionEvent`
     // log post-Phase-E-step-18. Walk every session linked to the conversation
@@ -1314,20 +1326,24 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
         "no SessionStateUpload was ever sent, so session_state must be None"
     );
 
-    // Step 3: /resume creates a new session with conversation_resume_from
-    // set to the event count snapshotted at /resume time.
-    let resumed: Conversation = client
+    // Step 3: implicit resume via /messages — flipping the Closed
+    // conversation back to Active and queueing the trigger message. The
+    // automation spawns a new session with conversation_resume_from set
+    // to the event count snapshotted at this point.
+    client
         .post(format!(
-            "{}/v1/conversations/{conversation_id}/resume",
+            "{}/v1/conversations/{conversation_id}/messages",
             server.base_url()
         ))
+        .json(&SendMessageRequest {
+            content: "resume trigger".to_string(),
+        })
         .send()
         .await?
-        .json()
-        .await?;
-    assert_eq!(resumed.status, ConversationStatus::Active);
-
-    let new_session_id = find_session_for_conversation(&store, &conversation_id).await;
+        .error_for_status()?;
+    let new_session_id = poll_resumed_session_id(&client, &server.base_url(), &conversation_id)
+        .await
+        .expect("expected a Resumed event after implicit resume via /messages");
     assert_ne!(
         new_session_id, initial_session_id,
         "resume must create a brand-new session"
@@ -1340,7 +1356,7 @@ async fn close_then_resume_replays_full_history_with_no_session_state() -> anyho
     let _events_len_at_resume = new_session
         .mode
         .conversation_resume_from()
-        .expect("conversation_resume_from must be set on a session created by /resume");
+        .expect("conversation_resume_from must be set on a session created by implicit resume");
 
     // Step 4: connect fake-worker #2 with the real worker's
     // resume_from_event_index value. The server must return the FULL event
@@ -1480,21 +1496,23 @@ async fn resume_after_session_state_upload_persists_but_omits_from_catch_up() ->
         "SessionStateUpload should be persisted byte-for-byte"
     );
 
-    // Resume the conversation and connect worker #2.
-    let resumed: Conversation = client
+    // Resume the conversation implicitly via /messages and connect worker
+    // #2. After the trigger send the previous session is in the store
+    // with status Complete (the test drove it terminal above);
+    // `find_new_session_for_conversation` polls for the new session that
+    // the automation spawns.
+    client
         .post(format!(
-            "{}/v1/conversations/{conversation_id}/resume",
+            "{}/v1/conversations/{conversation_id}/messages",
             server.base_url()
         ))
+        .json(&SendMessageRequest {
+            content: "resume trigger".to_string(),
+        })
         .send()
         .await?
-        .json()
-        .await?;
-    assert_eq!(resumed.status, ConversationStatus::Active);
+        .error_for_status()?;
 
-    // After /resume the previous session is in the store with status
-    // Complete (the test drove it terminal above). `find_new_session_for_conversation`
-    // polls for the new session that the automation spawns.
     let new_session_id =
         find_new_session_for_conversation(&store, &conversation_id, &initial_session_id).await;
     assert_ne!(new_session_id, initial_session_id);
@@ -1852,12 +1870,19 @@ async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Resul
     )
     .await?;
 
-    // Step 3: /resume — automation spawns session #2 and appends Resumed.
+    // Step 3: implicit resume via /messages — sending a message on a
+    // non-Active conversation flips Active and the automation spawns
+    // session #2 and appends Resumed. The trigger message stays in the
+    // chat_relay pending queue because no worker connects to s2 in this
+    // test; it never lands in any session's event log.
     let _ = client
         .post(format!(
-            "{}/v1/conversations/{conversation_id}/resume",
+            "{}/v1/conversations/{conversation_id}/messages",
             server.base_url()
         ))
+        .json(&SendMessageRequest {
+            content: "resume trigger".to_string(),
+        })
         .send()
         .await?
         .error_for_status()?;
