@@ -114,22 +114,6 @@ impl SessionMode {
             }
         )
     }
-
-    /// Stamp the resume hint on an interactive mode. Returns `false` if
-    /// called on a `Headless` mode — the caller has the wrong session.
-    #[must_use]
-    pub fn set_conversation_resume_from(&mut self, value: Option<usize>) -> bool {
-        match self {
-            SessionMode::Interactive {
-                conversation_resume_from,
-                ..
-            } => {
-                *conversation_resume_from = value;
-                true
-            }
-            SessionMode::Headless => false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

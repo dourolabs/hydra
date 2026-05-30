@@ -1063,7 +1063,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_spawn_does_not_set_conversation_resume_from_or_append_resumed() {
+    async fn fresh_spawn_has_no_conversation_resume_from_or_resumed_event() {
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
 
