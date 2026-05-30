@@ -356,13 +356,6 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn get_conversation_versions(
-        &self,
-        _id: &ConversationId,
-    ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
-        fail()
-    }
-
     async fn get_conversation_event_summaries(
         &self,
         _ids: &[ConversationId],
