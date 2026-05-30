@@ -401,7 +401,6 @@ impl AppState {
 
         Ok(versioned)
     }
-
 }
 
 #[cfg(test)]
