@@ -613,10 +613,9 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
     // Step 2: implicit resume — sending a message to a non-Active
     // conversation flips status back to Active and the automation spawns a
     // new session with conversation_resume_from set to the pre-Resumed
-    // event count. This is the only resume path post-cleanup of the
-    // dead `/resume` route; the trigger message gets queued and is
-    // delivered to the new worker folded into FirstMessage after the
-    // Phase 1 handshake completes below.
+    // event count. The trigger message gets queued and is delivered to
+    // the new worker folded into FirstMessage after the Phase 1
+    // handshake completes below.
     client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/messages",
@@ -876,12 +875,13 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
 -> anyhow::Result<()> {
     // Regression guard for the close/resume flow, adapted to the WS-only
     // Phase 1 split:
-    //   1. After /resume, the freshly-spawned worker opens `Fresh`, sees
-    //      `ResumeContext { prior_session_id }`, and requests the prior
-    //      session's transcript. That `Transcript { events }` must include
-    //      the full prior conversation history (user messages and
-    //      assistant replies plus the Suspending + Closed lifecycle
-    //      markers) so the agent can reconstruct context.
+    //   1. After the implicit resume triggered by `POST /messages`, the
+    //      freshly-spawned worker opens `Fresh`, sees `ResumeContext {
+    //      prior_session_id }`, and requests the prior session's
+    //      transcript. That `Transcript { events }` must include the
+    //      full prior conversation history (user messages and assistant
+    //      replies plus the Suspending + Closed lifecycle markers) so
+    //      the agent can reconstruct context.
     //   2. After the new worker re-attaches, the relay must forward ONLY
     //      the next new user message — not replay msg1/msg2/msg3 — so the
     //      assistant does not generate redundant replies for earlier turns.
@@ -1076,9 +1076,7 @@ async fn resume_replays_full_history_in_catch_up_and_forwards_only_new_message()
     // Step 5: implicit resume via /messages with msg4 — flipping the
     // conversation back to Active and queueing msg4 for delivery to the
     // new worker. The automation spawns the new session and appends a
-    // Resumed event. (The dead `/resume` route used to do the flip
-    // explicitly; production never used it, so the regression flow
-    // exercised here is "user sends a message after close".)
+    // Resumed event.
     client
         .post(format!(
             "{}/v1/conversations/{conversation_id}/messages",
