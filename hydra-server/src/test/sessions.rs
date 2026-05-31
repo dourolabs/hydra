@@ -1196,7 +1196,6 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 mode: SessionMode::Interactive {
                     conversation_id: hydra_common::ConversationId::new(),
                     idle_timeout_secs: None,
-                    conversation_resume_from: None,
                     greet_user: false,
                 },
                 status: Status::Created,

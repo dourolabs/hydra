@@ -896,9 +896,9 @@ impl PostgresStoreV2 {
             .transpose()?;
 
         // Phase E step 16: the legacy `context` / `prompt` / `model` /
-        // `mcp_config` / `interactive` / `conversation_resume_from` columns
-        // are gone. `mount_spec`, `agent_config`, and `mode` are NOT NULL
-        // in every row (backfilled by PR-1, dual-written since PR-2).
+        // `mcp_config` / `interactive` columns are gone. `mount_spec`,
+        // `agent_config`, and `mode` are NOT NULL in every row (backfilled
+        // by PR-1, dual-written since PR-2).
         let mount_spec = serde_json::from_value(row.mount_spec.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
         let agent_config = serde_json::from_value(row.agent_config.clone()).map_err(|e| {
@@ -1450,9 +1450,9 @@ struct TaskRow {
     #[sqlx(default)]
     usage: Option<Value>,
     // Phase E step 16: the legacy `context` / `prompt` / `model` /
-    // `mcp_config` / `interactive` / `conversation_resume_from` columns
-    // are gone; `mount_spec` / `agent_config` / `mode` are the sole source
-    // of session shape (NOT NULL after the backfill in PR-1).
+    // `mcp_config` / `interactive` columns are gone; `mount_spec` /
+    // `agent_config` / `mode` are the sole source of session shape
+    // (NOT NULL after the backfill in PR-1).
     mount_spec: Value,
     agent_config: Value,
     mode: Value,
@@ -5721,41 +5721,6 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn task_interactive_and_conversation_id_round_trip(pool: PgStorePool) {
-        let store = PostgresStoreV2::new(pool);
-        let conv_id = ConversationId::new();
-        let mut task = sample_session();
-        task.mode = crate::domain::sessions::SessionMode::Interactive {
-            conversation_id: conv_id.clone(),
-            idle_timeout_secs: None,
-            conversation_resume_from: Some(7),
-            greet_user: false,
-        };
-
-        let (task_id, _) = store
-            .add_session(task.clone(), Utc::now(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let fetched = store.get_session(&task_id, false).await.unwrap();
-        assert!(
-            fetched.item.is_interactive(),
-            "interactive must be persisted as true"
-        );
-        assert_eq!(
-            fetched.item.conversation_id().cloned(),
-            Some(conv_id),
-            "conversation_id must be persisted"
-        );
-        assert_eq!(
-            fetched.item.mode.conversation_resume_from(),
-            Some(7),
-            "conversation_resume_from must be persisted (inside SessionMode::Interactive)"
-        );
-    }
-
-    #[sqlx::test(migrations = "./migrations")]
-    #[ignore]
     async fn issue_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
 
@@ -8442,7 +8407,6 @@ mod tests {
         task_a.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_a.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
             greet_user: false,
         };
         let (task_a_id, _) = handles
@@ -8455,7 +8419,6 @@ mod tests {
         task_b.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_b.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
             greet_user: false,
         };
         handles
@@ -8742,7 +8705,6 @@ mod tests {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             None => SessionMode::Headless,

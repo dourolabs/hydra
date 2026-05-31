@@ -1528,7 +1528,6 @@ mod tests {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {
@@ -1628,7 +1627,6 @@ mod tests {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id.clone(),
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {

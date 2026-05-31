@@ -18,14 +18,6 @@ export type SessionMode = { "type": "headless" } | { "type": "interactive", conv
  */
 idle_timeout_secs?: bigint | null, 
 /**
- * Event-index resumption marker. See
- * `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
- * state-blob direction. Belongs inside the `Interactive` variant because
- * resumption is only meaningful for interactive sessions; making it part of
- * the mode means a `Headless` session can never carry a meaningless value.
- */
-conversation_resume_from?: number | null, 
-/**
  * Whether the agent should produce a greeting turn before any user
  * message arrives. When `true`, the server emits `FirstMessage` with
  * an empty `user_message` as soon as the worker signals `Ready`,
