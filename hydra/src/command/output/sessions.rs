@@ -415,7 +415,6 @@ mod tests {
             Some(id) => SessionMode::Interactive {
                 conversation_id: id,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             None => SessionMode::Headless,

@@ -680,8 +680,7 @@ async fn resume_after_idle_replays_full_event_log_in_catch_up() -> anyhow::Resul
 
     // Step 2: implicit resume — sending a message to a non-Active
     // conversation flips status back to Active and the automation spawns a
-    // new session with conversation_resume_from set to the pre-Resumed
-    // event count. The trigger message gets queued and is delivered to
+    // new session. The trigger message gets queued and is delivered to
     // the new worker folded into FirstMessage after the Phase 1
     // handshake completes below.
     client
@@ -2160,7 +2159,6 @@ async fn create_interactive_session_with_settings(
         mode: SessionMode::Interactive {
             conversation_id,
             idle_timeout_secs: None,
-            conversation_resume_from: None,
             greet_user,
         },
         agent_config: AgentSpec::Adhoc {

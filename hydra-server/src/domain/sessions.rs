@@ -59,10 +59,6 @@ pub enum SessionMode {
         /// Optional worker-side idle timeout override. `None` falls back to
         /// `config.job.interactive_idle_timeout_secs`.
         idle_timeout_secs: Option<u64>,
-        /// Event-index resumption marker. See
-        /// `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
-        /// state-blob direction.
-        conversation_resume_from: Option<usize>,
         /// Whether the agent should produce a greeting turn before any user
         /// message arrives. Default `false` matches today's interactive
         /// behavior.
@@ -78,18 +74,6 @@ impl SessionMode {
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
-        }
-    }
-
-    /// Returns the conversation event index to resume from, if any.
-    /// Always `None` for `SessionMode::Headless`.
-    pub fn conversation_resume_from(&self) -> Option<usize> {
-        match self {
-            SessionMode::Interactive {
-                conversation_resume_from,
-                ..
-            } => *conversation_resume_from,
-            SessionMode::Headless => None,
         }
     }
 
@@ -290,12 +274,10 @@ impl From<api::sessions::SessionMode> for SessionMode {
             api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
                 greet_user,
             } => SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
                 greet_user,
             },
             _ => unreachable!("unsupported session mode variant"),
@@ -310,12 +292,10 @@ impl From<SessionMode> for api::sessions::SessionMode {
             SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
                 greet_user,
             } => api::sessions::SessionMode::Interactive {
                 conversation_id,
                 idle_timeout_secs,
-                conversation_resume_from,
                 greet_user,
             },
         }

@@ -633,7 +633,6 @@ mod tests {
             SessionMode::Interactive {
                 conversation_id: conversation_id.clone(),
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             status,

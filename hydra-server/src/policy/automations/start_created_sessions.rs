@@ -37,8 +37,7 @@ impl Automation for StartCreatedSessionsAutomation {
         // Fire only on a fresh `Created` session: either a `SessionCreated`
         // event, or a `SessionUpdated` event whose status TRANSITIONS into
         // `Created`. Without the transition check, any unrelated mutation on a
-        // session that happens to still be in `Created` status (e.g. setting
-        // `conversation_resume_from` on a freshly-spawned session) would
+        // session that happens to still be in `Created` status would
         // re-trigger `start_pending_task`, racing with the original start and
         // causing the job-engine's idempotency check to surface as a Failed
         // session.
@@ -205,11 +204,9 @@ mod tests {
     #[tokio::test]
     async fn no_op_on_created_to_created_update() {
         // An unrelated mutation on a session that is already in `Created`
-        // (e.g. setting `conversation_resume_from` on a freshly-spawned
-        // session before it has started) must NOT re-trigger
-        // `start_pending_task`, because doing so would race the original
-        // start and surface as a Failed session via the job-engine's
-        // idempotency check.
+        // (before it has started) must NOT re-trigger `start_pending_task`,
+        // because doing so would race the original start and surface as a
+        // Failed session via the job-engine's idempotency check.
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 

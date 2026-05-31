@@ -386,7 +386,7 @@ struct TaskRow {
     // Phase D step 12 (PR-1) populated these columns on every INSERT;
     // Phase E step 16 (PR-5) made them the sole source of session shape
     // after dropping the legacy `context` / `prompt` / `model` /
-    // `mcp_config` / `interactive` / `conversation_resume_from` columns.
+    // `mcp_config` / `interactive` columns.
     mount_spec: String,
     agent_config: String,
     mode: String,
@@ -1498,9 +1498,9 @@ impl SqliteStore {
             .transpose()?;
 
         // Phase E step 16: the legacy `context` / `prompt` / `model` /
-        // `mcp_config` / `interactive` / `conversation_resume_from` columns
-        // are gone. `mount_spec`, `agent_config`, and `mode` are now NOT
-        // NULL in every row (backfilled by PR-1, dual-written since PR-2).
+        // `mcp_config` / `interactive` columns are gone. `mount_spec`,
+        // `agent_config`, and `mode` are now NOT NULL in every row
+        // (backfilled by PR-1, dual-written since PR-2).
         let mount_spec = serde_json::from_str(&row.mount_spec)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
         let agent_config = serde_json::from_str(&row.agent_config).map_err(|e| {
@@ -7794,41 +7794,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_interactive_and_conversation_id_round_trip() {
-        let store = create_test_store().await;
-        let conv_id = ConversationId::new();
-        let mut task = spawn_task();
-        task.mode = SessionMode::Interactive {
-            conversation_id: conv_id.clone(),
-            idle_timeout_secs: None,
-            conversation_resume_from: Some(7),
-            greet_user: false,
-        };
-
-        let now = Utc::now();
-        let (task_id, _) = store
-            .add_session(task.clone(), now, &ActorRef::test())
-            .await
-            .unwrap();
-
-        let fetched = store.get_session(&task_id, false).await.unwrap();
-        assert!(
-            fetched.item.is_interactive(),
-            "interactive must be persisted as true"
-        );
-        assert_eq!(
-            fetched.item.conversation_id().cloned(),
-            Some(conv_id),
-            "conversation_id must be persisted"
-        );
-        assert_eq!(
-            fetched.item.mode.conversation_resume_from(),
-            Some(7),
-            "conversation_resume_from must be persisted (inside SessionMode::Interactive)"
-        );
-    }
-
-    #[tokio::test]
     async fn task_creation_time_is_preserved() {
         let store = create_test_store().await;
         let creation_time = Utc::now() - Duration::hours(2);
@@ -10429,7 +10394,6 @@ mod tests {
                 session.mode = SessionMode::Interactive {
                     conversation_id: conv_id,
                     idle_timeout_secs: None,
-                    conversation_resume_from: None,
                     greet_user: false,
                 };
             }

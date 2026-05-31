@@ -98,13 +98,6 @@ pub enum SessionMode {
         /// and for legacy rows that don't carry one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idle_timeout_secs: Option<u64>,
-        /// Event-index resumption marker. See
-        /// `/designs/sessions-orthogonality-redesign.md` §3 for the longer-term
-        /// state-blob direction. Belongs inside the `Interactive` variant because
-        /// resumption is only meaningful for interactive sessions; making it part of
-        /// the mode means a `Headless` session can never carry a meaningless value.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        conversation_resume_from: Option<usize>,
         /// Whether the agent should produce a greeting turn before any user
         /// message arrives. When `true`, the server emits `FirstMessage` with
         /// an empty `user_message` as soon as the worker signals `Ready`,
@@ -122,19 +115,6 @@ impl SessionMode {
             SessionMode::Interactive {
                 conversation_id, ..
             } => Some(conversation_id),
-        }
-    }
-
-    /// Returns the conversation event index to resume from, if any. Always
-    /// `None` for headless sessions because resumption is only meaningful
-    /// for interactive runs.
-    pub fn conversation_resume_from(&self) -> Option<usize> {
-        match self {
-            SessionMode::Interactive {
-                conversation_resume_from,
-                ..
-            } => *conversation_resume_from,
-            SessionMode::Headless => None,
         }
     }
 
@@ -1335,7 +1315,6 @@ mod tests {
         session.mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: Some(600),
-            conversation_resume_from: None,
             greet_user: false,
         };
         let summary = SessionSummary::from(&session);
@@ -1465,14 +1444,12 @@ mod tests {
         let interactive = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: Some(300),
-            conversation_resume_from: Some(7),
             greet_user: false,
         };
         let i_json = serde_json::to_value(&interactive).unwrap();
         assert_eq!(i_json["type"], "interactive");
         assert_eq!(i_json["conversation_id"], conv_id.as_ref());
         assert_eq!(i_json["idle_timeout_secs"], 300);
-        assert_eq!(i_json["conversation_resume_from"], 7);
         let parsed: SessionMode = serde_json::from_value(i_json).unwrap();
         assert_eq!(parsed, interactive);
     }
@@ -1558,7 +1535,6 @@ mod tests {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id.clone(),
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {
@@ -2005,7 +1981,6 @@ mod tests {
         let mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
             greet_user: true,
         };
         let json = serde_json::to_value(&mode).unwrap();

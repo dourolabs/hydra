@@ -225,7 +225,6 @@ async fn spawn_session(
         mode: SessionMode::Interactive {
             conversation_id: conversation_id.clone(),
             idle_timeout_secs: None,
-            conversation_resume_from: None,
             greet_user: false,
         },
         agent_config: AgentSpec::Named { name: agent_name },
@@ -451,7 +450,6 @@ mod tests {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             None => SessionMode::Headless,
@@ -936,52 +934,6 @@ mod tests {
         );
     }
 
-    /// Helper that runs the automation once and returns the (single) session
-    /// it spawned for the conversation.
-    async fn run_and_get_session(
-        state: &AppState,
-        conversation_id: &ConversationId,
-        event: &ServerEvent,
-    ) -> Session {
-        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
-        let ctx = AutomationContext {
-            event,
-            app_state: state,
-            store: state.store(),
-        };
-        automation.execute(&ctx).await.unwrap();
-
-        let sessions = state
-            .list_sessions_with_query(&SearchSessionsQuery::default())
-            .await
-            .unwrap();
-        sessions
-            .into_iter()
-            .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
-            .map(|(_, s)| s.item)
-            .expect("expected a session for the conversation")
-    }
-
-    #[tokio::test]
-    async fn fresh_spawn_has_no_conversation_resume_from() {
-        let state = state_with_default_model("default-model");
-        register_agent(&state, "swe", "prompt", false).await;
-
-        let conversation = make_conversation(Some("swe"));
-        let (conversation_id, _) = state
-            .store
-            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
-            .await
-            .unwrap();
-
-        let event = conversation_created_event(conversation_id.clone(), conversation);
-        let session = run_and_get_session(&state, &conversation_id, &event).await;
-
-        // No conversation_resume_from on a fresh spawn.
-        assert!(session.is_interactive(), "session should be interactive");
-        assert_eq!(session.mode.conversation_resume_from(), None);
-    }
-
     #[tokio::test]
     async fn resume_spawn_sets_resumed_from_to_prior_session_id() {
         // Regression: the session-level `resumed_from` lineage edge must
@@ -1014,7 +966,6 @@ mod tests {
             DomainSessionMode::Interactive {
                 conversation_id: conversation_id.clone(),
                 idle_timeout_secs: None,
-                conversation_resume_from: None,
                 greet_user: false,
             },
             TaskStatus::Complete,
