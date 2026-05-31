@@ -29,7 +29,7 @@ use tokio_tungstenite::tungstenite;
 use tracing::{info, warn};
 
 use hydra_common::api::v1::{
-    conversations::{CatchUpEvent, ServerMessage, WorkerMessage},
+    relay::{CatchUpEvent, ServerMessage, WorkerMessage},
     sessions::SessionEvent,
 };
 use hydra_common::SessionId;

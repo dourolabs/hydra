@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
-    api::v1::conversations::SessionStatePayload,
+    api::v1::relay::SessionStatePayload,
     constants::{ENV_ANTHROPIC_API_KEY, ENV_CLAUDE_CODE_OAUTH_TOKEN},
 };
 use tempfile::TempDir;
@@ -1244,7 +1244,7 @@ mod tests {
         // The exact bytes the suspend-side uploader (`build_session_state_payload`
         // in relay_adapter.rs) produces for a running Claude session.
         let transcript = b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n".to_vec();
-        let payload = hydra_common::api::v1::conversations::SessionStatePayload::V1 {
+        let payload = hydra_common::api::v1::relay::SessionStatePayload::V1 {
             session_id: "abc-uuid".to_string(),
             transcript: Some(transcript.clone()),
         };
@@ -1277,7 +1277,7 @@ mod tests {
         std::fs::create_dir_all(&cwd).unwrap();
         let claude = claude_for_test(&home, &cwd).await;
 
-        let payload = hydra_common::api::v1::conversations::SessionStatePayload::V1 {
+        let payload = hydra_common::api::v1::relay::SessionStatePayload::V1 {
             session_id: "abc-uuid".to_string(),
             transcript: None,
         };
@@ -1310,7 +1310,7 @@ mod tests {
     /// Build a SessionStatePayload::V1 with the given session_id + raw transcript
     /// bytes, serialized via serde_json. Mirrors the suspend-side uploader.
     fn payload_bytes(session_id: &str, transcript: Option<Vec<u8>>) -> Vec<u8> {
-        let payload = hydra_common::api::v1::conversations::SessionStatePayload::V1 {
+        let payload = hydra_common::api::v1::relay::SessionStatePayload::V1 {
             session_id: session_id.to_string(),
             transcript,
         };

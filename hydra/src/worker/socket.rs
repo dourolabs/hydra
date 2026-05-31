@@ -7,7 +7,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use hydra_common::api::v1::conversations::{ServerMessage, WorkerMessage};
+use hydra_common::api::v1::relay::{ServerMessage, WorkerMessage};
 use tokio_tungstenite::tungstenite;
 
 /// A typed worker-side wrapper around a WebSocket stream.
@@ -98,7 +98,7 @@ mod tests {
     use chrono::Utc;
     use futures::{channel::mpsc, SinkExt, StreamExt};
     use hydra_common::api::v1::{
-        conversations::{ServerMessage, WorkerMessage},
+        relay::{ServerMessage, WorkerMessage},
         sessions::SessionEvent,
     };
 

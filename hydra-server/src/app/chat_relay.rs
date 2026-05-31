@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use hydra_common::api::v1::conversations::ServerMessage;
+use hydra_common::api::v1::relay::ServerMessage;
 use hydra_common::api::v1::sessions::SessionEvent as ApiSessionEvent;
 use hydra_common::{ConversationId, SessionId};
 use std::sync::Arc;
