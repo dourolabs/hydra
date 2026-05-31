@@ -26,8 +26,8 @@ pub use activity_log::{
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, conversations, documents, events, form, issues, labels, login, logs, merge_check,
-    merge_queues, patches, repositories, secrets, session_status, sessions, task_status, users,
-    version, whoami,
+    merge_queues, patches, relay, repositories, secrets, session_status, sessions, task_status,
+    users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -297,8 +297,11 @@ mod ts_export {
         crate::conversations::SendMessageRequest::export_all(&cfg).expect("SendMessageRequest");
         crate::conversations::SearchConversationsQuery::export_all(&cfg)
             .expect("SearchConversationsQuery");
-        crate::conversations::WorkerMessage::export_all(&cfg).expect("WorkerMessage");
-        crate::conversations::ServerMessage::export_all(&cfg).expect("ServerMessage");
-        crate::conversations::CatchUpEvent::export_all(&cfg).expect("CatchUpEvent");
+
+        // API v1: relay
+        crate::relay::WorkerMessage::export_all(&cfg).expect("WorkerMessage");
+        crate::relay::ServerMessage::export_all(&cfg).expect("ServerMessage");
+        crate::relay::SessionStatePayload::export_all(&cfg).expect("SessionStatePayload");
+        crate::relay::CatchUpEvent::export_all(&cfg).expect("CatchUpEvent");
     }
 }

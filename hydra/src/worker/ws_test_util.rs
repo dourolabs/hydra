@@ -8,7 +8,7 @@
 //! frames.
 
 use futures::SinkExt;
-use hydra_common::api::v1::conversations::{ServerMessage, WorkerMessage};
+use hydra_common::api::v1::relay::{ServerMessage, WorkerMessage};
 use tokio_tungstenite::tungstenite;
 
 use crate::worker::socket::WorkerSocket;

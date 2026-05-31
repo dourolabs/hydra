@@ -13,7 +13,7 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 use anyhow::{anyhow, Result};
 use futures::{Sink, Stream};
 use hydra_common::api::v1::{
-    conversations::{ServerMessage, SessionStatePayload, WorkerMessage},
+    relay::{ServerMessage, SessionStatePayload, WorkerMessage},
     sessions::{ResumeSource, SessionEvent},
 };
 use hydra_common::SessionId;
@@ -905,7 +905,7 @@ mod tests {
     use crate::worker::socket::WorkerSocket;
     use futures::channel::mpsc as futures_mpsc;
     use futures::{Sink, StreamExt};
-    use hydra_common::api::v1::conversations::{ServerMessage, WorkerMessage};
+    use hydra_common::api::v1::relay::{ServerMessage, WorkerMessage};
     use hydra_common::api::v1::sessions::ResumeSource;
     use hydra_common::SessionId;
     use tokio_tungstenite::tungstenite;

@@ -27,8 +27,8 @@ use hydra_common::{
     api::v1::{
         conversations::{
             Conversation, ConversationStatus, CreateConversationRequest, SendMessageRequest,
-            ServerMessage, SessionStatePayload, WorkerMessage,
         },
+        relay::{ServerMessage, SessionStatePayload, WorkerMessage},
         sessions::{ListSessionsResponse, SessionEvent, WorkerContext},
     },
 };

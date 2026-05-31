@@ -14,7 +14,7 @@ use axum::{
 use futures::{SinkExt, StreamExt, stream::SplitSink};
 use hydra_common::ConversationId;
 use hydra_common::SessionId;
-use hydra_common::api::v1::conversations::{CatchUpEvent, ServerMessage, WorkerMessage};
+use hydra_common::api::v1::relay::{CatchUpEvent, ServerMessage, WorkerMessage};
 use hydra_common::api::v1::sessions::SessionEvent;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};

@@ -13,6 +13,7 @@ pub mod merge_queues;
 pub mod pagination;
 pub mod patches;
 pub mod relations;
+pub mod relay;
 pub mod repositories;
 pub mod secrets;
 pub mod serde_helpers;

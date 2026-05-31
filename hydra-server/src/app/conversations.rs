@@ -490,7 +490,7 @@ mod tests {
         state: &AppState,
         conversation_id: &ConversationId,
         session_id: &SessionId,
-    ) -> mpsc::Receiver<hydra_common::api::v1::conversations::ServerMessage> {
+    ) -> mpsc::Receiver<hydra_common::api::v1::relay::ServerMessage> {
         let (tx, rx) = mpsc::channel(TO_WORKER_CAPACITY);
         let _ = state
             .chat_relay_map
