@@ -143,8 +143,9 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   // ── Active sessions ──
   // List is capped at SESSIONS_SECTION_LIMIT rows, but the count badge shows
   // the true total (matching the top nav) so it doesn't appear to plateau at 6.
-  const { data: activeSessions } = useActiveSessions(SESSIONS_SECTION_LIMIT);
-  const { data: activeSessionCount = 0 } = useActiveSessionCount();
+  // Scoped to the logged-in user's own sessions, matching the chats list above.
+  const { data: activeSessions } = useActiveSessions(displayName, SESSIONS_SECTION_LIMIT);
+  const { data: activeSessionCount = 0 } = useActiveSessionCount(displayName);
   const { issueMap, conversationMap } = useSessionLinks(activeSessions ?? []);
 
   // On mobile, close drawer when navigating.

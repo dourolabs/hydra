@@ -17,7 +17,19 @@ vi.mock("@hydra/ui", () => ({
 
 const activeSessionCountMock = vi.fn();
 vi.mock("../features/sessions/useActiveSessionCount", () => ({
-  useActiveSessionCount: () => activeSessionCountMock(),
+  useActiveSessionCount: (...args: unknown[]) => activeSessionCountMock(...args),
+}));
+
+vi.mock("../features/auth/useAuth", () => ({
+  useAuth: () => ({
+    user: { actor: { type: "user", username: "alice" } },
+    logout: vi.fn(),
+    loading: false,
+  }),
+}));
+
+vi.mock("../api/auth", () => ({
+  actorDisplayName: () => "Alice",
 }));
 
 const openIssueCreateModalMock = vi.fn();
@@ -273,5 +285,11 @@ describe("SiteHeader", () => {
     activeSessionCountMock.mockReturnValue({ data: 9 });
     renderHeader();
     expect(screen.getByTestId("site-header-sessions-label").textContent).toBe("9 sessions");
+  });
+
+  it("passes the current-user creator filter into useActiveSessionCount", () => {
+    activeSessionCountMock.mockReturnValue({ data: 0 });
+    renderHeader();
+    expect(activeSessionCountMock).toHaveBeenCalledWith("Alice");
   });
 });
