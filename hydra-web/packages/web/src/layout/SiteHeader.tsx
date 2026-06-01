@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Conversation } from "@hydra/api";
 import { Icons, Kbd, Tooltip } from "@hydra/ui";
 import { apiClient } from "../api/client";
+import { actorDisplayName } from "../api/auth";
+import { useAuth } from "../features/auth/useAuth";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
 import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { Breadcrumbs } from "./Breadcrumbs";
@@ -19,7 +21,9 @@ interface SiteHeaderProps {
 
 export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderProps) {
   const { items, current, currentKind } = useBreadcrumbsState();
-  const { data: activeSessionCount = 0 } = useActiveSessionCount();
+  const { user } = useAuth();
+  const displayName = user ? actorDisplayName(user.actor) : null;
+  const { data: activeSessionCount = 0 } = useActiveSessionCount(displayName);
   const { open: openIssueCreate } = useIssueCreateModal();
   const navigate = useNavigate();
   const queryClient = useQueryClient();

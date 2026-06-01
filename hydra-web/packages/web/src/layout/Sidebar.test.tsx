@@ -364,6 +364,12 @@ describe("Sidebar", () => {
     ]);
   });
 
+  it("passes the current-user creator filter into the active-sessions hooks", () => {
+    renderSidebar();
+    expect(activeSessionsMock).toHaveBeenCalledWith("Alice", 6);
+    expect(activeSessionCountMock).toHaveBeenCalledWith("Alice");
+  });
+
   it("renders Active sessions section with running sessions", () => {
     activeSessionsMock.mockReturnValue({
       data: [
