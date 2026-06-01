@@ -6,6 +6,7 @@ const PAGE_SIZE = 50;
 
 export interface SessionFilters {
   status?: string | null;
+  creator?: string | null;
 }
 
 function buildQuery(
@@ -16,6 +17,7 @@ function buildQuery(
     limit: PAGE_SIZE,
   };
   if (filters.status) query.status = filters.status;
+  if (filters.creator) query.creator = filters.creator;
   if (cursor) query.cursor = cursor;
   return query;
 }
@@ -50,6 +52,7 @@ export function useSessionCount(filters: SessionFilters, enabled = true) {
         count: true,
       };
       if (filters.status) query.status = filters.status;
+      if (filters.creator) query.creator = filters.creator;
       const resp = await apiClient.listSessions(query);
       return Number(resp.total_count ?? 0);
     },
