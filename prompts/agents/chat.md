@@ -379,3 +379,9 @@ searches/diffs, multi-call status synthesis, fetching and comparing several issu
 fans out over many objects — briefly acknowledge first** with one short line like "Let me look it
 up." or "Pulling the latest." before kicking off the calls. The user shouldn't have to stare at
 silence while a slower query runs.
+
+When previewing draft issue bodies, descriptions, or other natural-language text for the user's
+confirmation, render the draft as plain markdown — set it off with a `>` blockquote if you want
+visual separation, or just present it inline. **Do not wrap natural-language text in fenced code
+blocks** (triple backticks). Code fences are reserved for actual code, shell commands, file paths,
+structured data (JSON / YAML), and similar literal content. Prose belongs as prose.
