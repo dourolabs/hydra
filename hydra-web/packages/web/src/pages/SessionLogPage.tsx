@@ -8,15 +8,17 @@ import { getRuntime } from "../utils/time";
 import { useSession } from "../features/sessions/useSession";
 import { SessionLogViewer } from "../features/sessions/SessionLogViewer";
 import { SessionSettings } from "../features/sessions/SessionSettings";
+import { SessionEventsView } from "../features/sessions/SessionEventsView";
 import { DeleteConfirmModal } from "../components/DeleteConfirmModal/DeleteConfirmModal";
 import { apiClient, ApiError } from "../api/client";
 import { useToast } from "../features/toast/useToast";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./SessionLogPage.module.css";
 
-type TabKey = "logs" | "settings";
+type TabKey = "events" | "logs" | "settings";
 
 const TABS: { key: TabKey; label: string }[] = [
+  { key: "events", label: "Events" },
   { key: "logs", label: "Logs" },
   { key: "settings", label: "Settings" },
 ];
@@ -29,7 +31,7 @@ export function SessionLogPage() {
   const { data: record, isLoading, error } = useSession(sessionId ?? "");
   const { addToast } = useToast();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<TabKey>("logs");
+  const [activeTab, setActiveTab] = useState<TabKey>("events");
   const [killModalOpen, setKillModalOpen] = useState(false);
   const [killRequested, setKillRequested] = useState(false);
 
@@ -192,6 +194,11 @@ export function SessionLogPage() {
           </div>
 
           <div className={styles.body}>
+            {activeTab === "events" && (
+              <div className={styles.bodyInner}>
+                <SessionEventsView sessionId={record.session_id} />
+              </div>
+            )}
             {activeTab === "logs" && (
               <div className={styles.bodyFull}>
                 <SessionLogViewer
