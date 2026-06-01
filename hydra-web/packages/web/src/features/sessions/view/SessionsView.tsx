@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Avatar, Badge } from "@hydra/ui";
 import type { SessionSummaryRecord, Status as SessionStatus } from "@hydra/api";
+import { useAuth } from "../../auth/useAuth";
+import { actorDisplayName } from "../../../api/auth";
 import {
   usePaginatedSessions,
   useSessionCount,
@@ -32,6 +34,12 @@ const STATUS_FILTERS: StatusFilter[] = [
   { key: "failed", label: "Failed" },
 ];
 
+type Scope = "mine" | "all";
+
+function parseScope(raw: string | null): Scope {
+  return raw === "all" ? "all" : "mine";
+}
+
 function SessionRuntimeCell({ record }: { record: SessionSummaryRecord }) {
   const { durationText, status } = useSingleSessionDuration(record);
   if (durationText === "—") return <span className={styles.dash}>—</span>;
@@ -42,8 +50,17 @@ export function SessionsView() {
   const navigate = useNavigate();
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const [selectedStatus, setSelectedStatus] = useState<SessionStatus | null>(null);
+  const { user } = useAuth();
+  const displayName = user ? actorDisplayName(user.actor) : null;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const scope = parseScope(searchParams.get("scope"));
 
-  const filters = useMemo(() => ({ status: selectedStatus }), [selectedStatus]);
+  const creatorFilter = scope === "mine" && displayName ? displayName : null;
+
+  const filters = useMemo(
+    () => ({ status: selectedStatus, creator: creatorFilter }),
+    [selectedStatus, creatorFilter],
+  );
 
   const {
     data: paginatedData,
@@ -82,6 +99,18 @@ export function SessionsView() {
   const displayCount = totalCount ?? rows.length;
   const totalLabel = displayCount === 1 ? "1 SESSION" : `${displayCount} SESSIONS`;
 
+  const setScope = (next: Scope) => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      if (next === "all") {
+        params.set("scope", "all");
+      } else {
+        params.delete("scope");
+      }
+      return params;
+    });
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.pageHead}>
@@ -90,6 +119,37 @@ export function SessionsView() {
           <h1 className={styles.pageTitle}>Sessions</h1>
         </div>
         <span className={styles.headSpacer} />
+        <div
+          className={styles.scopeToggle}
+          role="tablist"
+          aria-label="Session scope"
+          data-testid="sessions-scope-toggle"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={scope === "mine"}
+            className={`${styles.scopeOption}${
+              scope === "mine" ? ` ${styles.scopeOptionActive}` : ""
+            }`}
+            onClick={() => setScope("mine")}
+            data-testid="sessions-scope-mine"
+          >
+            Mine
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={scope === "all"}
+            className={`${styles.scopeOption}${
+              scope === "all" ? ` ${styles.scopeOptionActive}` : ""
+            }`}
+            onClick={() => setScope("all")}
+            data-testid="sessions-scope-all"
+          >
+            All
+          </button>
+        </div>
       </div>
 
       <div className={styles.toolbar}>

@@ -7,6 +7,31 @@ import type { ListSessionsResponse, SessionSummaryRecord } from "@hydra/api";
 // --- Mocks ---
 
 const navigateMock = vi.fn();
+
+let searchParamsString = "";
+const setSearchParamsMock = vi.fn(
+  (
+    updater:
+      | URLSearchParams
+      | string
+      | Record<string, string>
+      | ((prev: URLSearchParams) => URLSearchParams),
+  ) => {
+    const prev = new URLSearchParams(searchParamsString);
+    let next: URLSearchParams;
+    if (typeof updater === "function") {
+      next = updater(prev);
+    } else if (updater instanceof URLSearchParams) {
+      next = updater;
+    } else if (typeof updater === "string") {
+      next = new URLSearchParams(updater);
+    } else {
+      next = new URLSearchParams(updater);
+    }
+    searchParamsString = next.toString();
+  },
+);
+
 vi.mock("react-router-dom", () => ({
   Link: ({
     to,
@@ -24,7 +49,25 @@ vi.mock("react-router-dom", () => ({
     </a>
   ),
   useNavigate: () => navigateMock,
+  useSearchParams: () => {
+    return [new URLSearchParams(searchParamsString), setSearchParamsMock] as const;
+  },
 }));
+
+let mockUser: { actor: { type: "user"; username: string } } | null = {
+  actor: { type: "user", username: "alice" },
+};
+vi.mock("../../features/auth/useAuth", () => ({
+  useAuth: () => ({ user: mockUser, logout: vi.fn(), loading: false }),
+}));
+
+vi.mock("../../api/auth", () => ({
+  actorDisplayName: (actor: { type: string; username?: string }) =>
+    actor.type === "user" ? actor.username : "",
+}));
+
+const usePaginatedSessionsMock = vi.fn();
+const useSessionCountMock = vi.fn();
 
 interface PaginatedSessionsState {
   pages: ListSessionsResponse[] | undefined;
@@ -47,17 +90,23 @@ const fetchNextPageMock = vi.fn();
 const sessionCountState: { count: number | undefined } = { count: undefined };
 
 vi.mock("../../features/sessions/usePaginatedSessions", () => ({
-  usePaginatedSessions: () => ({
-    data: paginatedState.pages ? { pages: paginatedState.pages } : undefined,
-    isLoading: paginatedState.isLoading,
-    error: paginatedState.error,
-    fetchNextPage: fetchNextPageMock,
-    hasNextPage: paginatedState.hasNextPage,
-    isFetchingNextPage: paginatedState.isFetchingNextPage,
-  }),
-  useSessionCount: () => ({
-    data: sessionCountState.count,
-  }),
+  usePaginatedSessions: (...args: unknown[]) => {
+    usePaginatedSessionsMock(...args);
+    return {
+      data: paginatedState.pages ? { pages: paginatedState.pages } : undefined,
+      isLoading: paginatedState.isLoading,
+      error: paginatedState.error,
+      fetchNextPage: fetchNextPageMock,
+      hasNextPage: paginatedState.hasNextPage,
+      isFetchingNextPage: paginatedState.isFetchingNextPage,
+    };
+  },
+  useSessionCount: (...args: unknown[]) => {
+    useSessionCountMock(...args);
+    return {
+      data: sessionCountState.count,
+    };
+  },
 }));
 
 vi.mock("../../features/sessions/useSessionLinks", () => ({
@@ -138,6 +187,11 @@ function reset() {
   sessionCountState.count = undefined;
   navigateMock.mockReset();
   fetchNextPageMock.mockReset();
+  searchParamsString = "";
+  setSearchParamsMock.mockClear();
+  usePaginatedSessionsMock.mockReset();
+  useSessionCountMock.mockReset();
+  mockUser = { actor: { type: "user", username: "alice" } };
 }
 
 describe("SessionsListPage", () => {
@@ -279,5 +333,66 @@ describe("SessionsListPage", () => {
     expect(title).toContain("2000 cache read");
     expect(title).toContain("500 cache creation");
     expect(title).toContain("750 output");
+  });
+});
+
+describe("SessionsListPage scope toggle", () => {
+  beforeEach(() => {
+    reset();
+    useBreadcrumbsMock.mockReset();
+    cleanup();
+  });
+
+  it("defaults to 'Mine' and queries usePaginatedSessions with creator=<current user>", () => {
+    setSessions([]);
+    render(<SessionsListPage />);
+    expect(usePaginatedSessionsMock).toHaveBeenCalled();
+    const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
+    expect(firstArg).toEqual({ status: null, creator: "alice" });
+    expect(useSessionCountMock.mock.calls[0]?.[0]).toEqual({
+      status: null,
+      creator: "alice",
+    });
+
+    const toggle = screen.getByTestId("sessions-scope-toggle");
+    expect(toggle).toBeDefined();
+    const mineBtn = screen.getByTestId("sessions-scope-mine");
+    expect(mineBtn.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("does not pass a creator filter when the user is not authenticated", () => {
+    mockUser = null;
+    setSessions([]);
+    render(<SessionsListPage />);
+    expect(usePaginatedSessionsMock).toHaveBeenCalled();
+    const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
+    expect(firstArg).toEqual({ status: null, creator: null });
+  });
+
+  it("omits creator filter when scope=all and reflects active tab", () => {
+    searchParamsString = "scope=all";
+    setSessions([]);
+    render(<SessionsListPage />);
+    const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
+    expect(firstArg).toEqual({ status: null, creator: null });
+    const allBtn = screen.getByTestId("sessions-scope-all");
+    expect(allBtn.getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("clicking 'All' sets ?scope=all", () => {
+    setSessions([]);
+    render(<SessionsListPage />);
+    screen.getByTestId("sessions-scope-all").click();
+    expect(setSearchParamsMock).toHaveBeenCalled();
+    expect(searchParamsString).toBe("scope=all");
+  });
+
+  it("clicking 'Mine' removes ?scope param", () => {
+    searchParamsString = "scope=all";
+    setSessions([]);
+    render(<SessionsListPage />);
+    screen.getByTestId("sessions-scope-mine").click();
+    expect(setSearchParamsMock).toHaveBeenCalled();
+    expect(searchParamsString).toBe("");
   });
 });
