@@ -26,7 +26,6 @@ use tokio::{
 };
 
 use super::claude_formatter::StreamFormatter;
-use crate::worker::model_selector::translate_claude_event;
 use crate::worker::report::{
     MaterializeError, NativeResume, RunReport, SessionStateFormat, SessionStateRef, TokenUsage,
     WorkerEvent,
@@ -987,6 +986,33 @@ pub(crate) fn session_state_if_exists(
 pub(crate) fn worker_home_dir() -> Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME environment variable not set")?;
     Ok(PathBuf::from(home))
+}
+
+/// Per-event translation between Claude-native and generic event shapes.
+/// Pulled out so unit tests can exercise it directly without spinning up the
+/// translator task.
+pub(crate) fn translate_claude_event(event: ClaudeEvent) -> WorkerEvent {
+    match event {
+        ClaudeEvent::Assistant { text } => WorkerEvent::AssistantText { text },
+        ClaudeEvent::Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
+        } => WorkerEvent::Usage {
+            usage: TokenUsage {
+                input_tokens,
+                output_tokens,
+                cache_read_input_tokens,
+                cache_creation_input_tokens,
+            },
+        },
+        ClaudeEvent::SystemInit { session_id } => WorkerEvent::SessionInit {
+            model_session_id: session_id,
+        },
+        ClaudeEvent::ToolUse { tool_name, payload } => WorkerEvent::ToolUse { tool_name, payload },
+        ClaudeEvent::Raw { value } => WorkerEvent::Raw { value },
+    }
 }
 
 #[cfg(test)]
