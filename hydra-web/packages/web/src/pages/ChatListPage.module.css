@@ -45,39 +45,54 @@
   flex: 1;
 }
 
-.scopeToggle {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 0;
-  padding: 2px;
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-0);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 9px;
   background: var(--bg-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-}
-
-.scopeOption {
-  appearance: none;
-  background: transparent;
-  border: none;
-  padding: 4px 10px;
-  font-family: var(--f-sans);
-  font-size: var(--t-xs);
+  border-radius: var(--radius-md);
   color: var(--fg-2);
-  cursor: pointer;
-  border-radius: var(--radius-xs, 3px);
-  transition:
-    background var(--tx-fast),
-    color var(--tx-fast);
+  font-size: var(--t-sm);
+  min-width: 200px;
+  transition: border-color var(--tx-fast);
 }
 
-.scopeOption:hover {
-  color: var(--fg-0);
+.searchBox:focus-within {
+  border-color: var(--acc);
 }
 
-.scopeOptionActive {
-  background: var(--bg-0);
+.searchBox input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
   color: var(--fg-0);
-  box-shadow: 0 0 0 1px var(--line) inset;
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+
+.searchBox input::placeholder {
+  color: var(--fg-3);
+}
+
+.searchIcon {
+  color: var(--fg-2);
+  flex-shrink: 0;
 }
 
 .body {
@@ -214,4 +229,21 @@
   min-height: 0;
   overflow: auto;
   padding: 12px var(--pad-x);
+}
+
+@media (max-width: 768px) {
+  .pageHead {
+    padding: 14px 16px 10px;
+  }
+
+  .toolbar {
+    padding: 8px 16px;
+  }
+
+  /* Force the search box onto its own row so the FilterBar's chips have full
+     width — mirrors IssuesView's mobile breakpoint. */
+  .searchBox {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
 }

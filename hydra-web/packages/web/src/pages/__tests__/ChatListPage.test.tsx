@@ -115,6 +115,18 @@ vi.mock("../../api/client", () => ({
   },
 }));
 
+// The ChatListPage now imports FilterBar from features/filters. Stub it to a
+// no-op div so this file stays focused on URL ↔ server-query wiring and the
+// auto-creator seed behaviour. End-to-end chip interactions are covered in
+// the @chat:filter-bar Playwright spec.
+vi.mock("../../features/filters", () => ({
+  FilterBar: () => <div data-testid="filter-bar" />,
+}));
+
+vi.mock("../../features/chat/conversationFilters", () => ({
+  useConversationFilters: () => ({}),
+}));
+
 const BADGE_LABELS: Record<string, string> = {
   "conv-active": "Active",
   "conv-idle": "Idle",
@@ -190,19 +202,22 @@ function resetMutationState() {
   mutationState.error = null;
 }
 
+function resetState() {
+  vi.clearAllMocks();
+  mockConversations = [];
+  resetMutationState();
+  mockCreateConversation.mockReset();
+  useBreadcrumbsMock.mockReset();
+  useConversationsMock.mockReset();
+  setSearchParamsMock.mockClear();
+  searchParamsString = "";
+  mockUser = { actor: { type: "user", username: "alice" } };
+}
+
 // --- Tests ---
 
 describe("ChatListPage New Chat button", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockConversations = [];
-    resetMutationState();
-    mockCreateConversation.mockReset();
-    useBreadcrumbsMock.mockReset();
-    useConversationsMock.mockReset();
-    searchParamsString = "";
-    mockUser = { actor: { type: "user", username: "alice" } };
-  });
+  beforeEach(resetState);
 
   it("publishes a Workspace / Chats breadcrumb on mount", () => {
     render(<ChatListPage />);
@@ -256,10 +271,6 @@ describe("ChatListPage New Chat button", () => {
   });
 
   it("orders rows by status bucket (active > idle > closed), then updated_at desc within each bucket", () => {
-    // Timestamps are chosen so that bucket-only and recency-only orderings diverge:
-    // c-new-closed is the single most recently updated, but must sink to the bottom;
-    // c-old-active is the least recently updated active, but must still rank above
-    // any idle (incl. the most-recently-updated idle).
     mockConversations = [
       {
         conversation_id: "c-old-closed",
@@ -344,12 +355,6 @@ describe("ChatListPage New Chat button", () => {
   });
 
   it("renders the Messages count as the sum across sessions (multi-session conversation)", () => {
-    // Regression test for the chat-list "Messages" column previously reading
-    // only the latest session's events. The summary is computed server-side
-    // by aggregating chat-text SessionEvents across every session linked to
-    // the conversation; here we verify the table renders that aggregate
-    // verbatim — i.e. a conversation whose two prior sessions had 4 and 7
-    // messages respectively surfaces as `11`, not `7`.
     mockConversations = [
       {
         conversation_id: "c-multi",
@@ -433,65 +438,71 @@ describe("ChatListPage New Chat button", () => {
   });
 });
 
-describe("ChatListPage scope toggle", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockConversations = [];
-    resetMutationState();
-    mockCreateConversation.mockReset();
-    useBreadcrumbsMock.mockReset();
-    useConversationsMock.mockReset();
-    setSearchParamsMock.mockClear();
-    searchParamsString = "";
-    mockUser = { actor: { type: "user", username: "alice" } };
-  });
+describe("ChatListPage default creator filter", () => {
+  beforeEach(resetState);
 
-  it("defaults to 'Mine' and queries useConversations with creator=<current user>", () => {
+  it("seeds ?creator=users/<me> on first visit and queries with creator=<me>", () => {
     render(<ChatListPage />);
-    expect(useConversationsMock).toHaveBeenCalled();
-    const firstArg = useConversationsMock.mock.calls[0]?.[0];
-    expect(firstArg).toEqual({ creator: "alice" });
 
-    const toggle = screen.getByTestId("chats-scope-toggle");
-    expect(toggle).toBeDefined();
-    const mineBtn = screen.getByTestId("chats-scope-mine");
-    expect(mineBtn.getAttribute("aria-selected")).toBe("true");
+    // The page writes the seeded creator chip back to the URL via replace.
+    expect(setSearchParamsMock).toHaveBeenCalled();
+    expect(searchParamsString).toBe("creator=users%2Falice");
+
+    // The server query carries `creator=alice` (Principal path stripped).
+    expect(useConversationsMock).toHaveBeenCalled();
+    const lastArg =
+      useConversationsMock.mock.calls[useConversationsMock.mock.calls.length - 1]?.[0];
+    expect(lastArg).toEqual({ creator: "alice" });
     cleanup();
   });
 
-  it("does not pass a creator filter when the user is not authenticated", () => {
+  it("does not seed a creator filter when the user is not authenticated", () => {
     mockUser = null;
     render(<ChatListPage />);
-    expect(useConversationsMock).toHaveBeenCalled();
-    const firstArg = useConversationsMock.mock.calls[0]?.[0];
-    expect(firstArg).toBeUndefined();
-    cleanup();
-  });
-
-  it("omits creator filter when scope=all and updates URL via setSearchParams", () => {
-    searchParamsString = "scope=all";
-    render(<ChatListPage />);
-    const firstArg = useConversationsMock.mock.calls[0]?.[0];
-    expect(firstArg).toBeUndefined();
-    const allBtn = screen.getByTestId("chats-scope-all");
-    expect(allBtn.getAttribute("aria-selected")).toBe("true");
-    cleanup();
-  });
-
-  it("clicking 'All' sets ?scope=all", () => {
-    render(<ChatListPage />);
-    fireEvent.click(screen.getByTestId("chats-scope-all"));
-    expect(setSearchParamsMock).toHaveBeenCalled();
-    expect(searchParamsString).toBe("scope=all");
-    cleanup();
-  });
-
-  it("clicking 'Mine' removes ?scope param", () => {
-    searchParamsString = "scope=all";
-    render(<ChatListPage />);
-    fireEvent.click(screen.getByTestId("chats-scope-mine"));
-    expect(setSearchParamsMock).toHaveBeenCalled();
     expect(searchParamsString).toBe("");
+    const lastArg =
+      useConversationsMock.mock.calls[useConversationsMock.mock.calls.length - 1]?.[0];
+    expect(lastArg).toEqual({});
+    cleanup();
+  });
+
+  it("respects an explicit ?creator= in the URL without re-seeding", () => {
+    searchParamsString = "creator=users/bob";
+    render(<ChatListPage />);
+    expect(searchParamsString).toBe("creator=users/bob");
+    const lastArg =
+      useConversationsMock.mock.calls[useConversationsMock.mock.calls.length - 1]?.[0];
+    expect(lastArg).toEqual({ creator: "bob" });
+    cleanup();
+  });
+
+  it("resolves legacy ?scope=mine into a creator chip", () => {
+    searchParamsString = "scope=mine";
+    render(<ChatListPage />);
+    expect(searchParamsString).toBe("creator=users%2Falice");
+    const lastArg =
+      useConversationsMock.mock.calls[useConversationsMock.mock.calls.length - 1]?.[0];
+    expect(lastArg).toEqual({ creator: "alice" });
+    cleanup();
+  });
+
+  it("resolves legacy ?scope=all into no creator filter", () => {
+    searchParamsString = "scope=all";
+    render(<ChatListPage />);
+    expect(searchParamsString).toBe("");
+    const lastArg =
+      useConversationsMock.mock.calls[useConversationsMock.mock.calls.length - 1]?.[0];
+    expect(lastArg).toEqual({});
+    cleanup();
+  });
+
+  it("respects an explicit ?status= without seeding a creator filter", () => {
+    searchParamsString = "status=closed";
+    render(<ChatListPage />);
+    expect(searchParamsString).toBe("status=closed");
+    const lastArg =
+      useConversationsMock.mock.calls[useConversationsMock.mock.calls.length - 1]?.[0];
+    expect(lastArg).toEqual({ status: "closed" });
     cleanup();
   });
 });

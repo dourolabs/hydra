@@ -45,7 +45,7 @@ function filterByCreator(creator: string | null) {
 }
 
 test.describe("Chat list defaults to current user @chat:default-mine", () => {
-  test("defaults to Mine, toggles to All, and persists scope in URL @chat:default-mine", async ({
+  test("auto-seeds a creator chip on first visit; removing it widens to all chats @chat:default-mine", async ({
     authenticatedPage: page,
   }) => {
     const requestedCreators: Array<string | null> = [];
@@ -64,31 +64,55 @@ test.describe("Chat list defaults to current user @chat:default-mine", () => {
     await page.goto("/chat");
     await expect(page.getByTestId("chats-list")).toBeVisible();
 
-    // The Mine pill is selected by default.
-    const mine = page.getByTestId("chats-scope-mine");
-    const all = page.getByTestId("chats-scope-all");
-    await expect(mine).toHaveAttribute("aria-selected", "true");
-    await expect(all).toHaveAttribute("aria-selected", "false");
+    // The FilterBar's creator chip is auto-seeded for the logged-in user and
+    // the URL reflects it.
+    await expect(page.getByTestId("filter-chip-creator")).toBeVisible();
+    await expect(page).toHaveURL(/[?&]creator=users(?:%2F|\/)dev-user\b/);
 
     // At least one of the conversations requests was made with creator=<me>.
     expect(requestedCreators).toContain(ME);
 
-    // Only my chats are visible; the foreign-creator chat is filtered out.
+    // Only my chats are visible; the foreign-creator chat is filtered out
+    // server-side.
     await expect(page.getByTestId("chats-list-row-c-mine-1")).toBeVisible();
     await expect(page.getByTestId("chats-list-row-c-mine-2")).toBeVisible();
     await expect(page.getByTestId("chats-list-row-c-other")).toHaveCount(0);
 
-    // Toggle to All — URL gains ?scope=all and the foreign chat appears.
-    await all.click();
-    await expect(page).toHaveURL(/[?&]scope=all\b/);
-    await expect(all).toHaveAttribute("aria-selected", "true");
-    await expect(mine).toHaveAttribute("aria-selected", "false");
+    // Remove the chip — the URL loses ?creator= and the foreign chat appears.
+    await page
+      .getByTestId("filter-chip-creator")
+      .getByRole("button", { name: /remove creator filter/i })
+      .click();
+    await expect(page).not.toHaveURL(/[?&]creator=/);
+    await expect(page.getByTestId("filter-chip-creator")).toHaveCount(0);
     await expect(page.getByTestId("chats-list-row-c-other")).toBeVisible();
+  });
 
-    // Toggle back to Mine — scope=all is removed from the URL.
-    await mine.click();
-    await expect(page).not.toHaveURL(/[?&]scope=all\b/);
-    await expect(mine).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByTestId("chats-list-row-c-other")).toHaveCount(0);
+  test("legacy ?scope=mine and ?scope=all URLs redirect to the FilterBar equivalent @chat:default-mine", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.route(/\/api\/v1\/conversations(\?|$)/, (route) => {
+      const url = new URL(route.request().url());
+      const creator = url.searchParams.get("creator");
+      const body = filterByCreator(creator);
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    });
+
+    await page.goto("/chat?scope=mine");
+    // The legacy param is rewritten to the explicit `?creator=` on first paint.
+    await expect(page).toHaveURL(/[?&]creator=users(?:%2F|\/)dev-user\b/);
+    await expect(page).not.toHaveURL(/[?&]scope=/);
+    await expect(page.getByTestId("filter-chip-creator")).toBeVisible();
+
+    await page.goto("/chat?scope=all");
+    // `?scope=all` strips to "no filter" — no creator chip, no scope param.
+    await expect(page).not.toHaveURL(/[?&]scope=/);
+    await expect(page).not.toHaveURL(/[?&]creator=/);
+    await expect(page.getByTestId("filter-chip-creator")).toHaveCount(0);
+    await expect(page.getByTestId("chats-list-row-c-other")).toBeVisible();
   });
 });
