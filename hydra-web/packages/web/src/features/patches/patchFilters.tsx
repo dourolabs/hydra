@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Icons, type BadgeStatus } from "@hydra/ui";
 import type { PatchStatus, PatchSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import type { FilterDefinitions, FilterOption } from "../filters";
+import type { Filter, FilterDefinitions, FilterOption } from "../filters";
 import { useUserOptions } from "../filters/options/userOptions";
 import { useRepoOptions } from "../filters/options/repoOptions";
 import { statusOptions } from "../filters/options/statusOptions";
@@ -47,6 +47,22 @@ function valueIncludes(haystack: string | null, values: string[]): boolean {
   return values.includes(haystack);
 }
 
+export interface UsePatchFiltersOptions {
+  /**
+   * Current filter chips. Used to decide which relation-picker option lists
+   * to fetch eagerly: if the user already has (or rehydrates from URL) a
+   * `relatedIssue` chip, we kick off the issues list immediately so the
+   * picker is populated when opened. See `addMenuOpen` for the other gate.
+   */
+  filters?: Filter[];
+  /**
+   * Whether the FilterBar's add-filter menu is currently open. When `true`,
+   * both relation-picker option lists become eligible to fetch so the
+   * picker isn't empty when the user clicks through. Defaults to `false`.
+   */
+  addMenuOpen?: boolean;
+}
+
 /**
  * Builds the `PATCH_FILTERS` definition map for the Patches page. Loaded as a
  * hook because the option lists for `author` / `repository` and the relation
@@ -63,10 +79,24 @@ function valueIncludes(haystack: string | null, values: string[]): boolean {
  * accepts an array. `repository` / `author` are single-select. Relations stay
  * multi-select; their resolver unions related patch ids across the selected
  * entities.
+ *
+ * Relation-picker option lists (`listIssues` / `listSessions`, each
+ * `limit=100`) are lazy: they only fire when the matching relation chip is
+ * already on the bar (e.g. URL-rehydrated `?relatedIssue=i-aa`) or when the
+ * add-filter menu opens, so a cold-cache Patches page paint without any
+ * relation filter makes zero extra option-list requests.
  */
-export function usePatchFilters(): FilterDefinitions<PatchSummaryRecord> {
+export function usePatchFilters(
+  options: UsePatchFiltersOptions = {},
+): FilterDefinitions<PatchSummaryRecord> {
+  const { filters = [], addMenuOpen = false } = options;
   const userOpts = useUserOptions();
   const repoOpts = useRepoOptions();
+
+  const needIssue =
+    addMenuOpen || filters.some((f) => f.id === "relatedIssue");
+  const needSession =
+    addMenuOpen || filters.some((f) => f.id === "relatedSession");
 
   // Bounded option lists for the relation pickers. Filtering happens
   // server-side; the picker just needs entity ids + display data.
@@ -74,11 +104,13 @@ export function usePatchFilters(): FilterDefinitions<PatchSummaryRecord> {
     queryKey: ["filter-options-issues"],
     queryFn: () => apiClient.listIssues({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needIssue,
   });
   const sessionListQuery = useQuery({
     queryKey: ["filter-options-sessions"],
     queryFn: () => apiClient.listSessions({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needSession,
   });
 
   const issueEntities: RelationEntity[] = useMemo(

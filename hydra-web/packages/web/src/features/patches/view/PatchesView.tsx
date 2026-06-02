@@ -31,6 +31,9 @@ interface PatchesViewProps {
   totalCount: number;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  // Passed through to <FilterBar onMenuOpenChange>. The page uses this to
+  // lazy-load relation-picker option lists only when the menu opens.
+  onFilterMenuOpenChange?: (open: boolean) => void;
 }
 
 export function PatchesView({
@@ -47,6 +50,7 @@ export function PatchesView({
   totalCount,
   searchValue,
   onSearchChange,
+  onFilterMenuOpenChange,
 }: PatchesViewProps) {
   const navigate = useNavigate();
   const isMobile = useMediaQuery(MOBILE_QUERY);
@@ -84,6 +88,7 @@ export function PatchesView({
           definitions={definitions}
           count={filteredCount}
           total={totalCount}
+          onMenuOpenChange={onFilterMenuOpenChange}
         />
       </div>
 
