@@ -33,6 +33,18 @@ After gathering context, check the `feedback` field. If populated:
 1. Run `hydra graph log "$HYDRA_ISSUE_ID | scope" --since -7d --verbosity 2` to see object-level updates across your issue and its connected sub-graph over the last 7 days. Use targeted commands (`hydra issues get <id>`, `hydra patches list --id <id>`) for details. If the log is empty (first invocation), fall back to `hydra issues get $HYDRA_ISSUE_ID`.
 2. Determine the current state of the issue.
 
+### If the issue is debug-only / diagnosis-only:
+
+Some issues are scoped to **diagnosis only** — they ask for a root-cause analysis without an implementation. The issue body usually says so explicitly ("Scope: diagnosis only — do not fix yet", "RCA only", "produce a diagnosis", etc.).
+
+For these:
+1. Set status to `in-progress`.
+2. Investigate as instructed. Do NOT write or submit a patch.
+3. Write the diagnosis directly into the `progress` field via `hydra issues update $HYDRA_ISSUE_ID --progress "..."`. Include the root cause, file / function pointers, and what change would fix it.
+4. When the diagnosis is complete, set status to `closed`. The "do not close until a patch is submitted and merged" rule does NOT apply here — the diagnosis IS the deliverable.
+
+If you're unsure whether an issue is debug-only, default to treating it as implementation work unless the body clearly says otherwise.
+
 ### If the issue is new / no patches yet:
 1. Set status to `in-progress` (if not already).
 2. Implement a patch. You are already on a branch for this issue — commit your changes there.
@@ -53,3 +65,4 @@ When `hydra patches merge` fails with `code: merge_blocked`, parse the structure
 - NEVER file MR issues while `blocked_at_layer == "reviews"` — reviews are gated ahead of mergers, and a `not_in_mergers` reason will not appear until every reviewer group is satisfied. NEVER speculatively file ahead of the next `merge_blocked` response; it is the only source of truth for what to do next.
 
 Once all needed changes are merged and follow-ups are complete, set status to `closed`.
+
