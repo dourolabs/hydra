@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Icons, TypeChip } from "@hydra/ui";
+import { Avatar, Icons, TypeChip } from "@hydra/ui";
 import type { BadgeStatus } from "@hydra/ui";
 import type {
   ConversationSummary,
@@ -17,6 +17,7 @@ import {
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
 import { conversationTitle } from "../chat/conversationTitle";
+import { principalAvatarKind, principalDisplayName } from "../principal/formatPrincipal";
 import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
 import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSessionDuration";
@@ -81,6 +82,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
   const pct = progressFraction(childStatuses);
   const hasActiveChild = !!childStatuses?.some((c) => c.hasActiveTask);
   const { durationText, status: runtimeStatus } = useSessionDuration(sessions);
+  const assigneeName = issue.assignee ? principalDisplayName(issue.assignee) : null;
   const to = `/issues/${record.issue_id}${linkSearch ?? ""}`;
 
   return (
@@ -102,6 +104,14 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
         <div className={styles.title}>{issue.title || "(untitled)"}</div>
         <div className={styles.meta}>
           {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
+          {issue.assignee && assigneeName && (
+            <Avatar
+              name={assigneeName}
+              kind={principalAvatarKind(issue.assignee)}
+              size="sm"
+              title={`Assignee · ${assigneeName}`}
+            />
+          )}
           {pct !== null && (
             <span className={styles.progressBar} aria-hidden="true">
               <span
