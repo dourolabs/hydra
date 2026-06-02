@@ -1,4 +1,6 @@
 import type { ConversationStatus, SessionEvent } from "@hydra/api";
+import type { JsonValue } from "@hydra/api";
+import { descriptionSnippet } from "../../utils/text";
 
 export interface ActivityStatus {
   /**
@@ -13,6 +15,9 @@ export interface ActivityStatus {
    */
   toolName?: string;
 }
+
+/** Max length used when truncating a tool-call description for display. */
+export const TOOL_DESCRIPTION_MAX_CHARS = 100;
 
 /**
  * Tool-name → human label table. Kept as a plain record so it's trivial to
@@ -35,6 +40,25 @@ export const TOOL_LABELS: Record<string, string> = {
 };
 
 /**
+ * Pull a human-readable `description` string out of a tool-call payload, if
+ * one is present. Many Claude tools (e.g. `Bash`, `Agent`) ship a short
+ * `description` in their input that summarises the call in active voice —
+ * far more informative than the bare tool name.
+ *
+ * Returns `null` when the payload is not an object, lacks a string
+ * `description`, or carries an empty/whitespace-only description.
+ */
+function extractToolDescription(payload: JsonValue): string | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const desc = (payload as { [key: string]: JsonValue }).description;
+  if (typeof desc !== "string") return null;
+  const trimmed = desc.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
  * Derive what the transient activity indicator should display based on the
  * tail of the (already merged with optimistic) `SessionEvent` log and the
  * conversation's status. Returns `null` to mean "hide the indicator".
@@ -44,8 +68,13 @@ export const TOOL_LABELS: Record<string, string> = {
  *
  * Mapping (see issue [[i-hgmaqhor]]):
  * - `UserMessage` tail → `Thinking…`
- * - `ToolUse` tail → tool-specific label from `TOOL_LABELS`, fallback to
- *   `Using <tool_name>` (toolName exposed separately for inline-code render).
+ * - `ToolUse` tail →
+ *     1. payload `description` field (truncated) when present
+ *        (per [[i-jxamlakh]]: tools like `Bash`/`Agent` carry a human-readable
+ *        description and surfacing it is more informative than the tool name),
+ *     2. otherwise tool-specific label from `TOOL_LABELS`,
+ *     3. otherwise fallback `Using <tool_name>` (toolName exposed separately
+ *        for inline-code render).
  * - `Resumed` tail → `Resuming session…`
  * - `AssistantMessage` / `Suspending` / `Closed` / `Unknown` tail → `null`
  *   (the next assistant message is the visible signal; system-event tails
@@ -64,6 +93,10 @@ export function deriveActivityStatus(
     case "user_message":
       return { text: "Thinking…" };
     case "tool_use": {
+      const description = extractToolDescription(tail.payload);
+      if (description) {
+        return { text: descriptionSnippet(description, TOOL_DESCRIPTION_MAX_CHARS) };
+      }
       const label = TOOL_LABELS[tail.tool_name];
       if (label) return { text: label };
       return { text: "Using", toolName: tail.tool_name };
