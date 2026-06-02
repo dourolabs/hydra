@@ -76,6 +76,13 @@
   word-break: break-word;
 }
 
+/* Hold preview cards in the same right-side column as the user bubble. */
+.referencesSlot {
+  width: 76%;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ── Agent messages ── */
 .agentRow {
   display: flex;
@@ -167,5 +174,8 @@
   }
   .userBubble {
     max-width: 90%;
+  }
+  .referencesSlot {
+    width: 90%;
   }
 }
