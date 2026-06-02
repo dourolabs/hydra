@@ -46,45 +46,13 @@
 
 .toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 10px;
   padding: 10px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--bg-0);
   flex-shrink: 0;
   flex-wrap: wrap;
-}
-
-.chipFilter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 9px;
-  font-size: var(--t-sm);
-  font-family: var(--f-sans);
-  color: var(--fg-1);
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--tx-fast), color var(--tx-fast), border-color var(--tx-fast);
-}
-
-.chipFilter:hover {
-  color: var(--fg-0);
-  border-color: var(--line-strong);
-}
-
-.chipFilterActive {
-  background: var(--bg-3);
-  color: var(--fg-0);
-  border-color: var(--line-strong);
-}
-
-.toolbarSpacer {
-  flex: 1;
 }
 
 .searchBox {
@@ -318,6 +286,15 @@
 }
 
 @media (max-width: 768px) {
+  .toolbar {
+    padding: 8px 16px;
+  }
+
+  .searchBox {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
   .loadMore {
     padding: 12px 16px 14px;
   }
