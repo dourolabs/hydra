@@ -299,6 +299,7 @@ export function createSessionRoutes(store: Store): Hono {
     const spawnedFrom = c.req.query("spawned_from");
     const spawnedFromIds = c.req.query("spawned_from_ids");
     const status = c.req.query("status");
+    const creator = c.req.query("creator");
     const conversationId = c.req.query("conversation_id");
     const limitParam = c.req.query("limit");
     const countParam = c.req.query("count");
@@ -322,6 +323,9 @@ export function createSessionRoutes(store: Store): Hono {
     if (status) {
       const statuses = new Set(status.split(","));
       filtered = filtered.filter(({ entry }) => statuses.has(entry.data.status));
+    }
+    if (creator) {
+      filtered = filtered.filter(({ entry }) => entry.data.creator === creator);
     }
     if (conversationId) {
       filtered = filtered.filter(
