@@ -265,7 +265,17 @@ async fn handle_fresh_path(
                                 return;
                             }
                         };
-                        let transcript = ServerMessage::Transcript { events };
+                        // Read directly from `session.agent_config.system_prompt`
+                        // — same source as `handle_ready`'s `FirstMessage.agent_prompt`
+                        // arms. `handle_ready` blanks the prompt on `FirstMessage`
+                        // for resumed sessions, so without this field the
+                        // transcript-resume path would never deliver the
+                        // prompt to the model.
+                        let agent_prompt = session.agent_config.system_prompt.clone();
+                        let transcript = ServerMessage::Transcript {
+                            events,
+                            agent_prompt,
+                        };
                         if !send_json(&mut ws_sender, &transcript).await {
                             cleanup(&state, conversation_id.as_ref());
                             return;

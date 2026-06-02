@@ -308,11 +308,14 @@ async fn connect_relay(base_url: &str, session_id: &SessionId) -> anyhow::Result
 /// Wire-shape captured at the end of Phase 1 for the test helpers'
 /// purposes: the events the server delivered (transcript for
 /// fresh-with-prior-session, catch-up for reconnecting, empty
-/// otherwise) plus the raw text payload.
+/// otherwise) plus the raw text payload. On the transcript-replay path,
+/// `transcript_agent_prompt` carries the server-populated prompt so tests
+/// can assert it landed on the wire.
 #[derive(Debug, Default)]
 struct HandshakeOutcome {
     events: Vec<SessionEvent>,
     raw: String,
+    transcript_agent_prompt: Option<String>,
 }
 
 /// Complete a Phase-1 handshake under the WS-only protocol, accepting
@@ -337,6 +340,7 @@ async fn worker_handshake(
         other => anyhow::bail!("expected text Phase-1 reply, got {other:?}"),
     };
     let parsed: ServerMessage = serde_json::from_str(&raw)?;
+    let mut transcript_agent_prompt: Option<String> = None;
     let events = match &parsed {
         ServerMessage::ResumeContext {
             prior_session_id, ..
@@ -356,7 +360,13 @@ async fn worker_handshake(
                     other => anyhow::bail!("expected text Transcript, got {other:?}"),
                 };
                 match serde_json::from_str::<ServerMessage>(&t)? {
-                    ServerMessage::Transcript { events } => events,
+                    ServerMessage::Transcript {
+                        events,
+                        agent_prompt,
+                    } => {
+                        transcript_agent_prompt = agent_prompt;
+                        events
+                    }
                     other => anyhow::bail!("expected Transcript, got {other:?}"),
                 }
             } else {
@@ -366,7 +376,11 @@ async fn worker_handshake(
         ServerMessage::CatchUp { events } => events.iter().map(|e| e.event.clone()).collect(),
         other => anyhow::bail!("expected ResumeContext or CatchUp, got {other:?}"),
     };
-    Ok(HandshakeOutcome { events, raw })
+    Ok(HandshakeOutcome {
+        events,
+        raw,
+        transcript_agent_prompt,
+    })
 }
 
 /// Raw-text variant of [`worker_handshake`] that still returns the
@@ -2557,6 +2571,98 @@ async fn first_message_fresh_interactive_greet_user_true_emits_with_empty_user_m
     assert_eq!(
         user_message, "",
         "greet_user=true must produce an empty user_message so the agent greets first"
+    );
+
+    Ok(())
+}
+
+/// (e) Transcript-resume path — when the worker takes the
+/// `RequestTranscript` fallback, the server must populate
+/// `Transcript.agent_prompt` from the *current* (resumed) session's
+/// `agent_config.system_prompt`. This is the only path that carries the
+/// prompt to the model on a resume; `handle_ready` blanks
+/// `FirstMessage.agent_prompt` for `resumed_from.is_some()` sessions to
+/// avoid double-prepend.
+#[tokio::test]
+async fn transcript_resume_carries_agent_prompt_from_current_session() -> anyhow::Result<()> {
+    use crate::domain::users::Username;
+    use hydra_common::api::v1::sessions::{
+        AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+    };
+
+    let (state, store) = state_with_idle_timeout_secs(60);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+
+    // Build a prior session with one stored event so the transcript has
+    // something to replay (the agent-prompt assertion is independent of
+    // this, but it keeps the test close to the real flow).
+    let prior_session_id =
+        create_interactive_session_with_settings(&state, &store, "prior prompt", false).await?;
+    let conv_id = store
+        .get_session(&prior_session_id, false)
+        .await?
+        .item
+        .conversation_id()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("prior session must have a conversation_id"))?;
+    store
+        .append_session_event(
+            &prior_session_id,
+            crate::domain::sessions::SessionEvent::UserMessage {
+                content: "earlier message".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            &ActorRef::test(),
+        )
+        .await?;
+
+    // Resumed session in the same conversation with a DIFFERENT system
+    // prompt, so the assertion proves the field comes from the current
+    // session (not the prior one).
+    let resumed_req = CreateSessionRequest {
+        mode: SessionMode::Interactive {
+            conversation_id: conv_id.clone(),
+            idle_timeout_secs: None,
+            greet_user: false,
+        },
+        agent_config: AgentSpec::Adhoc {
+            system_prompt: "current prompt".to_string(),
+            mcp_config: None,
+        },
+        model: None,
+        mount_spec: MountSpec::default(),
+        image: None,
+        env_vars: std::collections::HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: None,
+        resumed_from: Some(prior_session_id.clone()),
+    };
+    let (resumed_session_id, _) = state
+        .create_session(resumed_req, ActorRef::test(), Username::from("creator"))
+        .await
+        .map_err(|err| anyhow::anyhow!("create_session failed: {err}"))?;
+
+    let mut ws = connect_relay(&server.base_url(), &resumed_session_id).await?;
+    let handshake = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+
+    assert_eq!(
+        handshake.transcript_agent_prompt.as_deref(),
+        Some("current prompt"),
+        "Transcript.agent_prompt must be populated from the current session's \
+         agent_config.system_prompt (not the prior session, not blanked)",
+    );
+    // Verify the user_message-via-events invariant: the prior session's
+    // first UserMessage event must appear in the transcript so the worker
+    // can primer-replay it without any extra wiring.
+    assert!(
+        handshake.events.iter().any(|e| matches!(
+            e,
+            SessionEvent::UserMessage { content, .. } if content == "earlier message"
+        )),
+        "prior session's UserMessage must appear in Transcript.events; got {:?}",
+        handshake.events,
     );
 
     Ok(())
