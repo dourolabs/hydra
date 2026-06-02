@@ -37,13 +37,17 @@ export function DocumentPreviewCard({ id }: DocumentPreviewCardProps) {
       topRow={
         <>
           <MonoId id={id} />
-          <span className={styles.kindChip}>{KIND_LABEL.document}</span>
-          <AgoTime iso={data.timestamp} />
         </>
       }
       title={title}
       bodyExcerpt={excerpt ?? undefined}
-      footer={path ? <span data-pc-mono="true">{path}</span> : undefined}
+      footer={
+        <>
+          <span className={styles.kindChip}>{KIND_LABEL.document}</span>
+          {path && <span data-pc-mono="true">{path}</span>}
+          <AgoTime iso={data.timestamp} />
+        </>
+      }
     />
   );
 }

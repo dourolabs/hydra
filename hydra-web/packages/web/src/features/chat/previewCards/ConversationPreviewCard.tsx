@@ -61,11 +61,16 @@ export function ConversationPreviewCard({ id }: ConversationPreviewCardProps) {
         <>
           <Badge status={status} />
           <MonoId id={id} />
-          <AgoTime iso={data.updated_at} />
         </>
       }
       title={title}
-      footer={agent ? <span className={styles.assigneeName}>{agent}</span> : undefined}
+      footer={
+        <>
+          <span className={styles.kindChip}>{KIND_LABEL.conversation}</span>
+          {agent && <span className={styles.assigneeName}>{agent}</span>}
+          <AgoTime iso={data.updated_at} />
+        </>
+      }
     />
   );
 }

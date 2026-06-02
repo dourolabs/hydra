@@ -1,6 +1,6 @@
 import { Avatar, Badge, TypeChip, type PreviewCardTone, type BadgeStatus } from "@hydra/ui";
 import { useIssue } from "../../issues/useIssue";
-import { principalDisplayName } from "../../principal/formatPrincipal";
+import { principalAvatarKind, principalDisplayName } from "../../principal/formatPrincipal";
 import { normalizeIssueStatus } from "../../../utils/statusMapping";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import {
@@ -10,7 +10,6 @@ import {
   SkeletonPreviewCard,
 } from "./cardHelpers";
 import { KIND_LABEL, firstNonEmptyLine } from "./cardConstants";
-import styles from "./previewCards.module.css";
 
 const TONE_BY_STATUS: Partial<Record<BadgeStatus, PreviewCardTone>> = {
   open: "open",
@@ -46,9 +45,8 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
   const tone = toneForIssueStatus(issue.status);
   const status = normalizeIssueStatus(issue.status);
   const excerpt = firstNonEmptyLine(issue.description);
-  const repoName = issue.session_settings?.repo_name ?? null;
   const assignee = issue.assignee ?? null;
-  const progressLine = firstNonEmptyLine(issue.progress);
+  const assigneeName = assignee ? principalDisplayName(assignee) : null;
   const title = issue.title || id;
 
   return (
@@ -60,35 +58,23 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
         <>
           <Badge status={status} />
           <MonoId id={id} />
-          {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
-          <AgoTime iso={data.timestamp} />
         </>
       }
       title={title}
       bodyExcerpt={excerpt ?? undefined}
       footer={
-        assignee || repoName || progressLine ? (
-          <>
-            {assignee && (
-              <span className={styles.assignee}>
-                <Avatar
-                  name={principalDisplayName(assignee)}
-                  kind={"Agent" in assignee ? "agent" : "human"}
-                  size="sm"
-                />
-                <span className={styles.assigneeName}>
-                  {principalDisplayName(assignee)}
-                </span>
-              </span>
-            )}
-            {repoName && <span data-pc-mono="true">{repoName}</span>}
-            {progressLine && (
-              <span className={styles.progressLine} title={progressLine}>
-                {progressLine}
-              </span>
-            )}
-          </>
-        ) : undefined
+        <>
+          {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
+          {assignee && assigneeName && (
+            <Avatar
+              name={assigneeName}
+              kind={principalAvatarKind(assignee)}
+              size="sm"
+              title={`Assignee · ${assigneeName}`}
+            />
+          )}
+          <AgoTime iso={data.timestamp} />
+        </>
       }
     />
   );
