@@ -21,6 +21,7 @@ import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
 import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSessionDuration";
 import type { ChildStatus } from "../dashboard/computeIssueProgress";
+import { PatchRepoLink } from "../patches/PatchRepoLink";
 import styles from "./RailRow.module.css";
 
 const STATUS_DOT_CLASS: Partial<Record<BadgeStatus, string>> = {
@@ -148,7 +149,9 @@ export function PatchRailRow({ record, linkSearch }: PatchRailRowProps) {
       <div className={styles.body}>
         <div className={styles.title}>{p.title || "(untitled)"}</div>
         <div className={styles.meta}>
-          <span className={styles.metaMono}>{p.service_repo_name}</span>
+          <span className={styles.metaMono}>
+            <PatchRepoLink patch={p} />
+          </span>
           {p.review_summary.count > 0 && (
             <span
               className={`${styles.metaMono}${p.review_summary.approved ? ` ${styles.metaApproved}` : ""}`}

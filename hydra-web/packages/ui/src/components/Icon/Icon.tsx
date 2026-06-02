@@ -207,3 +207,11 @@ export const IconLink = (p: IconProps) => (
     <path d="M9 11.5L7.5 13a2.5 2.5 0 0 1-3.5-3.5L5.5 8" />
   </IconBase>
 );
+
+export const IconExternalLink = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M9 3h4v4" />
+    <path d="M13 3l-6 6" />
+    <path d="M11 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1H6.5" />
+  </IconBase>
+);
