@@ -137,8 +137,9 @@ mod log_capture {
 
 /// Test helper for short idle timeout: build an `AppState` whose JobSection
 /// reports `interactive_idle_timeout_secs = secs` in the WorkerContext it
-/// serves to interactive workers. In production this defaults to 600s; tests
-/// use a small value (e.g. 2s) so the worker idle-timer fires quickly.
+/// serves to interactive workers. In production this defaults to
+/// `DEFAULT_CONVERSATION_TIMEOUT_SECS`; tests use a small value (e.g. 2s)
+/// so the worker idle-timer fires quickly.
 fn state_with_idle_timeout_secs(secs: u64) -> (AppState, Arc<dyn Store>) {
     let mut config = test_app_config();
     config.job.interactive_idle_timeout_secs = secs;

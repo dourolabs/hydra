@@ -5,7 +5,10 @@ pub use crate::ee::config::kube;
 pub use crate::ee::config::build_kube_client;
 
 use anyhow::{Context, Result, ensure};
-use hydra_common::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
+use hydra_common::{
+    BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig,
+    constants::DEFAULT_CONVERSATION_TIMEOUT_SECS,
+};
 use octocrab::models::AppId;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{
@@ -754,7 +757,7 @@ const fn default_idle_timeout_secs() -> u64 {
 }
 
 const fn default_interactive_idle_timeout_secs() -> u64 {
-    600
+    DEFAULT_CONVERSATION_TIMEOUT_SECS
 }
 
 fn default_kubeconfig_path() -> String {

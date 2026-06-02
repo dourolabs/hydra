@@ -14,7 +14,7 @@ use crate::{
     store::{MemoryStore, Store, StoreError},
 };
 use anyhow::Context;
-use hydra_common::RepoName;
+use hydra_common::{RepoName, constants::DEFAULT_CONVERSATION_TIMEOUT_SECS};
 use reqwest::{Client, header};
 use std::{
     sync::Arc,
@@ -74,7 +74,7 @@ pub fn test_app_config() -> AppConfig {
             memory_limit: "1Gi".to_string(),
             cpu_request: "500m".to_string(),
             memory_request: "1Gi".to_string(),
-            interactive_idle_timeout_secs: 600,
+            interactive_idle_timeout_secs: DEFAULT_CONVERSATION_TIMEOUT_SECS,
         },
         storage: StorageConfig::default(),
         job_engine: JobEngineConfig::default(),

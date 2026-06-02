@@ -10,7 +10,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
     api::v1::sessions::SessionModeKind,
-    constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
+    constants::{DEFAULT_CONVERSATION_TIMEOUT_SECS, ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{MountSpec, WorkerContext},
     SessionId,
@@ -133,7 +133,8 @@ pub async fn run(
         let selector_home_dir = worker_home_dir
             .clone()
             .ok_or_else(|| anyhow!("HOME must be set to construct a model wrapper"))?;
-        let selector_idle_timeout = Duration::from_secs(idle_timeout_secs.unwrap_or(600));
+        let selector_idle_timeout =
+            Duration::from_secs(idle_timeout_secs.unwrap_or(DEFAULT_CONVERSATION_TIMEOUT_SECS));
 
         let selector_result = ModelSelector::from_context(
             &model,
