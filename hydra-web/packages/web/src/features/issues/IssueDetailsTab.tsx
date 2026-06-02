@@ -1,8 +1,11 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Icons, TypeChip } from "@hydra/ui";
+import { Avatar, Badge, TypeChip } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
-import { formatPrincipalPath } from "../principal/formatPrincipal";
+import {
+  principalAvatarKind,
+  principalDisplayName,
+} from "../principal/formatPrincipal";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
@@ -62,8 +65,12 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
         <span className={styles.blockLabel}>Assignee</span>
         {issue.assignee ? (
           <span className={styles.blockValue}>
-            <Icons.IconAgent size={12} />
-            {formatPrincipalPath(issue.assignee)}
+            <Avatar
+              name={principalDisplayName(issue.assignee)}
+              kind={principalAvatarKind(issue.assignee)}
+              size="sm"
+            />
+            {principalDisplayName(issue.assignee)}
           </span>
         ) : (
           <span className={`${styles.blockValue} ${styles.blockEmpty}`}>Unassigned</span>

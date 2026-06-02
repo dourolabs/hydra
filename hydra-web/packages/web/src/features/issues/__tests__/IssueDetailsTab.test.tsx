@@ -12,13 +12,15 @@ vi.mock("../IssueLabelEditor", () => ({
 }));
 
 vi.mock("@hydra/ui", () => ({
+  Avatar: ({ name, kind }: { name: string; kind?: string }) => (
+    <span data-testid="avatar" data-kind={kind ?? "human"}>
+      {name}
+    </span>
+  ),
   Badge: ({ status }: { status: string }) => (
     <span data-testid={`badge-${status}`}>{status}</span>
   ),
   TypeChip: ({ type }: { type: string }) => <span data-testid={`type-${type}`}>{type}</span>,
-  Icons: {
-    IconAgent: () => <span data-testid="agent-icon" />,
-  },
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -73,11 +75,26 @@ describe("IssueDetailsTab", () => {
       />,
     );
     expect(screen.getByTestId("status-chip")).toBeDefined();
-    // Phase 4b: assignee renders as canonical path form.
-    expect(screen.getByText("users/bob")).toBeDefined();
+    const avatar = screen.getByTestId("avatar");
+    expect(avatar.getAttribute("data-kind")).toBe("human");
+    expect(avatar.textContent).toBe("bob");
     expect(screen.getByText("Created")).toBeDefined();
     expect(screen.getByText("Updated")).toBeDefined();
     expect(screen.getByTestId("label-editor")).toBeDefined();
+  });
+
+  it("renders agent-kind avatar when assignee is an Agent principal", () => {
+    render(
+      <IssueDetailsTab
+        record={makeRecord({
+          assignee: { Agent: { name: "swe" } },
+        })}
+        onOpenStatusModal={() => {}}
+      />,
+    );
+    const avatar = screen.getByTestId("avatar");
+    expect(avatar.getAttribute("data-kind")).toBe("agent");
+    expect(avatar.textContent).toBe("swe");
   });
 
   it("does not render the Parent block (parents live in the Related tab)", () => {
