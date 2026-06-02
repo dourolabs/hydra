@@ -20,6 +20,10 @@
   color: var(--fg-2);
   font-style: italic;
   line-height: 1.4;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .code {
