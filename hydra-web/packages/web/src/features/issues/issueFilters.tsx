@@ -7,7 +7,7 @@ import type {
   IssueType,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import type { FilterDefinitions, FilterOption } from "../filters";
+import type { Filter, FilterDefinitions, FilterOption } from "../filters";
 import { useUserOptions } from "../filters/options/userOptions";
 import { statusOptions } from "../filters/options/statusOptions";
 import {
@@ -68,6 +68,22 @@ function valueIncludes(haystack: string | null, values: string[]): boolean {
   return values.includes(haystack);
 }
 
+export interface UseIssueFiltersOptions {
+  /**
+   * Current filter chips. Used to decide which relation-picker option lists
+   * to fetch eagerly: if the user already has (or rehydrates from URL) a
+   * `relatedPatch` chip, we kick off the patch list immediately so the
+   * picker is populated when opened. See `addMenuOpen` for the other gate.
+   */
+  filters?: Filter[];
+  /**
+   * Whether the FilterBar's add-filter menu is currently open. When `true`,
+   * all four relation-picker option lists become eligible to fetch so the
+   * picker isn't empty when the user clicks through. Defaults to `false`.
+   */
+  addMenuOpen?: boolean;
+}
+
 /**
  * Builds the `ISSUE_FILTERS` definition map for the Issues page. Loaded as a
  * hook because the option lists for `assignee` / `creator` and the relation
@@ -88,9 +104,28 @@ function valueIncludes(haystack: string | null, values: string[]): boolean {
  *
  * The `repository` filter was confirmed out of scope by the reviewer (the
  * server-side surface doesn't carry repo_name on IssueSummary today).
+ *
+ * Relation-picker option lists (`listPatches` / `listSessions` /
+ * `listConversations` / `listIssues`, each `limit=100`) are lazy: they only
+ * fire when the matching relation chip is already on the bar (e.g.
+ * URL-rehydrated `?relatedPatch=p-aa`) or when the add-filter menu opens, so
+ * a cold-cache Issues page paint without any relation filter makes zero
+ * extra option-list requests.
  */
-export function useIssueFilters(): FilterDefinitions<IssueSummaryRecord> {
+export function useIssueFilters(
+  options: UseIssueFiltersOptions = {},
+): FilterDefinitions<IssueSummaryRecord> {
+  const { filters = [], addMenuOpen = false } = options;
   const userOpts = useUserOptions();
+
+  const needPatch =
+    addMenuOpen || filters.some((f) => f.id === "relatedPatch");
+  const needSession =
+    addMenuOpen || filters.some((f) => f.id === "relatedSession");
+  const needConversation =
+    addMenuOpen || filters.some((f) => f.id === "relatedChat");
+  const needIssue =
+    addMenuOpen || filters.some((f) => f.id === "parentOrChild");
 
   // Bounded option lists for the relation pickers. Filtering happens
   // server-side; the picker just needs entity ids + display data.
@@ -98,21 +133,25 @@ export function useIssueFilters(): FilterDefinitions<IssueSummaryRecord> {
     queryKey: ["filter-options-patches"],
     queryFn: () => apiClient.listPatches({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needPatch,
   });
   const sessionListQuery = useQuery({
     queryKey: ["filter-options-sessions"],
     queryFn: () => apiClient.listSessions({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needSession,
   });
   const conversationListQuery = useQuery({
     queryKey: ["filter-options-conversations"],
     queryFn: () => apiClient.listConversations({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needConversation,
   });
   const issueListQuery = useQuery({
     queryKey: ["filter-options-issues"],
     queryFn: () => apiClient.listIssues({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needIssue,
   });
 
   const patchEntities: RelationEntity[] = useMemo(
