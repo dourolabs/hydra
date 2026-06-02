@@ -179,7 +179,7 @@ export function createConversationRoutes(store: Store): Hono {
     store.create<Conversation>(COLLECTION, id, conversation, SSE_PREFIX);
     if (body.message) {
       const sessionId = createInteractiveSessionForConversation(store, id, now);
-      appendSessionEvent(sessionId, {
+      appendSessionEvent(store, sessionId, {
         type: "user_message",
         content: body.message,
         timestamp: now,
@@ -200,7 +200,7 @@ export function createConversationRoutes(store: Store): Hono {
     const sessionId =
       latestSessionForConversation(store, id) ??
       createInteractiveSessionForConversation(store, id, now);
-    appendSessionEvent(sessionId, {
+    appendSessionEvent(store, sessionId, {
       type: "user_message",
       content: body.content,
       timestamp: now,

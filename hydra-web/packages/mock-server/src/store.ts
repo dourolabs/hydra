@@ -204,6 +204,39 @@ export class Store {
     }
   }
 
+  /**
+   * Emit an SSE event for entities that don't live in a versioned collection
+   * (e.g. `session_event_created`, `conversation_event_created`). The caller
+   * supplies the per-entity `version` (typically the new length of the
+   * append-only log) and a `timestamp`. Bumps the global event seq, appends
+   * to the replay buffer, and fans out to live listeners — same shape as
+   * `emitEvent` so `GET /v1/events` consumers can't tell the difference.
+   */
+  emitSideEvent(
+    eventType: SseEventType,
+    entityType: string,
+    entityId: string,
+    version: number,
+    timestamp: string,
+    entity: unknown,
+  ): StoreEvent {
+    this.eventSeq++;
+    const event: StoreEvent = {
+      id: this.eventSeq,
+      eventType,
+      entityType,
+      entityId,
+      version,
+      timestamp,
+      entity,
+    };
+    this.events.push(event);
+    for (const listener of this.listeners) {
+      listener(event);
+    }
+    return event;
+  }
+
   subscribe(listener: StoreEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

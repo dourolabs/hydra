@@ -918,6 +918,135 @@ describe("SSE Events", () => {
     controller.abort();
     reader.releaseLock();
   });
+
+  it("POST /v1/conversations/:id/messages emits session_event_created on /v1/events", async () => {
+    // Pre-create the conversation + initial session so the send-message path
+    // routes through the existing session rather than spawning a new one
+    // (either path emits session_event_created — picking one for clarity).
+    const conversation = await client.createConversation({
+      agent_name: null,
+      session_settings: undefined,
+      message: "hello",
+    });
+    const conversationId = conversation.conversation_id;
+    const sessions = await client.listSessions({ conversation_id: conversationId });
+    expect(sessions.sessions.length).toBeGreaterThan(0);
+    const sessionId = sessions.sessions[0].session_id;
+
+    // Subscribe to /v1/events.
+    const controller = new AbortController();
+    const resp = await originalFetch(`${baseUrl}/v1/events`, {
+      method: "GET",
+      headers: { Authorization: "Bearer dev-token-12345" },
+      signal: controller.signal,
+    });
+    expect(resp.status).toBe(200);
+    const reader = resp.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const received: Array<{ event: string; data: string; id?: string }> = [];
+
+    function parseSSEBuffer(buf: string): {
+      parsed: Array<{ event: string; data: string; id?: string }>;
+      remaining: string;
+    } {
+      const parsed: Array<{ event: string; data: string; id?: string }> = [];
+      const blocks = buf.split("\n\n");
+      const remaining = blocks.pop() ?? "";
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        let event = "";
+        let data = "";
+        let id: string | undefined;
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data = line.slice(5).trim();
+          else if (line.startsWith("id:")) id = line.slice(3).trim();
+        }
+        if (event || data) parsed.push({ event, data, id });
+      }
+      return { parsed, remaining };
+    }
+    async function readUntil(
+      predicate: (evts: typeof received) => boolean,
+      maxBytes = 65536,
+    ) {
+      let bytesRead = 0;
+      while (!predicate(received) && bytesRead < maxBytes) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        bytesRead += value.length;
+        const { parsed, remaining } = parseSSEBuffer(buffer);
+        buffer = remaining;
+        received.push(...parsed);
+      }
+    }
+
+    // Wait for the connected event and capture current_seq for monotonicity.
+    await readUntil((evts) => evts.some((e) => e.event === "connected"));
+    const connected = received.find((e) => e.event === "connected")!;
+    const priorSeq = JSON.parse(connected.data).current_seq as number;
+
+    // Post a message; expect session_event_created to fire.
+    const beforeSend = received.length;
+    await client.sendMessage(conversationId, { content: "follow-up question" });
+    await readUntil((evts) =>
+      evts.slice(beforeSend).some((e) => e.event === "session_event_created"),
+    );
+
+    const sse = received.find((e) => e.event === "session_event_created");
+    expect(sse).toBeDefined();
+    expect(Number(sse!.id)).toBeGreaterThan(priorSeq);
+    const payload = JSON.parse(sse!.data);
+    expect(payload.entity_type).toBe("session_event");
+    expect(payload.entity_id).toBe(sessionId);
+    expect(payload.entity).toMatchObject({
+      type: "user_message",
+      content: "follow-up question",
+    });
+    expect(typeof payload.entity.timestamp).toBe("string");
+    expect(typeof payload.version).toBe("number");
+    expect(typeof payload.timestamp).toBe("string");
+
+    controller.abort();
+    reader.releaseLock();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session events fixture coverage
+// ---------------------------------------------------------------------------
+describe("Session events seed coverage", () => {
+  beforeEach(async () => {
+    await resetServer();
+  });
+
+  it("every t-seedNNNNN session has a non-empty event log covering all variants", async () => {
+    const { sessions } = await client.listSessions({ limit: 1000 });
+    const seedIds = sessions
+      .map((s) => s.session_id)
+      .filter((id) => /^t-seed\d{5}$/.test(id));
+    expect(seedIds.length).toBeGreaterThanOrEqual(18);
+
+    const variantsSeen = new Set<string>();
+    for (const id of seedIds) {
+      const events = await client.getSessionEvents(id);
+      expect(events.length, `${id} should have at least one event`).toBeGreaterThan(0);
+      for (const event of events) variantsSeen.add(event.type);
+    }
+
+    for (const variant of [
+      "user_message",
+      "assistant_message",
+      "tool_use",
+      "suspending",
+      "resumed",
+      "closed",
+    ]) {
+      expect(variantsSeen.has(variant), `missing variant: ${variant}`).toBe(true);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

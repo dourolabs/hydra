@@ -2260,6 +2260,402 @@
     }
   },
   "session_events": {
+    "t-seed00001": [
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "ls db/migrations/pending/" },
+        "timestamp": "2026-03-14T09:02:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Found 4 pending migrations: 0042_add_session_index.sql, 0043_partition_events.sql, 0044_backfill_user_emails.sql, 0045_drop_legacy_audit.sql. Executing in order.",
+        "timestamp": "2026-03-14T09:05:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "psql -f db/migrations/pending/0042_add_session_index.sql" },
+        "timestamp": "2026-03-14T09:08:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "0042 and 0043 applied cleanly. 0044 ran the backfill on 1.2M rows in 11 minutes.",
+        "timestamp": "2026-03-14T09:22:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "psql -c 'SELECT COUNT(*) FROM users WHERE email IS NULL'" },
+        "timestamp": "2026-03-14T09:28:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "0 rows with NULL email — backfill verified. Proceeding with 0045 drop.",
+        "timestamp": "2026-03-14T09:32:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "psql -f db/migrations/pending/0045_drop_legacy_audit.sql" },
+        "timestamp": "2026-03-14T09:38:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "All 4 migrations applied. Schema is at v2.0. Wrote migration report to db/migrations/v2.0-report.md.",
+        "timestamp": "2026-03-14T09:43:00.000Z"
+      },
+      {
+        "type": "closed",
+        "timestamp": "2026-03-14T09:45:00.000Z"
+      }
+    ],
+    "t-seed00002": [
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "rg -n 'refreshToken' src/auth" },
+        "timestamp": "2026-03-15T10:32:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Current refresh logic in src/auth/oauth.ts:142 fires unconditionally — needs a queue so concurrent callers don't trigger duplicate refreshes.",
+        "timestamp": "2026-03-15T10:40:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "read",
+        "payload": { "path": "src/auth/oauth.ts" },
+        "timestamp": "2026-03-15T10:55:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Sketching a per-client refresh promise. First call kicks off the refresh; concurrent calls await the same promise and reuse the resolved token.",
+        "timestamp": "2026-03-15T11:05:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "edit",
+        "payload": { "path": "src/auth/oauth.ts", "summary": "introduce refresh queue + AbortSignal plumbing" },
+        "timestamp": "2026-03-15T11:25:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Queue is wired up. Need to add the retry-after-network-failure case next.",
+        "timestamp": "2026-03-15T11:40:00.000Z"
+      }
+    ],
+    "t-seed00003": [
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "rg -n 'WebSocket' packages/ws-client/src" },
+        "timestamp": "2026-03-15T11:03:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Existing ws-client has raw WebSocket but no JWT auth, heartbeat, or reconnection. ConnectionManager will own all three.",
+        "timestamp": "2026-03-15T11:08:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "write",
+        "payload": { "path": "packages/ws-client/src/ConnectionManager.ts", "summary": "JWT-authed WS with heartbeat + exponential backoff reconnection" },
+        "timestamp": "2026-03-15T11:15:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "First pass implemented. Heartbeat is set to 30s; backoff caps at 30s; reconnect attempts unbounded but jittered.",
+        "timestamp": "2026-03-15T11:25:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "pnpm --filter @acme/ws-client test ConnectionManager" },
+        "timestamp": "2026-03-15T11:35:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "6/8 unit tests pass. Two failures are around the heartbeat-on-reconnect race; investigating.",
+        "timestamp": "2026-03-15T11:40:00.000Z"
+      }
+    ],
+    "t-seed00004": [
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "go tool pprof -alloc_space rate-limiter.heap" },
+        "timestamp": "2026-03-15T12:02:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "pprof shows steady growth in redis.(*Pool).Get allocations; connections are checked out but never returned on the rate-limit error path.",
+        "timestamp": "2026-03-15T12:10:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "goroutine dump > /tmp/dump.txt && grep -c redis.pool /tmp/dump.txt" },
+        "timestamp": "2026-03-15T12:20:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Confirmed: 412 goroutines blocked on Pool.Get after a 10-minute soak. The cleanup happens only on the happy path. Need defer cleanup in the middleware.",
+        "timestamp": "2026-03-15T12:30:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "edit",
+        "payload": { "path": "internal/middleware/ratelimit.go", "summary": "defer conn.Close() unconditionally; cover error paths" },
+        "timestamp": "2026-03-15T12:45:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Patch applied. Running another soak to confirm steady-state heap before submitting.",
+        "timestamp": "2026-03-15T12:55:00.000Z"
+      }
+    ],
+    "t-seed00005": [
+      {
+        "type": "tool_use",
+        "tool_name": "read",
+        "payload": { "path": "workers/session_cleanup.ts" },
+        "timestamp": "2026-03-15T12:32:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Confirmed the TOCTOU window: check-status then mark-killed has a ~50ms gap. Two replicas can both observe \"running\" and both mark-killed, double-decrementing the active session counter.",
+        "timestamp": "2026-03-15T12:40:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "edit",
+        "payload": { "path": "workers/session_cleanup.ts", "summary": "wrap check + mark in a SETNX(session-cleanup:<id>, ttl=30s) lock" },
+        "timestamp": "2026-03-15T12:50:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Lock is in place. Need to write a concurrent-replica regression test next.",
+        "timestamp": "2026-03-15T13:00:00.000Z"
+      }
+    ],
+    "t-seed00007": [
+      {
+        "type": "tool_use",
+        "tool_name": "read",
+        "payload": { "path": "patches/p-seed00001.diff" },
+        "timestamp": "2026-03-15T13:02:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Diff touches src/auth/oauth.ts and config/providers.yaml. Reviewing token storage and refresh paths first.",
+        "timestamp": "2026-03-15T13:10:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "read",
+        "payload": { "path": "src/auth/oauth.ts" },
+        "timestamp": "2026-03-15T13:20:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Access tokens are stored in plaintext in the Redis session blob. PR description doesn't address this. Flagging as a security issue.",
+        "timestamp": "2026-03-15T13:30:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "grep",
+        "payload": { "pattern": "redis.set.*token", "path": "src" },
+        "timestamp": "2026-03-15T13:40:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Confirmed three call sites store raw tokens. Will request changes — tokens should be encrypted at rest using the existing KMS helper.",
+        "timestamp": "2026-03-15T13:50:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Draft review ready: 1 must-fix (token encryption), 2 nits (missing error logging on refresh failure, magic-number TTL). Posting.",
+        "timestamp": "2026-03-15T14:05:00.000Z"
+      }
+    ],
+    "t-seed00009": [
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "psql -c 'EXPLAIN ANALYZE SELECT * FROM issues WHERE description ILIKE %foo%'" },
+        "timestamp": "2026-03-15T09:02:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Sequential scan over 4.2M rows, 380ms p50. GIN with pg_trgm should bring this to single-digit ms.",
+        "timestamp": "2026-03-15T09:10:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "psql -c 'CREATE INDEX CONCURRENTLY idx_issues_description_trgm ON issues USING GIN (description gin_trgm_ops)'" },
+        "timestamp": "2026-03-15T09:18:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Index built in 92s. Re-running EXPLAIN.",
+        "timestamp": "2026-03-15T09:25:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "pgbench -f bench/issue-search.sql -c 8 -T 30" },
+        "timestamp": "2026-03-15T09:35:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Throughput went 24 tps → 1,840 tps; p99 dropped from 920ms to 14ms. Writing benchmark notes for the PR.",
+        "timestamp": "2026-03-15T09:45:00.000Z"
+      }
+    ],
+    "t-seed00010": [
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "pnpm add yjs y-websocket y-postgresql" },
+        "timestamp": "2026-03-14T16:05:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Dependencies added. Wiring Y.Doc to the existing collab room manager.",
+        "timestamp": "2026-03-14T16:15:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "edit",
+        "payload": { "path": "src/collab/RoomManager.ts", "summary": "swap in-memory state for Y.Doc backed by Y-WebSocket provider" },
+        "timestamp": "2026-03-14T16:25:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "RoomManager now persists doc updates through y-postgresql. Need to handle the snapshot-vs-update split — large docs should snapshot every 100 updates.",
+        "timestamp": "2026-03-14T16:35:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "write",
+        "payload": { "path": "src/collab/persistence.ts", "summary": "PostgreSQL persistence adapter with snapshot interval" },
+        "timestamp": "2026-03-14T16:45:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Adapter implemented. Running the collab integration suite.",
+        "timestamp": "2026-03-14T16:55:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "pnpm test --filter @acme/collab" },
+        "timestamp": "2026-03-14T17:00:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "All 34 integration tests pass. Submitting patch.",
+        "timestamp": "2026-03-14T17:05:00.000Z"
+      },
+      {
+        "type": "closed",
+        "timestamp": "2026-03-14T17:10:00.000Z"
+      }
+    ],
+    "t-seed00012": [
+      {
+        "type": "tool_use",
+        "tool_name": "read",
+        "payload": { "path": "src/http/client.ts" },
+        "timestamp": "2026-03-15T14:02:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Picking up where t-seed00011 left off: need to wire the per-client refresh mutex into the http client's request interceptor.",
+        "timestamp": "2026-03-15T14:10:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "edit",
+        "payload": { "path": "src/http/client.ts", "summary": "guard refresh path with per-client mutex; share resolved token" },
+        "timestamp": "2026-03-15T14:20:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Interceptor wired. Writing the deadlock regression test that was flaking on the prior approach.",
+        "timestamp": "2026-03-15T14:30:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "write",
+        "payload": { "path": "tests/http/refresh_deadlock.test.ts", "summary": "10-concurrent-callers regression test" },
+        "timestamp": "2026-03-15T14:45:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Test added. Verifying no deadlock and exactly-one refresh call across 10 concurrent requests.",
+        "timestamp": "2026-03-15T14:55:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "pnpm test refresh_deadlock" },
+        "timestamp": "2026-03-15T15:00:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Green. exactly-one refresh call confirmed. Following up with the unit-test issue (i-seed00021).",
+        "timestamp": "2026-03-15T15:05:00.000Z"
+      }
+    ],
+    "t-seed00013": [
+      {
+        "type": "tool_use",
+        "tool_name": "read",
+        "payload": { "path": "src/http/refresh_queue.ts" },
+        "timestamp": "2026-03-15T15:32:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Mutex API is straightforward: acquire(clientId), release(clientId, token). Three test cases planned: happy path, concurrent callers, error propagation.",
+        "timestamp": "2026-03-15T15:38:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "write",
+        "payload": { "path": "tests/http/refresh_queue.happy.test.ts", "summary": "single-caller acquire/release returns refreshed token" },
+        "timestamp": "2026-03-15T15:45:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Happy path test in place.",
+        "timestamp": "2026-03-15T15:50:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "write",
+        "payload": { "path": "tests/http/refresh_queue.concurrent.test.ts", "summary": "5 concurrent callers see the same refreshed token" },
+        "timestamp": "2026-03-15T15:55:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Concurrent test added. Drafting the error-propagation case next.",
+        "timestamp": "2026-03-15T16:00:00.000Z"
+      },
+      {
+        "type": "tool_use",
+        "tool_name": "bash",
+        "payload": { "command": "pnpm test refresh_queue" },
+        "timestamp": "2026-03-15T16:05:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Happy + concurrent both green; error-propagation case still WIP.",
+        "timestamp": "2026-03-15T16:10:00.000Z"
+      }
+    ],
     "t-seed00016": [
       {
         "type": "user_message",
