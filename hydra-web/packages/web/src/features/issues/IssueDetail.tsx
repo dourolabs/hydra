@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, Button, TypeChip } from "@hydra/ui";
+import { Avatar, Badge, Button, TypeChip } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { IssueVersionRecord } from "@hydra/api";
+import { principalAvatarKind, principalDisplayName } from "../principal/formatPrincipal";
 import { normalizeIssueStatus } from "../../utils/statusMapping";
 import { useIssue } from "./useIssue";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
@@ -112,12 +113,19 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <h1 className={styles.title}>{issue.title || issueId}</h1>
 
           <div className={styles.metaRow}>
-            {issue.creator && (
-              <>
-                <span>opened by {issue.creator}</span>
-                <span className={styles.metaSep}>·</span>
-              </>
+            {issue.assignee ? (
+              <span>
+                <Avatar
+                  name={principalDisplayName(issue.assignee)}
+                  kind={principalAvatarKind(issue.assignee)}
+                  size="sm"
+                />
+                {principalDisplayName(issue.assignee)}
+              </span>
+            ) : (
+              <span className={styles.assigneeEmpty}>Unassigned</span>
             )}
+            <span className={styles.metaSep}>·</span>
             <AgoTime iso={record.creation_time} />
             {settings?.repo_name && (
               <>

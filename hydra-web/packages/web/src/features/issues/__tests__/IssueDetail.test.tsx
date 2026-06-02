@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
-import type { Form, FormResponse, IssueVersionRecord } from "@hydra/api";
+import type { Form, FormResponse, IssueVersionRecord, Principal } from "@hydra/api";
 
 // --- Hook mocks ---
 vi.mock("../useIssue", () => ({
@@ -40,6 +40,11 @@ vi.mock("../../../components/MobileTabBar", () => ({
 
 // --- @hydra/ui stubs (minimal renderings sufficient for the assertions) ---
 vi.mock("@hydra/ui", () => ({
+  Avatar: ({ name, kind }: { name: string; kind?: string }) => (
+    <span data-testid="avatar" data-kind={kind}>
+      {name}
+    </span>
+  ),
   Badge: ({ status }: { status: string }) => <span data-testid={`badge-${status}`}>{status}</span>,
   TypeChip: ({ type }: { type: string }) => <span data-testid={`type-${type}`}>{type}</span>,
   Button: ({
@@ -131,6 +136,7 @@ function makeResponse(): FormResponse {
 function makeRecord(overrides: {
   form?: Form | null;
   form_response?: FormResponse | null;
+  assignee?: Principal | null;
 }): IssueVersionRecord {
   return {
     issue_id: "i-1",
@@ -145,6 +151,7 @@ function makeRecord(overrides: {
       creator: "alice",
       status: "open",
       progress: "",
+      assignee: overrides.assignee ?? null,
       dependencies: [],
       patches: [],
       labels: [],
@@ -198,5 +205,43 @@ describe("IssueDetail FormPanel rendering", () => {
     expect(screen.getByText("Please review the OAuth2 migration proposal")).toBeDefined();
     // But action buttons are gone in the read-only branch.
     expect(screen.queryByRole("button", { name: "Submit review" })).toBeNull();
+  });
+});
+
+describe("IssueDetail assignee rendering", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("renders an avatar and name for a human assignee", () => {
+    render(
+      <IssueDetail record={makeRecord({ assignee: { User: { name: "alice" } } })} />,
+      { wrapper: makeWrapper() },
+    );
+
+    const avatar = screen.getByTestId("avatar");
+    expect(avatar).toBeDefined();
+    expect(avatar.getAttribute("data-kind")).toBe("human");
+    expect(avatar.textContent).toBe("alice");
+    expect(screen.queryByText("Unassigned")).toBeNull();
+    expect(screen.queryByText(/opened by/i)).toBeNull();
+  });
+
+  it("renders an avatar with agent kind for an Agent assignee", () => {
+    render(
+      <IssueDetail record={makeRecord({ assignee: { Agent: { name: "swe" } } })} />,
+      { wrapper: makeWrapper() },
+    );
+
+    const avatar = screen.getByTestId("avatar");
+    expect(avatar.getAttribute("data-kind")).toBe("agent");
+    expect(avatar.textContent).toBe("swe");
+  });
+
+  it("renders 'Unassigned' when the issue has no assignee", () => {
+    render(<IssueDetail record={makeRecord({ assignee: null })} />, {
+      wrapper: makeWrapper(),
+    });
+
+    expect(screen.getByText("Unassigned")).toBeDefined();
+    expect(screen.queryByTestId("avatar")).toBeNull();
   });
 });
