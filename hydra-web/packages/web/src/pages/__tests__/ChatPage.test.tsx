@@ -154,6 +154,7 @@ vi.mock("../../features/chat/ChatMessageList.module.css", () => ({ default: cssP
 vi.mock("../../features/chat/ChatRightPanel.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/chat/ChatMetadataTab.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/chat/ChatRelatedTab.module.css", () => ({ default: cssProxy }));
+vi.mock("../../features/chat/ChatActivityIndicator.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/issues/IssueSettings.module.css", () => ({ default: cssProxy }));
 vi.mock("../../components/MobileTabBar.module.css", () => ({ default: cssProxy }));
 
@@ -289,6 +290,75 @@ describe("ChatPage 2-pane layout", () => {
     expect(list.getAttribute("data-transcript-source")).toBe("session_events");
     expect(screen.getByText("hi from session")).toBeDefined();
     expect(screen.getByText("hello from session")).toBeDefined();
+
+    cleanup();
+  });
+
+  // ── ChatActivityIndicator wiring ──────────────────────────────────────
+  // The indicator lives below the transcript (not inside it) and is driven
+  // purely by `deriveActivityStatus(events, conversation.status)`. These
+  // tests verify the wiring picks the right inputs and shows/hides the
+  // indicator correctly without re-testing the derivation mapping table.
+
+  it("renders the activity indicator below the thread when tail is a user_message", () => {
+    mockEvents = [
+      { type: "user_message", content: "hello", timestamp: "2026-04-01T10:00:00Z" },
+    ];
+    render(<ChatPage />);
+
+    const indicator = screen.getByTestId("chat-activity-indicator");
+    expect(indicator).toBeDefined();
+    expect(screen.getByTestId("chat-activity-indicator-text").textContent).toBe(
+      "Thinking…",
+    );
+
+    // The indicator must live OUTSIDE the message list, not as a transcript row.
+    const list = screen.getByTestId("chat-message-list");
+    expect(list.contains(indicator)).toBe(false);
+
+    cleanup();
+  });
+
+  it("hides the activity indicator when the tail event is an assistant_message", () => {
+    mockEvents = [
+      { type: "user_message", content: "hi", timestamp: "2026-04-01T10:00:00Z" },
+      {
+        type: "assistant_message",
+        content: "hello",
+        timestamp: "2026-04-01T10:00:30Z",
+      },
+    ];
+    render(<ChatPage />);
+
+    expect(screen.queryByTestId("chat-activity-indicator")).toBeNull();
+
+    cleanup();
+  });
+
+  it("hides the activity indicator when the conversation is closed", () => {
+    mockConversation = makeConversation({ status: "closed" as Conversation["status"] });
+    mockEvents = [
+      { type: "user_message", content: "hi", timestamp: "2026-04-01T10:00:00Z" },
+    ];
+    render(<ChatPage />);
+
+    // Conversation is closed → the indicator is hidden even though the tail
+    // would otherwise produce a label.
+    expect(screen.queryByTestId("chat-activity-indicator")).toBeNull();
+
+    cleanup();
+  });
+
+  it("shows a tool-use label when a ToolUse is the trailing event", () => {
+    mockEvents = [
+      { type: "user_message", content: "search please", timestamp: "2026-04-01T10:00:00Z" },
+      { type: "tool_use", tool_name: "Grep", payload: null, timestamp: "2026-04-01T10:00:05Z" },
+    ];
+    render(<ChatPage />);
+
+    expect(screen.getByTestId("chat-activity-indicator-text").textContent).toBe(
+      "Searching code",
+    );
 
     cleanup();
   });

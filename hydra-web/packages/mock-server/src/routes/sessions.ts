@@ -471,6 +471,22 @@ export function createSessionRoutes(store: Store): Hono {
     return c.json(getSessionEvents(id));
   });
 
+  // POST /v1/dev/sessions/:id/events — test-only: append a SessionEvent and
+  // broadcast a `session_event_created` SSE notification, so e2e scenarios
+  // can simulate the worker emitting `ToolUse` / `AssistantMessage` events
+  // mid-conversation. Mirrors the real-server flow without requiring a
+  // full agent loop.
+  app.post("/v1/dev/sessions/:id/events", async (c) => {
+    const id = c.req.param("id");
+    const entry = store.get<Session>(COLLECTION, id);
+    if (!entry) {
+      return c.json({ error: `session '${id}' not found` }, 404);
+    }
+    const event = (await c.req.json()) as SessionEvent;
+    appendSessionEvent(store, id, event);
+    return c.json({ ok: true });
+  });
+
   // GET /v1/sessions/:id/versions
   app.get("/v1/sessions/:id/versions", (c) => {
     const id = c.req.param("id");

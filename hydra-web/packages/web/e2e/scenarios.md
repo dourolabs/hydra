@@ -55,6 +55,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@chat:default-mine` — `/chat` defaults to the logged-in user's chats (Mine); toggle flips to All (`?scope=all`) and back, the Chats query carries `creator=<me>` by default
 - `@chat:transcript-source` — Chat detail page renders from `SessionEvent` (`data-transcript-source="session_events"` on the message list). Across a 2-session resumption chain the merged transcript renders in chronological order and the per-session fan-out hits each session's `/v1/sessions/:id/events`.
 - `@chat:conversation-switch` — Soft-navigating directly between two conversations (sidebar click on `/chat/A` → `/chat/B`) shows only the new conversation's messages: the previous transcript does not leak, and a not-yet-reconciled optimistic message sent in the previous conversation does not appear in the new one.
+- `@chat:activity-status` — After the user sends a message, a transient activity indicator appears below the message thread (`Thinking…`), transitions through at least one `ToolUse` label as the worker emits `tool_use` events, and disappears once an `AssistantMessage` lands. The indicator is not part of the transcript history.
 
 ## Repositories
 
