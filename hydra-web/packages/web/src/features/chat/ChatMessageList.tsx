@@ -3,6 +3,7 @@ import type { SessionEvent } from "@hydra/api";
 import { Markdown } from "../../components/Markdown";
 import { formatTimestamp } from "../../utils/time";
 import { AgoTime } from "../../components/Runtime/Runtime";
+import { MessageReferencesPreview } from "./MessageReferencesPreview";
 import styles from "./ChatMessageList.module.css";
 
 function SystemEvent({ text, timestamp }: { text: string; timestamp: string }) {
@@ -25,6 +26,9 @@ function renderEvent(event: SessionEvent, index: number, agentName: string) {
             </span>
           </div>
           <div className={styles.userBubble}>{event.content}</div>
+          <div className={styles.referencesSlot}>
+            <MessageReferencesPreview content={event.content} />
+          </div>
         </div>
       );
     case "assistant_message":
@@ -39,6 +43,7 @@ function renderEvent(event: SessionEvent, index: number, agentName: string) {
           <div className={styles.agentBody}>
             <Markdown content={event.content} />
           </div>
+          <MessageReferencesPreview content={event.content} />
         </div>
       );
     case "suspending":
