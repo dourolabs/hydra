@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { SessionEvent } from "@hydra/api";
+import { Avatar } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import { formatTimestamp } from "../../utils/time";
 import { AgoTime } from "../../components/Runtime/Runtime";
@@ -14,13 +15,20 @@ function SystemEvent({ text, timestamp }: { text: string; timestamp: string }) {
   );
 }
 
-function renderEvent(event: SessionEvent, index: number, agentName: string) {
+interface RenderContext {
+  agentName: string;
+  creator: string;
+  userAuthorLabel: string;
+}
+
+function renderEvent(event: SessionEvent, index: number, ctx: RenderContext) {
   switch (event.type) {
     case "user_message":
       return (
         <div key={index} className={styles.userRow}>
           <div className={styles.userHead}>
-            <span className={styles.msgAuthor}>You</span>
+            <Avatar name={ctx.creator} kind="human" size="sm" />
+            <span className={styles.msgAuthor}>{ctx.userAuthorLabel}</span>
             <span className={styles.msgWhen} title={formatTimestamp(event.timestamp)}>
               <AgoTime iso={event.timestamp} />
             </span>
@@ -35,7 +43,8 @@ function renderEvent(event: SessionEvent, index: number, agentName: string) {
       return (
         <div key={index} className={styles.agentRow}>
           <div className={styles.agentHead}>
-            <span className={styles.msgAuthor}>{agentName}</span>
+            <Avatar name={ctx.agentName} kind="agent" size="sm" />
+            <span className={styles.msgAuthor}>{ctx.agentName}</span>
             <span className={styles.msgWhen} title={formatTimestamp(event.timestamp)}>
               <AgoTime iso={event.timestamp} />
             </span>
@@ -67,11 +76,27 @@ function renderEvent(event: SessionEvent, index: number, agentName: string) {
 interface ChatMessageListProps {
   events: SessionEvent[];
   agentName?: string | null;
+  creator?: string;
+  currentUsername?: string | null;
 }
 
-export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
+export function ChatMessageList({
+  events,
+  agentName,
+  creator,
+  currentUsername,
+}: ChatMessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const resolvedAgent = agentName || "Agent";
+  const resolvedCreator = creator ?? "";
+  const isCreatorMe =
+    !!resolvedCreator && currentUsername != null && currentUsername === resolvedCreator;
+  const userAuthorLabel = isCreatorMe || !resolvedCreator ? "You" : resolvedCreator;
+  const renderCtx: RenderContext = {
+    agentName: resolvedAgent,
+    creator: resolvedCreator,
+    userAuthorLabel,
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -104,7 +129,7 @@ export function ChatMessageList({ events, agentName }: ChatMessageListProps) {
       data-transcript-source="session_events"
     >
       <div className={styles.thread}>
-        {events.map((event, i) => renderEvent(event, i, resolvedAgent))}
+        {events.map((event, i) => renderEvent(event, i, renderCtx))}
       </div>
     </div>
   );

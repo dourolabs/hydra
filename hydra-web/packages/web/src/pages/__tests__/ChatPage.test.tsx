@@ -31,6 +31,10 @@ vi.mock("../../features/chat/useChatTranscript", () => ({
   }),
 }));
 
+vi.mock("../../features/auth/useUsername", () => ({
+  useUsername: () => "alice",
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useMutation: () => ({
     mutate: vi.fn(),
@@ -91,6 +95,9 @@ vi.mock("../../api/client", () => ({
 }));
 
 vi.mock("@hydra/ui", () => ({
+  Avatar: ({ name, kind }: { name: string; kind?: "human" | "agent" }) => (
+    <span data-testid="avatar" data-kind={kind ?? "human"} data-name={name} />
+  ),
   Button: ({
     children,
     onClick,

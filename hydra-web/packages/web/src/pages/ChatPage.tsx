@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner } from "@hydra/ui";
 import type { Conversation, SessionEvent } from "@hydra/api";
 import { useConversation } from "../features/chat/useConversations";
+import { useUsername } from "../features/auth/useUsername";
 import { useChatTranscript } from "../features/chat/useChatTranscript";
 import { mergeOptimisticEvents } from "../features/chat/mergeOptimisticEvents";
 import { ChatHeader } from "../features/chat/ChatHeader";
@@ -31,6 +32,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const queryClient = useQueryClient();
   const { data: conversation, isLoading, error } = useConversation(conversationId);
   const transcript = useChatTranscript(conversationId);
+  const currentUsername = useUsername();
 
   const [mobileTab, setMobileTab] = useState<MobileTabKey>("chat");
   const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTabKey>("related");
@@ -183,7 +185,12 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
         data-testid="chat-pane"
       >
         <ChatHeader conversation={conversation} />
-        <ChatMessageList events={events} agentName={conversation.agent_name} />
+        <ChatMessageList
+          events={events}
+          agentName={conversation.agent_name}
+          creator={conversation.creator}
+          currentUsername={currentUsername}
+        />
         {activityStatus ? <ChatActivityIndicator status={activityStatus} /> : null}
         <ChatInput
           conversationId={conversationId}
