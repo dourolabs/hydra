@@ -34,6 +34,12 @@ export default defineConfig({
       port: 8080,
       reuseExistingServer: !process.env.CI,
       cwd: "../..",
+      // Freeze the synthetic-events loop during e2e runs so background
+      // `tool_use` / `assistant_message` emissions on running sessions don't
+      // race against assertions about session-event tails (e.g. the
+      // `@chat:activity-status` spec). The loop's only purpose is dev-UI
+      // fluidity; tests need deterministic event logs.
+      env: { MOCK_SYNTHETIC_EVENTS: "0" },
     },
     {
       command:

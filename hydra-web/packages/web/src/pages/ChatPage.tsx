@@ -8,6 +8,8 @@ import { useChatTranscript } from "../features/chat/useChatTranscript";
 import { mergeOptimisticEvents } from "../features/chat/mergeOptimisticEvents";
 import { ChatHeader } from "../features/chat/ChatHeader";
 import { ChatMessageList } from "../features/chat/ChatMessageList";
+import { ChatActivityIndicator } from "../features/chat/ChatActivityIndicator";
+import { deriveActivityStatus } from "../features/chat/deriveActivityStatus";
 import { ChatInput } from "../features/chat/ChatInput";
 import { clearConversationDraft } from "../features/chat/useConversationDraft";
 import { ChatRightPanel, type ChatRightPanelTabKey } from "../features/chat/ChatRightPanel";
@@ -164,6 +166,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
 
   const canClose = conversation.status !== "closed";
   const chatPaneActive = mobileTab === "chat";
+  const activityStatus = deriveActivityStatus(events, conversation.status);
 
   return (
     <div className={styles.chatLayout}>
@@ -181,6 +184,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
       >
         <ChatHeader conversation={conversation} />
         <ChatMessageList events={events} agentName={conversation.agent_name} />
+        {activityStatus ? <ChatActivityIndicator status={activityStatus} /> : null}
         <ChatInput
           conversationId={conversationId}
           onSend={handleSend}
