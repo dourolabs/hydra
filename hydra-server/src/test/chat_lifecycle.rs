@@ -1578,6 +1578,157 @@ async fn resume_after_session_state_upload_persists_but_omits_from_catch_up() ->
 }
 
 #[tokio::test]
+async fn fresh_handshake_returns_resume_blob_keyed_on_resumed_from() -> anyhow::Result<()> {
+    // Regression test for i-kladnbkw: when session B is spawned from a prior
+    // session A that uploaded `session_state`, the Fresh handshake on B must
+    // deliver A's bytes in `ResumeContext.resume_blob`. The bug was that
+    // `handle_fresh_path` looked the store up by the CURRENT session id
+    // (B's), so the lookup always missed and the worker fell back to
+    // transcript replay (`Resumed { source: "transcript" }`) instead of
+    // taking the native-resume path (`source: "native"`). The fix keys the
+    // lookup on `session.resumed_from`.
+    init_test_tracing();
+    let (state, store) = state_with_idle_timeout_secs(2);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+    let client = test_client();
+
+    let created: Conversation = client
+        .post(format!("{}/v1/conversations", server.base_url()))
+        .json(&CreateConversationRequest {
+            message: Some("hello".to_string()),
+            agent_name: None,
+            session_settings: None,
+        })
+        .send()
+        .await?
+        .json()
+        .await?;
+    let conversation_id = created.conversation_id.clone();
+    let initial_session_id = find_session_for_conversation(&store, &conversation_id).await;
+
+    // Worker #1 (session A): connect, exchange one turn, suspend, and
+    // upload `session_state` before closing the socket.
+    let mut ws = connect_relay(&server.base_url(), &initial_session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    let _ = drain_server_messages(&mut ws, Duration::from_millis(100)).await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: SessionEvent::AssistantMessage {
+                content: "reply".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+
+    let payload = SessionStatePayload::V1 {
+        session_id: "claude-session-uuid-native-resume".to_string(),
+        transcript: Some(b"{\"type\":\"summary\",\"text\":\"native\"}\n".to_vec()),
+    };
+    let payload_bytes = serde_json::to_vec(&payload)?;
+
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::Event {
+            event: SessionEvent::Suspending {
+                reason: "idle_timeout".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+        },
+    )
+    .await?;
+    send_worker_message(
+        &mut ws,
+        WorkerMessage::SessionStateUpload {
+            data: payload_bytes.clone(),
+        },
+    )
+    .await?;
+    ws.send(tungstenite::Message::Close(None)).await?;
+    drop(ws);
+
+    mark_session_terminal(&state, &initial_session_id, TaskStatus::Complete).await;
+    wait_for_status(
+        &client,
+        &server.base_url(),
+        &conversation_id,
+        ConversationStatus::Idle,
+    )
+    .await?;
+
+    // Sanity: the upload is keyed on A's id, which is exactly the keying
+    // the bug fix relies on for the prior-id lookup to succeed.
+    let stored_state = store.get_session_state(&initial_session_id).await?;
+    assert_eq!(
+        stored_state.as_deref(),
+        Some(payload_bytes.as_slice()),
+        "SessionStateUpload should be persisted byte-for-byte on the prior session"
+    );
+
+    // /messages on a closed/idle conversation triggers a resume which
+    // spawns session B with `resumed_from = Some(A)`.
+    client
+        .post(format!(
+            "{}/v1/conversations/{conversation_id}/messages",
+            server.base_url()
+        ))
+        .json(&SendMessageRequest {
+            content: "resume trigger".to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let new_session_id =
+        find_new_session_for_conversation(&store, &conversation_id, &initial_session_id).await;
+    assert_ne!(new_session_id, initial_session_id);
+    let new_session = store.get_session(&new_session_id, false).await?.item;
+    assert_eq!(
+        new_session.resumed_from.as_ref(),
+        Some(&initial_session_id),
+        "resumed_from must point at the prior session"
+    );
+
+    // Worker #2 (session B): drive Phase 1 manually so we can inspect the
+    // raw `ResumeContext` reply rather than letting the helper auto-advance
+    // into a `RequestTranscript` fallback.
+    let mut ws2 = connect_relay(&server.base_url(), &new_session_id).await?;
+    send_worker_message(&mut ws2, WorkerMessage::Fresh).await?;
+    let raw = match ws2
+        .next()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("ws2 closed before Phase-1 reply"))??
+    {
+        tungstenite::Message::Text(t) => t,
+        other => anyhow::bail!("expected text Phase-1 reply, got {other:?}"),
+    };
+    match serde_json::from_str::<ServerMessage>(&raw)? {
+        ServerMessage::ResumeContext {
+            resume_blob,
+            prior_session_id,
+        } => {
+            assert_eq!(
+                resume_blob.as_deref(),
+                Some(payload_bytes.as_slice()),
+                "resume_blob must carry the bytes uploaded by the PRIOR session — \
+                 a `None` here means the lookup is still keyed on the current \
+                 session id and would force the worker into the transcript-replay \
+                 fallback (`Resumed {{ source: \"transcript\" }}`)"
+            );
+            assert_eq!(
+                prior_session_id.as_ref(),
+                Some(&initial_session_id),
+                "prior_session_id must point at the prior session"
+            );
+        }
+        other => anyhow::bail!("expected ResumeContext, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn reconnecting_handshake_does_not_return_session_state() -> anyhow::Result<()> {
     // `Reconnecting` is a mid-session WS reconnect by the same live worker,
     // not a fresh resume. Even though the catch-up no longer ships
