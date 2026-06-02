@@ -14,6 +14,12 @@ pub const ENV_HYDRA_TOKEN: &str = "HYDRA_TOKEN";
 pub const ENV_HYDRA_DOCUMENTS_DIR: &str = "HYDRA_DOCUMENTS_DIR";
 pub const ENV_BROWSER: &str = "BROWSER";
 
+/// Default conversation/interactive idle timeout in seconds (20 minutes).
+/// Used by the server as the fallback when a session doesn't pin its own
+/// `idle_timeout_secs`, and by the worker as the fallback when the server
+/// didn't send one. Kept in `hydra-common` so both sides agree on the value.
+pub const DEFAULT_CONVERSATION_TIMEOUT_SECS: u64 = 1200;
+
 /// Overall request timeout for the HydraClient HTTP client, in seconds.
 pub const ENV_HYDRA_HTTP_TIMEOUT_SECS: &str = "HYDRA_HTTP_TIMEOUT_SECS";
 /// Connect timeout for the HydraClient HTTP client, in seconds.

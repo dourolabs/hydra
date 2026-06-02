@@ -14,6 +14,7 @@ use hydra::client::{HydraClient, HydraClientTimeouts};
 use hydra::config::{self, expand_path};
 use hydra::constants::DEFAULT_CONFIG_FILE;
 use hydra_common::api::v1::agents::UpsertAgentRequest;
+use hydra_common::constants::DEFAULT_CONVERSATION_TIMEOUT_SECS;
 
 /// Directory layout under ~/.hydra/
 const SERVER_DIR: &str = "~/.hydra/server";
@@ -841,7 +842,7 @@ fn render_server_config(
             memory_limit: "1Gi".to_string(),
             cpu_request: "500m".to_string(),
             memory_request: "1Gi".to_string(),
-            interactive_idle_timeout_secs: 600,
+            interactive_idle_timeout_secs: DEFAULT_CONVERSATION_TIMEOUT_SECS,
         },
         storage: StorageConfig::Sqlite {
             sqlite_path: db_path.display().to_string(),
