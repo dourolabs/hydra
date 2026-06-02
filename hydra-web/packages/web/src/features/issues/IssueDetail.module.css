@@ -80,6 +80,11 @@
   padding: 0 8px;
 }
 
+.assigneeEmpty {
+  color: var(--fg-3);
+  font-style: italic;
+}
+
 .description {
   font-family: var(--f-sans);
   font-size: var(--t-md);
