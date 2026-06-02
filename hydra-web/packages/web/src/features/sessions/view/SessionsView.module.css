@@ -84,8 +84,8 @@
 /* ─── Toolbar ─── */
 .toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 10px;
   padding: 10px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--bg-0);
@@ -93,35 +93,43 @@
   flex-wrap: wrap;
 }
 
-.chipFilter {
-  display: inline-flex;
+.searchBox {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   height: 26px;
   padding: 0 9px;
-  font-size: var(--t-sm);
-  font-family: var(--f-sans);
-  color: var(--fg-1);
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  cursor: pointer;
-  white-space: nowrap;
-  transition:
-    background var(--tx-fast),
-    color var(--tx-fast),
-    border-color var(--tx-fast);
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  min-width: 200px;
+  transition: border-color var(--tx-fast);
 }
 
-.chipFilter:hover {
-  color: var(--fg-0);
-  border-color: var(--line-strong);
+.searchBox:focus-within {
+  border-color: var(--acc);
 }
 
-.chipFilterActive {
-  background: var(--bg-3);
+.searchBox input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
   color: var(--fg-0);
-  border-color: var(--line-strong);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+
+.searchBox input::placeholder {
+  color: var(--fg-3);
+}
+
+.searchIcon {
+  color: var(--fg-2);
+  flex-shrink: 0;
 }
 
 .toolbarSpacer {
@@ -321,6 +329,24 @@
 }
 
 @media (max-width: 768px) {
+  .pageHead {
+    padding: 14px 16px 10px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .toolbar {
+    padding: 8px 16px;
+  }
+
+  /* Force the search box onto its own row instead of letting it squeeze into
+     whatever space is left on row 1, mirroring IssuesView's mobile layout. */
+  .searchBox {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
   .loadMore {
     padding: 12px 16px 14px;
   }
