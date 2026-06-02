@@ -8,7 +8,7 @@ import type { SessionId } from "./SessionId";
  */
 export type ServerMessage =
   | { type: "resume_context"; resume_blob?: number[] | null; prior_session_id?: SessionId | null }
-  | { type: "transcript"; events: Array<SessionEvent> }
+  | { type: "transcript"; events: Array<SessionEvent>; agent_prompt?: string | null }
   | { type: "catch_up"; events: Array<CatchUpEvent> }
   | { type: "first_message"; agent_prompt: string; user_message: string }
   | { type: "event"; event: SessionEvent; event_index: number }

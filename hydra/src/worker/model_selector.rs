@@ -95,8 +95,9 @@ impl ModelSelector {
             + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
             + Unpin,
     {
-        let (resume, primer) = self.phase1_negotiate(&mut ws).await?;
-        let (agent_prompt, user_message) = phase2_ready(&mut ws).await?;
+        let (resume, primer, transcript_agent_prompt) = self.phase1_negotiate(&mut ws).await?;
+        let (first_msg_agent_prompt, user_message) = phase2_ready(&mut ws).await?;
+        let agent_prompt = transcript_agent_prompt.unwrap_or(first_msg_agent_prompt);
         let prompt = concat_first_message(&primer, &agent_prompt, &user_message);
         let report = self.run_with_native(&prompt, resume).await?;
         // Headless doesn't concurrently read the WS during `run_with_native`,
@@ -131,8 +132,9 @@ impl ModelSelector {
             + Send
             + 'static,
     {
-        let (resume, primer) = self.phase1_negotiate(&mut ws).await?;
-        let (agent_prompt, user_message) = phase2_ready(&mut ws).await?;
+        let (resume, primer, transcript_agent_prompt) = self.phase1_negotiate(&mut ws).await?;
+        let (first_msg_agent_prompt, user_message) = phase2_ready(&mut ws).await?;
+        let agent_prompt = transcript_agent_prompt.unwrap_or(first_msg_agent_prompt);
         let prompt = concat_first_message(&primer, &agent_prompt, &user_message);
         let RelayAdapter {
             input_rx,
@@ -161,11 +163,14 @@ impl ModelSelector {
     /// Phase 1 — context negotiation. Sends `Fresh`, awaits `ResumeContext`,
     /// attempts native materialization, and on failure asks for the prior
     /// session's transcript as primer text. Returns the resolved
-    /// [`NativeResume`] (if any) and the primer-event list (may be empty).
+    /// [`NativeResume`] (if any), the primer-event list (may be empty), and
+    /// the transcript-resume agent prompt (Some only on the
+    /// transcript-replay branch; the resumed-session `FirstMessage`
+    /// blanks the prompt, so the caller uses this value instead when set).
     async fn phase1_negotiate<S>(
         &mut self,
         ws: &mut WorkerSocket<S>,
-    ) -> Result<(Option<NativeResume>, Vec<SessionEvent>)>
+    ) -> Result<(Option<NativeResume>, Vec<SessionEvent>, Option<String>)>
     where
         S: Sink<tungstenite::Message, Error = tungstenite::Error>
             + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
@@ -200,7 +205,7 @@ impl ModelSelector {
             None => (None, prior_session_id.is_some()),
         };
 
-        let primer = emit_resumed_and_collect_primer(
+        let (primer, transcript_agent_prompt) = emit_resumed_and_collect_primer(
             ws,
             native.is_some(),
             prior_session_id,
@@ -208,7 +213,7 @@ impl ModelSelector {
         )
         .await?;
 
-        Ok((native, primer))
+        Ok((native, primer, transcript_agent_prompt))
     }
 
     /// Run one batch turn. The Codex arm currently has no resume support;
@@ -340,33 +345,37 @@ async fn emit_resumed_and_collect_primer<S>(
     native_present: bool,
     prior_session_id: Option<SessionId>,
     need_transcript: bool,
-) -> Result<Vec<SessionEvent>>
+) -> Result<(Vec<SessionEvent>, Option<String>)>
 where
     S: Sink<tungstenite::Message, Error = tungstenite::Error>
         + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
         + Unpin,
 {
-    let (primer, emit_source) = match (need_transcript, prior_session_id.clone()) {
-        (true, Some(prior)) => {
-            ws.send(WorkerMessage::RequestTranscript {
-                prior_session_id: prior,
-            })
-            .await?;
-            let resp = ws
-                .recv()
-                .await?
-                .ok_or_else(|| anyhow!("ws closed before Transcript"))?;
-            let events = match resp {
-                ServerMessage::Transcript { events } => events,
-                other => return Err(anyhow!("expected Transcript, got {other:?}")),
-            };
-            (events, Some(ResumeSource::Transcript))
-        }
-        _ if native_present && prior_session_id.is_some() => {
-            (Vec::new(), Some(ResumeSource::Native))
-        }
-        _ => (Vec::new(), None),
-    };
+    let (primer, transcript_agent_prompt, emit_source) =
+        match (need_transcript, prior_session_id.clone()) {
+            (true, Some(prior)) => {
+                ws.send(WorkerMessage::RequestTranscript {
+                    prior_session_id: prior,
+                })
+                .await?;
+                let resp = ws
+                    .recv()
+                    .await?
+                    .ok_or_else(|| anyhow!("ws closed before Transcript"))?;
+                let (events, agent_prompt) = match resp {
+                    ServerMessage::Transcript {
+                        events,
+                        agent_prompt,
+                    } => (events, agent_prompt),
+                    other => return Err(anyhow!("expected Transcript, got {other:?}")),
+                };
+                (events, agent_prompt, Some(ResumeSource::Transcript))
+            }
+            _ if native_present && prior_session_id.is_some() => {
+                (Vec::new(), None, Some(ResumeSource::Native))
+            }
+            _ => (Vec::new(), None, None),
+        };
 
     if let (Some(from), Some(source)) = (prior_session_id, emit_source) {
         ws.send(WorkerMessage::Event {
@@ -379,7 +388,7 @@ where
         .await?;
     }
 
-    Ok(primer)
+    Ok((primer, transcript_agent_prompt))
 }
 
 /// Build a `SessionStatePayload` from a [`RunReport`] for the unified
@@ -814,6 +823,46 @@ mod tests {
         );
     }
 
+    /// Resume-path invariant: when `phase1_negotiate` returns a
+    /// transcript-borne agent prompt (Some), `drive_*` selects it over
+    /// the (blanked) `FirstMessage.agent_prompt` via `unwrap_or`, so the
+    /// resulting concatenation feeds the model the system prompt that
+    /// `handle_ready` blanked for the resumed-session arm. Without the
+    /// new field, the model would see only the primer + user message.
+    #[test]
+    fn resume_path_concat_uses_transcript_prompt_when_first_message_blanked() {
+        // Returned by helpers so clippy doesn't fold the unwrap_or away.
+        fn transcript_prompt() -> Option<String> {
+            Some("you are helpful".to_string())
+        }
+        fn first_msg_prompt() -> String {
+            String::new()
+        }
+        let agent_prompt = transcript_prompt().unwrap_or_else(first_msg_prompt);
+        let primer = vec![SessionEvent::UserMessage {
+            content: "earlier".to_string(),
+            timestamp: chrono::Utc::now(),
+        }];
+        let out = concat_first_message(&primer, &agent_prompt, "new turn");
+        assert_eq!(out, "User: earlier\n\nyou are helpful\n\nnew turn");
+    }
+
+    /// Fresh-path invariant: with no transcript-borne prompt, the
+    /// `FirstMessage.agent_prompt` flows through unchanged — `unwrap_or`
+    /// must not clobber the fresh-session prompt with an empty string.
+    #[test]
+    fn fresh_path_concat_uses_first_message_prompt_when_no_transcript_prompt() {
+        fn transcript_prompt() -> Option<String> {
+            None
+        }
+        fn first_msg_prompt() -> String {
+            "fresh prompt".to_string()
+        }
+        let agent_prompt = transcript_prompt().unwrap_or_else(first_msg_prompt);
+        let out = concat_first_message(&[], &agent_prompt, "hello");
+        assert_eq!(out, "fresh prompt\n\nhello");
+    }
+
     #[tokio::test]
     async fn spawn_output_translator_translates_event_stream() {
         let (claude_tx, claude_rx) = mpsc::channel::<ClaudeEvent>(8);
@@ -996,13 +1045,18 @@ mod tests {
         let (mut worker, mut s_rx, _s_tx) = paired();
         let prior = SessionId::new();
 
-        let primer = emit_resumed_and_collect_primer(&mut worker, true, Some(prior.clone()), false)
-            .await
-            .unwrap();
+        let (primer, transcript_agent_prompt) =
+            emit_resumed_and_collect_primer(&mut worker, true, Some(prior.clone()), false)
+                .await
+                .unwrap();
 
         assert!(
             primer.is_empty(),
             "native path must not return primer events"
+        );
+        assert!(
+            transcript_agent_prompt.is_none(),
+            "native path must not surface a transcript-borne agent prompt"
         );
         match next_worker_msg(&mut s_rx).await {
             WorkerMessage::Event {
@@ -1046,11 +1100,12 @@ mod tests {
             }
             other => panic!("expected RequestTranscript, got {other:?}"),
         }
-        // 2. Server replies with the transcript.
+        // 2. Server replies with the transcript carrying the agent prompt.
         push_server_msg(
             &s_tx,
             &ServerMessage::Transcript {
                 events: canned.clone(),
+                agent_prompt: Some("you are helpful".to_string()),
             },
         )
         .await;
@@ -1069,8 +1124,47 @@ mod tests {
             }
             other => panic!("expected Resumed{{Transcript}}, got {other:?}"),
         }
-        let primer = primer_handle.await.unwrap();
+        let (primer, transcript_agent_prompt) = primer_handle.await.unwrap();
         assert_eq!(primer, canned, "primer must be the transcript replay");
+        assert_eq!(
+            transcript_agent_prompt.as_deref(),
+            Some("you are helpful"),
+            "transcript-borne agent prompt must be surfaced to the caller",
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_resumed_transcript_path_without_prompt_returns_none() {
+        let (mut worker, mut s_rx, s_tx) = paired();
+        let prior = SessionId::new();
+
+        let primer_handle = {
+            let prior = prior.clone();
+            tokio::spawn(async move {
+                emit_resumed_and_collect_primer(&mut worker, false, Some(prior), true)
+                    .await
+                    .unwrap()
+            })
+        };
+
+        match next_worker_msg(&mut s_rx).await {
+            WorkerMessage::RequestTranscript { .. } => {}
+            other => panic!("expected RequestTranscript, got {other:?}"),
+        }
+        // Server replies omitting agent_prompt (None on the wire).
+        push_server_msg(
+            &s_tx,
+            &ServerMessage::Transcript {
+                events: Vec::new(),
+                agent_prompt: None,
+            },
+        )
+        .await;
+        // Drain the Resumed{Transcript} emit.
+        let _ = next_worker_msg(&mut s_rx).await;
+        let (primer, transcript_agent_prompt) = primer_handle.await.unwrap();
+        assert!(primer.is_empty());
+        assert!(transcript_agent_prompt.is_none());
     }
 
     #[tokio::test]
@@ -1078,10 +1172,12 @@ mod tests {
         let (mut worker, mut s_rx, _s_tx) = paired();
 
         // No predecessor session: helper must not send anything.
-        let primer = emit_resumed_and_collect_primer(&mut worker, false, None, false)
-            .await
-            .unwrap();
+        let (primer, transcript_agent_prompt) =
+            emit_resumed_and_collect_primer(&mut worker, false, None, false)
+                .await
+                .unwrap();
         assert!(primer.is_empty());
+        assert!(transcript_agent_prompt.is_none());
         // Close the sender side so `next` returns None instead of hanging.
         drop(_s_tx);
         drop(worker);

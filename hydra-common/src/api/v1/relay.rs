@@ -95,8 +95,17 @@ pub enum ServerMessage {
         prior_session_id: Option<SessionId>,
     },
     /// Phase 1 (RequestTranscript fallback) — the prior session's event log
-    /// for the worker to use as primer text.
-    Transcript { events: Vec<SessionEvent> },
+    /// for the worker to use as primer text. `agent_prompt` carries
+    /// `session.agent_config.system_prompt` for the resumed session so the
+    /// worker can feed it to the model on the transcript-resume path; the
+    /// follow-up `FirstMessage.agent_prompt` is blanked for resumed sessions
+    /// in `handle_ready`, so without this field the prompt would never reach
+    /// the model. `None` mirrors the source `Option<String>`.
+    Transcript {
+        events: Vec<SessionEvent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_prompt: Option<String>,
+    },
     /// Phase 1 (Reconnecting) — events past the worker's last seen index,
     /// each tagged with its per-session `event_index` so the worker can
     /// resume tracking the running max post-catch-up.
@@ -209,17 +218,38 @@ mod tests {
     }
 
     #[test]
-    fn server_message_transcript_round_trip() {
+    fn server_message_transcript_round_trip_with_prompt() {
         let msg = ServerMessage::Transcript {
             events: vec![SessionEvent::UserMessage {
                 content: "primer".to_string(),
                 timestamp: Utc::now(),
             }],
+            agent_prompt: Some("you are a helpful assistant".to_string()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, deserialized);
         assert!(json.contains(r#""type":"transcript""#));
+        assert!(json.contains(r#""agent_prompt":"you are a helpful assistant""#));
+    }
+
+    #[test]
+    fn server_message_transcript_round_trip_without_prompt() {
+        let msg = ServerMessage::Transcript {
+            events: vec![SessionEvent::UserMessage {
+                content: "primer".to_string(),
+                timestamp: Utc::now(),
+            }],
+            agent_prompt: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, deserialized);
+        assert!(json.contains(r#""type":"transcript""#));
+        assert!(
+            !json.contains("agent_prompt"),
+            "None variant must omit the field on the wire, got {json}"
+        );
     }
 
     #[test]
