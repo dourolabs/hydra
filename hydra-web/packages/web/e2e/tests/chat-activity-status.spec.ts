@@ -81,8 +81,9 @@ test.describe("Chat activity indicator @chat:activity-status", () => {
       const indicatorText = page.getByTestId("chat-activity-indicator-text");
       await expect(indicatorText).toHaveText("Thinking…");
 
-      // Worker emits a Grep tool_use → indicator should switch to
-      // `Searching code` without remounting (same testid still resolves).
+      // Worker emits a Grep tool_use (no `description` in payload) →
+      // indicator should switch to the TOOL_LABELS entry `Searching code`
+      // without remounting (same testid still resolves).
       await appendSessionEventToMock(request, SEED_SESSION_ID, {
         type: "tool_use",
         tool_name: "Grep",
@@ -91,6 +92,21 @@ test.describe("Chat activity indicator @chat:activity-status", () => {
       });
       await invalidateSessionEvents(page, SEED_SESSION_ID);
       await expect(indicatorText).toHaveText("Searching code");
+
+      // Worker emits a Bash tool_use whose payload carries a human-readable
+      // `description` → indicator should switch to that description verbatim
+      // (per i-jxamlakh: description trumps the TOOL_LABELS entry).
+      await appendSessionEventToMock(request, SEED_SESSION_ID, {
+        type: "tool_use",
+        tool_name: "Bash",
+        payload: {
+          command: "rg -n OAuth packages/web/src",
+          description: "Locate OAuth handler usages",
+        },
+        timestamp: new Date(Date.now() + 1500).toISOString(),
+      });
+      await invalidateSessionEvents(page, SEED_SESSION_ID);
+      await expect(indicatorText).toHaveText("Locate OAuth handler usages");
 
       // Final assistant message lands → indicator hides.
       await appendSessionEventToMock(request, SEED_SESSION_ID, {
