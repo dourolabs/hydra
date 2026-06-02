@@ -46,22 +46,6 @@ export function SessionPreviewCard({ id }: SessionPreviewCardProps) {
   const issueId = session.spawned_from ?? null;
   const titleText = agentName ? `${agentName} · session` : "session";
 
-  const footerNodes: React.ReactNode[] = [];
-  if (session.creation_time) {
-    footerNodes.push(
-      <span key="created">
-        created <AgoTime iso={session.creation_time} />
-      </span>,
-    );
-  }
-  if (session.end_time) {
-    footerNodes.push(
-      <span key="ended">
-        ended <AgoTime iso={session.end_time} />
-      </span>,
-    );
-  }
-
   return (
     <NavigatingPreviewCard
       to={to}
@@ -71,7 +55,6 @@ export function SessionPreviewCard({ id }: SessionPreviewCardProps) {
         <>
           <Badge status={status} />
           <MonoId id={id} />
-          <AgoTime iso={data.timestamp} />
         </>
       }
       title={titleText}
@@ -87,7 +70,13 @@ export function SessionPreviewCard({ id }: SessionPreviewCardProps) {
           </>
         ) : undefined
       }
-      footer={footerNodes.length > 0 ? <>{footerNodes}</> : undefined}
+      footer={
+        <>
+          <span className={styles.kindChip}>{KIND_LABEL.session}</span>
+          {agentName && <span className={styles.assigneeName}>{agentName}</span>}
+          <AgoTime iso={data.timestamp} />
+        </>
+      }
     />
   );
 }

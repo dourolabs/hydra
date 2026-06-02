@@ -43,7 +43,6 @@ export function PatchPreviewCard({ id }: PatchPreviewCardProps) {
   const tone = toneForPatchStatus(status);
   const excerpt = firstNonEmptyLine(patch.description);
   const title = patch.title || id;
-  const repoName = patch.service_repo_name || null;
   const author = patch.creator || null;
 
   return (
@@ -55,23 +54,20 @@ export function PatchPreviewCard({ id }: PatchPreviewCardProps) {
         <>
           <Badge status={status} />
           <MonoId id={id} />
-          <AgoTime iso={data.timestamp} />
         </>
       }
       title={title}
       bodyExcerpt={excerpt ?? undefined}
       footer={
-        author || repoName ? (
-          <>
-            {author && (
-              <span className={styles.assignee}>
-                <Avatar name={author} kind="human" size="sm" />
-                <span className={styles.assigneeName}>{author}</span>
-              </span>
-            )}
-            {repoName && <span data-pc-mono="true">{repoName}</span>}
-          </>
-        ) : undefined
+        <>
+          {author && (
+            <span className={styles.assignee}>
+              <Avatar name={author} kind="human" size="sm" title={`Author · ${author}`} />
+              <span className={styles.assigneeName}>{author}</span>
+            </span>
+          )}
+          <AgoTime iso={data.timestamp} />
+        </>
       }
     />
   );
