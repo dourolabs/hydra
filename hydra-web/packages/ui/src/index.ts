@@ -71,6 +71,9 @@ export type { ChipProps, ChipTone } from "./components/Chip";
 export { TypeChip, issueTypeDisplayLabel } from "./components/TypeChip";
 export type { TypeChipProps, IssueType } from "./components/TypeChip";
 
+export { PreviewCard } from "./components/PreviewCard";
+export type { PreviewCardProps, PreviewCardTone } from "./components/PreviewCard";
+
 export { Kbd } from "./components/Kbd";
 export type { KbdProps } from "./components/Kbd";
 

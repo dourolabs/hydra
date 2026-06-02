@@ -1,0 +1,89 @@
+/* Shared visual bits for per-kind preview cards.
+ *
+ * The card chrome (border, edge, padding, max-width) lives in
+ * `@hydra/ui/components/PreviewCard/PreviewCard.module.css`. This module
+ * adds inline-content helpers used by the slot children: mono ids,
+ * avatar+name pairs, kind chips, and skeleton placeholders.
+ */
+
+.mono {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+  word-break: keep-all;
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+}
+
+.kindChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--t-xxs);
+  font-family: var(--f-mono);
+  color: var(--fg-2);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-1);
+  min-width: 0;
+}
+
+.assigneeName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.progressLine {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-2);
+}
+
+.sessionBodyLine {
+  display: block;
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessionBodyLine[data-mono="true"] {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.skeletonLine {
+  display: inline-block;
+  height: 0.9em;
+  width: 60%;
+  border-radius: var(--radius-xs, 2px);
+  background: var(--bg-2);
+  animation: previewCardPulse 1.6s ease-in-out infinite;
+}
+
+.skeletonLineShort {
+  width: 30%;
+}
+
+.skeletonLineLong {
+  width: 80%;
+}
+
+@keyframes previewCardPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+}
