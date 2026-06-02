@@ -22,7 +22,9 @@ use tokio_tungstenite::tungstenite;
 
 use crate::worker::claude::{Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage};
 use crate::worker::codex::Codex;
-use crate::worker::relay_adapter::{spawn_relay_pump, PumpExit, ReconnectFn, RelayAdapter};
+use crate::worker::relay_adapter::{
+    spawn_relay_pump, worker_event_to_session_event, PumpExit, ReconnectFn, RelayAdapter,
+};
 use crate::worker::report::{
     MaterializeError, NativeResume, RunReport, SessionResume, TokenUsage, WorkerEvent,
     WorkerInputMessage,
@@ -89,24 +91,48 @@ impl ModelSelector {
     /// model invocation, plus the unified end-of-session cleanup
     /// (`SessionStateUpload` → `Closed` event → optional `EndSessionAck`).
     /// Returns the resulting [`RunReport`].
+    ///
+    /// While the model runs, per-step `WorkerEvent`s the per-wrapper `run`
+    /// emits are forwarded onto the WS as `WorkerMessage::Event` frames by a
+    /// small dedicated forwarder task — the headless analogue of
+    /// [`Self::drive_interactive`]'s Phase-3 [`spawn_relay_pump`]. This is
+    /// what populates the server-side events log for headless sessions.
     pub async fn drive_headless<S>(&mut self, mut ws: WorkerSocket<S>) -> Result<RunReport>
     where
         S: Sink<tungstenite::Message, Error = tungstenite::Error>
             + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
-            + Unpin,
+            + Unpin
+            + Send
+            + 'static,
     {
         let (resume, primer) = self.phase1_negotiate(&mut ws).await?;
         let (agent_prompt, user_message) = phase2_ready(&mut ws).await?;
         let prompt = concat_first_message(&primer, &agent_prompt, &user_message);
-        let report = self.run_with_native(&prompt, resume).await?;
+
+        // Phase 3 — hand the WS to a forwarder task that drains
+        // `WorkerEvent`s emitted by the wrapper and writes them on the WS
+        // as `WorkerMessage::Event` frames. The wrapper drops its sender
+        // when its stdout pump finishes, which closes the channel and
+        // lets the forwarder hand the WS back for the unified cleanup.
+        let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>(32);
+        let forwarder = spawn_headless_event_forwarder(ws, event_rx);
+        let run_result = self.run_with_native(&prompt, resume, Some(event_tx)).await;
+        let ws_opt = forwarder.await.unwrap_or(None);
+        let report = run_result?;
+
         // Headless doesn't concurrently read the WS during `run_with_native`,
         // so any `EndSession` issued during the model run is buffered. Drain
         // it now (non-blocking-ish) before the unified cleanup so we can
-        // include `EndSessionAck`. The cleanup runs unconditionally.
-        let end_session_requested = drain_end_session_headless(&mut ws).await;
-        send_unified_cleanup(&mut ws, &report, end_session_requested).await;
-        if let Err(err) = ws.close().await {
-            tracing::warn!(error = %err, "cleanup: failed to send WS Close frame");
+        // include `EndSessionAck`. The cleanup runs unconditionally when we
+        // still hold a WS — if the forwarder lost it (send failure mid-run)
+        // there is nothing left to write on, and the server-side disconnect
+        // fallback caps the log.
+        if let Some(mut ws) = ws_opt {
+            let end_session_requested = drain_end_session_headless(&mut ws).await;
+            send_unified_cleanup(&mut ws, &report, end_session_requested).await;
+            if let Err(err) = ws.close().await {
+                tracing::warn!(error = %err, "cleanup: failed to send WS Close frame");
+            }
         }
         Ok(report)
     }
@@ -212,11 +238,14 @@ impl ModelSelector {
     }
 
     /// Run one batch turn. The Codex arm currently has no resume support;
-    /// `resume` is logged and dropped if supplied.
+    /// `resume` is logged and dropped if supplied. If `event_tx` is `Some`,
+    /// it is handed to the per-wrapper `run` so per-step `WorkerEvent`s the
+    /// wrapper produces are forwarded to the caller as they arrive.
     async fn run_with_native(
         &mut self,
         prompt: &str,
         resume: Option<NativeResume>,
+        event_tx: Option<mpsc::Sender<WorkerEvent>>,
     ) -> Result<RunReport> {
         match self {
             Self::Claude(c) => {
@@ -224,13 +253,13 @@ impl ModelSelector {
                     NativeResume::Claude(c) => Some(c),
                     _ => None,
                 });
-                c.run(prompt, claude_resume).await
+                c.run(prompt, claude_resume, event_tx).await
             }
             Self::Codex(c) => {
                 if resume.is_some() {
                     tracing::debug!("ModelSelector: dropping `resume` for Codex (out of scope)");
                 }
-                c.run(prompt).await
+                c.run(prompt, event_tx).await
             }
         }
     }
@@ -454,6 +483,48 @@ async fn send_unified_cleanup<S>(
     }
 }
 
+/// Spawn the headless Phase-3 forwarder. Owns the [`WorkerSocket`] while the
+/// model runs and drains `event_rx`, translating each [`WorkerEvent`] into a
+/// `WorkerMessage::Event` via [`worker_event_to_session_event`]. Returns the
+/// open `WorkerSocket` when the channel closes (per-wrapper `run` finished —
+/// its event sender was dropped) so [`ModelSelector::drive_headless`] can
+/// drive the unified end-of-session cleanup on it. Returns `None` if a WS
+/// send error during forwarding made the socket unusable.
+///
+/// This is the headless analogue of the Phase-3 pump in
+/// [`crate::worker::relay_adapter::spawn_relay_pump`] but trimmed: headless
+/// has no inbound `WorkerInputMessage` stream and no reconnect loop, just a
+/// uni-directional event-out fanout.
+fn spawn_headless_event_forwarder<S>(
+    ws: WorkerSocket<S>,
+    event_rx: mpsc::Receiver<WorkerEvent>,
+) -> JoinHandle<Option<WorkerSocket<S>>>
+where
+    S: Sink<tungstenite::Message, Error = tungstenite::Error>
+        + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
+        + Unpin
+        + Send
+        + 'static,
+{
+    tokio::spawn(async move {
+        let mut ws = ws;
+        let mut event_rx = event_rx;
+        while let Some(event) = event_rx.recv().await {
+            let Some(api_event) = worker_event_to_session_event(event) else {
+                continue;
+            };
+            if let Err(err) = ws.send(WorkerMessage::Event { event: api_event }).await {
+                tracing::warn!(
+                    error = %err,
+                    "headless event forwarder: WS send failed; abandoning WS",
+                );
+                return None;
+            }
+        }
+        Some(ws)
+    })
+}
+
 /// Best-effort headless drain of an inbound `ServerMessage::EndSession`.
 /// Returns `true` iff `EndSession` was observed. Per the design's "simple
 /// shape" for headless: no concurrent watcher during the model run; just
@@ -590,7 +661,7 @@ fn spawn_output_translator(
 /// Per-event translation between Claude-native and generic event shapes.
 /// Pulled out so unit tests can exercise it directly without spinning up the
 /// translator task.
-fn translate_claude_event(event: ClaudeEvent) -> WorkerEvent {
+pub(crate) fn translate_claude_event(event: ClaudeEvent) -> WorkerEvent {
     match event {
         ClaudeEvent::Assistant { text } => WorkerEvent::AssistantText { text },
         ClaudeEvent::Usage {
@@ -1260,6 +1331,129 @@ mod tests {
             let (mut ws, _server_tx, _server_rx) = duplex();
             // Nothing buffered, timeout returns false.
             assert!(!drain_end_session_headless(&mut ws).await);
+        }
+    }
+
+    mod headless_forwarder {
+        use super::*;
+        use crate::worker::ws_test_util::{collect_worker_msgs, duplex};
+
+        #[tokio::test]
+        async fn forwards_assistant_and_tool_use_to_ws_in_order() {
+            // Feeds three `WorkerEvent`s into the forwarder; expects the two
+            // that translate to a `SessionEvent` (AssistantText, ToolUse) to
+            // appear on the WS in arrival order, with `Usage` dropped.
+            let (ws, _server_tx, mut server_rx) = duplex();
+            let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>(8);
+            let forwarder = spawn_headless_event_forwarder(ws, event_rx);
+
+            event_tx
+                .send(WorkerEvent::AssistantText {
+                    text: "hello".to_string(),
+                })
+                .await
+                .unwrap();
+            event_tx
+                .send(WorkerEvent::Usage {
+                    usage: TokenUsage::default(),
+                })
+                .await
+                .unwrap();
+            event_tx
+                .send(WorkerEvent::ToolUse {
+                    tool_name: "Bash".to_string(),
+                    payload: serde_json::json!({"command": "ls"}),
+                })
+                .await
+                .unwrap();
+            drop(event_tx);
+
+            let ws_back = forwarder
+                .await
+                .expect("forwarder task panicked")
+                .expect("forwarder must hand WS back on natural close");
+            drop(ws_back);
+
+            let frames = collect_worker_msgs(&mut server_rx).await;
+            assert_eq!(frames.len(), 2, "got frames {frames:?}");
+            match &frames[0] {
+                WorkerMessage::Event {
+                    event: SessionEvent::AssistantMessage { content, .. },
+                } => assert_eq!(content, "hello"),
+                other => panic!("expected AssistantMessage, got {other:?}"),
+            }
+            match &frames[1] {
+                WorkerMessage::Event {
+                    event:
+                        SessionEvent::ToolUse {
+                            tool_name, payload, ..
+                        },
+                } => {
+                    assert_eq!(tool_name, "Bash");
+                    assert_eq!(payload, &serde_json::json!({"command": "ls"}));
+                }
+                other => panic!("expected ToolUse, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn returns_open_ws_on_channel_close_so_cleanup_can_proceed() {
+            // Closing the channel (per-wrapper `run` finished, dropped its
+            // sender) must hand the WS back to `drive_headless` so the
+            // unified cleanup runs on the same socket.
+            let (ws, _server_tx, mut server_rx) = duplex();
+            let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>(4);
+            let forwarder = spawn_headless_event_forwarder(ws, event_rx);
+            drop(event_tx);
+
+            let mut ws_back = forwarder
+                .await
+                .expect("forwarder task panicked")
+                .expect("forwarder must hand WS back on natural close");
+
+            // Sanity-check the WS is still usable for downstream cleanup.
+            ws_back
+                .send(WorkerMessage::Event {
+                    event: SessionEvent::Closed {
+                        timestamp: chrono::Utc::now(),
+                    },
+                })
+                .await
+                .expect("WS should still be open");
+            drop(ws_back);
+
+            let frames = collect_worker_msgs(&mut server_rx).await;
+            assert_eq!(frames.len(), 1);
+            assert!(matches!(
+                frames[0],
+                WorkerMessage::Event {
+                    event: SessionEvent::Closed { .. }
+                }
+            ));
+        }
+
+        #[tokio::test]
+        async fn drops_ws_when_send_fails_midstream() {
+            // Dropping the server-side receiver makes WS sends fail; the
+            // forwarder must abandon the WS (return None) so the caller
+            // skips cleanup rather than hanging on a broken socket.
+            let (ws, server_tx, server_rx) = duplex();
+            // Close the server side so the very first send errors out.
+            drop(server_tx);
+            drop(server_rx);
+
+            let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>(4);
+            let forwarder = spawn_headless_event_forwarder(ws, event_rx);
+            event_tx
+                .send(WorkerEvent::AssistantText {
+                    text: "x".to_string(),
+                })
+                .await
+                .unwrap();
+            drop(event_tx);
+
+            let ws_back = forwarder.await.expect("forwarder task panicked");
+            assert!(ws_back.is_none(), "broken WS must be abandoned");
         }
     }
 }

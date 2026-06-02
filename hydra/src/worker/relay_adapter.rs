@@ -370,7 +370,7 @@ async fn process_catch_up_events(
     max_index
 }
 
-fn worker_event_to_session_event(event: WorkerEvent) -> Option<SessionEvent> {
+pub(crate) fn worker_event_to_session_event(event: WorkerEvent) -> Option<SessionEvent> {
     match event {
         WorkerEvent::AssistantText { text } => Some(SessionEvent::AssistantMessage {
             content: text,

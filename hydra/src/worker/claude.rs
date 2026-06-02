@@ -26,8 +26,10 @@ use tokio::{
 };
 
 use super::claude_formatter::StreamFormatter;
+use crate::worker::model_selector::translate_claude_event;
 use crate::worker::report::{
     MaterializeError, NativeResume, RunReport, SessionStateFormat, SessionStateRef, TokenUsage,
+    WorkerEvent,
 };
 
 /// Grace period after the main process exits before killing the process group.
@@ -192,7 +194,18 @@ impl Claude {
 
     /// Run a one-shot, non-interactive Claude invocation and return the
     /// resulting `RunReport`.
-    pub async fn run(&mut self, prompt: &str, resume: Option<ClaudeResume>) -> Result<RunReport> {
+    ///
+    /// If `event_tx` is `Some`, per-step `WorkerEvent`s parsed from Claude's
+    /// stream-json stdout are forwarded on it as they arrive (mirroring the
+    /// interactive path so headless runs can populate the server-side events
+    /// log). The sender is dropped when the stdout pump completes, signalling
+    /// the dispatcher's forwarder to drain and exit.
+    pub async fn run(
+        &mut self,
+        prompt: &str,
+        resume: Option<ClaudeResume>,
+        event_tx: Option<mpsc::Sender<WorkerEvent>>,
+    ) -> Result<RunReport> {
         let resume_uuid = match resume {
             Some(ClaudeResume::SessionId(uuid)) => Some(uuid),
             Some(ClaudeResume::TranscriptFile(path)) => Some(install_claude_transcript_file(
@@ -251,6 +264,7 @@ impl Claude {
         });
 
         let mut stdout_handle = tokio::spawn(async move {
+            let mut event_tx = event_tx;
             let mut formatter = StreamFormatter::new();
             let mut reader = BufReader::new(child_stdout);
             let mut stdout_buf = String::new();
@@ -281,6 +295,19 @@ impl Claude {
                         .await
                         .context("failed to flush claude stdout")?;
                     stdout_buf.push_str(&formatted);
+                }
+                if let Some(tx) = event_tx.as_ref() {
+                    let mut closed = false;
+                    for event in parse_claude_events(&line) {
+                        let translated = translate_claude_event(event);
+                        if tx.send(translated).await.is_err() {
+                            closed = true;
+                            break;
+                        }
+                    }
+                    if closed {
+                        event_tx = None;
+                    }
                 }
             }
             let last_message = formatter.last_assistant_text().map(str::to_owned);
