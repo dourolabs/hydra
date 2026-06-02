@@ -60,6 +60,7 @@ export function PatchPreviewCard({ id }: PatchPreviewCardProps) {
       bodyExcerpt={excerpt ?? undefined}
       footer={
         <>
+          <span className={styles.kindChip}>{KIND_LABEL.patch}</span>
           {author && (
             <span className={styles.assignee}>
               <Avatar name={author} kind="human" size="sm" title={`Author · ${author}`} />
