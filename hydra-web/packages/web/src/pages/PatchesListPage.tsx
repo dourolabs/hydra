@@ -45,7 +45,6 @@ export function PatchesListPage() {
   useBreadcrumbs([{ label: "Workspace", to: "/" }], "Patches");
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const definitions = usePatchFilters();
 
   // Filters are mirrored between URL params and local state. The local state
   // is the source of truth for chip `_uid`s (used by FilterBar to anchor the
@@ -54,6 +53,15 @@ export function PatchesListPage() {
   const [filters, setFiltersState] = useState<Filter[]>(() =>
     filtersFromUrl(searchParams),
   );
+
+  // Lazy-load gate for the relation-picker option lists in `usePatchFilters`:
+  // flipped on while the FilterBar's add-filter menu is open so the picker
+  // isn't empty when the user clicks "Related X". Combined inside the hook
+  // with a check on `filters` so URL-rehydrated relation chips also enable
+  // the right list immediately on first paint.
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+
+  const definitions = usePatchFilters({ filters, addMenuOpen });
 
   useEffect(() => {
     const fromUrl = filtersFromUrl(searchParams);
@@ -168,6 +176,7 @@ export function PatchesListPage() {
       totalCount={displayCount}
       searchValue={searchValue}
       onSearchChange={handleSearchChange}
+      onFilterMenuOpenChange={setAddMenuOpen}
     />
   );
 }
