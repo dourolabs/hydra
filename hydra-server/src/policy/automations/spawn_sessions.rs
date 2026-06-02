@@ -88,10 +88,18 @@ impl Automation for SpawnSessionsAutomation {
             triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 
+        // Locate the assignment agent, if one is configured. Unassigned
+        // issues are auto-assigned to it below so the agent queue can
+        // treat every issue uniformly via the `assignee` field.
+        let assignment_agent = queues
+            .iter()
+            .find(|q| q.agent.is_assignment_agent && !q.agent.deleted)
+            .map(|q| q.agent.clone());
+
         // Scan all open/in-progress issues for spawn readiness on every event.
         // This ensures that when a child issue transitions to a terminal state,
         // the parent issue is also evaluated for readiness.
-        let target_issues: Vec<_> = {
+        let mut target_issues: Vec<_> = {
             let query = SearchIssuesQuery::new(
                 None,
                 vec![IssueStatus::Open, IssueStatus::InProgress],
@@ -107,6 +115,50 @@ impl Automation for SpawnSessionsAutomation {
                 .map(|(id, v)| (id, v.item))
                 .collect()
         };
+
+        // Auto-assign unassigned issues to the configured assignment agent
+        // (if any) and persist the update before the per-agent spawn loop
+        // runs. Issues with no assignee and no configured assignment agent
+        // are left unassigned; the queue will skip them.
+        if let Some(agent) = assignment_agent.as_ref() {
+            let agent_name = hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone())
+                .map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "assignment agent '{}' has invalid name: {e}",
+                        agent.name
+                    ))
+                })?;
+            let assignee = hydra_common::principal::Principal::Agent { name: agent_name };
+            for (issue_id, issue) in target_issues.iter_mut() {
+                if issue.assignee.is_some() {
+                    continue;
+                }
+                issue.assignee = Some(assignee.clone());
+                if let Err(err) = ctx
+                    .app_state
+                    .upsert_issue(
+                        Some(issue_id.clone()),
+                        hydra_common::api::v1::issues::UpsertIssueRequest::new(
+                            issue.clone().into(),
+                            None,
+                        ),
+                        actor.clone(),
+                    )
+                    .await
+                {
+                    // Roll back the in-memory mutation so the queue does not
+                    // try to spawn for an assignment we failed to persist.
+                    issue.assignee = None;
+                    tracing::warn!(
+                        automation = AUTOMATION_NAME,
+                        issue_id = %issue_id,
+                        agent = agent.name,
+                        error = %err,
+                        "failed to auto-assign unassigned issue to assignment agent"
+                    );
+                }
+            }
+        }
 
         for queue in &queues {
             let task_state = agent_task_state(ctx.app_state, &queue.agent.name)
@@ -307,6 +359,32 @@ mod tests {
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
+            false,
+            vec![],
+        );
+        handles.store.add_agent(agent).await?;
+
+        let doc = Document {
+            title: format!("{name} prompt"),
+            body_markdown: format!("prompt for {name}"),
+            path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+            deleted: false,
+        };
+        handles.store.add_document(doc, &ActorRef::test()).await?;
+        Ok(())
+    }
+
+    async fn register_assignment_agent(
+        handles: &test_utils::TestStateHandles,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let agent = Agent::new(
+            name.to_string(),
+            format!("/agents/{name}/prompt.md"),
+            None,
+            DEFAULT_AGENT_MAX_TRIES,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            true,
             false,
             vec![],
         );
@@ -802,6 +880,151 @@ mod tests {
             1,
             "should not spawn for closed/terminal issues on session events"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn auto_assigns_unassigned_issue_to_assignment_agent() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let agent_name = "pm";
+        register_assignment_agent(&handles, agent_name).await?;
+
+        // Create an unassigned, repo-less issue (typical assignment-agent target).
+        let issue = Issue::new(
+            IssueType::Task,
+            "Needs assignment".to_string(),
+            "desc".to_string(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        let event = issue_created_event(issue_id.clone(), issue);
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        // Persisted assignee should now be the assignment agent.
+        let stored = handles.store.get_issue(&issue_id, false).await?.item;
+        match stored.assignee {
+            Some(hydra_common::principal::Principal::Agent { ref name }) => {
+                assert_eq!(name.as_str(), agent_name);
+            }
+            other => panic!("expected assignee Principal::Agent('{agent_name}'); got {other:?}"),
+        }
+
+        // The assignment agent's queue should also have spawned a session.
+        let sessions = handles.state.list_sessions().await?;
+        assert_eq!(
+            sessions.len(),
+            1,
+            "expected one session to be spawned after auto-assignment"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unassigned_issue_is_noop_without_assignment_agent() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        // Register a non-assignment agent so the early "no agents" return
+        // doesn't short-circuit. It should NOT pick up the unassigned issue.
+        register_agent(&handles, "agent-a").await?;
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "Needs assignment".to_string(),
+            "desc".to_string(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        let event = issue_created_event(issue_id.clone(), issue);
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        // Issue remains unassigned; no session spawned.
+        let stored = handles.store.get_issue(&issue_id, false).await?.item;
+        assert!(
+            stored.assignee.is_none(),
+            "issue should remain unassigned without an assignment agent; got {:?}",
+            stored.assignee
+        );
+        let sessions = handles.state.list_sessions().await?;
+        assert_eq!(sessions.len(), 0, "no session should be spawned");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn assigned_issue_is_not_reassigned() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
+
+        register_assignment_agent(&handles, "pm").await?;
+        register_agent(&handles, "agent-a").await?;
+        add_repository(&handles.state, repo_name.clone(), repository()).await?;
+
+        // Issue explicitly assigned to agent-a — should NOT be reassigned to pm.
+        let issue = make_issue("agent-a", &repo_name);
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        let event = issue_created_event(issue_id.clone(), issue);
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let stored = handles.store.get_issue(&issue_id, false).await?.item;
+        match stored.assignee {
+            Some(hydra_common::principal::Principal::Agent { ref name }) => {
+                assert_eq!(
+                    name.as_str(),
+                    "agent-a",
+                    "pre-existing assignee should be preserved"
+                );
+            }
+            other => panic!("expected assignee Principal::Agent('agent-a'); got {other:?}"),
+        }
 
         Ok(())
     }
