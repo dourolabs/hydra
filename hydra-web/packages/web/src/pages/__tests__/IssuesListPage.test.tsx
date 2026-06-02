@@ -1,15 +1,24 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
-import React from "react";
+import { render, cleanup } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import type { ChildStatus } from "../../features/dashboard/computeIssueProgress";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 
 // --- Mocks ---
 
-vi.mock("../../features/dashboard/FilterBar", () => ({
+// IssuesView replaced the four Pickers with the generic <FilterBar>. The
+// FilterBar drives client-side filtering — server fetches in table mode now
+// load the unfiltered page. The test stubs FilterBar to a no-op div so this
+// file stays focused on URL → page-framing wiring (eyebrow, title,
+// breadcrumb) and the server-fetch surface for the table layout.
+vi.mock("../../features/filters", () => ({
   FilterBar: () => <div data-testid="filter-bar" />,
+  applyFilters: <T,>(items: T[]) => items,
+}));
+
+vi.mock("../../features/issues/issueFilters", () => ({
+  useIssueFilters: () => ({}),
 }));
 
 interface PaginatedState {
@@ -83,46 +92,12 @@ vi.mock("../../features/issues/usePaginatedIssues", () => ({
   BOARD_STATUSES: ["open", "in-progress", "failed", "closed", "dropped"],
 }));
 
-vi.mock("../../features/dashboard/usePaginatedPatches", () => ({
-  usePaginatedPatches: () => ({
-    data: { pages: [] },
-    isLoading: false,
-    fetchNextPage: vi.fn(),
-    hasNextPage: false,
-    isFetchingNextPage: false,
-  }),
-}));
-
-vi.mock("../../features/dashboard/usePaginatedDocuments", () => ({
-  usePaginatedDocuments: () => ({
-    data: { pages: [] },
-    isLoading: false,
-    fetchNextPage: vi.fn(),
-    hasNextPage: false,
-    isFetchingNextPage: false,
-  }),
-}));
-
 vi.mock("../../features/auth/useAuth", () => ({
   useAuth: () => ({
     user: { actor: { type: "user", username: "alice" } },
     loading: false,
     logout: vi.fn(),
   }),
-}));
-
-interface UsersState {
-  agents: { name: string }[];
-  users: { username: string }[];
-}
-const usersState: UsersState = { agents: [], users: [] };
-
-vi.mock("../../hooks/useAgents", () => ({
-  useAgents: () => ({ data: usersState.agents, isLoading: false }),
-}));
-
-vi.mock("../../hooks/useUsers", () => ({
-  useUsers: () => ({ data: usersState.users, isLoading: false }),
 }));
 
 vi.mock("../../api/auth", () => ({
@@ -153,11 +128,6 @@ vi.mock("../../features/dashboard/usePageIssueTrees", () => ({
 vi.mock("../../utils/statusMapping", () => ({
   TERMINAL_STATUSES: new Set(["closed", "failed"]),
   normalizeIssueStatus: (s: string) => s,
-}));
-
-vi.mock("../../features/dashboard/filterStorage", () => ({
-  readFilterState: () => null,
-  writeFilterState: vi.fn(),
 }));
 
 const useBreadcrumbsMock = vi.fn();
@@ -194,38 +164,6 @@ vi.mock("@hydra/ui", () => ({
   ),
   Badge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
   TypeChip: ({ type }: { type: string }) => <span data-testid="type-chip">{type}</span>,
-  Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
-  Picker: ({
-    label,
-    value,
-    onToggle,
-    children,
-  }: {
-    label: string;
-    value: React.ReactNode;
-    open: boolean;
-    onToggle: () => void;
-    children: React.ReactNode;
-  }) => (
-    <div data-testid={`picker-${label.toLowerCase()}`}>
-      <button type="button" onClick={onToggle} aria-label={label}>
-        {value}
-      </button>
-      {children}
-    </div>
-  ),
-  PickerRow: ({
-    onClick,
-    children,
-  }: {
-    active?: boolean;
-    onClick: () => void;
-    children: React.ReactNode;
-  }) => (
-    <button type="button" onClick={onClick}>
-      {children}
-    </button>
-  ),
   Icons: new Proxy(
     {},
     {
@@ -312,8 +250,6 @@ beforeEach(() => {
   paginatedState.countFilters = undefined;
   treesState.childStatusMap = new Map();
   treesState.sessionsByIssue = new Map();
-  usersState.agents = [];
-  usersState.users = [];
 });
 
 afterEach(() => {
@@ -326,7 +262,7 @@ describe("IssuesListPage Issue Create modal", () => {
   // the design refresh — its create flow is exercised in SiteHeader tests now.
   it("does not mount its own IssueCreateModal", () => {
     renderIssuesList("/?create-issue=1");
-    expect(screen.queryByTestId("issue-create-modal")).toBeNull();
+    expect(document.querySelector('[data-testid="issue-create-modal"]')).toBeNull();
   });
 });
 
@@ -365,26 +301,43 @@ describe("IssuesListPage breadcrumb label", () => {
   });
 });
 
-describe("IssuesListPage default filter", () => {
-  it("sends no filters to the server on a bare index route (All issues)", () => {
+describe("IssuesListPage table-mode server filtering", () => {
+  // The new <FilterBar> narrows the loaded subset purely client-side, so the
+  // table-mode paginated query always loads the unfiltered page (50/page).
+  // The URL-shortcut framing (`?creator=alice`, `?selected=your-issues`,
+  // `?selected=in_progress`) still drives the eyebrow/title/breadcrumb but
+  // does NOT ride through to the server query in table mode.
+
+  it("sends no filters to the server on a bare index route", () => {
     renderIssuesList("/");
     expect(paginatedState.paginatedFilters).toEqual({});
     expect(paginatedState.countFilters).toEqual({});
   });
 
-  it("sends { creator } when the URL pins creator to the current user", () => {
+  it("still sends no filters to the server when ?creator=<user> is set", () => {
     renderIssuesList("/?creator=alice");
-    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
+    expect(paginatedState.paginatedFilters).toEqual({});
   });
 
-  it("translates legacy ?selected=your-issues to a creator filter", () => {
+  it("still sends no filters to the server for legacy ?selected=your-issues", () => {
     renderIssuesList("/?selected=your-issues");
-    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
+    expect(paginatedState.paginatedFilters).toEqual({});
   });
 
-  it("sends an empty filter set when ?selected=all", () => {
+  it("still sends no filters to the server for ?selected=all", () => {
     renderIssuesList("/?selected=all");
     expect(paginatedState.paginatedFilters).toEqual({});
+  });
+
+  it("invokes the list and count hooks with identical filter inputs", () => {
+    paginatedState.issues = [makeIssue("i-1")];
+    paginatedState.totalCount = 9;
+
+    renderIssuesList("/?selected=assigned");
+
+    expect(paginatedState.paginatedFilters).toBeDefined();
+    expect(paginatedState.countFilters).toBeDefined();
+    expect(paginatedState.countFilters).toEqual(paginatedState.paginatedFilters);
   });
 });
 
@@ -420,19 +373,6 @@ describe("IssuesListPage eyebrow count", () => {
     const eyebrow = container.querySelector(".eyebrow");
     expect(eyebrow!.textContent).toBe("IN PROGRESS · 1 ISSUE");
   });
-
-  it("invokes the list and count hooks with identical filter inputs", () => {
-    paginatedState.issues = [makeIssue("i-1")];
-    paginatedState.totalCount = 9;
-
-    renderIssuesList("/?selected=assigned");
-
-    expect(paginatedState.paginatedFilters).toBeDefined();
-    expect(paginatedState.countFilters).toBeDefined();
-    // Both hooks must see the same filter object so React Query's cache keys
-    // and the backend filter set stay aligned across the two queries.
-    expect(paginatedState.countFilters).toEqual(paginatedState.paginatedFilters);
-  });
 });
 
 describe("IssuesListPage IssuesTable rendering", () => {
@@ -450,9 +390,9 @@ describe("IssuesListPage IssuesTable rendering", () => {
       ],
     ]);
 
-    renderIssuesList("/");
+    const { getByTestId } = renderIssuesList("/");
 
-    const cell = screen.getByTestId("runtime-active");
+    const cell = getByTestId("runtime-active");
     expect(cell).toBeDefined();
     expect(cell.className).toContain("isLive");
     // Elapsed >= 5 seconds — format starts with a digit and ends with "s".
@@ -474,9 +414,9 @@ describe("IssuesListPage IssuesTable rendering", () => {
       ],
     ]);
 
-    renderIssuesList("/");
+    const { getByTestId } = renderIssuesList("/");
 
-    const cell = screen.getByTestId("runtime-idle");
+    const cell = getByTestId("runtime-idle");
     expect(cell).toBeDefined();
     expect(cell.className).toContain("rtInstrument");
     expect(cell.className).not.toContain("isLive");
@@ -621,69 +561,9 @@ describe("IssuesListPage IssuesTable rendering", () => {
 
     const fills = container.querySelectorAll(".progressFill");
     expect(fills.length).toBe(2);
-    // Idle row carries the base progressFill but not the active variant —
-    // the active variant is what swaps the fill from green to yellow + glow.
     expect(fills[0]!.className).toContain("progressFill");
     expect(fills[0]!.className).not.toContain("progressFillActive");
-    // Active row carries both classes so the active variant overrides the
-    // base green background with the yellow in-progress color.
     expect(fills[1]!.className).toContain("progressFill");
     expect(fills[1]!.className).toContain("progressFillActive");
-  });
-});
-
-describe("IssuesListPage Creator and Assignee pickers", () => {
-  it("Creator picker shows only user rows (no agent rows)", () => {
-    usersState.agents = [{ name: "swe" }, { name: "reviewer" }];
-    usersState.users = [{ username: "bob" }, { username: "carol" }];
-
-    renderIssuesList("/");
-
-    const creator = screen.getByTestId("issues-filter-creator");
-    const avatars = creator.querySelectorAll('[data-testid="avatar"]');
-    const names = Array.from(avatars).map((a) => a.textContent);
-
-    // The current user "alice" is injected by the page so the My-issues
-    // flow has a row to land on; the two seeded users also appear; no
-    // agent names should leak into the Creator picker.
-    expect(names).toContain("alice");
-    expect(names).toContain("bob");
-    expect(names).toContain("carol");
-    expect(names).not.toContain("swe");
-    expect(names).not.toContain("reviewer");
-
-    // Every avatar rendered inside the Creator picker is the human variant.
-    for (const a of avatars) {
-      expect(a.getAttribute("data-kind")).toBe("human");
-    }
-  });
-
-  it("Assignee picker shows an Agents section before a Users section, each kind tagged correctly", () => {
-    usersState.agents = [{ name: "reviewer" }, { name: "swe" }];
-    usersState.users = [{ username: "bob" }];
-
-    renderIssuesList("/");
-
-    const assignee = screen.getByTestId("issues-filter-assignee");
-
-    // Section headers appear in DOM order: Agents, then Users.
-    const text = assignee.textContent ?? "";
-    const agentsIdx = text.indexOf("Agents");
-    const usersIdx = text.indexOf("Users");
-    expect(agentsIdx).toBeGreaterThanOrEqual(0);
-    expect(usersIdx).toBeGreaterThanOrEqual(0);
-    expect(agentsIdx).toBeLessThan(usersIdx);
-
-    // Every Avatar's kind matches the section it lives in. Agent names come
-    // through `data-kind="agent"`; user names through `data-kind="human"`.
-    const avatars = Array.from(
-      assignee.querySelectorAll('[data-testid="avatar"]'),
-    ) as HTMLElement[];
-    const byName = new Map(avatars.map((a) => [a.textContent ?? "", a.getAttribute("data-kind")]));
-    expect(byName.get("swe")).toBe("agent");
-    expect(byName.get("reviewer")).toBe("agent");
-    expect(byName.get("bob")).toBe("human");
-    // alice (the logged-in user) is also injected into userOptions.
-    expect(byName.get("alice")).toBe("human");
   });
 });

@@ -14,7 +14,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@dashboard:view` — User can see the issue list on the dashboard (planned)
 - `@dashboard:inbox` — Default `your-issues` view shows the logged-in user's own issues (creator = user), including dropped/closed states
-- `@dashboard:search` — User can search for issues by title
+- `@dashboard:search` — User can open the FilterBar add-filter menu on the Issues list and select a property filter (Status) — replaces the prior free-text issue search
 
 ## Navigation
 

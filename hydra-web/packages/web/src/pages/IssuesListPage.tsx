@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { IssueStatus, IssueType } from "@hydra/api";
 import {
@@ -7,8 +7,6 @@ import {
   type IssueFilters,
 } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
-import { useAgents } from "../hooks/useAgents";
-import { useUsers } from "../hooks/useUsers";
 import { actorDisplayName, actorPrincipalPath } from "../api/auth";
 import {
   IssuesView,
@@ -20,7 +18,10 @@ import styles from "./IssuesListPage.module.css";
 
 // Map the legacy `?selected=...` shortcut onto the explicit filter params so
 // e2e tests and bookmarked URLs continue to work after the sidebar switched
-// to the new scheme.
+// to the new scheme. These URL params still drive eyebrow / breadcrumb /
+// board-mode query state — even though the table-mode FilterBar is now
+// purely client-side, the page-level "All / My / Assigned" framing remains
+// URL-pinned for sharability.
 const LEGACY_SELECTED_VALUES = new Set([
   "your-issues",
   "assigned",
@@ -123,9 +124,8 @@ function resolveFilters(
   return { status: null, type: null, creator: "", assignee: "", label: "" };
 }
 
-function buildServerFilters(state: FilterState, searchQuery: string): IssueFilters {
+function buildServerFilters(state: FilterState): IssueFilters {
   const filters: IssueFilters = {};
-  if (searchQuery) filters.q = searchQuery;
   if (state.status) filters.status = state.status;
   if (state.type) filters.type = state.type;
   if (state.creator) filters.creator = state.creator;
@@ -213,96 +213,15 @@ export function IssuesListPage() {
   }, [layout]);
   const isTable = layout === "table";
 
-  const [searchValue, setSearchValue] = useState(searchParams.get("q") ?? "");
-  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") ?? "");
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  const handleSearchChange = useCallback((value: string) => {
-    setSearchValue(value);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      setSearchQuery(value);
-    }, 300);
-  }, []);
-
-  useEffect(() => {
-    return () => clearTimeout(debounceRef.current);
-  }, []);
-
-  // Helper that updates a single filter param in the URL. Setting an empty
-  // value removes the param; setting any other value also clears the legacy
-  // `selected=` shortcut so the two schemes never coexist in the URL.
-  const setParam = useCallback(
-    (key: string, value: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (value) {
-            next.set(key, value);
-          } else {
-            next.delete(key);
-          }
-          next.delete("selected");
-          return next;
-        },
-        { replace: false },
-      );
-    },
-    [setSearchParams],
+  // Table mode now loads the unfiltered page (the FilterBar narrows
+  // client-side over the loaded subset). Board mode still consumes the
+  // URL-derived filters via `baseFilters`, both because it's out of scope
+  // for this PR and because per-column server queries need a baseline.
+  const boardBaseFilters = useMemo(
+    () => buildServerFilters(filterState),
+    [filterState],
   );
-
-  const handleStatusChange = useCallback(
-    (status: IssueStatus | null) => setParam("status", status),
-    [setParam],
-  );
-  const handleTypeChange = useCallback(
-    (type: IssueType | null) => setParam("type", type),
-    [setParam],
-  );
-  const handleCreatorChange = useCallback(
-    (creator: string) => setParam("creator", creator || null),
-    [setParam],
-  );
-  const handleAssigneeChange = useCallback(
-    (assignee: string) => setParam("assignee", assignee || null),
-    [setParam],
-  );
-
-  const { data: agents } = useAgents();
-  const { data: users } = useUsers();
-  // Picker rows for Creator/Assignee. `name` is the user-facing label; the
-  // Assignee filter needs a Principal `path` (Phase 4b) because the wire form
-  // is `users/<x>` / `agents/<x>`. Creator stays bare.
-  const agentOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const opts: { name: string; assigneePath: string }[] = [];
-    for (const a of agents ?? []) {
-      if (seen.has(a.name)) continue;
-      seen.add(a.name);
-      opts.push({ name: a.name, assigneePath: `agents/${a.name}` });
-    }
-    return opts.sort((a, b) => a.name.localeCompare(b.name));
-  }, [agents]);
-
-  const userOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const opts: { name: string; assigneePath: string }[] = [];
-    for (const u of users ?? []) {
-      if (seen.has(u.username)) continue;
-      seen.add(u.username);
-      opts.push({ name: u.username, assigneePath: `users/${u.username}` });
-    }
-    if (currentUser && currentPrincipalPath && !seen.has(currentUser)) {
-      seen.add(currentUser);
-      opts.push({ name: currentUser, assigneePath: currentPrincipalPath });
-    }
-    return opts.sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, currentUser, currentPrincipalPath]);
-
-  const serverFilters = useMemo(
-    () => buildServerFilters(filterState, searchQuery),
-    [filterState, searchQuery],
-  );
+  const tableServerFilters = useMemo<IssueFilters>(() => ({}), []);
 
   const {
     data: paginatedData,
@@ -310,9 +229,9 @@ export function IssuesListPage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = usePaginatedIssues(serverFilters, isTable);
+  } = usePaginatedIssues(tableServerFilters, isTable);
 
-  const { data: totalCount } = useIssueCount(serverFilters);
+  const { data: totalCount } = useIssueCount(tableServerFilters);
 
   const issues = useMemo(() => {
     const seen = new Set<string>();
@@ -359,24 +278,12 @@ export function IssuesListPage() {
         childStatusMap={childStatusMap}
         sessionsByIssue={sessionsByIssue}
         isLoading={isLoading}
-        baseFilters={serverFilters}
+        baseFilters={boardBaseFilters}
         username={currentUser}
         filterRootId={rootId}
         hasNextPage={hasNextPage ?? false}
         isFetchingNextPage={isFetchingNextPage ?? false}
         onLoadMore={handleLoadMore}
-        searchValue={searchValue}
-        onSearchChange={handleSearchChange}
-        selectedStatus={filterState.status}
-        onStatusChange={handleStatusChange}
-        selectedType={filterState.type}
-        onTypeChange={handleTypeChange}
-        selectedCreator={filterState.creator}
-        onCreatorChange={handleCreatorChange}
-        selectedAssignee={filterState.assignee}
-        onAssigneeChange={handleAssigneeChange}
-        agentOptions={agentOptions}
-        userOptions={userOptions}
         eyebrow={formatEyebrow(eyebrowPrefix, displayCount)}
         title={title}
       />
