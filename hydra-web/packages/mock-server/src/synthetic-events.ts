@@ -18,8 +18,6 @@ type SyntheticVariant = "tool_use" | "assistant_message";
 const ROTATION: readonly SyntheticVariant[] = [
   "tool_use",
   "assistant_message",
-  "tool_use",
-  "assistant_message",
 ];
 
 function buildSyntheticEvent(variant: SyntheticVariant, tick: number): SessionEvent {
@@ -49,9 +47,9 @@ function buildSyntheticEvent(variant: SyntheticVariant, tick: number): SessionEv
  * The rotation is keyed off the current per-session event-log length so the
  * output is deterministic given a fixed seed (important for e2e snapshots).
  *
- * Returns a handle whose `stop()` is idempotent and uses a generation counter
- * so any in-flight ticks scheduled before `stop()` no-op rather than racing
- * with a subsequent `start`.
+ * Returns a handle whose `stop()` is idempotent: it clears the interval and
+ * flips a per-handle `stopped` flag that causes any tick already queued by
+ * the event loop to no-op when it runs.
  */
 export function startSyntheticEvents(
   store: Store,
