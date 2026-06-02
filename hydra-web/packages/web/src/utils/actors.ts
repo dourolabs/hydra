@@ -41,3 +41,18 @@ export function actorAvatarName(actor: ActorRef): string {
   if ("Automation" in actor) return actor.Automation.automation_name;
   return "?";
 }
+
+/**
+ * Avatar `kind` hint derived from an [`ActorRef`]. The `<Avatar />` component
+ * understands only `"human"` and `"agent"`; anything non-human (system workers,
+ * automations, external identities) maps to `"agent"` so the styling matches
+ * the rest of the UI.
+ */
+export function actorAvatarKind(actor: ActorRef): "human" | "agent" {
+  if ("Authenticated" in actor) {
+    const id = actor.Authenticated.actor_id;
+    if ("User" in id) return "human";
+    return "agent";
+  }
+  return "agent";
+}

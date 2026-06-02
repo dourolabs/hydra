@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { ActorId } from "@hydra/api";
-import { actorIdDisplayName } from "./actors";
+import type { ActorId, ActorRef } from "@hydra/api";
+import { actorIdDisplayName, actorAvatarKind } from "./actors";
 
 // These fixtures are the *exact* JSON shapes ts-rs promises in
 // `packages/api/src/generated/ActorId.ts`. They double as a contract
@@ -49,5 +49,42 @@ describe("ActorId wire-form contract", () => {
     expect(JSON.parse(JSON.stringify(id))).toEqual({
       External: { system: "github", username: "jayantk" },
     });
+  });
+});
+
+describe("actorAvatarKind", () => {
+  it("classifies authenticated User as human", () => {
+    const actor: ActorRef = {
+      Authenticated: { actor_id: { User: { name: "alice" } } },
+    };
+    expect(actorAvatarKind(actor)).toBe("human");
+  });
+
+  it("classifies authenticated Agent as agent", () => {
+    const actor: ActorRef = {
+      Authenticated: { actor_id: { Agent: { name: "swe" } } },
+    };
+    expect(actorAvatarKind(actor)).toBe("agent");
+  });
+
+  it("classifies authenticated Adhoc as agent", () => {
+    const actor: ActorRef = {
+      Authenticated: { actor_id: { Adhoc: { session_id: "s-abc" } } },
+    };
+    expect(actorAvatarKind(actor)).toBe("agent");
+  });
+
+  it("classifies System workers as agent", () => {
+    const actor: ActorRef = {
+      System: { worker_name: "reaper", on_behalf_of: null },
+    };
+    expect(actorAvatarKind(actor)).toBe("agent");
+  });
+
+  it("classifies Automation as agent", () => {
+    const actor: ActorRef = {
+      Automation: { automation_name: "auto-merge", triggered_by: null },
+    };
+    expect(actorAvatarKind(actor)).toBe("agent");
   });
 });
