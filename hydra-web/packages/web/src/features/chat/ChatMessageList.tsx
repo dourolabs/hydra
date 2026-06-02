@@ -87,6 +87,7 @@ export function ChatMessageList({
   currentUsername,
 }: ChatMessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
   const resolvedAgent = agentName || "Agent";
   const resolvedCreator = creator ?? "";
   const isCreatorMe =
@@ -100,8 +101,34 @@ export function ChatMessageList({
 
   useEffect(() => {
     const container = containerRef.current;
+    const thread = threadRef.current;
     if (!container) return;
     container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+
+    // Preview cards for `[[id]]` references fetch their target asynchronously
+    // and paint after the initial scroll-to-bottom — without this follow-up
+    // the trailing card(s) can land below the input box. Re-pin the bottom
+    // while the new message's content settles, and stop as soon as the user
+    // intentionally scrolls away.
+    if (!thread || typeof ResizeObserver === "undefined") return;
+    let following = true;
+    const observer = new ResizeObserver(() => {
+      if (!following) return;
+      container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+    });
+    observer.observe(thread);
+    const stopFollowing = () => {
+      following = false;
+    };
+    const stopTimer = window.setTimeout(stopFollowing, 1500);
+    container.addEventListener("wheel", stopFollowing, { passive: true });
+    container.addEventListener("touchmove", stopFollowing, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(stopTimer);
+      container.removeEventListener("wheel", stopFollowing);
+      container.removeEventListener("touchmove", stopFollowing);
+    };
   }, [events.length]);
 
   if (events.length === 0) {
@@ -128,7 +155,7 @@ export function ChatMessageList({
       data-testid="chat-message-list"
       data-transcript-source="session_events"
     >
-      <div className={styles.thread}>
+      <div ref={threadRef} className={styles.thread}>
         {events.map((event, i) => renderEvent(event, i, renderCtx))}
       </div>
     </div>

@@ -77,6 +77,96 @@ describe("ChatMessageList auto-scroll", () => {
   });
 });
 
+describe("ChatMessageList ResizeObserver follow-bottom", () => {
+  let scrollToSpy: ReturnType<typeof vi.fn>;
+  let originalScrollTo: typeof Element.prototype.scrollTo | undefined;
+  let observers: Array<{ cb: ResizeObserverCallback; targets: Element[] }>;
+  let OriginalResizeObserver: typeof ResizeObserver | undefined;
+
+  beforeEach(() => {
+    originalScrollTo = Element.prototype.scrollTo;
+    scrollToSpy = vi.fn();
+    Element.prototype.scrollTo = scrollToSpy as unknown as typeof Element.prototype.scrollTo;
+
+    observers = [];
+    OriginalResizeObserver = globalThis.ResizeObserver;
+    class MockResizeObserver {
+      private targets: Element[] = [];
+      constructor(cb: ResizeObserverCallback) {
+        observers.push({ cb, targets: this.targets });
+      }
+      observe(target: Element) {
+        this.targets.push(target);
+      }
+      unobserve() {}
+      disconnect() {
+        this.targets.length = 0;
+      }
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    if (originalScrollTo) {
+      Element.prototype.scrollTo = originalScrollTo;
+    }
+    if (OriginalResizeObserver) {
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    } else {
+      // @ts-expect-error - clean up jsdom global
+      delete globalThis.ResizeObserver;
+    }
+    vi.clearAllMocks();
+  });
+
+  function fireResize() {
+    const active = observers[observers.length - 1];
+    if (!active || active.targets.length === 0) return;
+    active.cb([], active as unknown as ResizeObserver);
+  }
+
+  it("re-scrolls to bottom when the thread resizes after a new message (e.g., preview cards painting)", () => {
+    const { rerender } = render(<ChatMessageList events={[userMessage("hi")]} />);
+    rerender(<ChatMessageList events={[userMessage("hi"), assistantMessage("hello")]} />);
+
+    const initialCalls = scrollToSpy.mock.calls.length;
+    expect(initialCalls).toBeGreaterThan(0);
+
+    // Simulate a preview card painting in after the initial scroll.
+    fireResize();
+
+    expect(scrollToSpy.mock.calls.length).toBeGreaterThan(initialCalls);
+    expect(scrollToSpy.mock.calls.at(-1)?.[0]).toMatchObject({ behavior: "auto" });
+  });
+
+  it("stops following the bottom after a brief window so the user can scroll up freely", () => {
+    const { rerender } = render(<ChatMessageList events={[userMessage("hi")]} />);
+    rerender(<ChatMessageList events={[userMessage("hi"), assistantMessage("hello")]} />);
+
+    // Advance past the follow window.
+    vi.advanceTimersByTime(2000);
+
+    const callsBefore = scrollToSpy.mock.calls.length;
+    fireResize();
+    expect(scrollToSpy.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("stops following when the user scrolls (wheel)", () => {
+    const { container, rerender } = render(<ChatMessageList events={[userMessage("hi")]} />);
+    rerender(<ChatMessageList events={[userMessage("hi"), assistantMessage("hello")]} />);
+
+    const list = container.querySelector('[data-testid="chat-message-list"]') as HTMLElement;
+    list.dispatchEvent(new Event("wheel"));
+
+    const callsBefore = scrollToSpy.mock.calls.length;
+    fireResize();
+    expect(scrollToSpy.mock.calls.length).toBe(callsBefore);
+  });
+});
+
 describe("ChatMessageList avatars and author labels", () => {
   beforeEach(() => {
     Element.prototype.scrollTo =
