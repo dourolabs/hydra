@@ -1,10 +1,64 @@
 # Add a new repo
 
-Requirements: the issue must specify the git remote to connect, eg. https://github.com/foo/bar.git
+Requirements: the issue must specify the git remote to connect, eg. https://github.com/foo/bar.git or a local path like /home/user/my-repo.
+
+## Detecting local vs GitHub repos
+
+Before starting the workflow, determine whether this is a **local repo** or a **GitHub repo**:
+- **Local repo**: the remote URL starts with `file://` or `/` (an absolute filesystem path).
+- **GitHub repo**: any other URL (typically `https://github.com/...` or `git@github.com:...`).
+
+The workflow differs significantly depending on this. See the appropriate section below.
+
+---
+
+## Local repo workflow
+
+Use this workflow when the remote URL is a local filesystem path (starts with `file://` or `/`).
+
+**Note on bare repos:** For best results, the local repo should be a **bare repository** (created with `git clone --bare` or `git init --bare`). Git rejects pushes to the checked-out branch of a non-bare repo by default. If using a non-bare repo, the user must configure `receive.denyCurrentBranch = updateInstead` on the repo. Recommend bare repos to users when possible.
+
+### Required workflow (local repos):
+
+0. Determine if this is the first time being run on this issue. Look at child issues to see if the steps below have
+   already been followed. If they have, skip to the iterative problem solving phase (step 5) below.
+
+   **Already-registered case:** Before running step 1, check whether the repo is already in the system via `hydra repos list`. If it is — typically because the chat agent registered it before dispatching this issue — **skip step 1**. Don't re-run `hydra repos create` (it will fail with a duplicate error). Don't overwrite the patch-workflow config (reviewers / merger) unless this issue explicitly asks you to.
+
+**Initial Phase:**
+1. Use "hydra repos create" to add the repo to the system, eg `hydra repos create local/my-project /home/user/my-repo`.
+   The CLI will auto-convert filesystem paths to `file://` URLs.
+2. Clone the repository with "hydra repos clone".
+3. Create an issue to investigate the contents of the repository. The goal is to produce an index document for the repo in the document store
+   under /repos/<repo-name>.md. The document must describe what is in the repository, its purpose, the names of major components, service names,
+   module names, etc. It should include anything that would help a future agent determine when this repository needs to be used for a task.
+
+   **Preferred method:** Write the index document directly to `$HYDRA_DOCUMENTS_DIR/repos/<repo-name>.md`. Changes are automatically
+   pushed back to the document store when the job completes. Fall back to `hydra documents put /repos/<repo-name>.md --file <file>`
+   only if filesystem access is unavailable.
+4. Create an issue as a follow up to (3) that runs build / test / lint (as applicable) in the repo. Ask the agent to report back any
+   problems it encounters in the issue itself for further analysis.
+   **Do NOT** create issues for Dockerfile creation, GitHub Actions, Docker image builds, or image triggers — these are not applicable for local repos.
+   Local repos use the default hydra-worker image.
+5. End the session -- another agent will pick up this issue once the child issues above have completed.
+
+**Iterative problem solving phase (local repos):**
+6. Inspect the results from the build / test / lint issue. Look at the issue itself, and if needed, look at logs from the agent run using
+   "hydra jobs logs <issue-id>".
+7. If there were problems, create follow-up issues to address them.
+8. Otherwise, the issue is done.
+
+---
+
+## GitHub repo workflow
+
+Use this workflow when the remote URL points to GitHub.
 
 Required workflow:
 0. Determine if this is the first time being run on this issue. Look at child issues to see if the steps in the "initial phase" have
    already been followed. If they have already been followed, skip to the iterative problem solving phase (step 9) below.
+
+   **Already-registered case:** Before running step 1, check whether the repo is already in the system via `hydra repos list`. If it is — typically because the chat agent registered it before dispatching this issue — **skip step 1**. Don't re-run `hydra repos create` (it will fail with a duplicate error). Don't overwrite the patch-workflow config (reviewers / merger) unless this issue explicitly asks you to.
 
 Initial Phase:
 1. Use "hydra repos create" to add the repo to the system, eg "hydra repos create foo/bar https://github.com/foo/bar.git"
