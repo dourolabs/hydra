@@ -421,16 +421,17 @@
 .connectionStrip {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 0;
+  gap: 8px;
+  padding: 6px 12px 6px 20px;
   font-family: var(--f-mono);
   font-size: var(--t-xxs);
   color: var(--fg-3);
+  flex-shrink: 0;
 }
 
 .connectionDot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--fg-3);
   flex-shrink: 0;

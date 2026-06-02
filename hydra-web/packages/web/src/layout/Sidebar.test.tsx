@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -497,6 +497,26 @@ describe("Sidebar", () => {
     const row = screen.getByTestId("sidebar-session-row-s-2") as HTMLAnchorElement;
     expect(row.textContent).toContain("Auth sync");
     expect(row.getAttribute("title")).toBe("Auth sync");
+  });
+
+  it("renders the connection state combined with the version on a single line", async () => {
+    getVersionMock.mockResolvedValue({ version: "0.5.12" });
+    renderSidebar();
+    const versionEl = await waitFor(() => screen.getByTestId("sidebar-version"));
+    expect(versionEl.textContent).toBe("v0.5.12");
+    // The strip text combines the connection label and the version with a slash.
+    const dot = screen.getByTestId("sidebar-connection-dot");
+    const strip = dot.parentElement as HTMLElement;
+    expect(strip.textContent).toBe("Connected / v0.5.12");
+  });
+
+  it("shows only the connection label when the version has not yet loaded", () => {
+    getVersionMock.mockReturnValue(new Promise(() => {})); // never resolves
+    renderSidebar();
+    const dot = screen.getByTestId("sidebar-connection-dot");
+    const strip = dot.parentElement as HTMLElement;
+    expect(strip.textContent).toBe("Connected");
+    expect(screen.queryByTestId("sidebar-version")).toBeNull();
   });
 
   it("falls back to the prompt snippet when neither linked entity is resolvable", () => {

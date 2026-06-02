@@ -384,22 +384,26 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
         </div>
       </div>
 
-      <div className={styles.foot}>
-        <Tooltip content={`SSE: ${CONNECTION_LABELS[connectionState]}`} position="top">
-          <div className={styles.connectionStrip}>
-            <span
-              className={styles.connectionDot}
-              data-state={connectionState}
-              data-testid="sidebar-connection-dot"
-            />
-            <span>{CONNECTION_LABELS[connectionState]}</span>
+      <Tooltip content={`SSE: ${CONNECTION_LABELS[connectionState]}`} position="top">
+        <div className={styles.connectionStrip}>
+          <span
+            className={styles.connectionDot}
+            data-state={connectionState}
+            data-testid="sidebar-connection-dot"
+          />
+          <span>
+            {CONNECTION_LABELS[connectionState]}
             {version && (
-              <span style={{ marginLeft: "auto" }} data-testid="sidebar-version">
-                {version}
-              </span>
+              <>
+                {" / "}
+                <span data-testid="sidebar-version">v{version}</span>
+              </>
             )}
-          </div>
-        </Tooltip>
+          </span>
+        </div>
+      </Tooltip>
+
+      <div className={styles.foot}>
         {user && displayName && (
           <div className={styles.userCard}>
             <Avatar name={displayName} kind="human" size="lg" />
