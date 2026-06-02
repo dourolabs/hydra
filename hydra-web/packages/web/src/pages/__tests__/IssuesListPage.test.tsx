@@ -21,6 +21,20 @@ vi.mock("../../features/issues/issueFilters", () => ({
   useIssueFilters: () => ({}),
 }));
 
+// Relation resolver issues `/v1/relations` queries via useQueries, which
+// needs a QueryClient. Stub it to a no-op `null` result (no relation filter
+// active) so the page exercises the URL → server-query mapping for the
+// scalar filters covered by the rest of this file.
+vi.mock("../../features/issues/useRelationFilteredIssueIds", () => ({
+  useRelationFilteredIssueIds: () => ({ issueIds: null, isLoading: false }),
+  RELATION_FILTER_IDS: [
+    "relatedPatch",
+    "relatedChat",
+    "relatedSession",
+    "parentOrChild",
+  ],
+}));
+
 interface PaginatedState {
   issues: IssueSummaryRecord[];
   totalCount: number | undefined;
@@ -302,11 +316,10 @@ describe("IssuesListPage breadcrumb label", () => {
 });
 
 describe("IssuesListPage table-mode server filtering", () => {
-  // The new <FilterBar> narrows the loaded subset purely client-side, so the
-  // table-mode paginated query always loads the unfiltered page (50/page).
-  // The URL-shortcut framing (`?creator=alice`, `?selected=your-issues`,
-  // `?selected=in_progress`) still drives the eyebrow/title/breadcrumb but
-  // does NOT ride through to the server query in table mode.
+  // The new FilterBar drives a server-side query: URL filter params translate
+  // into `IssueFilters` on `usePaginatedIssues` / `useIssueCount`. The
+  // URL-shortcut framing (`?creator=alice`, `?selected=your-issues`,
+  // `?selected=in_progress`) also rides through to the server query.
 
   it("sends no filters to the server on a bare index route", () => {
     renderIssuesList("/");
@@ -314,19 +327,36 @@ describe("IssuesListPage table-mode server filtering", () => {
     expect(paginatedState.countFilters).toEqual({});
   });
 
-  it("still sends no filters to the server when ?creator=<user> is set", () => {
+  it("sends creator to the server when ?creator=<user> is set", () => {
     renderIssuesList("/?creator=alice");
-    expect(paginatedState.paginatedFilters).toEqual({});
+    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
   });
 
-  it("still sends no filters to the server for legacy ?selected=your-issues", () => {
+  it("sends creator to the server for legacy ?selected=your-issues", () => {
     renderIssuesList("/?selected=your-issues");
-    expect(paginatedState.paginatedFilters).toEqual({});
+    expect(paginatedState.paginatedFilters).toEqual({ creator: "alice" });
   });
 
-  it("still sends no filters to the server for ?selected=all", () => {
+  it("sends no filters to the server for ?selected=all", () => {
     renderIssuesList("/?selected=all");
     expect(paginatedState.paginatedFilters).toEqual({});
+  });
+
+  it("sends assignee to the server for legacy ?selected=assigned", () => {
+    renderIssuesList("/?selected=assigned");
+    expect(paginatedState.paginatedFilters).toEqual({
+      assignee: "users/alice",
+    });
+  });
+
+  it("sends status=in-progress for legacy ?selected=in_progress", () => {
+    renderIssuesList("/?selected=in_progress");
+    expect(paginatedState.paginatedFilters).toEqual({ status: "in-progress" });
+  });
+
+  it("sends type to the server when ?type=bug is set", () => {
+    renderIssuesList("/?type=bug");
+    expect(paginatedState.paginatedFilters).toEqual({ type: "bug" });
   });
 
   it("invokes the list and count hooks with identical filter inputs", () => {
@@ -338,6 +368,11 @@ describe("IssuesListPage table-mode server filtering", () => {
     expect(paginatedState.paginatedFilters).toBeDefined();
     expect(paginatedState.countFilters).toBeDefined();
     expect(paginatedState.countFilters).toEqual(paginatedState.paginatedFilters);
+  });
+
+  it("sends the free-text ?q= search param to the server", () => {
+    renderIssuesList("/?q=deployment");
+    expect(paginatedState.paginatedFilters).toEqual({ q: "deployment" });
   });
 });
 

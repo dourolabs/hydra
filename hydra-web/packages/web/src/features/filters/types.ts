@@ -35,6 +35,22 @@ export interface FilterDefinition<TItem> {
   entityLabel?: string;
   options: FilterOption[];
   apply: (item: TItem, filter: Filter) => boolean;
+  /**
+   * When true, the value picker behaves as a radio (picking a value replaces
+   * any previously selected value; picking the same value again deselects).
+   * Used by filter definitions that map to a server param accepting only one
+   * value — e.g., the Issues page's `status` / `type` / `creator` / `assignee`
+   * server filters.
+   */
+  singleSelect?: boolean;
+  /**
+   * When true, the value picker exposes the `is` / `is not` segmented toggle
+   * and the chip renders the op prefix. Defaults to `false` for filter
+   * definitions whose backing server param can only express positive
+   * membership; future definitions that the server can negate should set
+   * `notInSupported: true`.
+   */
+  notInSupported?: boolean;
 }
 
 export type FilterDefinitions<TItem> = Record<string, FilterDefinition<TItem>>;

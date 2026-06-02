@@ -28,6 +28,7 @@ export function ValuePicker<T>({
 
   const Icon = definition.icon;
   const showSearch = definition.options.length > SEARCH_THRESHOLD;
+  const showNotInToggle = definition.notInSupported === true;
 
   const visibleOptions = useMemo(() => {
     if (!search.trim()) return definition.options;
@@ -41,6 +42,16 @@ export function ValuePicker<T>({
   const selectedSet = useMemo(() => new Set(filter.values), [filter.values]);
 
   function toggleValue(value: string) {
+    if (definition.singleSelect) {
+      // Radio behaviour: picking a new value replaces the selection; picking
+      // the currently-selected value clears it. Single-select filters back
+      // server params that take a single value (e.g. `?status=open`), so we
+      // must enforce one-at-a-time at the picker UI to avoid drifting from
+      // what the server can express.
+      const nextValues = selectedSet.has(value) ? [] : [value];
+      onChange({ ...filter, values: nextValues });
+      return;
+    }
     const nextValues = selectedSet.has(value)
       ? filter.values.filter((v) => v !== value)
       : [...filter.values, value];
@@ -67,30 +78,32 @@ export function ValuePicker<T>({
           <Icon size={14} />
         </span>
         <span className={styles.headerLabel}>{definition.label}</span>
-        <div className={styles.segmented} role="tablist" aria-label="Match mode">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filter.op === "in"}
-            className={`${styles.segmentedButton}${
-              filter.op === "in" ? ` ${styles.segmentedActive}` : ""
-            }`}
-            onClick={() => setOp("in")}
-          >
-            is
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filter.op === "not_in"}
-            className={`${styles.segmentedButton}${
-              filter.op === "not_in" ? ` ${styles.segmentedActive}` : ""
-            }`}
-            onClick={() => setOp("not_in")}
-          >
-            is not
-          </button>
-        </div>
+        {showNotInToggle && (
+          <div className={styles.segmented} role="tablist" aria-label="Match mode">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filter.op === "in"}
+              className={`${styles.segmentedButton}${
+                filter.op === "in" ? ` ${styles.segmentedActive}` : ""
+              }`}
+              onClick={() => setOp("in")}
+            >
+              is
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={filter.op === "not_in"}
+              className={`${styles.segmentedButton}${
+                filter.op === "not_in" ? ` ${styles.segmentedActive}` : ""
+              }`}
+              onClick={() => setOp("not_in")}
+            >
+              is not
+            </button>
+          </div>
+        )}
       </div>
 
       {showSearch && (

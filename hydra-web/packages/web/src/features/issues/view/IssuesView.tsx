@@ -1,10 +1,8 @@
-import { useMemo, useState } from "react";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { Icons } from "@hydra/ui";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import type { IssueFilters } from "../usePaginatedIssues";
-import { FilterBar, applyFilters, type Filter } from "../../filters";
-import { useIssueFilters } from "../issueFilters";
+import { FilterBar, type Filter, type FilterDefinitions } from "../../filters";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
 import styles from "./IssuesView.module.css";
@@ -23,12 +21,21 @@ interface IssuesViewProps {
   isFetchingNextPage: boolean;
   onLoadMore: () => void;
   // Board layout still needs these to feed its per-column queries; table
-  // layout now narrows purely client-side via the new <FilterBar>.
+  // layout drives them via the FilterBar / search input.
   baseFilters: IssueFilters;
   username: string;
   filterRootId: string | null;
   eyebrow: string;
   title: string;
+  // Table-mode FilterBar state. The page owns this and persists it to URL;
+  // IssuesView is a dumb consumer that renders the bar + search input.
+  filters: Filter[];
+  setFilters: (next: Filter[]) => void;
+  definitions: FilterDefinitions<IssueSummaryRecord>;
+  filteredCount: number;
+  totalCount: number;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
 }
 
 export function IssuesView({
@@ -46,15 +53,14 @@ export function IssuesView({
   filterRootId,
   eyebrow,
   title,
+  filters,
+  setFilters,
+  definitions,
+  filteredCount,
+  totalCount,
+  searchValue,
+  onSearchChange,
 }: IssuesViewProps) {
-  const definitions = useIssueFilters({ loadedIssues: issues });
-  const [filters, setFilters] = useState<Filter[]>([]);
-
-  const filtered = useMemo(
-    () => applyFilters(issues, filters, definitions),
-    [issues, filters, definitions],
-  );
-
   return (
     <div className={styles.page}>
       <div className={styles.pageHead}>
@@ -93,12 +99,25 @@ export function IssuesView({
 
       {layout === "table" && (
         <div className={styles.toolbar}>
+          <div className={styles.searchBox}>
+            <span className={styles.searchIcon}>
+              <Icons.IconSearch size={14} />
+            </span>
+            <input
+              type="text"
+              placeholder="Search issues…"
+              value={searchValue}
+              onChange={(e) => onSearchChange(e.target.value)}
+              aria-label="Search issues"
+              data-testid="issues-search"
+            />
+          </div>
           <FilterBar
             filters={filters}
             setFilters={setFilters}
             definitions={definitions}
-            count={filtered.length}
-            total={issues.length}
+            count={filteredCount}
+            total={totalCount}
           />
         </div>
       )}
@@ -106,17 +125,17 @@ export function IssuesView({
       <div className={styles.body}>
         {layout === "table" && (
           <>
-            {isLoading && filtered.length === 0 && (
+            {isLoading && issues.length === 0 && (
               <div className={styles.empty}>Loading issues…</div>
             )}
 
-            {!isLoading && filtered.length === 0 && (
+            {!isLoading && issues.length === 0 && (
               <div className={styles.empty}>No issues match the current filters.</div>
             )}
 
-            {filtered.length > 0 && (
+            {issues.length > 0 && (
               <IssuesTable
-                issues={filtered}
+                issues={issues}
                 childStatusMap={childStatusMap}
                 sessionsByIssue={sessionsByIssue}
                 filterRootId={filterRootId}

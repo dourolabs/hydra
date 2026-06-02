@@ -33,6 +33,7 @@ function buildQuery(
   if (filters.assignee) query.assignee = filters.assignee;
   if (filters.labels) query.labels = filters.labels;
   if (filters.q) query.q = filters.q;
+  if (filters.ids) query.ids = filters.ids;
   if (cursor) query.cursor = cursor;
   return query;
 }

@@ -5,16 +5,13 @@ import type {
   IssueStatus,
   IssueSummaryRecord,
   IssueType,
-  Principal,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import type { Filter, FilterDefinitions, FilterOption } from "../filters";
+import type { FilterDefinitions, FilterOption } from "../filters";
 import { useUserOptions } from "../filters/options/userOptions";
 import { statusOptions } from "../filters/options/statusOptions";
 import {
   relationOptionsFromEntities,
-  useIssueRelationsIndex,
-  type RelationEdge,
   type RelationEntity,
 } from "../filters/options/relationOptions";
 
@@ -61,104 +58,42 @@ function buildTypeOptions(): FilterOption[] {
   }));
 }
 
-function principalToPath(p: Principal | null | undefined): string | null {
-  if (!p) return null;
-  if ("User" in p) return `users/${p.User.name}`;
-  if ("Agent" in p) return `agents/${p.Agent.name}`;
-  if ("External" in p) return `external/${p.External.system}/${p.External.username}`;
-  return null;
+// Server-side filtering means none of the `apply` functions below are invoked
+// from the Issues page (the page maps Filter[] → IssueFilters via
+// `filtersToIssuesQuery` and lets the server narrow). `apply` stays defined
+// for the foundation contract (and for any future client-side consumer such
+// as a synchronous unit test) but matches what the server would do.
+function valueIncludes(haystack: string | null, values: string[]): boolean {
+  if (haystack === null) return false;
+  return values.includes(haystack);
 }
-
-function applyValuesMatch(item: string | null, filter: Filter): boolean {
-  if (item === null) return false;
-  return filter.values.includes(item);
-}
-
-interface UseIssueFiltersArgs {
-  loadedIssues: IssueSummaryRecord[];
-}
-
-const ISSUE_RELATION_EDGES = {
-  patch: [{ rel_type: "has-patch", direction: "outbound" } as RelationEdge],
-  chat: [{ rel_type: "refers-to", direction: "inbound" } as RelationEdge],
-  session: [
-    // sessions linked to an issue use `spawned_from` rather than a relation
-    // row; handled separately by listing sessions and grouping client-side.
-  ] as RelationEdge[],
-  parentOrChild: [
-    { rel_type: "child-of", direction: "outbound" } as RelationEdge,
-    { rel_type: "child-of", direction: "inbound" } as RelationEdge,
-  ],
-};
 
 /**
  * Builds the `ISSUE_FILTERS` definition map for the Issues page. Loaded as a
- * hook because the option lists for `assignee` / `creator` / `repository`
- * and the relation indices for relation filters all come from live React
- * Query data.
+ * hook because the option lists for `assignee` / `creator` and the relation
+ * picker option lists all come from live React Query data.
  *
- * The relation filters operate over a per-page index: for the currently
- * loaded `issueIds` we fetch `has-patch`, `refers-to`, `child-of` relations
- * and an associated list of all sessions whose `spawned_from` is one of the
- * loaded issues. The picker option lists are bounded fetches of all
- * patches / sessions / conversations / issues so the user can choose any
- * target — but the actual matching is limited to entries appearing in the
- * relation index, keeping work O(loaded issues × edges) regardless of how
- * many entities exist in the system.
+ * Every entry maps to a server-side query param:
+ *   - `status` / `type`        → `?status=` / `?issue_type=` on listIssues.
+ *   - `creator` / `assignee`   → `?creator=` / `?assignee=` on listIssues.
+ *   - relation filters          → `/v1/relations` lookup → `ids=` on
+ *                                listIssues. See `useRelationFilteredIssueIds`.
+ *
+ * `status` / `type` / `creator` / `assignee` are `singleSelect: true` because
+ * the backing server param accepts a single value. Relations stay
+ * multi-select; their resolver unions related issue ids across the selected
+ * entities. `not_in` is unsupported server-side for every entry, so each
+ * definition leaves `notInSupported` unset (the ValuePicker hides the
+ * is/is-not toggle for these).
+ *
+ * The `repository` filter was confirmed out of scope by the reviewer (the
+ * server-side surface doesn't carry repo_name on IssueSummary today).
  */
-export function useIssueFilters({
-  loadedIssues,
-}: UseIssueFiltersArgs): FilterDefinitions<IssueSummaryRecord> {
+export function useIssueFilters(): FilterDefinitions<IssueSummaryRecord> {
   const userOpts = useUserOptions();
 
-  const issueIds = useMemo(() => loadedIssues.map((rec) => rec.issue_id), [
-    loadedIssues,
-  ]);
-
-  const { index: patchIndex } = useIssueRelationsIndex(
-    issueIds,
-    ISSUE_RELATION_EDGES.patch,
-  );
-  const { index: chatIndex } = useIssueRelationsIndex(
-    issueIds,
-    ISSUE_RELATION_EDGES.chat,
-  );
-  const { index: relativeIndex } = useIssueRelationsIndex(
-    issueIds,
-    ISSUE_RELATION_EDGES.parentOrChild,
-  );
-
-  // Sessions linked to issues go through `spawned_from`, not a relation row.
-  // Fetch sessions for the loaded issue ids and bucket them by source.
-  const sessionsByIssueQuery = useQuery({
-    queryKey: ["filter-sessions-by-issue", [...issueIds].sort().join(",")],
-    queryFn: async () => {
-      if (issueIds.length === 0) return [];
-      const resp = await apiClient.listSessions({
-        spawned_from_ids: issueIds.join(","),
-        limit: Math.max(100, issueIds.length * 4),
-      });
-      return resp.sessions;
-    },
-    enabled: issueIds.length > 0,
-    staleTime: 30_000,
-  });
-
-  const sessionIndex = useMemo(() => {
-    const map = new Map<string, Set<string>>();
-    for (const session of sessionsByIssueQuery.data ?? []) {
-      const issueId = session.session.spawned_from;
-      if (!issueId) continue;
-      const set = map.get(issueId) ?? new Set<string>();
-      set.add(session.session_id);
-      map.set(issueId, set);
-    }
-    return map;
-  }, [sessionsByIssueQuery.data]);
-
-  // Option lists for relation pickers — bounded fetches of recent entities.
-  // Picking an id the filter index can't see is harmless: `apply` falls
-  // through to `false` so the filter narrows to nothing.
+  // Bounded option lists for the relation pickers. Filtering happens
+  // server-side; the picker just needs entity ids + display data.
   const patchListQuery = useQuery({
     queryKey: ["filter-options-patches"],
     queryFn: () => apiClient.listPatches({ limit: 100 }),
@@ -227,37 +162,47 @@ export function useIssueFilters({
         icon: Icons.IconDot,
         group: "properties",
         kind: "enum",
+        singleSelect: true,
         options: buildStatusOptions(),
         apply: (rec, filter) =>
-          applyValuesMatch(rec.issue.status, filter),
+          valueIncludes(rec.issue.status, filter.values),
       },
       type: {
         label: "Type",
         icon: Icons.IconFilter,
         group: "properties",
         kind: "enum",
+        singleSelect: true,
         options: buildTypeOptions(),
-        apply: (rec, filter) => applyValuesMatch(rec.issue.type, filter),
+        apply: (rec, filter) => valueIncludes(rec.issue.type, filter.values),
       },
       assignee: {
         label: "Assignee",
         icon: Icons.IconAgent,
         group: "people",
         kind: "user",
+        singleSelect: true,
         options: userOpts,
-        apply: (rec, filter) =>
-          applyValuesMatch(principalToPath(rec.issue.assignee), filter),
+        // The wire form of `assignee` is a Principal path (`users/<name>` /
+        // `agents/<name>`), which is what the user-options list keys on.
+        apply: (rec, filter) => {
+          const p = rec.issue.assignee;
+          if (!p) return false;
+          let path: string | null = null;
+          if ("User" in p) path = `users/${p.User.name}`;
+          else if ("Agent" in p) path = `agents/${p.Agent.name}`;
+          return path !== null && filter.values.includes(path);
+        },
       },
       creator: {
         label: "Creator",
         icon: Icons.IconAgent,
         group: "people",
         kind: "user",
-        // The Creator field on the wire is a bare username, not a Principal
-        // path. We surface the same user-option list (with `users/<name>` /
-        // `agents/<name>` values) for consistency and strip the prefix when
-        // matching.
+        singleSelect: true,
         options: userOpts,
+        // Creator on the wire is a bare username; strip the Principal-path
+        // prefix to compare.
         apply: (rec, filter) => {
           const creator = rec.issue.creator;
           return filter.values.some((v) => {
@@ -277,11 +222,7 @@ export function useIssueFilters({
         kind: "relation",
         entityLabel: "chat",
         options: relationOptionsFromEntities("chat", conversationEntities),
-        apply: (rec, filter) => {
-          const set = chatIndex.get(rec.issue_id);
-          if (!set) return false;
-          return filter.values.some((v) => set.has(v));
-        },
+        apply: () => false,
       },
       relatedPatch: {
         label: "Related patch",
@@ -290,11 +231,7 @@ export function useIssueFilters({
         kind: "relation",
         entityLabel: "patch",
         options: relationOptionsFromEntities("patch", patchEntities),
-        apply: (rec, filter) => {
-          const set = patchIndex.get(rec.issue_id);
-          if (!set) return false;
-          return filter.values.some((v) => set.has(v));
-        },
+        apply: () => false,
       },
       relatedSession: {
         label: "Related session",
@@ -303,11 +240,7 @@ export function useIssueFilters({
         kind: "relation",
         entityLabel: "session",
         options: relationOptionsFromEntities("session", sessionEntities),
-        apply: (rec, filter) => {
-          const set = sessionIndex.get(rec.issue_id);
-          if (!set) return false;
-          return filter.values.some((v) => set.has(v));
-        },
+        apply: () => false,
       },
       parentOrChild: {
         label: "Parent or child issue",
@@ -316,11 +249,7 @@ export function useIssueFilters({
         kind: "relation",
         entityLabel: "parent or child issue",
         options: relationOptionsFromEntities("issue", issueEntities),
-        apply: (rec, filter) => {
-          const set = relativeIndex.get(rec.issue_id);
-          if (!set) return false;
-          return filter.values.some((v) => set.has(v));
-        },
+        apply: () => false,
       },
     };
   }, [
@@ -329,9 +258,5 @@ export function useIssueFilters({
     patchEntities,
     sessionEntities,
     issueEntities,
-    chatIndex,
-    patchIndex,
-    sessionIndex,
-    relativeIndex,
   ]);
 }
