@@ -143,6 +143,10 @@ export function usePatchFilters(): FilterDefinitions<PatchSummaryRecord> {
           });
         },
       },
+      // Relation filters are resolved server-side via
+      // `useRelationFilteredPatchIds`; the page never invokes `apply` on these.
+      // `() => false` is a guardrail so stray client-side `applyFilters(...)`
+      // calls don't silently fall through and treat every row as a match.
       relatedIssue: {
         label: "Related issue",
         icon: Icons.IconIssue,
