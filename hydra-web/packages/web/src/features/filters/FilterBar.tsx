@@ -19,6 +19,12 @@ interface FilterBarProps<T> {
   definitions: FilterDefinitions<T>;
   count: number;
   total: number;
+  /**
+   * Notified whenever the add-filter menu opens or closes. Pages that
+   * lazy-load relation picker options use this to start prefetching the
+   * moment the menu opens so the picker isn't empty when clicked.
+   */
+  onMenuOpenChange?: (open: boolean) => void;
 }
 
 const POP_GAP = 4;
@@ -55,6 +61,7 @@ export function FilterBar<T>({
   definitions,
   count,
   total,
+  onMenuOpenChange,
 }: FilterBarProps<T>) {
   const addButtonRef = useRef<HTMLButtonElement | null>(null);
   const chipRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
@@ -75,12 +82,14 @@ export function FilterBar<T>({
     if (!trigger) return;
     setMenuAnchor(computeAnchor(trigger.getBoundingClientRect()));
     setMenuOpen(true);
-  }, []);
+    onMenuOpenChange?.(true);
+  }, [onMenuOpenChange]);
 
   const closeMenu = useCallback(() => {
     setMenuOpen(false);
     setMenuAnchor(null);
-  }, []);
+    onMenuOpenChange?.(false);
+  }, [onMenuOpenChange]);
 
   const openPicker = useCallback((uid: string) => {
     const el = chipRefs.current.get(uid);

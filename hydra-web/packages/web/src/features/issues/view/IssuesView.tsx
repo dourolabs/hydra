@@ -36,6 +36,9 @@ interface IssuesViewProps {
   totalCount: number;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  // Passed through to <FilterBar onMenuOpenChange>. The page uses this to
+  // lazy-load relation-picker option lists only when the menu opens.
+  onFilterMenuOpenChange?: (open: boolean) => void;
 }
 
 export function IssuesView({
@@ -60,6 +63,7 @@ export function IssuesView({
   totalCount,
   searchValue,
   onSearchChange,
+  onFilterMenuOpenChange,
 }: IssuesViewProps) {
   return (
     <div className={styles.page}>
@@ -118,6 +122,7 @@ export function IssuesView({
             definitions={definitions}
             count={filteredCount}
             total={totalCount}
+            onMenuOpenChange={onFilterMenuOpenChange}
           />
         </div>
       )}

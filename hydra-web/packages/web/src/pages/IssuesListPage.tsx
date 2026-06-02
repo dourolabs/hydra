@@ -192,8 +192,6 @@ export function IssuesListPage() {
   const currentUser = user ? actorDisplayName(user.actor) : "";
   const currentPrincipalPath = user ? actorPrincipalPath(user.actor) : null;
 
-  const definitions = useIssueFilters();
-
   // Filters are mirrored between URL params and local state. The local state
   // is the source of truth for chip `_uid`s (used by FilterBar to anchor the
   // "just-added" value picker), and the URL is the source of truth for
@@ -208,6 +206,15 @@ export function IssuesListPage() {
       currentPrincipalPath,
     ),
   );
+
+  // Lazy-load gate for the relation-picker option lists in `useIssueFilters`:
+  // flipped on while the FilterBar's add-filter menu is open so the picker
+  // isn't empty when the user clicks "Related X". Combined inside the hook
+  // with a check on `filters` so URL-rehydrated relation chips also enable
+  // the right list immediately on first paint.
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+
+  const definitions = useIssueFilters({ filters, addMenuOpen });
 
   useEffect(() => {
     const fromUrl = applyLegacySelected(
@@ -390,6 +397,7 @@ export function IssuesListPage() {
         totalCount={displayCount}
         searchValue={searchValue}
         onSearchChange={handleSearchChange}
+        onFilterMenuOpenChange={setAddMenuOpen}
       />
     </div>
   );
