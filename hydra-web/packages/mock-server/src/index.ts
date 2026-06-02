@@ -23,12 +23,36 @@ import { createRelationRoutes } from "./routes/relations.js";
 import { createSecretRoutes, resetSecrets } from "./routes/secrets.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { loadSeedData } from "./seed.js";
+import {
+  startSyntheticEvents,
+  type SyntheticEventsHandle,
+} from "./synthetic-events.js";
 
 const store = new Store();
 
 // Load seed data on startup
 loadSeedData(store);
 const app = new Hono();
+
+// Background loop that periodically appends synthetic SessionEvents to every
+// running session so the dev UI sees the events / chat surfaces live-update.
+// Gated by MOCK_SYNTHETIC_EVENTS env var (default ON; set to "0" to disable);
+// fully off under Vitest so contract tests aren't perturbed by background
+// emissions. The handle is stopped and re-armed around POST /v1/dev/reset
+// so a reset doesn't leave a stale timer firing against the new seed state.
+let syntheticEvents: SyntheticEventsHandle | null = null;
+
+function syntheticEventsEnabled(): boolean {
+  if (process.env.VITEST) return false;
+  return process.env.MOCK_SYNTHETIC_EVENTS !== "0";
+}
+
+function syntheticIntervalMs(): number | undefined {
+  const raw = process.env.MOCK_SYNTHETIC_EVENTS_INTERVAL_MS;
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
 
 // X-Mock-Error middleware: return simulated error for any request with this header
 app.use("*", async (c, next) => {
@@ -107,8 +131,17 @@ app.onError((err, c) => {
 
 // POST /v1/dev/reset — restore store to seed data state
 app.post("/v1/dev/reset", (c) => {
+  if (syntheticEvents) {
+    syntheticEvents.stop();
+    syntheticEvents = null;
+  }
   loadSeedData(store);
   resetSecrets();
+  if (syntheticEventsEnabled()) {
+    syntheticEvents = startSyntheticEvents(store, {
+      intervalMs: syntheticIntervalMs(),
+    });
+  }
   return c.json({ ok: true });
 });
 
@@ -154,6 +187,11 @@ if (!process.env.VITEST) {
   startMockServer({ port }).then(({ port: resolvedPort }) => {
     console.log(`@hydra/mock-server listening on http://localhost:${resolvedPort}`);
   });
+  if (syntheticEventsEnabled()) {
+    syntheticEvents = startSyntheticEvents(store, {
+      intervalMs: syntheticIntervalMs(),
+    });
+  }
 }
 
 export { app, store };

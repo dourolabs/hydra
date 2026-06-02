@@ -14,6 +14,17 @@ pnpm --filter @hydra/mock-server typecheck
 
 The web dev server (`pnpm --filter @hydra/web dev`) wires the mock server in automatically — open `http://localhost:3000` and any of the issue IDs below.
 
+## Synthetic SessionEvents
+
+The standalone server runs a background loop that appends one synthetic `SessionEvent` (alternating `tool_use` / `assistant_message`, content tagged `[mock]`) every ~2.5s to every session whose latest version has `status === "running"`. Each append flows through the same `appendSessionEvent` path the conversation routes use, so the chat detail and session events surfaces live-update via `session_event_created` SSE without any manual refetch — same end-to-end behaviour as production where running agents continuously produce events. The loop is stopped and re-armed around `POST /v1/dev/reset` so a reset cleanly resumes from the freshly-seeded log without orphaned timers.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `MOCK_SYNTHETIC_EVENTS` | `1` (on) | Set to `0` to freeze the world — useful when debugging a stable mock snapshot. |
+| `MOCK_SYNTHETIC_EVENTS_INTERVAL_MS` | `2500` | Override the tick interval (positive integer, milliseconds). |
+
+The loop is fully OFF under Vitest so contract tests are unaffected; the dedicated `synthetic-events.test.ts` opts in explicitly with a short interval.
+
 ## Seed issues with forms
 
 The form schema is defined in `hydra-common/src/api/v1/form.rs` and mirrored to TypeScript under `packages/api/src/generated/{Form,Field,Input,Action,Effect,SelectOption,FormResponse}.ts`. When working on `FormPanel` or anything form-adjacent, open the issue IDs below — between them they cover every `Input` variant, both `Effect` types, and every `ActionStyle`.
