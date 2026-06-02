@@ -1,114 +1,90 @@
-import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, Icons, Kbd } from "@hydra/ui";
-import type { PatchStatus, PatchSummaryRecord } from "@hydra/api";
-import { usePaginatedPatches, usePatchCount } from "../../dashboard/usePaginatedPatches";
+import type { PatchSummaryRecord } from "@hydra/api";
 import { normalizePatchStatus } from "../../../utils/statusMapping";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import { PatchRailRow } from "../../related/RailRow";
 import { PatchRepoLink } from "../PatchRepoLink";
+import {
+  FilterBar,
+  type Filter,
+  type FilterDefinitions,
+} from "../../filters";
 import styles from "./PatchesView.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
 
-interface StatusFilter {
-  key: "all" | PatchStatus;
-  label: string;
+interface PatchesViewProps {
+  patches: PatchSummaryRecord[];
+  isLoading: boolean;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  onLoadMore: () => void;
+  eyebrow: string;
+  // FilterBar state. The page owns this and persists it to URL; PatchesView
+  // is a dumb consumer that renders the bar + search input.
+  filters: Filter[];
+  setFilters: (next: Filter[]) => void;
+  definitions: FilterDefinitions<PatchSummaryRecord>;
+  filteredCount: number;
+  totalCount: number;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
 }
 
-const STATUS_FILTERS: StatusFilter[] = [
-  { key: "all", label: "All" },
-  { key: "Open", label: "Open" },
-  { key: "ChangesRequested", label: "Changes requested" },
-  { key: "Merged", label: "Merged" },
-  { key: "Closed", label: "Closed" },
-];
-
-export function PatchesView() {
+export function PatchesView({
+  patches,
+  isLoading,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
+  eyebrow,
+  filters,
+  setFilters,
+  definitions,
+  filteredCount,
+  totalCount,
+  searchValue,
+  onSearchChange,
+}: PatchesViewProps) {
   const navigate = useNavigate();
   const isMobile = useMediaQuery(MOBILE_QUERY);
-  const [searchValue, setSearchValue] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const [selectedStatus, setSelectedStatus] = useState<PatchStatus | null>(null);
-
-  useEffect(() => {
-    return () => clearTimeout(debounceRef.current);
-  }, []);
-
-  const handleSearchChange = (value: string) => {
-    setSearchValue(value);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setSearchQuery(value), 300);
-  };
-
-  const filters = useMemo(
-    () => ({
-      q: searchQuery || undefined,
-      status: selectedStatus ? [selectedStatus] : undefined,
-    }),
-    [searchQuery, selectedStatus],
-  );
-
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    usePaginatedPatches(filters);
-
-  const { data: totalCount } = usePatchCount(filters);
-
-  const patches = useMemo<PatchSummaryRecord[]>(() => {
-    const seen = new Set<string>();
-    return (data?.pages.flatMap((p) => p.patches) ?? []).filter((rec) => {
-      if (seen.has(rec.patch_id)) return false;
-      seen.add(rec.patch_id);
-      return true;
-    });
-  }, [data]);
 
   const handleRowClick = (id: string) => {
     navigate(`/patches/${id}`);
   };
 
-  const activeKey: StatusFilter["key"] = selectedStatus ?? "all";
-  const displayCount = totalCount ?? patches.length;
-
   return (
     <div className={styles.page}>
       <div className={styles.pageHead}>
         <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>
-            WORK · {displayCount === 1 ? "1 PATCH" : `${displayCount} PATCHES`}
-          </span>
+          <span className={styles.eyebrow}>{eyebrow}</span>
           <h1 className={styles.pageTitle}>Patches</h1>
         </div>
         <span className={styles.headSpacer} />
       </div>
 
       <div className={styles.toolbar}>
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            className={`${styles.chipFilter}${activeKey === f.key ? ` ${styles.chipFilterActive}` : ""}`}
-            onClick={() => setSelectedStatus(f.key === "all" ? null : f.key)}
-            data-testid={`patches-filter-${f.key}`}
-          >
-            <span>{f.label}</span>
-          </button>
-        ))}
-        <span className={styles.toolbarSpacer} />
         <div className={styles.searchBox}>
           <Icons.IconSearch className={styles.searchIcon} size={14} />
           <input
             type="text"
             placeholder="Search patches…"
             value={searchValue}
-            onChange={(e) => handleSearchChange(e.target.value)}
+            onChange={(e) => onSearchChange(e.target.value)}
             aria-label="Search patches"
             data-testid="patches-search"
           />
           <Kbd>/</Kbd>
         </div>
+        <FilterBar
+          filters={filters}
+          setFilters={setFilters}
+          definitions={definitions}
+          count={filteredCount}
+          total={totalCount}
+        />
       </div>
 
       <div className={styles.body}>
@@ -193,7 +169,7 @@ export function PatchesView() {
             <button
               type="button"
               className={styles.loadMoreButton}
-              onClick={() => fetchNextPage()}
+              onClick={onLoadMore}
               disabled={isFetchingNextPage}
             >
               {isFetchingNextPage ? "Loading…" : "Load more"}

@@ -42,6 +42,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@patches:view-detail` — User can view a patch's details and metadata
 - `@patches:navigate` — User can navigate to a patch from an issue
+- `@patches:filter-bar` — Patches list toolbar uses the generic `<FilterBar>`. User can open + Filter, pick Status → Merged, the URL persists `?status=Merged`, the table narrows server-side (`listPatches` is called with `status=Merged`), and a page reload re-hydrates the chip from the URL.
 
 ## Documents
 
