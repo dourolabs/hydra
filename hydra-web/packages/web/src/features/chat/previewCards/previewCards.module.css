@@ -42,15 +42,6 @@
   max-width: 160px;
 }
 
-.progressLine {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--fg-2);
-}
-
 .sessionBodyLine {
   display: block;
   font-size: var(--t-sm);
@@ -84,6 +75,11 @@
 }
 
 @keyframes previewCardPulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 0.9; }
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
