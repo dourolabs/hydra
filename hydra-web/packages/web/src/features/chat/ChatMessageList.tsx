@@ -112,8 +112,15 @@ export function ChatMessageList({
     // intentionally scrolls away.
     if (!thread || typeof ResizeObserver === "undefined") return;
     let following = true;
-    const observer = new ResizeObserver(() => {
+    // Per spec, ResizeObserver fires once on observe with the current size.
+    // Capture the current height so that initial fire is a no-op and the
+    // smooth-scroll above is not pre-empted by an immediate auto-scroll.
+    let lastHeight = thread.getBoundingClientRect().height;
+    const observer = new ResizeObserver((entries) => {
       if (!following) return;
+      const newHeight = entries[0]?.contentRect.height ?? thread.scrollHeight;
+      if (newHeight <= lastHeight) return;
+      lastHeight = newHeight;
       container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
     });
     observer.observe(thread);

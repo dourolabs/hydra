@@ -80,8 +80,35 @@ describe("ChatMessageList auto-scroll", () => {
 describe("ChatMessageList ResizeObserver follow-bottom", () => {
   let scrollToSpy: ReturnType<typeof vi.fn>;
   let originalScrollTo: typeof Element.prototype.scrollTo | undefined;
-  let observers: Array<{ cb: ResizeObserverCallback; targets: Element[] }>;
+  type MockObserverState = {
+    cb: ResizeObserverCallback;
+    targets: Element[];
+    instance: ResizeObserver;
+  };
+  let observers: MockObserverState[];
   let OriginalResizeObserver: typeof ResizeObserver | undefined;
+
+  function makeEntry(target: Element, height: number): ResizeObserverEntry {
+    return {
+      target,
+      contentRect: {
+        height,
+        width: 0,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        toJSON() {
+          return {};
+        },
+      },
+      borderBoxSize: [],
+      contentBoxSize: [],
+      devicePixelContentBoxSize: [],
+    } as unknown as ResizeObserverEntry;
+  }
 
   beforeEach(() => {
     originalScrollTo = Element.prototype.scrollTo;
@@ -91,12 +118,18 @@ describe("ChatMessageList ResizeObserver follow-bottom", () => {
     observers = [];
     OriginalResizeObserver = globalThis.ResizeObserver;
     class MockResizeObserver {
+      private cb: ResizeObserverCallback;
       private targets: Element[] = [];
       constructor(cb: ResizeObserverCallback) {
-        observers.push({ cb, targets: this.targets });
+        this.cb = cb;
+        observers.push({ cb, targets: this.targets, instance: this as unknown as ResizeObserver });
       }
       observe(target: Element) {
         this.targets.push(target);
+        // Per spec, observe() queues a callback firing with the current size.
+        // jsdom reports getBoundingClientRect().height === 0 for unstyled
+        // elements, so 0 is the correct "current size" here.
+        this.cb([makeEntry(target, 0)], this as unknown as ResizeObserver);
       }
       unobserve() {}
       disconnect() {
@@ -122,10 +155,11 @@ describe("ChatMessageList ResizeObserver follow-bottom", () => {
     vi.clearAllMocks();
   });
 
-  function fireResize() {
+  function fireResize(height = 100) {
     const active = observers[observers.length - 1];
     if (!active || active.targets.length === 0) return;
-    active.cb([], active as unknown as ResizeObserver);
+    const target = active.targets[0]!;
+    active.cb([makeEntry(target, height)], active.instance);
   }
 
   it("re-scrolls to bottom when the thread resizes after a new message (e.g., preview cards painting)", () => {
@@ -136,10 +170,34 @@ describe("ChatMessageList ResizeObserver follow-bottom", () => {
     expect(initialCalls).toBeGreaterThan(0);
 
     // Simulate a preview card painting in after the initial scroll.
-    fireResize();
+    fireResize(100);
 
     expect(scrollToSpy.mock.calls.length).toBeGreaterThan(initialCalls);
     expect(scrollToSpy.mock.calls.at(-1)?.[0]).toMatchObject({ behavior: "auto" });
+  });
+
+  it("does not pre-empt the initial smooth scroll when ResizeObserver's spec-mandated initial fire reports the same size", () => {
+    // The MockResizeObserver in beforeEach simulates the spec-correct initial
+    // fire on observe(). Each effect run (mount + rerender) triggers exactly
+    // one smooth scroll, and the initial-fire callback must NOT add an auto
+    // scroll on top of it.
+    const { rerender } = render(<ChatMessageList events={[userMessage("hi")]} />);
+    rerender(<ChatMessageList events={[userMessage("hi"), assistantMessage("hello")]} />);
+
+    expect(scrollToSpy).toHaveBeenCalled();
+    for (const call of scrollToSpy.mock.calls) {
+      expect(call[0]).toMatchObject({ behavior: "smooth" });
+    }
+  });
+
+  it("ignores resize events that do not grow the thread", () => {
+    const { rerender } = render(<ChatMessageList events={[userMessage("hi")]} />);
+    rerender(<ChatMessageList events={[userMessage("hi"), assistantMessage("hello")]} />);
+
+    const callsBefore = scrollToSpy.mock.calls.length;
+    // Same height as initial (0) — should be a no-op.
+    fireResize(0);
+    expect(scrollToSpy.mock.calls.length).toBe(callsBefore);
   });
 
   it("stops following the bottom after a brief window so the user can scroll up freely", () => {
@@ -150,7 +208,7 @@ describe("ChatMessageList ResizeObserver follow-bottom", () => {
     vi.advanceTimersByTime(2000);
 
     const callsBefore = scrollToSpy.mock.calls.length;
-    fireResize();
+    fireResize(100);
     expect(scrollToSpy.mock.calls.length).toBe(callsBefore);
   });
 
@@ -162,7 +220,7 @@ describe("ChatMessageList ResizeObserver follow-bottom", () => {
     list.dispatchEvent(new Event("wheel"));
 
     const callsBefore = scrollToSpy.mock.calls.length;
-    fireResize();
+    fireResize(100);
     expect(scrollToSpy.mock.calls.length).toBe(callsBefore);
   });
 });
