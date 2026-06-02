@@ -7,6 +7,7 @@ import { normalizePatchStatus } from "../../../utils/statusMapping";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import { PatchRailRow } from "../../related/RailRow";
+import { PatchRepoLink } from "../PatchRepoLink";
 import styles from "./PatchesView.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -162,19 +163,7 @@ export function PatchesView() {
                         </span>
                       </td>
                       <td className={styles.colRepo}>
-                        {p.github?.url ? (
-                          <a
-                            href={p.github.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={styles.repoLink}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {p.github.owner}/{p.github.repo}#{String(p.github.number)}
-                          </a>
-                        ) : (
-                          p.service_repo_name
-                        )}
+                        <PatchRepoLink patch={p} />
                       </td>
                       <td className={styles.colUpdated}>
                         <AgoTime iso={rec.timestamp} />

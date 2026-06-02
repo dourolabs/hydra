@@ -1,0 +1,22 @@
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--acc);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link:hover {
+  color: var(--acc-bright);
+  text-decoration: underline;
+}
+
+.label {
+  white-space: nowrap;
+}
+
+.icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}

@@ -261,20 +261,10 @@
 }
 
 .colRepo {
-  width: 160px;
+  width: 240px;
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--fg-1);
-}
-
-.repoLink {
-  color: var(--acc);
-  text-decoration: none;
-}
-
-.repoLink:hover {
-  color: var(--acc-bright);
-  text-decoration: underline;
 }
 
 .colUpdated {
