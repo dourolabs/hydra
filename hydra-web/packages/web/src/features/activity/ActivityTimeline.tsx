@@ -1,7 +1,11 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Avatar, Spinner } from "@hydra/ui";
 import type { ActorRef } from "@hydra/api";
-import { actorDisplayName, actorAvatarName } from "../../utils/actors";
+import {
+  actorDisplayName,
+  actorAvatarName,
+  actorAvatarKind,
+} from "../../utils/actors";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./ActivityTimeline.module.css";
 
@@ -44,7 +48,11 @@ export function TimelineEntry({
         <div className={styles.entryHeader}>
           {actor && (
             <span className={styles.actor}>
-              <Avatar name={actorAvatarName(actor)} size="sm" />
+              <Avatar
+                name={actorAvatarName(actor)}
+                kind={actorAvatarKind(actor)}
+                size="sm"
+              />
               {actorDisplayName(actor)}
             </span>
           )}
