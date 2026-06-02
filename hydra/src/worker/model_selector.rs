@@ -20,14 +20,15 @@ use hydra_common::SessionId;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_tungstenite::tungstenite;
 
-use crate::worker::claude::{Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage};
+use crate::worker::claude::{
+    translate_claude_event, Claude, ClaudeEvent, ClaudeResume, ClaudeUserMessage,
+};
 use crate::worker::codex::Codex;
 use crate::worker::relay_adapter::{
     spawn_relay_pump, worker_event_to_session_event, PumpExit, ReconnectFn, RelayAdapter,
 };
 use crate::worker::report::{
-    MaterializeError, NativeResume, RunReport, SessionResume, TokenUsage, WorkerEvent,
-    WorkerInputMessage,
+    MaterializeError, NativeResume, RunReport, SessionResume, WorkerEvent, WorkerInputMessage,
 };
 use crate::worker::socket::WorkerSocket;
 
@@ -658,36 +659,10 @@ fn spawn_output_translator(
     })
 }
 
-/// Per-event translation between Claude-native and generic event shapes.
-/// Pulled out so unit tests can exercise it directly without spinning up the
-/// translator task.
-pub(crate) fn translate_claude_event(event: ClaudeEvent) -> WorkerEvent {
-    match event {
-        ClaudeEvent::Assistant { text } => WorkerEvent::AssistantText { text },
-        ClaudeEvent::Usage {
-            input_tokens,
-            output_tokens,
-            cache_read_input_tokens,
-            cache_creation_input_tokens,
-        } => WorkerEvent::Usage {
-            usage: TokenUsage {
-                input_tokens,
-                output_tokens,
-                cache_read_input_tokens,
-                cache_creation_input_tokens,
-            },
-        },
-        ClaudeEvent::SystemInit { session_id } => WorkerEvent::SessionInit {
-            model_session_id: session_id,
-        },
-        ClaudeEvent::ToolUse { tool_name, payload } => WorkerEvent::ToolUse { tool_name, payload },
-        ClaudeEvent::Raw { value } => WorkerEvent::Raw { value },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::report::TokenUsage;
     use std::path::PathBuf;
 
     #[test]
