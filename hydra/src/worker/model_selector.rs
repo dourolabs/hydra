@@ -39,6 +39,20 @@ use crate::worker::socket::WorkerSocket;
 /// natural-exit path. The unified cleanup still runs unconditionally.
 const HEADLESS_END_SESSION_DRAIN: Duration = Duration::from_millis(100);
 
+/// Outer bound for `forwarder.await` in `drive_headless`. The wrapper's
+/// stdout-pump shutdown chain (`PROCESS_GROUP_GRACE_PERIOD` of 5s →
+/// `kill_process_group` → `PIPE_READ_TIMEOUT` of 10s, see
+/// `worker::claude`) is finite, so under normal conditions the wrapper's
+/// `Sender<WorkerEvent>` drops well inside this window and the forwarder
+/// hands the WS back via the natural-close branch. This bound only fires
+/// when an orphan task still holds a `Sender<WorkerEvent>` clone after
+/// `Claude::run` returned — `event_rx.recv().await` would otherwise block
+/// indefinitely and wedge `drive_headless`. On timeout we abort the
+/// forwarder, log a warning, and treat the result as `None` so the
+/// `if let Some(mut ws) = ws_opt` cleanup branch is skipped and the
+/// server-side disconnect fallback caps the events log.
+const HEADLESS_FORWARDER_DRAIN: Duration = Duration::from_secs(30);
+
 /// Routes a worker invocation to either the Claude or Codex per-model wrapper.
 ///
 /// Constructed once per worker via [`ModelSelector::from_context`]; the public
@@ -117,7 +131,7 @@ impl ModelSelector {
         let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>(32);
         let forwarder = spawn_headless_event_forwarder(ws, event_rx);
         let run_result = self.run_with_native(&prompt, resume, Some(event_tx)).await;
-        let ws_opt = forwarder.await.unwrap_or(None);
+        let ws_opt = await_headless_forwarder(forwarder, HEADLESS_FORWARDER_DRAIN).await;
         let report = run_result?;
 
         // Headless doesn't concurrently read the WS during `run_with_native`,
@@ -523,6 +537,42 @@ where
         }
         Some(ws)
     })
+}
+
+/// Await the headless event forwarder, bounded by `drain`. On natural close,
+/// returns whatever the forwarder produced (`Some(ws)` for a healthy hand-back
+/// or `None` if a mid-stream WS send error already abandoned the socket). On
+/// timeout — the per-wrapper shutdown failed to drop every
+/// `Sender<WorkerEvent>` clone, so the forwarder is wedged on
+/// `event_rx.recv().await` — abort the task, log a warning, and return `None`
+/// so the caller skips the cleanup write path. See
+/// [`HEADLESS_FORWARDER_DRAIN`] for the rationale.
+async fn await_headless_forwarder<S>(
+    forwarder: JoinHandle<Option<WorkerSocket<S>>>,
+    drain: Duration,
+) -> Option<WorkerSocket<S>>
+where
+    S: Send + 'static,
+{
+    let abort_handle = forwarder.abort_handle();
+    match tokio::time::timeout(drain, forwarder).await {
+        Ok(Ok(opt)) => opt,
+        Ok(Err(err)) => {
+            tracing::warn!(
+                error = %err,
+                "headless event forwarder task ended abnormally; abandoning WS",
+            );
+            None
+        }
+        Err(_) => {
+            abort_handle.abort();
+            tracing::warn!(
+                drain_secs = drain.as_secs(),
+                "headless event forwarder did not drain within timeout; aborting (orphan task is still holding a WorkerEvent sender)",
+            );
+            None
+        }
+    }
 }
 
 /// Best-effort headless drain of an inbound `ServerMessage::EndSession`.
@@ -1430,6 +1480,54 @@ mod tests {
                     event: SessionEvent::Closed { .. }
                 }
             ));
+        }
+
+        #[tokio::test]
+        async fn await_with_timeout_returns_none_when_orphan_holds_sender() {
+            // Simulates the corner case from the wrapper's stdout-pump
+            // timeout path: a detached task still holds a `Sender<WorkerEvent>`
+            // clone after the per-wrapper `run` returned, so the forwarder's
+            // `event_rx.recv().await` never observes the channel closing.
+            // `await_headless_forwarder` must bound the wait, abort the
+            // forwarder, and return `None` so `drive_headless` skips the
+            // cleanup write path (the server-side disconnect fallback caps
+            // the log).
+            let (ws, _server_tx, _server_rx) = duplex();
+            let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>(4);
+            let forwarder = spawn_headless_event_forwarder(ws, event_rx);
+
+            // Leak the sender into a detached task that never drops it —
+            // the orphan stdout pump in production.
+            let leak = tokio::spawn(async move {
+                let _hold = event_tx;
+                std::future::pending::<()>().await;
+            });
+
+            let ws_back = await_headless_forwarder(forwarder, Duration::from_millis(50)).await;
+            assert!(
+                ws_back.is_none(),
+                "forwarder timeout must abandon the WS, not hand it back",
+            );
+
+            leak.abort();
+        }
+
+        #[tokio::test]
+        async fn await_with_timeout_returns_ws_on_natural_close() {
+            // Sanity check: when the wrapper drops its sender normally, the
+            // forwarder's natural-close branch runs and the helper returns
+            // the WS — the timeout is just an outer bound, not the common
+            // path.
+            let (ws, _server_tx, _server_rx) = duplex();
+            let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>(4);
+            let forwarder = spawn_headless_event_forwarder(ws, event_rx);
+            drop(event_tx);
+
+            let ws_back = await_headless_forwarder(forwarder, Duration::from_secs(5)).await;
+            assert!(
+                ws_back.is_some(),
+                "natural close must propagate the WS through the helper",
+            );
         }
 
         #[tokio::test]
