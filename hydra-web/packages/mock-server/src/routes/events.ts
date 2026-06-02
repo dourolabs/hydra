@@ -1,6 +1,51 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import type { SseEventType } from "@hydra/api";
 import type { Store, StoreEvent } from "../store.js";
+
+/**
+ * Maps an SSE event type to the entity-type category used by the `types=`
+ * query parameter (`issues`, `sessions`, `patches`, `documents`, `labels`,
+ * `conversations`). Mirrors `event_entity_info` in
+ * `hydra-server/src/routes/events.rs` so the mock server filters the same way
+ * the real server does. Returns `null` for non-entity events (`connected`,
+ * `resync`, `heartbeat`, `session_log`) that the SSE route writes directly and
+ * does not route through the filter.
+ */
+export function eventCategory(eventType: SseEventType): string | null {
+  switch (eventType) {
+    case "issue_created":
+    case "issue_updated":
+    case "issue_deleted":
+      return "issues";
+    case "patch_created":
+    case "patch_updated":
+    case "patch_deleted":
+      return "patches";
+    case "session_created":
+    case "session_updated":
+    case "session_event_created":
+    case "session_state_updated":
+      return "sessions";
+    case "document_created":
+    case "document_updated":
+    case "document_deleted":
+      return "documents";
+    case "label_created":
+    case "label_updated":
+    case "label_deleted":
+      return "labels";
+    case "conversation_created":
+    case "conversation_updated":
+    case "conversation_event_created":
+      return "conversations";
+    case "connected":
+    case "resync":
+    case "heartbeat":
+    case "session_log":
+      return null;
+  }
+}
 
 export function createEventRoutes(store: Store): Hono {
   const app = new Hono();
@@ -17,11 +62,12 @@ export function createEventRoutes(store: Store): Hono {
     const lastEventId = lastEventIdHeader ? Number(lastEventIdHeader) : 0;
 
     function matchesFilter(event: StoreEvent): boolean {
-      if (typesFilter && !typesFilter.includes(event.eventType)) return false;
-      if (issueIdsFilter && event.entityType === "issues" && !issueIdsFilter.includes(event.entityId)) return false;
-      if (sessionIdsFilter && event.entityType === "sessions" && !sessionIdsFilter.includes(event.entityId)) return false;
-      if (patchIdsFilter && event.entityType === "patches" && !patchIdsFilter.includes(event.entityId)) return false;
-      if (documentIdsFilter && event.entityType === "documents" && !documentIdsFilter.includes(event.entityId)) return false;
+      const category = eventCategory(event.eventType);
+      if (typesFilter && (category === null || !typesFilter.includes(category))) return false;
+      if (issueIdsFilter && category === "issues" && !issueIdsFilter.includes(event.entityId)) return false;
+      if (sessionIdsFilter && category === "sessions" && !sessionIdsFilter.includes(event.entityId)) return false;
+      if (patchIdsFilter && category === "patches" && !patchIdsFilter.includes(event.entityId)) return false;
+      if (documentIdsFilter && category === "documents" && !documentIdsFilter.includes(event.entityId)) return false;
       return true;
     }
 
