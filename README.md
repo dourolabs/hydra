@@ -116,12 +116,11 @@ Check out the documents tab of the frontend to see what's in the store and edit 
 
 ### Git Repositories and Branch Management
 
-Repositories are registered with Hydra so agents know where to work. Each issue and task gets tracking branches pushed to the remote:
+Repositories are registered with Hydra so agents know where to work. Each issue gets a tracking branch pushed to the remote:
 
-- `hydra/<issue-id>/base` -- where work on the issue started
 - `hydra/<issue-id>/head` -- the current head of work for the issue
 
-This allows sequential agents working on the same issue to pick up where the previous one left off. You can check out any of these branches to inspect the state of work at any point.
+This allows sequential agents working on the same issue to pick up where the previous one left off. You can check out this branch to inspect the state of work at any point.
 
 ## Code Overview
 

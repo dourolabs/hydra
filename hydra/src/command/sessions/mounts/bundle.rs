@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use git2::{build::CheckoutBuilder, BranchType, Commit, ErrorCode, Oid, Repository};
+use git2::{build::CheckoutBuilder, BranchType, Oid, Repository};
 use hydra_common::{sessions::Bundle, SessionId};
 
 use crate::git::{
@@ -160,17 +160,27 @@ impl Mount for BundleMount {
     }
 
     async fn save(&mut self) -> MountResult {
-        let (session_id, github_token) = match &self.bundle {
+        let (session_id, issue_branch_id, github_token) = match &self.bundle {
             BundleSource::None => return Ok(()),
             BundleSource::GitRepository {
                 github_token,
                 session_id,
+                issue_branch_id,
                 ..
-            } => (session_id.clone(), github_token.clone()),
+            } => (
+                session_id.clone(),
+                issue_branch_id.clone(),
+                github_token.clone(),
+            ),
         };
         let repo_path = self.repo_path.clone();
         let join_handle = tokio::task::spawn_blocking(move || {
-            finalize_task_run(&repo_path, &session_id, github_token.as_deref())
+            finalize_task_run(
+                &repo_path,
+                &session_id,
+                issue_branch_id.as_deref(),
+                github_token.as_deref(),
+            )
         });
         match join_handle.await {
             Ok(Ok(())) => Ok(()),
@@ -184,6 +194,18 @@ impl Mount for BundleMount {
     }
 }
 
+/// Pick the worker's working branch.
+///
+/// The worker only needs a single tracking branch — `hydra/<issue>/head` when
+/// the session is attached to an issue (so subsequent sessions on the same
+/// issue can resume from it), and `hydra/<session>/head` otherwise.
+fn working_branch_name(issue_id: Option<&str>, task_id: &SessionId) -> String {
+    match issue_id {
+        Some(issue_id) => format!("hydra/{issue_id}/head"),
+        None => format!("hydra/{task_id}/head"),
+    }
+}
+
 fn initialize_tracking_branches(
     repo_root: &Path,
     issue_id: Option<&str>,
@@ -193,96 +215,30 @@ fn initialize_tracking_branches(
     let issue_label = issue_id.unwrap_or("unknown");
     tracing::info!(
         target: "hydra::mounts::bundle",
-        "Ensuring git tracking branches exist (issue: {issue_label}, task: {task_id}) before starting work…"
+        "Ensuring git working branch exists (issue: {issue_label}, task: {task_id}) before starting work…"
     );
     let repo = Repository::open(repo_root)
         .with_context(|| format!("failed to open repository at {}", repo_root.display()))?;
     let head_commit = repo
         .head()
-        .context("failed to resolve HEAD for tracking branch initialization")?
+        .context("failed to resolve HEAD for working branch initialization")?
         .peel_to_commit()
-        .context("failed to peel HEAD to commit for tracking branch initialization")?;
+        .context("failed to peel HEAD to commit for working branch initialization")?;
 
     let remote_name = "origin";
-    let mut task_branch_target = head_commit.id();
-    let task_head_branch = format!("hydra/{task_id}/head");
+    let working_branch = working_branch_name(issue_id, task_id);
 
-    if let Some(issue_id) = issue_id {
-        let issue_base_branch = format!("hydra/{issue_id}/base");
-        let issue_head_branch = format!("hydra/{issue_id}/head");
-        let issue_head_exists = remote_branch_exists(&repo, remote_name, &issue_head_branch)
-            || repo
-                .find_branch(&issue_head_branch, BranchType::Local)
-                .is_ok();
-
-        if issue_head_exists {
-            let issue_head_commit = find_branch_commit(&repo, &issue_head_branch, remote_name)?
-                .ok_or_else(|| {
-                    anyhow!(
-                        "issue head branch '{issue_head_branch}' exists but failed to resolve commit"
-                    )
-                })?;
-
-            if remote_branch_exists(&repo, remote_name, &issue_base_branch) {
-                ensure_local_branch_from_remote(&repo, &issue_base_branch, remote_name)
-                    .with_context(|| {
-                        format!("failed to track remote issue base branch '{issue_base_branch}'")
-                    })?;
-            } else {
-                set_branch_to_commit(&repo, &issue_base_branch, issue_head_commit.id())
-                    .with_context(|| {
-                        format!("failed to align issue base branch '{issue_base_branch}' with head")
-                    })?;
-            }
-
-            if remote_branch_exists(&repo, remote_name, &issue_head_branch) {
-                ensure_local_branch_from_remote(&repo, &issue_head_branch, remote_name)
-                    .with_context(|| {
-                        format!("failed to track remote issue head branch '{issue_head_branch}'")
-                    })?;
-            } else {
-                set_branch_to_commit(&repo, &issue_head_branch, issue_head_commit.id())
-                    .with_context(|| {
-                        format!("failed to align issue head branch '{issue_head_branch}' locally")
-                    })?;
-            }
-
-            task_branch_target = issue_head_commit.id();
-        } else {
-            set_branch_to_commit(&repo, &issue_base_branch, head_commit.id()).with_context(
-                || format!("failed to create issue base branch '{issue_base_branch}'"),
-            )?;
-            push_branch(repo_root, &issue_base_branch, github_token, true).with_context(|| {
-                format!("failed to push issue base branch '{issue_base_branch}' to remote origin")
-            })?;
-
-            set_branch_to_commit(&repo, &issue_head_branch, head_commit.id()).with_context(
-                || format!("failed to create issue head branch '{issue_head_branch}'"),
-            )?;
-            push_branch(repo_root, &issue_head_branch, github_token, true).with_context(|| {
-                format!("failed to push issue head branch '{issue_head_branch}' to remote origin")
-            })?;
-        }
+    if remote_branch_exists(&repo, remote_name, &working_branch) {
+        ensure_local_branch_from_remote(&repo, &working_branch, remote_name)
+            .with_context(|| format!("failed to track remote working branch '{working_branch}'"))?;
+    } else {
+        set_branch_to_commit(&repo, &working_branch, head_commit.id())
+            .with_context(|| format!("failed to create working branch '{working_branch}'"))?;
+        push_branch(repo_root, &working_branch, github_token, true).with_context(|| {
+            format!("failed to push working branch '{working_branch}' to remote origin")
+        })?;
     }
 
-    let task_base_branch = format!("hydra/{task_id}/base");
-    set_branch_to_commit(&repo, &task_base_branch, task_branch_target)
-        .with_context(|| format!("failed to update task base branch '{task_base_branch}'"))?;
-    push_branch(repo_root, &task_base_branch, github_token, true).with_context(|| {
-        format!("failed to push task base branch '{task_base_branch}' to remote origin")
-    })?;
-
-    set_branch_to_commit(&repo, &task_head_branch, task_branch_target)
-        .with_context(|| format!("failed to update task head branch '{task_head_branch}'"))?;
-    push_branch(repo_root, &task_head_branch, github_token, true).with_context(|| {
-        format!("failed to push task head branch '{task_head_branch}' to remote origin")
-    })?;
-
-    let working_branch = if let Some(issue_id) = issue_id {
-        format!("hydra/{issue_id}/head")
-    } else {
-        task_head_branch.clone()
-    };
     checkout_local_branch(&repo, &working_branch).with_context(|| {
         format!("failed to checkout working branch '{working_branch}' before worker run")
     })?;
@@ -293,11 +249,12 @@ fn initialize_tracking_branches(
 fn finalize_task_run(
     repo_root: &Path,
     task_id: &SessionId,
+    issue_id: Option<&str>,
     github_token: Option<&str>,
 ) -> Result<()> {
     tracing::info!(
         target: "hydra::mounts::bundle",
-        "Auto-committing worker changes for task '{task_id}' and syncing tracking branches…"
+        "Auto-committing worker changes for task '{task_id}' and syncing working branch…"
     );
     let diff = workdir_diff(repo_root)?;
     let has_changes = !diff.trim().is_empty();
@@ -314,15 +271,9 @@ fn finalize_task_run(
         );
     }
 
-    let repo = Repository::open(repo_root)
-        .with_context(|| format!("failed to open repository at {}", repo_root.display()))?;
-
-    let task_head_branch = format!("hydra/{task_id}/head");
-    update_branch_to_head(&repo, &task_head_branch).with_context(|| {
-        format!("failed to update task head branch '{task_head_branch}' to latest commit")
-    })?;
-    push_branch(repo_root, &task_head_branch, github_token, true).with_context(|| {
-        format!("failed to push task head branch '{task_head_branch}' to remote origin")
+    let working_branch = working_branch_name(issue_id, task_id);
+    push_branch(repo_root, &working_branch, github_token, true).with_context(|| {
+        format!("failed to push working branch '{working_branch}' to remote origin")
     })?;
 
     Ok(())
@@ -349,35 +300,6 @@ fn ensure_local_branch_from_remote(repo: &Repository, branch: &str, remote: &str
     Ok(())
 }
 
-fn find_branch_commit<'repo>(
-    repo: &'repo Repository,
-    branch: &str,
-    remote: &str,
-) -> Result<Option<Commit<'repo>>> {
-    if let Ok(local_branch) = repo.find_branch(branch, BranchType::Local) {
-        return local_branch
-            .into_reference()
-            .peel_to_commit()
-            .map(Some)
-            .with_context(|| format!("failed to peel local branch '{branch}' to commit"));
-    }
-
-    let remote_reference = format!("refs/remotes/{remote}/{branch}");
-    let reference = match repo.find_reference(&remote_reference) {
-        Ok(reference) => reference,
-        Err(err) if err.code() == ErrorCode::NotFound => return Ok(None),
-        Err(err) => {
-            return Err(err)
-                .with_context(|| format!("failed to resolve remote branch '{remote_reference}'"))
-        }
-    };
-
-    reference
-        .peel_to_commit()
-        .map(Some)
-        .with_context(|| format!("failed to peel remote branch '{remote_reference}' to commit"))
-}
-
 fn checkout_local_branch(repo: &Repository, branch: &str) -> Result<()> {
     repo.set_head(&format!("refs/heads/{branch}"))
         .with_context(|| format!("failed to set HEAD to branch '{branch}'"))?;
@@ -402,23 +324,6 @@ fn set_branch_to_commit(repo: &Repository, branch: &str, commit: Oid) -> Result<
         "update hydra tracking branch reference",
     )
     .with_context(|| format!("failed to set branch '{branch}' reference to commit {commit}"))?;
-    Ok(())
-}
-
-fn update_branch_to_head(repo: &Repository, branch: &str) -> Result<()> {
-    let head_commit = repo
-        .head()
-        .context("failed to resolve HEAD for tracking branch update")?
-        .peel_to_commit()
-        .context("failed to peel HEAD commit for tracking branch update")?;
-    let reference_name = format!("refs/heads/{branch}");
-    repo.reference(
-        &reference_name,
-        head_commit.id(),
-        true,
-        "update hydra tracking branch",
-    )
-    .with_context(|| format!("failed to update branch '{branch}' to latest commit"))?;
     Ok(())
 }
 
@@ -543,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_tracking_branches_creates_issue_and_task_branches() -> Result<()> {
+    fn initialize_tracking_branches_creates_only_issue_head_branch() -> Result<()> {
         let fixture = RemoteFixture::new()?;
         let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
         git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
@@ -552,10 +457,7 @@ mod tests {
         let job_id = task_id("t-worker-123");
         initialize_tracking_branches(clone_dir.path(), Some(issue_id), &job_id, None)?;
 
-        let base_branch = format!("hydra/{issue_id}/base");
         let head_branch = format!("hydra/{issue_id}/head");
-        let task_base_branch = format!("hydra/{job_id}/base");
-        let task_head_branch = format!("hydra/{job_id}/head");
         let repo = Repository::open(clone_dir.path())
             .context("failed to open cloned repository for assertions")?;
         assert_eq!(
@@ -570,29 +472,61 @@ mod tests {
         let remote_repo = Repository::open(fixture.remote_dir())
             .context("failed to open remote repository for assertions")?;
         assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/{base_branch}"))?,
-            head_oid,
-            "issue base branch should be synchronized to the clone's HEAD"
-        );
-        assert_eq!(
             reference_target(&remote_repo, &format!("refs/heads/{head_branch}"))?,
             head_oid,
             "issue head branch should start from the clone's HEAD"
         );
-        assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/{task_base_branch}"))?,
-            head_oid,
-            "task base branch should match the clone's HEAD"
-        );
-        assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/{task_head_branch}"))?,
-            head_oid,
-            "task head branch should match the clone's HEAD"
-        );
+        for vestigial in [
+            format!("refs/heads/hydra/{issue_id}/base"),
+            format!("refs/heads/hydra/{job_id}/base"),
+            format!("refs/heads/hydra/{job_id}/head"),
+        ] {
+            assert!(
+                remote_repo.find_reference(&vestigial).is_err(),
+                "vestigial branch '{vestigial}' should not be created"
+            );
+        }
         let working_diff = workdir_diff(clone_dir.path())?;
         assert!(
             working_diff.trim().is_empty(),
             "working directory should be clean after initialize_tracking_branches"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn initialize_tracking_branches_without_issue_uses_session_head_branch() -> Result<()> {
+        let fixture = RemoteFixture::new()?;
+        let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
+        git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
+
+        let job_id = task_id("t-noissue-1");
+        initialize_tracking_branches(clone_dir.path(), None, &job_id, None)?;
+
+        let head_branch = format!("hydra/{job_id}/head");
+        assert_eq!(
+            git_current_branch(clone_dir.path())?,
+            head_branch,
+            "session head branch should be checked out when no issue id is provided"
+        );
+        let repo = Repository::open(clone_dir.path())
+            .context("failed to open cloned repository for assertions")?;
+        let head_oid = repo
+            .head()?
+            .target()
+            .ok_or_else(|| anyhow!("HEAD missing target after initialize test"))?;
+        let remote_repo = Repository::open(fixture.remote_dir())
+            .context("failed to open remote repository for assertions")?;
+        assert_eq!(
+            reference_target(&remote_repo, &format!("refs/heads/{head_branch}"))?,
+            head_oid,
+            "session head branch should be pushed to origin"
+        );
+        let vestigial = format!("refs/heads/hydra/{job_id}/base");
+        assert!(
+            remote_repo.find_reference(&vestigial).is_err(),
+            "session base branch should not be created"
         );
 
         Ok(())
@@ -608,12 +542,9 @@ mod tests {
         initialize_tracking_branches(first_clone.path(), Some(issue_id), &job_id, None)?;
 
         let remote_repo = Repository::open(fixture.remote_dir())
-            .context("failed to open remote repo for initial base ref")?;
-        let base_branch = format!("hydra/{issue_id}/base");
+            .context("failed to open remote repo for initial head ref")?;
         let head_branch = format!("hydra/{issue_id}/head");
-        let base_ref_name = format!("refs/heads/{base_branch}");
         let head_ref_name = format!("refs/heads/{head_branch}");
-        let initial_base_target = reference_target(&remote_repo, &base_ref_name)?;
         let initial_issue_head_target = reference_target(&remote_repo, &head_ref_name)?;
 
         fixture.push_new_main_commit("NOTES.md", "new work on main\n")?;
@@ -631,32 +562,11 @@ mod tests {
             .ok_or_else(|| anyhow!("second clone HEAD missing target"))?;
         assert_eq!(
             cloned_head, initial_issue_head_target,
-            "task branches should reuse the existing issue head commit"
+            "working branch should start from the existing issue head commit"
         );
 
         let updated_remote_repo = Repository::open(fixture.remote_dir())
             .context("failed to open remote repo for updated branch assertions")?;
-        assert_eq!(
-            reference_target(
-                &updated_remote_repo,
-                &format!("refs/heads/hydra/{next_job}/base")
-            )?,
-            initial_issue_head_target,
-            "task base branch should match the existing issue head commit"
-        );
-        assert_eq!(
-            reference_target(
-                &updated_remote_repo,
-                &format!("refs/heads/hydra/{next_job}/head")
-            )?,
-            initial_issue_head_target,
-            "task head branch should match the existing issue head commit"
-        );
-        assert_eq!(
-            initial_base_target,
-            reference_target(&updated_remote_repo, &base_ref_name)?,
-            "issue base branch should remain unchanged"
-        );
         assert_eq!(
             initial_issue_head_target,
             reference_target(&updated_remote_repo, &head_ref_name)?,
@@ -672,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_task_run_commits_changes_and_pushes_task_head_branch() -> Result<()> {
+    fn finalize_task_run_commits_changes_and_pushes_issue_head_branch() -> Result<()> {
         let fixture = RemoteFixture::new()?;
         let issue_id = "i-worker-789";
         let job_id = task_id("t-worker-789");
@@ -698,7 +608,7 @@ mod tests {
         )
         .context("failed to write new file during finalize test")?;
 
-        finalize_task_run(clone_dir.path(), &job_id, None)?;
+        finalize_task_run(clone_dir.path(), &job_id, Some(issue_id), None)?;
 
         let repo = Repository::open(clone_dir.path())
             .context("failed to open cloned repository for finalize assertions")?;
@@ -707,31 +617,52 @@ mod tests {
             working_diff.trim().is_empty(),
             "auto-commit should leave a clean working tree"
         );
-        let task_head_branch = format!("hydra/{job_id}/head");
-        assert!(
-            repo.find_branch(&task_head_branch, BranchType::Local)
-                .is_ok(),
-            "task head branch should exist locally after finalize"
-        );
         let head_oid = repo
             .head()?
             .target()
             .ok_or_else(|| anyhow!("HEAD missing target after finalize"))?;
-        let remote_repo = Repository::open(fixture.remote_dir())
-            .context("failed to open remote repository for finalize assertions")?;
-        assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/{task_head_branch}"))?,
-            head_oid,
-            "task head branch should be pushed to the new commit"
-        );
         assert_ne!(
             head_oid, issue_head_before,
             "HEAD should have advanced past the initial issue head commit"
         );
+
+        let remote_repo = Repository::open(fixture.remote_dir())
+            .context("failed to open remote repository for finalize assertions")?;
         assert_eq!(
             reference_target(&remote_repo, &format!("refs/heads/hydra/{issue_id}/head"))?,
-            issue_head_before,
-            "issue head branch should NOT advance during finalize_task_run"
+            head_oid,
+            "issue head branch should advance to the new commit so subsequent sessions resume from it"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_task_run_without_issue_pushes_session_head_branch() -> Result<()> {
+        let fixture = RemoteFixture::new()?;
+        let job_id = task_id("t-noissue-finalize");
+        let clone_dir = tempfile::tempdir().context("failed to create clone tempdir")?;
+        git_clone_repo(fixture.remote_path(), "main", clone_dir.path(), None)?;
+        configure_repo(clone_dir.path(), "Hydra Worker", "hydra-worker@example.com")
+            .context("failed to configure git repository")?;
+        initialize_tracking_branches(clone_dir.path(), None, &job_id, None)?;
+
+        std::fs::write(clone_dir.path().join("NEW.txt"), "new content\n")
+            .context("failed to write new file during finalize test")?;
+
+        finalize_task_run(clone_dir.path(), &job_id, None, None)?;
+
+        let local_repo = Repository::open(clone_dir.path()).context("open clone")?;
+        let local_head = local_repo
+            .head()?
+            .target()
+            .ok_or_else(|| anyhow!("local HEAD missing"))?;
+        let remote_repo = Repository::open(fixture.remote_dir())
+            .context("failed to open remote repository for finalize assertions")?;
+        assert_eq!(
+            reference_target(&remote_repo, &format!("refs/heads/hydra/{job_id}/head"))?,
+            local_head,
+            "session head branch should be pushed to the new commit when no issue is set"
         );
 
         Ok(())
@@ -801,9 +732,9 @@ mod tests {
         let remote_repo =
             Repository::open(fixture.remote_dir()).context("open remote repo for assertions")?;
         assert_eq!(
-            reference_target(&remote_repo, &format!("refs/heads/hydra/{job}/head"))?,
+            reference_target(&remote_repo, "refs/heads/hydra/i-bundle-setup/head")?,
             head_oid,
-            "task head branch should be pushed to origin"
+            "issue head branch should be pushed to origin"
         );
         assert!(
             mount.save_phase().is_some(),

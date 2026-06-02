@@ -81,18 +81,17 @@ results produced by the first agent. See details in the section below.
 
 ### Git State Management
 
-The system creates tracking branches that are pushed up to the remote to track the work
-done by agents for both issues and tasks. There are 4 branches created by any given task:
-* `hydra/<issue-id>/base` tracks where the work for an issue started
-* `hydra/<issue-id>/head` tracks the current head of the work for the issue. 
-* `hydra/<task-id>/base` tracks where the work for a task started
-* `hydra/<task-id>/head` tracks where the work for a task ended.
+The system creates one tracking branch per session that is pushed to the remote so
+sequential agents can pick up where the previous one left off:
+* `hydra/<issue-id>/head` -- current head of work for the issue. Used when the session
+  is attached to an issue.
+* `hydra/<session-id>/head` -- fallback working branch when no issue id is set.
 
-Workers working on a specific issue try to start from `hydra/<issue-id>/head`, which allows
-them to pick up the work from previous workers on the same issue. This approach is similar to running the agent in a loop on a single machine (though any changes not tracked by git are lost between agent runs).
+Workers attached to an issue start from `hydra/<issue-id>/head`, which lets them pick up
+the work from previous workers on the same issue. This approach is similar to running the
+agent in a loop on a single machine (though any changes not tracked by git are lost
+between agent runs).
 
-The branch invariants above are maintained by the `worker_run` command. It creates these tracking branches on startup, and then whenever the worker ends, `worker_run` will commit any uncommitted changes, push them up, and update the branch refs. 
-
-Note that all of these branches are pushed to the remote, so you can easily fetch the repo
-state before/after the work of a task / issue. Simply checkout the corresponding branch from
-the remote.
+The branch invariant above is maintained by the bundle mount setup/save phases: setup
+creates (or tracks the remote copy of) the working branch and checks it out, and save
+auto-commits any uncommitted changes and pushes the branch to origin.

@@ -14,7 +14,7 @@ All subcommands honor global CLI flags such as `--server-url`, `--token`, and `-
 
 ## Git workflow expectations
 
-- Work inside a repo that already has a `hydra/<ISSUE_ID>/base` branch pointing at the review baseline. `hydra patches create` compares `hydra/<issue>/base..HEAD` unless you override with `--range`.
+- `hydra patches create` compares `<base_ref>..HEAD` (where `base_ref` defaults to the issue's session-settings branch prefixed with `origin/`, or `origin/main`). Override with `--base-ref`.
 - The CLI uses libgit2 for all git operations. It will refuse to create a patch when uncommitted changes exist unless `--allow-uncommitted` is set.
 - The CLI always attempts to push the current branch to the remote (using a GitHub token from the server when available). The server-side `GithubPrSyncAutomation` then automatically creates or updates a GitHub PR whenever a patch is created or updated with `branch_name` set.
 - Use `hydra patches apply <PATCH_ID>` to pull a teammate's diff into your local tree; it applies the stored patch text onto your current branch without touching remotes.
