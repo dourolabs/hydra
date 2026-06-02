@@ -187,13 +187,21 @@ async fn handle_fresh_path(
     session: crate::domain::sessions::Session,
     actor_ref: ActorRef,
 ) {
-    // Reply ResumeContext from the session_state store.
-    let resume_blob = match state.store.get_session_state(&session_id).await {
-        Ok(blob) => blob,
-        Err(err) => {
-            warn!(%session_id, error = %err, "failed to load session_state for ResumeContext");
-            None
+    // Reply ResumeContext from the session_state store. The blob is keyed
+    // on the PRIOR session id — `session_state` is uploaded by a session
+    // before it dies, and the successor (this one) inherits it via
+    // `resumed_from`. A session with no `resumed_from` has no prior state
+    // to resume from.
+    let resume_blob = if let Some(prior_id) = session.resumed_from.as_ref() {
+        match state.store.get_session_state(prior_id).await {
+            Ok(blob) => blob,
+            Err(err) => {
+                warn!(%session_id, %prior_id, error = %err, "failed to load session_state for ResumeContext");
+                None
+            }
         }
+    } else {
+        None
     };
     let prior_session_id = session.resumed_from.clone();
     let resume_ctx = ServerMessage::ResumeContext {
