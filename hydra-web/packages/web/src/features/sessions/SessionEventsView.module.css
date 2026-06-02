@@ -1,0 +1,173 @@
+.center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+}
+
+.error {
+  color: var(--s-failed);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  margin: 0;
+}
+
+.empty {
+  color: var(--fg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  margin: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.row {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-1);
+  padding: 10px 14px;
+}
+
+.rowUser {
+  border-left-color: var(--acc);
+}
+
+.rowAssistant {
+  border-left-color: var(--c-violet);
+}
+
+.rowTool {
+  border-left-color: var(--c-amber, #d97706);
+}
+
+.rowSystem {
+  border-left-color: var(--fg-3);
+  background: var(--bg-0);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--fg-1);
+}
+
+.subtitle {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
+.code {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--fg-0);
+}
+
+.muted {
+  color: var(--fg-3);
+}
+
+.link {
+  color: var(--c-violet);
+  text-decoration: none;
+  font-family: var(--f-mono);
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.ts {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+
+.body {
+  margin-top: 8px;
+}
+
+.text {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.markdown {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  line-height: 1.55;
+}
+
+.markdown :global(p) {
+  margin: 0 0 10px;
+}
+
+.markdown :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown :global(ul),
+.markdown :global(ol) {
+  margin: 0 0 10px 18px;
+  padding: 0;
+}
+
+.markdown :global(pre) {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  overflow: auto;
+  margin: 0 0 10px;
+}
+
+.markdown :global(code) {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--fg-1);
+}
+
+.json {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  overflow: auto;
+  margin: 0;
+  max-height: 320px;
+}

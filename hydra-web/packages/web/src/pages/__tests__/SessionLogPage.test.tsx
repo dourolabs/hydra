@@ -95,6 +95,10 @@ vi.mock("../../features/sessions/SessionSettings", () => ({
   SessionSettings: () => <div data-testid="session-settings" />,
 }));
 
+vi.mock("../../features/sessions/SessionEventsView", () => ({
+  SessionEventsView: () => <div data-testid="session-events-view" />,
+}));
+
 vi.mock("../../components/DeleteConfirmModal/DeleteConfirmModal", () => ({
   DeleteConfirmModal: () => null,
 }));
