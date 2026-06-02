@@ -89,16 +89,47 @@ export function setSessionEvents(
   sessionEvents.set(sessionId, [...events]);
 }
 
+/**
+ * Append a SessionEvent to the per-session log and emit a
+ * `session_event_created` SSE event on the global `/v1/events` stream.
+ *
+ * The emitted event matches the wire shape produced by
+ * `hydra-server/src/routes/events.rs` (`SessionEventCreated`): `entity_type
+ * = "session_event"`, `entity_id = sessionId`, `entity = event`, and
+ * `version` = the 1-based index of the new event in the per-session log.
+ * Frontend consumers (`useSSE` → `useSessionEvents`) rely on this to live-
+ * invalidate `["sessionEvents", sessionId]` after the user posts a message.
+ *
+ * Seed loading uses `setSessionEvents` instead, which is silent — clients
+ * have not connected at seed time and the reconnect replay buffer only
+ * kicks in when `Last-Event-ID > 0`.
+ */
 export function appendSessionEvent(
+  store: Store,
   sessionId: string,
   event: SessionEvent,
 ): void {
   const existing = sessionEvents.get(sessionId);
+  let version: number;
   if (existing) {
     existing.push(event);
+    version = existing.length;
   } else {
     sessionEvents.set(sessionId, [event]);
+    version = 1;
   }
+  const timestamp =
+    "timestamp" in event && typeof event.timestamp === "string"
+      ? event.timestamp
+      : new Date().toISOString();
+  store.emitSideEvent(
+    "session_event_created",
+    "session_event",
+    sessionId,
+    version,
+    timestamp,
+    event,
+  );
 }
 
 export function getSessionEventsFor(sessionId: string): SessionEvent[] {
