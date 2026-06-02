@@ -1,0 +1,72 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.barSpacer {
+  flex: 1;
+}
+
+.summary {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+.summaryCount {
+  color: var(--fg-0);
+  font-weight: 600;
+}
+
+.addButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 9px;
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition:
+    border-color var(--tx-fast),
+    background var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.addButton:hover {
+  border-color: var(--acc);
+  color: var(--fg-0);
+  background: var(--bg-2);
+}
+
+.addButtonActive {
+  border-color: var(--acc);
+  background: var(--acc-soft);
+  color: var(--fg-0);
+}
+
+.clearButton {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  transition: color var(--tx-fast);
+}
+
+.clearButton:hover {
+  color: var(--fg-0);
+}

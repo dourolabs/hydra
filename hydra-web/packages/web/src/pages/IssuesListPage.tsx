@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { IssueStatus, IssueType } from "@hydra/api";
 import {
   usePaginatedIssues,
   useIssueCount,
   type IssueFilters,
 } from "../features/issues/usePaginatedIssues";
 import { useAuth } from "../features/auth/useAuth";
-import { useAgents } from "../hooks/useAgents";
-import { useUsers } from "../hooks/useUsers";
 import { actorDisplayName, actorPrincipalPath } from "../api/auth";
 import {
   IssuesView,
@@ -16,10 +13,23 @@ import {
 } from "../features/issues/view/IssuesView";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { useIssueFilters } from "../features/issues/issueFilters";
+import {
+  filtersFromUrl,
+  filtersToUrl,
+  searchToUrl,
+  SEARCH_URL_PARAM,
+} from "../features/issues/filterUrlSync";
+import { filtersToIssuesQuery } from "../features/issues/filtersToIssuesQuery";
+import {
+  useRelationFilteredIssueIds,
+  RELATION_FILTER_IDS,
+} from "../features/issues/useRelationFilteredIssueIds";
+import type { Filter } from "../features/filters";
 import styles from "./IssuesListPage.module.css";
 
-// Map the legacy `?selected=...` shortcut onto the explicit filter params so
-// e2e tests and bookmarked URLs continue to work after the sidebar switched
+// Map legacy `?selected=…` shortcut values onto the explicit filter URL params
+// so e2e tests and bookmarked URLs continue to work after the sidebar switched
 // to the new scheme.
 const LEGACY_SELECTED_VALUES = new Set([
   "your-issues",
@@ -50,134 +60,107 @@ function writeLayout(layout: IssuesLayout): void {
   }
 }
 
-interface FilterState {
-  status: IssueStatus | null;
-  type: IssueType | null;
-  creator: string;
-  assignee: string;
-  label: string;
-}
-
-function parseStatus(value: string | null): IssueStatus | null {
-  if (!value) return null;
-  // Allow either dash or underscore for the in-progress legacy form.
-  if (value === "in_progress") return "in-progress";
-  return value as IssueStatus;
-}
-
-function parseType(value: string | null): IssueType | null {
-  return value ? (value as IssueType) : null;
-}
-
-function resolveFilters(
-  searchParams: URLSearchParams,
+// Translate `?selected=<shortcut>` into the equivalent explicit filter chips
+// so the FilterBar (and the URL-derived eyebrow / title) stay in sync. The
+// `selected` param itself is left in place by this helper — the writer strips
+// it whenever the user mutates filters explicitly (see `filtersToUrl`).
+function applyLegacySelected(
+  filters: Filter[],
+  selected: string | null,
   currentUser: string,
   currentPrincipalPath: string | null,
-): FilterState {
-  // Explicit filter params take precedence over the legacy `selected=` shortcut.
-  const hasExplicit =
-    searchParams.has("status") ||
-    searchParams.has("type") ||
-    searchParams.has("creator") ||
-    searchParams.has("assignee") ||
-    searchParams.has("label");
-
-  if (hasExplicit) {
-    return {
-      status: parseStatus(searchParams.get("status")),
-      type: parseType(searchParams.get("type")),
-      creator: searchParams.get("creator") ?? "",
-      assignee: searchParams.get("assignee") ?? "",
-      label: searchParams.get("label") ?? "",
-    };
+): Filter[] {
+  if (!selected || !LEGACY_SELECTED_VALUES.has(selected)) return filters;
+  const hasExplicit = filters.length > 0;
+  if (hasExplicit) return filters;
+  if (selected === "your-issues" && currentUser) {
+    return [
+      {
+        _uid: "url:creator",
+        id: "creator",
+        op: "in",
+        values: [`users/${currentUser}`],
+      },
+    ];
   }
-
-  const selected = searchParams.get("selected");
-  if (selected && LEGACY_SELECTED_VALUES.has(selected)) {
-    if (selected === "your-issues") {
-      return { status: null, type: null, creator: currentUser, assignee: "", label: "" };
-    }
-    if (selected === "assigned") {
-      // Phase 4b: assignee filter is on the wire as a Principal path
-      // (`users/alice` / `agents/swe`). If the logged-in actor doesn't have a
-      // Principal form (session / service / etc.), fall through to "no filter"
-      // rather than producing a malformed query that the server would 400 on.
-      return {
-        status: null,
-        type: null,
-        creator: "",
-        assignee: currentPrincipalPath ?? "",
-        label: "",
-      };
-    }
-    if (selected === "in_progress") {
-      return { status: "in-progress", type: null, creator: "", assignee: "", label: "" };
-    }
-    // "all" — explicit no-filter via legacy URL.
+  if (selected === "assigned" && currentPrincipalPath) {
+    return [
+      {
+        _uid: "url:assignee",
+        id: "assignee",
+        op: "in",
+        values: [currentPrincipalPath],
+      },
+    ];
   }
-
-  // Default: All issues. The "My issues" view is reachable via the sidebar's
-  // Issues link, which injects `?creator=<currentUser>` explicitly. A bare
-  // `/` means "show everything" so clicking the All issues link from a
-  // filtered view always clears the filters.
-  return { status: null, type: null, creator: "", assignee: "", label: "" };
-}
-
-function buildServerFilters(state: FilterState, searchQuery: string): IssueFilters {
-  const filters: IssueFilters = {};
-  if (searchQuery) filters.q = searchQuery;
-  if (state.status) filters.status = state.status;
-  if (state.type) filters.type = state.type;
-  if (state.creator) filters.creator = state.creator;
-  if (state.assignee) filters.assignee = state.assignee;
-  if (state.label) filters.labels = state.label;
+  if (selected === "in_progress") {
+    return [
+      {
+        _uid: "url:status",
+        id: "status",
+        op: "in",
+        values: ["in-progress"],
+      },
+    ];
+  }
+  // `selected=all` — no implicit filter.
   return filters;
 }
 
-function describeFilters(
-  state: FilterState,
+interface FramingState {
+  rootId: string;
+  title: string;
+  eyebrowPrefix: string;
+}
+
+function describeFraming(
+  filters: Filter[],
+  searchValue: string,
   currentUser: string,
   currentPrincipalPath: string | null,
-): { rootId: string; title: string; eyebrowPrefix: string } {
-  const onlyCreatorIsMe =
+): FramingState {
+  if (searchValue.trim()) {
+    return { rootId: "filtered", title: "Issues", eyebrowPrefix: "FILTERED" };
+  }
+
+  const onlyCreator =
+    filters.length === 1 &&
+    filters[0].id === "creator" &&
+    filters[0].values.length === 1 &&
     !!currentUser &&
-    state.creator === currentUser &&
-    !state.status &&
-    !state.type &&
-    !state.assignee &&
-    !state.label;
-  if (onlyCreatorIsMe) {
+    filters[0].values[0] === `users/${currentUser}`;
+  if (onlyCreator) {
     return { rootId: "your-issues", title: "My issues", eyebrowPrefix: "MINE" };
   }
 
-  const onlyAssigneeIsMe =
+  const onlyAssignee =
+    filters.length === 1 &&
+    filters[0].id === "assignee" &&
+    filters[0].values.length === 1 &&
     !!currentPrincipalPath &&
-    state.assignee === currentPrincipalPath &&
-    !state.status &&
-    !state.type &&
-    !state.creator &&
-    !state.label;
-  if (onlyAssigneeIsMe) {
-    return { rootId: "assigned", title: "Assigned to me", eyebrowPrefix: "ASSIGNED" };
+    filters[0].values[0] === currentPrincipalPath;
+  if (onlyAssignee) {
+    return {
+      rootId: "assigned",
+      title: "Assigned to me",
+      eyebrowPrefix: "ASSIGNED",
+    };
   }
 
   const onlyInProgress =
-    state.status === "in-progress" &&
-    !state.type &&
-    !state.creator &&
-    !state.assignee &&
-    !state.label;
+    filters.length === 1 &&
+    filters[0].id === "status" &&
+    filters[0].values.length === 1 &&
+    filters[0].values[0] === "in-progress";
   if (onlyInProgress) {
-    return { rootId: "in_progress", title: "In progress", eyebrowPrefix: "IN PROGRESS" };
+    return {
+      rootId: "in_progress",
+      title: "In progress",
+      eyebrowPrefix: "IN PROGRESS",
+    };
   }
 
-  const hasAnyFilter =
-    !!state.status ||
-    !!state.type ||
-    !!state.creator ||
-    !!state.assignee ||
-    !!state.label;
-  if (!hasAnyFilter) {
+  if (filters.length === 0) {
     return { rootId: "all", title: "All issues", eyebrowPrefix: "ALL" };
   }
 
@@ -189,23 +172,108 @@ function formatEyebrow(prefix: string, count: number): string {
   return `${prefix} · ${n}`;
 }
 
+// Canonical, uid-free string repr used to detect whether the URL state and
+// the local FilterBar state are in sync. Empty-values filters represent an
+// in-flight FilterBar add (user picked a definition from the menu but hasn't
+// chosen values yet) and are deliberately invisible to the URL — including
+// them here would force a sync cycle that drops the just-added chip before
+// the user can pick a value.
+function filtersCanonicalRepr(filters: Filter[]): string {
+  return filters
+    .filter((f) => f.values.length > 0)
+    .map((f) => `${f.id}:${f.op}:${[...f.values].sort().join(",")}`)
+    .sort()
+    .join("|");
+}
+
 export function IssuesListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const currentUser = user ? actorDisplayName(user.actor) : "";
   const currentPrincipalPath = user ? actorPrincipalPath(user.actor) : null;
 
-  const filterState = useMemo(
-    () => resolveFilters(searchParams, currentUser, currentPrincipalPath),
-    [searchParams, currentUser, currentPrincipalPath],
+  const definitions = useIssueFilters();
+
+  // Filters are mirrored between URL params and local state. The local state
+  // is the source of truth for chip `_uid`s (used by FilterBar to anchor the
+  // "just-added" value picker), and the URL is the source of truth for
+  // shareable/back-buttonable state. When the URL changes externally
+  // (sidebar nav, back/forward) we sync into state; when the user mutates
+  // chips inside the bar, we write through to the URL ourselves.
+  const [filters, setFiltersState] = useState<Filter[]>(() =>
+    applyLegacySelected(
+      filtersFromUrl(searchParams),
+      searchParams.get("selected"),
+      currentUser,
+      currentPrincipalPath,
+    ),
   );
 
-  const { rootId, title, eyebrowPrefix } = describeFilters(
-    filterState,
+  useEffect(() => {
+    const fromUrl = applyLegacySelected(
+      filtersFromUrl(searchParams),
+      searchParams.get("selected"),
+      currentUser,
+      currentPrincipalPath,
+    );
+    if (filtersCanonicalRepr(filters) !== filtersCanonicalRepr(fromUrl)) {
+      setFiltersState(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, currentUser, currentPrincipalPath]);
+
+  // Debounced free-text search: `searchValue` is the user-typed string,
+  // `searchQuery` is what we actually send to the server / write to the URL
+  // after a 300ms quiet period. Mirrors the previous behaviour pre-FilterBar.
+  const [searchValue, setSearchValue] = useState(
+    searchParams.get(SEARCH_URL_PARAM) ?? "",
+  );
+  const [searchQuery, setSearchQuery] = useState(
+    searchParams.get(SEARCH_URL_PARAM) ?? "",
+  );
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      setSearchValue(value);
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        setSearchQuery(value);
+        setSearchParams((prev) => searchToUrl(prev, value), { replace: true });
+      }, 300);
+    },
+    [setSearchParams],
+  );
+
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
+
+  // External URL changes (sidebar nav, back button) win over local state.
+  // Re-seed the search input from the URL when it diverges from our last
+  // debounced value.
+  useEffect(() => {
+    const urlQ = searchParams.get(SEARCH_URL_PARAM) ?? "";
+    if (urlQ !== searchQuery) {
+      setSearchValue(urlQ);
+      setSearchQuery(urlQ);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const setFilters = useCallback(
+    (next: Filter[]) => {
+      setFiltersState(next);
+      setSearchParams((prev) => filtersToUrl(prev, next), { replace: false });
+    },
+    [setSearchParams],
+  );
+
+  const framing = describeFraming(
+    filters,
+    searchQuery,
     currentUser,
     currentPrincipalPath,
   );
-  useBreadcrumbs([{ label: "Workspace", to: "/" }], title);
+  useBreadcrumbs([{ label: "Workspace", to: "/" }], framing.title);
 
   const [layout, setLayout] = useState<IssuesLayout>(readLayout);
   useEffect(() => {
@@ -213,96 +281,42 @@ export function IssuesListPage() {
   }, [layout]);
   const isTable = layout === "table";
 
-  const [searchValue, setSearchValue] = useState(searchParams.get("q") ?? "");
-  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") ?? "");
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Resolve relation filters into a concrete issue id set the server can
+  // narrow on via `ids=`. Holds off `listIssues` while the resolver is in
+  // flight so the initial paint matches the URL state.
+  const { issueIds: relationIds, isLoading: relationsLoading } =
+    useRelationFilteredIssueIds(filters);
 
-  const handleSearchChange = useCallback((value: string) => {
-    setSearchValue(value);
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      setSearchQuery(value);
-    }, 300);
-  }, []);
-
-  useEffect(() => {
-    return () => clearTimeout(debounceRef.current);
-  }, []);
-
-  // Helper that updates a single filter param in the URL. Setting an empty
-  // value removes the param; setting any other value also clears the legacy
-  // `selected=` shortcut so the two schemes never coexist in the URL.
-  const setParam = useCallback(
-    (key: string, value: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (value) {
-            next.set(key, value);
-          } else {
-            next.delete(key);
-          }
-          next.delete("selected");
-          return next;
-        },
-        { replace: false },
-      );
-    },
-    [setSearchParams],
+  // Distinguish "no relation filter is active" (null) from "active but
+  // matched nothing" (empty array). `filtersToIssuesQuery` translates the
+  // empty case into a sentinel `ids=` that returns zero rows.
+  const hasActiveRelationFilter = filters.some(
+    (f) => RELATION_FILTER_IDS.includes(f.id) && f.values.length > 0,
   );
 
-  const handleStatusChange = useCallback(
-    (status: IssueStatus | null) => setParam("status", status),
-    [setParam],
-  );
-  const handleTypeChange = useCallback(
-    (type: IssueType | null) => setParam("type", type),
-    [setParam],
-  );
-  const handleCreatorChange = useCallback(
-    (creator: string) => setParam("creator", creator || null),
-    [setParam],
-  );
-  const handleAssigneeChange = useCallback(
-    (assignee: string) => setParam("assignee", assignee || null),
-    [setParam],
+  const tableServerFilters = useMemo<IssueFilters>(
+    () =>
+      filtersToIssuesQuery({
+        filters,
+        q: searchQuery,
+        extraIds: hasActiveRelationFilter ? relationIds ?? [] : null,
+      }),
+    [filters, searchQuery, hasActiveRelationFilter, relationIds],
   );
 
-  const { data: agents } = useAgents();
-  const { data: users } = useUsers();
-  // Picker rows for Creator/Assignee. `name` is the user-facing label; the
-  // Assignee filter needs a Principal `path` (Phase 4b) because the wire form
-  // is `users/<x>` / `agents/<x>`. Creator stays bare.
-  const agentOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const opts: { name: string; assigneePath: string }[] = [];
-    for (const a of agents ?? []) {
-      if (seen.has(a.name)) continue;
-      seen.add(a.name);
-      opts.push({ name: a.name, assigneePath: `agents/${a.name}` });
-    }
-    return opts.sort((a, b) => a.name.localeCompare(b.name));
-  }, [agents]);
+  // Board mode still consumes the legacy URL-derived shape; keep the
+  // historical mapping so chip navigation between table → board carries
+  // forward (status / assignee / creator chips, modelled the old way).
+  const boardBaseFilters = useMemo<IssueFilters>(() => {
+    const f = filtersToIssuesQuery({
+      filters,
+      q: "",
+      extraIds: null,
+    });
+    return f;
+  }, [filters]);
 
-  const userOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const opts: { name: string; assigneePath: string }[] = [];
-    for (const u of users ?? []) {
-      if (seen.has(u.username)) continue;
-      seen.add(u.username);
-      opts.push({ name: u.username, assigneePath: `users/${u.username}` });
-    }
-    if (currentUser && currentPrincipalPath && !seen.has(currentUser)) {
-      seen.add(currentUser);
-      opts.push({ name: currentUser, assigneePath: currentPrincipalPath });
-    }
-    return opts.sort((a, b) => a.name.localeCompare(b.name));
-  }, [users, currentUser, currentPrincipalPath]);
-
-  const serverFilters = useMemo(
-    () => buildServerFilters(filterState, searchQuery),
-    [filterState, searchQuery],
-  );
+  const tableEnabled = isTable && !relationsLoading;
 
   const {
     data: paginatedData,
@@ -310,17 +324,19 @@ export function IssuesListPage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = usePaginatedIssues(serverFilters, isTable);
+  } = usePaginatedIssues(tableServerFilters, tableEnabled);
 
-  const { data: totalCount } = useIssueCount(serverFilters);
+  const { data: totalCount } = useIssueCount(tableServerFilters, tableEnabled);
 
   const issues = useMemo(() => {
     const seen = new Set<string>();
-    return (paginatedData?.pages.flatMap((page) => page.issues) ?? []).filter((issue) => {
-      if (seen.has(issue.issue_id)) return false;
-      seen.add(issue.issue_id);
-      return true;
-    });
+    return (paginatedData?.pages.flatMap((page) => page.issues) ?? []).filter(
+      (issue) => {
+        if (seen.has(issue.issue_id)) return false;
+        seen.add(issue.issue_id);
+        return true;
+      },
+    );
   }, [paginatedData]);
 
   const displayCount = totalCount ?? issues.length;
@@ -358,27 +374,22 @@ export function IssuesListPage() {
         issues={issues}
         childStatusMap={childStatusMap}
         sessionsByIssue={sessionsByIssue}
-        isLoading={isLoading}
-        baseFilters={serverFilters}
+        isLoading={isLoading || (isTable && relationsLoading)}
+        baseFilters={boardBaseFilters}
         username={currentUser}
-        filterRootId={rootId}
+        filterRootId={framing.rootId}
         hasNextPage={hasNextPage ?? false}
         isFetchingNextPage={isFetchingNextPage ?? false}
         onLoadMore={handleLoadMore}
+        eyebrow={formatEyebrow(framing.eyebrowPrefix, displayCount)}
+        title={framing.title}
+        filters={filters}
+        setFilters={setFilters}
+        definitions={definitions}
+        filteredCount={issues.length}
+        totalCount={displayCount}
         searchValue={searchValue}
         onSearchChange={handleSearchChange}
-        selectedStatus={filterState.status}
-        onStatusChange={handleStatusChange}
-        selectedType={filterState.type}
-        onTypeChange={handleTypeChange}
-        selectedCreator={filterState.creator}
-        onCreatorChange={handleCreatorChange}
-        selectedAssignee={filterState.assignee}
-        onAssigneeChange={handleAssigneeChange}
-        agentOptions={agentOptions}
-        userOptions={userOptions}
-        eyebrow={formatEyebrow(eyebrowPrefix, displayCount)}
-        title={title}
       />
     </div>
   );

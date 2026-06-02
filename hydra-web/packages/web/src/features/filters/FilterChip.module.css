@@ -1,0 +1,97 @@
+.chip {
+  display: inline-flex;
+  align-items: stretch;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  overflow: hidden;
+  transition: border-color var(--tx-fast);
+}
+
+.chip:hover {
+  border-color: var(--line-strong);
+}
+
+.chipActive {
+  border-color: var(--acc);
+}
+
+.body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.body:hover {
+  background: var(--bg-3);
+}
+
+.icon {
+  color: var(--fg-2);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.label {
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+
+.op {
+  color: var(--fg-2);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.04em;
+}
+
+.values {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-0);
+}
+
+.placeholder {
+  color: var(--fg-3);
+  font-style: italic;
+}
+
+.overflow {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  height: 16px;
+  background: var(--bg-3);
+  border-radius: var(--radius-sm);
+  color: var(--fg-1);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+}
+
+.remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-2);
+  cursor: pointer;
+  transition: background var(--tx-fast), color var(--tx-fast);
+}
+
+.remove:hover {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
