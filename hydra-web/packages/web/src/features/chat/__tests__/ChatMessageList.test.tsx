@@ -5,6 +5,9 @@ import type { SessionEvent } from "@hydra/api";
 vi.mock("@hydra/ui", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div>,
+  Avatar: ({ name, kind }: { name: string; kind?: "human" | "agent" }) => (
+    <span data-testid="avatar" data-kind={kind ?? "human"} data-name={name} />
+  ),
 }));
 
 vi.mock("../../../utils/time", () => ({
@@ -21,6 +24,10 @@ const { ChatMessageList } = await import("../ChatMessageList");
 
 function userMessage(content: string, ts = "2026-05-14T00:00:00Z"): SessionEvent {
   return { type: "user_message", content, timestamp: ts };
+}
+
+function assistantMessage(content: string, ts = "2026-05-14T00:00:01Z"): SessionEvent {
+  return { type: "assistant_message", content, timestamp: ts };
 }
 
 describe("ChatMessageList auto-scroll", () => {
@@ -67,6 +74,88 @@ describe("ChatMessageList auto-scroll", () => {
     rerender(<ChatMessageList events={[...events]} />);
 
     expect(scrollToSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatMessageList avatars and author labels", () => {
+  beforeEach(() => {
+    Element.prototype.scrollTo =
+      vi.fn() as unknown as typeof Element.prototype.scrollTo;
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("shows 'You' label and human-kind creator avatar when current user is the creator", () => {
+    const { container } = render(
+      <ChatMessageList
+        events={[userMessage("hi")]}
+        agentName="chat"
+        creator="alice"
+        currentUsername="alice"
+      />,
+    );
+
+    const avatars = container.querySelectorAll('[data-testid="avatar"]');
+    expect(avatars.length).toBe(1);
+    expect(avatars[0]?.getAttribute("data-kind")).toBe("human");
+    expect(avatars[0]?.getAttribute("data-name")).toBe("alice");
+    expect(container.textContent).toContain("You");
+    expect(container.textContent).not.toMatch(/\balice\b/);
+  });
+
+  it("shows creator's username (not 'You') when current user is not the creator", () => {
+    const { container } = render(
+      <ChatMessageList
+        events={[userMessage("hi")]}
+        agentName="chat"
+        creator="alice"
+        currentUsername="bob"
+      />,
+    );
+
+    const avatars = container.querySelectorAll('[data-testid="avatar"]');
+    expect(avatars.length).toBe(1);
+    expect(avatars[0]?.getAttribute("data-kind")).toBe("human");
+    expect(avatars[0]?.getAttribute("data-name")).toBe("alice");
+    expect(container.textContent).toContain("alice");
+    // The "You" indicator should not appear when the viewer isn't the creator.
+    expect(container.querySelectorAll("span")).toBeDefined();
+  });
+
+  it("renders an agent-kind avatar with the agent name on assistant messages", () => {
+    const { container } = render(
+      <ChatMessageList
+        events={[assistantMessage("hello there")]}
+        agentName="chat"
+        creator="alice"
+        currentUsername="alice"
+      />,
+    );
+
+    const avatars = container.querySelectorAll('[data-testid="avatar"]');
+    expect(avatars.length).toBe(1);
+    expect(avatars[0]?.getAttribute("data-kind")).toBe("agent");
+    expect(avatars[0]?.getAttribute("data-name")).toBe("chat");
+    expect(container.textContent).toContain("chat");
+  });
+
+  it("renders one avatar per message in a mixed transcript", () => {
+    const { container } = render(
+      <ChatMessageList
+        events={[userMessage("q"), assistantMessage("a")]}
+        agentName="chat"
+        creator="alice"
+        currentUsername="alice"
+      />,
+    );
+
+    const avatars = container.querySelectorAll('[data-testid="avatar"]');
+    expect(avatars.length).toBe(2);
+    expect(avatars[0]?.getAttribute("data-kind")).toBe("human");
+    expect(avatars[1]?.getAttribute("data-kind")).toBe("agent");
   });
 });
 
