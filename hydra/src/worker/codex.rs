@@ -14,10 +14,12 @@ use tokio::{
     fs,
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Command,
+    sync::mpsc,
 };
 
 use crate::worker::report::{
     MaterializeError, NativeResume, RunReport, SessionStateFormat, SessionStateRef, TokenUsage,
+    WorkerEvent,
 };
 
 /// Native resume handle for Codex. Placeholder today: Codex resume is out of
@@ -107,7 +109,16 @@ impl Codex {
     }
 
     /// Run one `codex exec --json` invocation and return its `RunReport`.
-    pub async fn run(&mut self, prompt: &str) -> Result<RunReport> {
+    ///
+    /// If `event_tx` is `Some`, parsed agent-message items are translated to
+    /// [`WorkerEvent::AssistantText`] and forwarded on it as they arrive so the
+    /// headless dispatcher can stream per-step events to the server. The
+    /// sender is dropped when the JSONL pump completes.
+    pub async fn run(
+        &mut self,
+        prompt: &str,
+        event_tx: Option<mpsc::Sender<WorkerEvent>>,
+    ) -> Result<RunReport> {
         let session_log_path = self.output_dir.path().join("session.jsonl");
 
         let mut command = Command::new("codex");
@@ -141,6 +152,7 @@ impl Codex {
 
         let log_path = session_log_path.clone();
         let parse_handle = tokio::spawn(async move {
+            let mut event_tx = event_tx;
             let mut log_file = fs::File::create(&log_path)
                 .await
                 .with_context(|| format!("failed to create codex session log {log_path:?}"))?;
@@ -169,7 +181,16 @@ impl Codex {
                     continue;
                 }
                 match serde_json::from_str::<CodexEvent>(trimmed) {
-                    Ok(event) => state.apply(event),
+                    Ok(event) => {
+                        if let Some(tx) = event_tx.as_ref() {
+                            if let Some(we) = codex_event_to_worker_event(&event) {
+                                if tx.send(we).await.is_err() {
+                                    event_tx = None;
+                                }
+                            }
+                        }
+                        state.apply(event);
+                    }
                     Err(_) => {
                         tracing::warn!(line = %trimmed, "unparseable codex --json event");
                     }
@@ -361,6 +382,19 @@ fn session_state_if_exists(
             "session-state path does not exist; returning None"
         );
         None
+    }
+}
+
+/// Translate a parsed [`CodexEvent`] into the wrapper-agnostic [`WorkerEvent`]
+/// shape the headless dispatcher forwards to the server. Only assistant
+/// message text currently maps; other event types are dropped here (the
+/// server-side `worker_event_to_session_event` would discard them anyway).
+fn codex_event_to_worker_event(event: &CodexEvent) -> Option<WorkerEvent> {
+    match event {
+        CodexEvent::ItemCompleted {
+            item: CodexItem::AgentMessage { text },
+        } => Some(WorkerEvent::AssistantText { text: text.clone() }),
+        _ => None,
     }
 }
 
@@ -600,6 +634,37 @@ mod tests {
             err_str.contains(ENV_OPENAI_API_KEY),
             "error should mention {ENV_OPENAI_API_KEY}; got: {err_str}"
         );
+    }
+
+    #[test]
+    fn codex_event_to_worker_event_maps_agent_message_to_assistant_text() {
+        let event = CodexEvent::ItemCompleted {
+            item: CodexItem::AgentMessage {
+                text: "hello".to_string(),
+            },
+        };
+        match codex_event_to_worker_event(&event) {
+            Some(WorkerEvent::AssistantText { text }) => assert_eq!(text, "hello"),
+            other => panic!("expected AssistantText, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codex_event_to_worker_event_drops_non_assistant_events() {
+        for event in [
+            CodexEvent::ThreadStarted {
+                thread_id: "tid".to_string(),
+            },
+            CodexEvent::ThreadTokenUsageUpdated {
+                token_usage: CodexTokenUsageRaw::default(),
+            },
+            CodexEvent::ItemCompleted {
+                item: CodexItem::Other,
+            },
+            CodexEvent::Other,
+        ] {
+            assert!(codex_event_to_worker_event(&event).is_none());
+        }
     }
 
     /// `try_materialize` on Codex is a stub today — every input shape (well
