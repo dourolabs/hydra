@@ -19,4 +19,5 @@
 .icon {
   flex-shrink: 0;
   opacity: 0.85;
+  transform: translateY(-1px);
 }
