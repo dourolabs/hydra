@@ -53,6 +53,28 @@ const RELATION_QUERY_SPECS: Record<string, RelationQuerySpec[]> = {
 
 export const RELATION_FILTER_IDS = Object.keys(RELATION_QUERY_SPECS);
 
+/**
+ * Server cap on the `ids=<csv>` param accepted by `listIssues` /
+ * `SearchIssuesQuery`. Exceeding it produces a 4xx (or silent truncation
+ * server-side); cap the joined set client-side so the request stays valid.
+ */
+export const MAX_IDS_CSV_LEN = 100;
+
+/**
+ * Truncate a resolved relation-matched id set to `MAX_IDS_CSV_LEN` before it
+ * goes onto the `ids=<csv>` param. When truncation happens, emits a
+ * `console.warn` so it surfaces in devtools without imposing UI cost on the
+ * (rare) overflow path — picker option-lists are already bounded to 100 per
+ * entity type upstream.
+ */
+export function capRelationIds(ids: string[]): string[] {
+  if (ids.length <= MAX_IDS_CSV_LEN) return ids;
+  console.warn(
+    `useRelationFilteredIssueIds: capping relation-matched id set ${ids.length} → ${MAX_IDS_CSV_LEN}; results past the first ${MAX_IDS_CSV_LEN} will be omitted from this page.`,
+  );
+  return ids.slice(0, MAX_IDS_CSV_LEN);
+}
+
 interface ResolverPlan {
   filter: Filter;
   specs: RelationQuerySpec[];
@@ -156,7 +178,7 @@ export function useRelationFilteredIssueIds(
       intersected = new Set([...intersected].filter((id) => other.has(id)));
     }
     return {
-      issueIds: [...intersected],
+      issueIds: capRelationIds([...intersected]),
       isLoading: false,
     };
   }, [plans, queries]);

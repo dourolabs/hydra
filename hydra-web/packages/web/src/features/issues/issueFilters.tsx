@@ -254,6 +254,10 @@ export function useIssueFilters(
           });
         },
       },
+      // Relation filters are resolved server-side via
+      // `useRelationFilteredIssueIds`; the page never invokes `apply` on these.
+      // `() => false` is a guardrail so stray client-side `applyFilters(...)`
+      // calls don't silently fall through and treat every row as a match.
       relatedChat: {
         label: "Related chat",
         icon: Icons.IconChat,

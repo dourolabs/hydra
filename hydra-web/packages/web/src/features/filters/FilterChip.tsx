@@ -46,7 +46,11 @@ export function FilterChip<T>({
           <Icon size={12} />
         </span>
         <span className={styles.label}>{definition.label}</span>
-        <span className={styles.op}>{filter.op === "in" ? "is" : "is not"}</span>
+        {definition.notInSupported && (
+          <span className={styles.op}>
+            {filter.op === "in" ? "is" : "is not"}
+          </span>
+        )}
         <span className={styles.values}>
           {preview.length === 0 && (
             <span className={styles.placeholder}>any…</span>
