@@ -156,9 +156,7 @@ export function ChatActivityLine({ run, now = Date.now }: ChatActivityLineProps)
 
   // Total elapsed since the user kicked off this run.
   const lastStep = steps[steps.length - 1];
-  const runEndTs = !live
-    ? (lastStep?.endTs ?? lastStep?.startTs ?? startedAt)
-    : tickingNow;
+  const runEndTs = !live ? (lastStep?.endTs ?? lastStep?.startTs ?? startedAt) : tickingNow;
   const elapsedMs = Math.max(0, runEndTs - startedAt);
 
   // Collapsed-row text: live shows the current step, terminal shows a summary.
@@ -195,7 +193,7 @@ export function ChatActivityLine({ run, now = Date.now }: ChatActivityLineProps)
         <span className={styles.orb} aria-hidden>
           <CategoryIcon category={displayCategory} />
         </span>
-        <span className={styles.text}>
+        <span className={styles.text} role="status" aria-live="polite">
           <span className={styles.verb} data-testid="chat-activity-line-verb">
             {verb}
           </span>
@@ -220,18 +218,9 @@ export function ChatActivityLine({ run, now = Date.now }: ChatActivityLineProps)
         <span className={styles.sweep} aria-hidden />
       </button>
       {open ? (
-        <div
-          className={styles.feed}
-          data-testid="chat-activity-line-feed"
-          role="list"
-        >
+        <div className={styles.feed} data-testid="chat-activity-line-feed" role="list">
           {steps.map((step, i) => (
-            <FeedRow
-              key={i}
-              step={step}
-              live={live}
-              tickingNow={tickingNow}
-            />
+            <FeedRow key={i} step={step} live={live} tickingNow={tickingNow} />
           ))}
         </div>
       ) : null}
@@ -262,12 +251,8 @@ function FeedRow({ step, live, tickingNow }: FeedRowProps) {
       <span className={styles.node} aria-hidden />
       <span className={styles.lbl}>
         <span className={styles.v}>{step.verb}</span>
-        {step.detail !== null ? (
-          <span className={styles.d}>{step.detail}</span>
-        ) : null}
-        {step.toolName !== null ? (
-          <code className={styles.codeSm}>{step.toolName}</code>
-        ) : null}
+        {step.detail !== null ? <span className={styles.d}>{step.detail}</span> : null}
+        {step.toolName !== null ? <code className={styles.codeSm}>{step.toolName}</code> : null}
       </span>
       <span className={styles.dur}>{dur}</span>
     </div>

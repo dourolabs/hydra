@@ -72,12 +72,8 @@ describe("ChatActivityLine — collapsed row reflects current step", () => {
     expect(root.getAttribute("data-category")).toBe("edit");
     expect(root.getAttribute("data-open")).toBe("false");
 
-    expect(screen.getByTestId("chat-activity-line-verb").textContent).toBe(
-      "Editing file",
-    );
-    expect(screen.getByTestId("chat-activity-line-detail").textContent).toBe(
-      "patch.tsx",
-    );
+    expect(screen.getByTestId("chat-activity-line-verb").textContent).toBe("Editing file");
+    expect(screen.getByTestId("chat-activity-line-detail").textContent).toBe("patch.tsx");
   });
 
   it("falls back to tool-name code when verb has no detail", () => {
@@ -88,18 +84,29 @@ describe("ChatActivityLine — collapsed row reflects current step", () => {
     });
     render(<ChatActivityLine run={liveRun(s)} now={() => 0} />);
 
-    expect(screen.getByTestId("chat-activity-line-tool").textContent).toBe(
-      "MysteryTool",
-    );
+    expect(screen.getByTestId("chat-activity-line-tool").textContent).toBe("MysteryTool");
+  });
+
+  it("wraps the verb/detail in a polite live region so AT announces transitions", () => {
+    const s = step({
+      category: "edit",
+      verb: "Editing file",
+      detail: "patch.tsx",
+    });
+    render(<ChatActivityLine run={liveRun(s)} now={() => 0} />);
+
+    const verb = screen.getByTestId("chat-activity-line-verb");
+    const liveRegion = verb.parentElement;
+    expect(liveRegion).not.toBeNull();
+    expect(liveRegion!.getAttribute("role")).toBe("status");
+    expect(liveRegion!.getAttribute("aria-live")).toBe("polite");
   });
 
   it("formats the run timer as M:SS using tabular-nums", () => {
     const s = step({ startTs: 0 });
     render(<ChatActivityLine run={liveRun(s, [s], 0)} now={() => 75_400} />);
 
-    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain(
-      "1:15",
-    );
+    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain("1:15");
   });
 });
 
@@ -123,9 +130,7 @@ describe("ChatActivityLine — click toggles feed", () => {
 
     expect(screen.getByTestId("chat-activity-line-feed")).toBeTruthy();
     expect(btn.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByTestId("chat-activity-line").getAttribute("data-open")).toBe(
-      "true",
-    );
+    expect(screen.getByTestId("chat-activity-line").getAttribute("data-open")).toBe("true");
 
     fireEvent.click(btn);
     expect(screen.queryByTestId("chat-activity-line-feed")).toBeNull();
@@ -148,9 +153,7 @@ describe("ChatActivityLine — expanded feed", () => {
       startTs: 1_500,
       endTs: null,
     });
-    render(
-      <ChatActivityLine run={liveRun(active, [closed, active])} now={() => 4_500} />,
-    );
+    render(<ChatActivityLine run={liveRun(active, [closed, active])} now={() => 4_500} />);
 
     fireEvent.click(screen.getByTestId("chat-activity-line-toggle"));
 
@@ -194,16 +197,10 @@ describe("ChatActivityLine — terminal state", () => {
 
   it("freezes the timer at the last step's endTs (does not tick forward)", () => {
     const s = closedStep({ endTs: 4_000 });
-    const { rerender } = render(
-      <ChatActivityLine run={doneRun([s], 0)} now={() => 999_999} />,
-    );
-    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain(
-      "0:04",
-    );
+    const { rerender } = render(<ChatActivityLine run={doneRun([s], 0)} now={() => 999_999} />);
+    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain("0:04");
     rerender(<ChatActivityLine run={doneRun([s], 0)} now={() => 8_888_888} />);
-    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain(
-      "0:04",
-    );
+    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain("0:04");
   });
 });
 
@@ -220,17 +217,13 @@ describe("ChatActivityLine — live timer ticks", () => {
     const s = step({ startTs: 0 });
     render(<ChatActivityLine run={liveRun(s)} now={() => clock} />);
 
-    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain(
-      "0:00",
-    );
+    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain("0:00");
 
     act(() => {
       clock = 12_000;
       vi.advanceTimersByTime(300);
     });
-    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain(
-      "0:12",
-    );
+    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain("0:12");
   });
 
   it("stops the tick loop when state flips to done", () => {
@@ -243,9 +236,7 @@ describe("ChatActivityLine — live timer ticks", () => {
       clock = 5_000;
       vi.advanceTimersByTime(300);
     });
-    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain(
-      "0:05",
-    );
+    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain("0:05");
 
     const settled = step({
       category: "run",
@@ -259,8 +250,6 @@ describe("ChatActivityLine — live timer ticks", () => {
       clock = 999_999;
       vi.advanceTimersByTime(5_000);
     });
-    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain(
-      "0:05",
-    );
+    expect(screen.getByTestId("chat-activity-line-timer").textContent).toContain("0:05");
   });
 });

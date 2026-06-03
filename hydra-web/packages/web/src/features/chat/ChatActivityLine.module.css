@@ -249,16 +249,6 @@
   animation: ai-dot-fade 1.2s ease-in-out infinite;
 }
 
-.step[data-state="pending"] .node {
-  background: transparent;
-  border: 1px solid color-mix(in oklch, var(--sc) 50%, var(--line));
-  box-shadow: none;
-}
-
-.step[data-state="pending"] .lbl {
-  opacity: 0.45;
-}
-
 .lbl {
   display: flex;
   align-items: baseline;
