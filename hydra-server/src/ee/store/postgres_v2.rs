@@ -1326,6 +1326,7 @@ struct ObjectRelationshipRow {
     target_id: String,
     target_kind: String,
     rel_type: String,
+    created_at: DateTime<Utc>,
 }
 
 fn parse_relationship_row(
@@ -1352,6 +1353,7 @@ fn parse_relationship_row(
         target_id,
         target_kind,
         rel_type,
+        created_at: r.created_at,
     })
 }
 
@@ -3470,7 +3472,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         };
 
         let sql = format!(
-            "SELECT source_id, source_kind, target_id, target_kind, rel_type \
+            "SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
              FROM {TABLE_OBJECT_RELATIONSHIPS}{where_clause} \
              ORDER BY created_at"
         );
@@ -3528,7 +3530,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         };
 
         let sql = format!(
-            "SELECT source_id, source_kind, target_id, target_kind, rel_type \
+            "SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
              FROM {TABLE_OBJECT_RELATIONSHIPS}{where_clause} \
              ORDER BY created_at"
         );
@@ -3563,30 +3565,30 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let sql = match direction {
             crate::store::TransitiveDirection::Forward => format!(
                 "WITH RECURSIVE transitive_rels AS ( \
-                     SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                     SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
                      WHERE source_id = ANY($1) AND rel_type = $2 \
                    UNION \
-                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
+                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type, r.created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
                      INNER JOIN transitive_rels tr ON r.source_id = tr.target_id \
                      WHERE r.rel_type = $2 \
                  ) \
-                 SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                 SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                  FROM transitive_rels"
             ),
             crate::store::TransitiveDirection::Backward => format!(
                 "WITH RECURSIVE transitive_rels AS ( \
-                     SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                     SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
                      WHERE target_id = ANY($1) AND rel_type = $2 \
                    UNION \
-                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
+                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type, r.created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
                      INNER JOIN transitive_rels tr ON r.target_id = tr.source_id \
                      WHERE r.rel_type = $2 \
                  ) \
-                 SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                 SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                  FROM transitive_rels"
             ),
         };

@@ -552,20 +552,21 @@ impl MemoryStore {
         }
 
         // Insert dependency relationships
+        let now = Utc::now();
         for dep in &issue.dependencies {
             let target_id = HydraId::from(dep.issue_id.clone());
             let rel_type = super::RelationshipType::from(dep.dependency_type);
             let key = (source_id.clone(), rel_type, target_id.clone());
-            self.object_relationships.insert(
-                key,
-                super::ObjectRelationship {
+            self.object_relationships
+                .entry(key)
+                .or_insert_with(|| super::ObjectRelationship {
                     source_id: source_id.clone(),
                     source_kind: super::ObjectKind::Issue,
-                    target_id,
+                    target_id: target_id.clone(),
                     target_kind: super::ObjectKind::Issue,
                     rel_type,
-                },
-            );
+                    created_at: now,
+                });
         }
 
         // Insert patch relationships
@@ -573,16 +574,16 @@ impl MemoryStore {
             let target_id = HydraId::from(patch_id.clone());
             let rel_type = super::RelationshipType::HasPatch;
             let key = (source_id.clone(), rel_type, target_id.clone());
-            self.object_relationships.insert(
-                key,
-                super::ObjectRelationship {
+            self.object_relationships
+                .entry(key)
+                .or_insert_with(|| super::ObjectRelationship {
                     source_id: source_id.clone(),
                     source_kind: super::ObjectKind::Issue,
-                    target_id,
+                    target_id: target_id.clone(),
                     target_kind: super::ObjectKind::Patch,
                     rel_type,
-                },
-            );
+                    created_at: now,
+                });
         }
     }
 
@@ -2326,6 +2327,7 @@ impl Store for MemoryStore {
                 target_id: target_id.clone(),
                 target_kind,
                 rel_type,
+                created_at: Utc::now(),
             },
         );
         Ok(true)
