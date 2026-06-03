@@ -5,6 +5,7 @@ pub mod documents;
 pub mod issues;
 pub mod labels;
 pub mod patches;
+pub mod projects;
 pub mod repositories;
 pub mod secrets;
 pub mod sessions;

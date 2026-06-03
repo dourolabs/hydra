@@ -26,14 +26,14 @@ pub use activity_log::{
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, conversations, documents, events, form, issues, labels, login, logs, merge_check,
-    merge_queues, patches, relay, repositories, secrets, session_status, sessions, task_status,
-    triggers, users, version, whoami,
+    merge_queues, patches, projects, relay, repositories, secrets, session_status, sessions,
+    task_status, triggers, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
-    ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, PatchId, SessionId,
-    TriggerId, random_len_for_count,
+    ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, PatchId, ProjectId,
+    SessionId, TriggerId, random_len_for_count,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use principal::{
@@ -83,6 +83,7 @@ mod ts_export {
         crate::SessionId::export_all(&cfg).expect("SessionId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
         crate::TriggerId::export_all(&cfg).expect("TriggerId");
+        crate::ProjectId::export_all(&cfg).expect("ProjectId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
         crate::Rgb::export_all(&cfg).expect("Rgb");
         crate::RepoName::export_all(&cfg).expect("RepoName");
@@ -145,6 +146,14 @@ mod ts_export {
         crate::events::ResyncEventData::export_all(&cfg).expect("ResyncEventData");
         crate::events::HeartbeatEventData::export_all(&cfg).expect("HeartbeatEventData");
         crate::events::SessionLogEventData::export_all(&cfg).expect("SessionLogEventData");
+
+        // API v1: projects
+        crate::projects::ProjectKey::export_all(&cfg).expect("ProjectKey");
+        crate::projects::StatusKey::export_all(&cfg).expect("StatusKey");
+        crate::projects::IconKey::export_all(&cfg).expect("IconKey");
+        crate::projects::StatusOnEnter::export_all(&cfg).expect("StatusOnEnter");
+        crate::projects::StatusDefinition::export_all(&cfg).expect("StatusDefinition");
+        crate::projects::Project::export_all(&cfg).expect("Project");
 
         // API v1: labels
         crate::labels::Label::export_all(&cfg).expect("Label");

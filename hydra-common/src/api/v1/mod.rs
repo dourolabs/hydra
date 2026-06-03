@@ -12,6 +12,7 @@ pub mod merge_check;
 pub mod merge_queues;
 pub mod pagination;
 pub mod patches;
+pub mod projects;
 pub mod relations;
 pub mod relay;
 pub mod repositories;

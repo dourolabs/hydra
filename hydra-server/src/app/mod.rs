@@ -1,6 +1,7 @@
 mod agents;
 mod app_state;
 pub mod chat_relay;
+pub(crate) mod colors;
 mod conversations;
 mod documents;
 pub mod event_bus;
@@ -8,6 +9,7 @@ mod issues;
 mod labels;
 mod merge_queue;
 mod patches;
+mod projects;
 mod repositories;
 mod resolved_task;
 pub(crate) mod sessions;
@@ -33,6 +35,7 @@ pub use hydra_common::repositories::{Repository, RepositoryRecord};
 pub use issues::{SubmitFeedbackError, SubmitFormActionError, UpsertIssueError};
 pub use labels::{CreateLabelError, UpdateLabelError};
 pub use patches::UpsertPatchError;
+pub use projects::ResolveStatusError;
 pub use resolved_task::{ResolvedTask, TaskResolutionError};
 pub use sessions::{CreateSessionError, SetSessionStatusError};
 pub(crate) use sessions::{
