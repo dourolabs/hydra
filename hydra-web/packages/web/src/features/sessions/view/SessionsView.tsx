@@ -41,6 +41,9 @@ interface SessionsViewProps {
   totalCount: number;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  // Passed through to <FilterBar onMenuOpenChange>. The page uses this to
+  // lazy-load relation-picker option lists only when the menu opens.
+  onFilterMenuOpenChange?: (open: boolean) => void;
 }
 
 export function SessionsView({
@@ -58,6 +61,7 @@ export function SessionsView({
   totalCount,
   searchValue,
   onSearchChange,
+  onFilterMenuOpenChange,
 }: SessionsViewProps) {
   const navigate = useNavigate();
   const isMobile = useMediaQuery(MOBILE_QUERY);
@@ -105,6 +109,7 @@ export function SessionsView({
           definitions={definitions}
           count={filteredCount}
           total={totalCount}
+          onMenuOpenChange={onFilterMenuOpenChange}
         />
       </div>
 

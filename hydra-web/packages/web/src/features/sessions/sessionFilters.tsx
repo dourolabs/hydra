@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Icons, type BadgeStatus } from "@hydra/ui";
 import type { SessionSummaryRecord, Status as SessionStatus } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import type { FilterDefinitions, FilterOption } from "../filters";
+import type { Filter, FilterDefinitions, FilterOption } from "../filters";
 import { useUserOptions } from "../filters/options/userOptions";
 import { statusOptions } from "../filters/options/statusOptions";
 import {
@@ -30,6 +30,22 @@ function buildStatusOptions(): FilterOption[] {
   return statusOptions(SESSION_STATUS_TONES);
 }
 
+export interface UseSessionFiltersOptions {
+  /**
+   * Current filter chips. Used to decide which relation-picker option lists
+   * to fetch eagerly: if the user already has (or rehydrates from URL) a
+   * `relatedPatch` chip, we kick off the patch list immediately so the
+   * picker is populated when opened. See `addMenuOpen` for the other gate.
+   */
+  filters?: Filter[];
+  /**
+   * Whether the FilterBar's add-filter menu is currently open. When `true`,
+   * all three relation-picker option lists become eligible to fetch so the
+   * picker isn't empty when the user clicks through. Defaults to `false`.
+   */
+  addMenuOpen?: boolean;
+}
+
 /**
  * Builds the `SESSION_FILTERS` definition map for the Sessions page. Loaded as
  * a hook because the `creator` user list and the relation pickers' option
@@ -51,24 +67,44 @@ function buildStatusOptions(): FilterOption[] {
  * The `agent` and "source kind" filters from the brief are deferred — the
  * server-side `SearchSessionsQuery` exposes neither. See the PR-3 issue body
  * for the deferral rationale.
+ *
+ * Relation-picker option lists (`listIssues` / `listPatches` /
+ * `listConversations`, each `limit=100`) are lazy: they only fire when the
+ * matching relation chip is already on the bar (e.g. URL-rehydrated
+ * `?relatedPatch=p-aa`) or when the add-filter menu opens, so a cold-cache
+ * Sessions page paint without any relation filter makes zero extra
+ * option-list requests.
  */
-export function useSessionFilters(): FilterDefinitions<SessionSummaryRecord> {
+export function useSessionFilters(
+  options: UseSessionFiltersOptions = {},
+): FilterDefinitions<SessionSummaryRecord> {
+  const { filters = [], addMenuOpen = false } = options;
   const userOpts = useUserOptions();
+
+  const needIssue =
+    addMenuOpen || filters.some((f) => f.id === "relatedIssue");
+  const needPatch =
+    addMenuOpen || filters.some((f) => f.id === "relatedPatch");
+  const needConversation =
+    addMenuOpen || filters.some((f) => f.id === "relatedChat");
 
   const issueListQuery = useQuery({
     queryKey: ["filter-options-issues"],
     queryFn: () => apiClient.listIssues({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needIssue,
   });
   const patchListQuery = useQuery({
     queryKey: ["filter-options-patches"],
     queryFn: () => apiClient.listPatches({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needPatch,
   });
   const conversationListQuery = useQuery({
     queryKey: ["filter-options-conversations"],
     queryFn: () => apiClient.listConversations({ limit: 100 }),
     staleTime: 60_000,
+    enabled: needConversation,
   });
 
   const issueEntities: RelationEntity[] = useMemo(
