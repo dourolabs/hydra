@@ -527,6 +527,15 @@ impl AppState {
                     actor_name: automation_name.clone(),
                 });
             }
+            ActorRef::Trigger {
+                on_behalf_of: Some(id),
+                ..
+            } => id.clone(),
+            ActorRef::Trigger { trigger_id, .. } => {
+                return Err(SubmitFormActionError::UnsupportedActor {
+                    actor_name: trigger_id.to_string(),
+                });
+            }
         };
 
         // Build the FormResponse

@@ -12,6 +12,7 @@ const SESSION_PREFIX: &str = "s-";
 const DOCUMENT_PREFIX: &str = "d-";
 const LABEL_PREFIX: &str = "l-";
 const CONVERSATION_PREFIX: &str = "c-";
+const TRIGGER_PREFIX: &str = "t-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HydraIdError {
@@ -85,6 +86,12 @@ pub struct LabelId(String);
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct ConversationId(String);
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, type = "string"))]
+pub struct TriggerId(String);
+
 impl HydraId {
     pub fn as_issue_id(&self) -> Option<IssueId> {
         IssueId::try_from(self.clone()).ok()
@@ -110,6 +117,10 @@ impl HydraId {
         ConversationId::try_from(self.clone()).ok()
     }
 
+    pub fn as_trigger_id(&self) -> Option<TriggerId> {
+        TriggerId::try_from(self.clone()).ok()
+    }
+
     pub fn validate_str(value: &str) -> Result<(), HydraIdError> {
         if value.starts_with(ISSUE_PREFIX) {
             IssueId::validate_str(value)
@@ -123,6 +134,8 @@ impl HydraId {
             SessionId::validate_str(value)
         } else if value.starts_with(CONVERSATION_PREFIX) {
             ConversationId::validate_str(value)
+        } else if value.starts_with(TRIGGER_PREFIX) {
+            TriggerId::validate_str(value)
         } else {
             Err(HydraIdError::InvalidPrefix(value.to_string()))
         }
@@ -343,6 +356,40 @@ impl<'de> Deserialize<'de> for ConversationId {
     }
 }
 
+impl TriggerId {
+    pub fn generate(random_len: usize) -> Result<Self, HydraIdError> {
+        generate_with_prefix(TRIGGER_PREFIX, random_len).map(Self)
+    }
+
+    pub fn new() -> Self {
+        Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
+    }
+
+    pub const fn prefix() -> &'static str {
+        TRIGGER_PREFIX
+    }
+
+    fn validate_str(value: &str) -> Result<(), HydraIdError> {
+        validate_with_prefix(value, TRIGGER_PREFIX)
+    }
+}
+
+impl Default for TriggerId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'de> Deserialize<'de> for TriggerId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        TriggerId::try_from(value).map_err(de::Error::custom)
+    }
+}
+
 impl TryFrom<String> for HydraId {
     type Error = HydraIdError;
 
@@ -406,6 +453,15 @@ impl TryFrom<String> for ConversationId {
     }
 }
 
+impl TryFrom<String> for TriggerId {
+    type Error = HydraIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        TriggerId::validate_str(&value)?;
+        Ok(Self(value))
+    }
+}
+
 impl TryFrom<HydraId> for IssueId {
     type Error = HydraIdError;
 
@@ -454,6 +510,14 @@ impl TryFrom<HydraId> for ConversationId {
     }
 }
 
+impl TryFrom<HydraId> for TriggerId {
+    type Error = HydraIdError;
+
+    fn try_from(value: HydraId) -> Result<Self, Self::Error> {
+        Self::try_from(value.0)
+    }
+}
+
 impl From<IssueId> for HydraId {
     fn from(value: IssueId) -> Self {
         Self(value.0)
@@ -490,6 +554,12 @@ impl From<ConversationId> for HydraId {
     }
 }
 
+impl From<TriggerId> for HydraId {
+    fn from(value: TriggerId) -> Self {
+        Self(value.0)
+    }
+}
+
 impl From<IssueId> for String {
     fn from(value: IssueId) -> Self {
         value.0
@@ -522,6 +592,12 @@ impl From<LabelId> for String {
 
 impl From<ConversationId> for String {
     fn from(value: ConversationId) -> Self {
+        value.0
+    }
+}
+
+impl From<TriggerId> for String {
+    fn from(value: TriggerId) -> Self {
         value.0
     }
 }
@@ -574,6 +650,12 @@ impl fmt::Display for ConversationId {
     }
 }
 
+impl fmt::Display for TriggerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl AsRef<str> for HydraId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -611,6 +693,12 @@ impl AsRef<str> for LabelId {
 }
 
 impl AsRef<str> for ConversationId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for TriggerId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -665,6 +753,14 @@ impl FromStr for LabelId {
 }
 
 impl FromStr for ConversationId {
+    type Err = HydraIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.to_string().try_into()
+    }
+}
+
+impl FromStr for TriggerId {
     type Err = HydraIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

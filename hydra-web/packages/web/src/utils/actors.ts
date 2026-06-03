@@ -28,6 +28,13 @@ export function actorDisplayName(actor: ActorRef): string {
     }
     return automation_name;
   }
+  if ("Trigger" in actor) {
+    const { trigger_id, on_behalf_of } = actor.Trigger;
+    if (on_behalf_of) {
+      return `${trigger_id} (on behalf of ${actorIdDisplayName(on_behalf_of)})`;
+    }
+    return trigger_id;
+  }
   return "unknown";
 }
 
@@ -39,6 +46,7 @@ export function actorAvatarName(actor: ActorRef): string {
   }
   if ("System" in actor) return actor.System.worker_name;
   if ("Automation" in actor) return actor.Automation.automation_name;
+  if ("Trigger" in actor) return actor.Trigger.trigger_id;
   return "?";
 }
 
