@@ -9786,15 +9786,23 @@ mod tests {
     // ---- Trigger tests --------------------------------------------------
 
     fn sample_trigger_pg() -> Trigger {
+        use hydra_common::api::v1::issues::{IssueStatus, IssueType, SessionSettings};
         use hydra_common::api::v1::users::Username as ApiUsername;
-        use hydra_common::triggers::{Schedule, Trigger as ApiTrigger};
+        use hydra_common::triggers::{Action, CreateIssueAction, Schedule, Trigger as ApiTrigger};
         ApiTrigger::new(
             true,
             Schedule::Cron {
                 expression: "0 9 * * MON".to_string(),
                 timezone: Some("UTC".to_string()),
             },
-            vec![],
+            vec![Action::CreateIssue(CreateIssueAction::new(
+                IssueType::Task,
+                "Daily triage".to_string(),
+                "Run triage for {{ now.date }}".to_string(),
+                Some("users/alice".to_string()),
+                Some(IssueStatus::Open),
+                SessionSettings::default(),
+            ))],
             ApiUsername::from("alice"),
             None,
             false,
@@ -9814,6 +9822,7 @@ mod tests {
         let fetched = store.get_trigger(&id, false).await.unwrap();
         assert_eq!(fetched.version, 1);
         assert!(fetched.item.enabled);
+        assert_eq!(fetched.item.actions, sample_trigger_pg().actions);
 
         assert_eq!(store.list_triggers(false).await.unwrap().len(), 1);
 
