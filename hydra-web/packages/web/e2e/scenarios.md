@@ -80,7 +80,8 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:dashboard` — Dashboard is usable on mobile viewport
 - `@mobile:issue-detail` — Issue detail page shows Overview / Related / Activity / Details top tabs on mobile; Overview is default; Related surfaces parents/children/patches/documents; Activity surfaces the timeline; Details surfaces rail content (Status, Created, Labels, etc.). Desktop hides the mobile bar and uses the right-rail sub-tabs.
 - `@mobile:issue-detail-overflow` — Issue detail page fits the 375px viewport (no document-level horizontal overflow) and the SessionList at the bottom of Overview is reachable via vertical scroll.
-- `@mobile:list-overflow` — List pages (sessions, patches, issues, chats, repositories, agents, secrets) have no document-level horizontal overflow at 375 px.
+- `@mobile:list-overflow` — List pages (sessions, patches, issues, chats, repositories, agents, secrets) have no document-level horizontal overflow at 360, 375, and 400 px.
+- `@mobile:related-tab-overflow` — Detail-page Related/Activity/Details tabs on issue and chat detail fit the mobile viewport with no element extending past the right edge at 360, 375, and 400 px.
 - `@mobile:login` — Login page is usable on mobile viewport
 - `@mobile:chat-scroll` — Chat header stays visible on mobile and the message list owns scroll (no page-level snap-to-bottom)
 - `@mobile:chat-tabs` — Right-panel content (Related, Details) is reachable via top tabs on the chat page mobile viewport; the Chat tab is default and the message-list scroll is not regressed

@@ -43,3 +43,21 @@
   background: var(--acc);
   border-radius: 1px;
 }
+
+/* At very narrow viewports (≤400px) four uppercase, letter-spaced tabs in the
+   issue-detail bar (Overview/Related/Activity/Details) don't fit at the
+   desktop padding values — the bar's intrinsic width pushes the AppLayout
+   main wider than the viewport, surfacing a 4px horizontal scrollbar. Tighten
+   horizontal padding so all four tabs fit at 360px. */
+@media (max-width: 400px) {
+  .bar {
+    padding: 0 8px;
+  }
+  .tab {
+    padding: 10px 8px;
+  }
+  .tabActive::after {
+    left: 8px;
+    right: 8px;
+  }
+}
