@@ -239,18 +239,22 @@ mod tests {
 
     #[test]
     fn node_ids_from_edges_dedupes_and_preserves_order() {
+        use chrono::Utc;
         use hydra_common::api::v1::relations::RelationResponse;
+        let now = Utc::now();
         let response = ListRelationsResponse {
             relations: vec![
                 RelationResponse {
                     source_id: "i-aaaaaa".parse().unwrap(),
                     target_id: "i-bbbbbb".parse().unwrap(),
                     rel_type: "child-of".to_string(),
+                    created_at: now,
                 },
                 RelationResponse {
                     source_id: "i-aaaaaa".parse().unwrap(),
                     target_id: "p-cccccc".parse().unwrap(),
                     rel_type: "has-patch".to_string(),
+                    created_at: now,
                 },
             ],
         };

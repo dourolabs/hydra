@@ -125,6 +125,7 @@ async fn list_relations_by_source_id() -> anyhow::Result<()> {
     let source_id = create_issue(&client, &base, "source").await?;
     let target_id = create_issue(&client, &base, "target").await?;
 
+    let before = chrono::Utc::now();
     client
         .post(format!("{base}/v1/relations"))
         .json(&CreateRelationRequest {
@@ -135,6 +136,7 @@ async fn list_relations_by_source_id() -> anyhow::Result<()> {
         .send()
         .await?
         .error_for_status()?;
+    let after = chrono::Utc::now();
 
     let list: ListRelationsResponse = client
         .get(format!("{base}/v1/relations?source_id={source_id}"))
@@ -147,6 +149,11 @@ async fn list_relations_by_source_id() -> anyhow::Result<()> {
     assert_eq!(list.relations.len(), 1);
     assert_eq!(list.relations[0].source_id, source_id);
     assert_eq!(list.relations[0].target_id, target_id);
+    let created_at = list.relations[0].created_at;
+    assert!(
+        created_at >= before && created_at <= after,
+        "created_at ({created_at}) should fall within [{before}, {after}]"
+    );
 
     Ok(())
 }

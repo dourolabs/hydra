@@ -198,6 +198,7 @@ struct ObjectRelationshipRow {
     target_id: String,
     target_kind: String,
     rel_type: String,
+    created_at: String,
 }
 
 fn parse_relationship_row(
@@ -218,12 +219,14 @@ fn parse_relationship_row(
     let rel_type = super::RelationshipType::from_str(&r.rel_type).map_err(|e| {
         StoreError::Internal(format!("invalid rel_type in object_relationships: {e}"))
     })?;
+    let created_at = parse_sqlite_timestamp(&r.created_at)?;
     Ok(super::ObjectRelationship {
         source_id,
         source_kind,
         target_id,
         target_kind,
         rel_type,
+        created_at,
     })
 }
 
@@ -3676,7 +3679,7 @@ impl ReadOnlyStore for SqliteStore {
         };
 
         let sql = format!(
-            "SELECT source_id, source_kind, target_id, target_kind, rel_type \
+            "SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
              FROM {TABLE_OBJECT_RELATIONSHIPS}{where_clause} \
              ORDER BY created_at"
         );
@@ -3745,7 +3748,7 @@ impl ReadOnlyStore for SqliteStore {
         };
 
         let sql = format!(
-            "SELECT source_id, source_kind, target_id, target_kind, rel_type \
+            "SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
              FROM {TABLE_OBJECT_RELATIONSHIPS}{where_clause} \
              ORDER BY created_at"
         );
@@ -3778,30 +3781,30 @@ impl ReadOnlyStore for SqliteStore {
         let sql = match direction {
             super::TransitiveDirection::Forward => format!(
                 "WITH RECURSIVE transitive_rels AS ( \
-                     SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                     SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
                      WHERE source_id IN ({placeholders}) AND rel_type = ?{rel_param} \
                    UNION \
-                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
+                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type, r.created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
                      INNER JOIN transitive_rels tr ON r.source_id = tr.target_id \
                      WHERE r.rel_type = ?{rel_param} \
                  ) \
-                 SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                 SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                  FROM transitive_rels"
             ),
             super::TransitiveDirection::Backward => format!(
                 "WITH RECURSIVE transitive_rels AS ( \
-                     SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                     SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} \
                      WHERE target_id IN ({placeholders}) AND rel_type = ?{rel_param} \
                    UNION \
-                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type \
+                     SELECT r.source_id, r.source_kind, r.target_id, r.target_kind, r.rel_type, r.created_at \
                      FROM {TABLE_OBJECT_RELATIONSHIPS} r \
                      INNER JOIN transitive_rels tr ON r.target_id = tr.source_id \
                      WHERE r.rel_type = ?{rel_param} \
                  ) \
-                 SELECT source_id, source_kind, target_id, target_kind, rel_type \
+                 SELECT source_id, source_kind, target_id, target_kind, rel_type, created_at \
                  FROM transitive_rels"
             ),
         };

@@ -1,11 +1,12 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::HydraId;
 
 /// A single relation in the response.
 ///
-/// Note: intentionally omits `source_kind`, `target_kind`, and `created_at`
-/// per the design document.
+/// Note: intentionally omits `source_kind` and `target_kind` per the design
+/// document; both are inferable from the prefixes of the source/target IDs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -13,6 +14,7 @@ pub struct RelationResponse {
     pub source_id: HydraId,
     pub target_id: HydraId,
     pub rel_type: String,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Query parameters for `GET /v1/relations/`.

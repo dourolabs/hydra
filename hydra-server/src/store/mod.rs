@@ -20,7 +20,7 @@ use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::principal::Principal;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId, TriggerId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     repositories::{Repository, SearchRepositoriesQuery},
@@ -46,6 +46,7 @@ pub enum ObjectKind {
     Patch,
     Document,
     Conversation,
+    Trigger,
 }
 
 impl ObjectKind {
@@ -55,6 +56,7 @@ impl ObjectKind {
             ObjectKind::Patch => "patch",
             ObjectKind::Document => "document",
             ObjectKind::Conversation => "conversation",
+            ObjectKind::Trigger => "trigger",
         }
     }
 }
@@ -75,6 +77,7 @@ impl FromStr for ObjectKind {
             "patch" => Ok(ObjectKind::Patch),
             "document" => Ok(ObjectKind::Document),
             "conversation" => Ok(ObjectKind::Conversation),
+            "trigger" => Ok(ObjectKind::Trigger),
             other => Err(format!("unsupported object kind '{other}'")),
         }
     }
@@ -97,6 +100,7 @@ pub enum RelationshipType {
     HasPatch,
     HasDocument,
     RefersTo,
+    Created,
 }
 
 impl RelationshipType {
@@ -107,6 +111,7 @@ impl RelationshipType {
             RelationshipType::HasPatch => "has-patch",
             RelationshipType::HasDocument => "has-document",
             RelationshipType::RefersTo => "refers-to",
+            RelationshipType::Created => "created",
         }
     }
 }
@@ -128,6 +133,7 @@ impl FromStr for RelationshipType {
             "has-patch" | "haspatch" | "has_patch" => Ok(RelationshipType::HasPatch),
             "has-document" | "hasdocument" | "has_document" => Ok(RelationshipType::HasDocument),
             "refers-to" | "refersto" | "refers_to" => Ok(RelationshipType::RefersTo),
+            "created" => Ok(RelationshipType::Created),
             other => Err(format!("unsupported relationship type '{other}'")),
         }
     }
@@ -150,6 +156,7 @@ pub struct ObjectRelationship {
     pub target_id: HydraId,
     pub target_kind: ObjectKind,
     pub rel_type: RelationshipType,
+    pub created_at: DateTime<Utc>,
 }
 
 /// An `auth_tokens` row resolved by token hash.
@@ -1236,6 +1243,8 @@ pub(crate) fn object_kind_from_id(id: &HydraId) -> Result<ObjectKind, StoreError
         Ok(ObjectKind::Document)
     } else if s.starts_with(ConversationId::prefix()) {
         Ok(ObjectKind::Conversation)
+    } else if s.starts_with(TriggerId::prefix()) {
+        Ok(ObjectKind::Trigger)
     } else {
         Err(StoreError::Internal(format!(
             "unrecognized object id prefix: {s}"
@@ -1261,5 +1270,30 @@ mod tests {
         let conv_id = ConversationId::new();
         let hid = HydraId::from(conv_id);
         assert_eq!(object_kind_from_id(&hid).unwrap(), ObjectKind::Conversation);
+    }
+
+    #[test]
+    fn object_kind_from_id_recognizes_trigger_prefix() {
+        let trigger_id = TriggerId::new();
+        let hid = HydraId::from(trigger_id);
+        assert_eq!(object_kind_from_id(&hid).unwrap(), ObjectKind::Trigger);
+    }
+
+    #[test]
+    fn object_kind_trigger_display_and_from_str() {
+        assert_eq!(ObjectKind::Trigger.to_string(), "trigger");
+        assert_eq!(
+            "trigger".parse::<ObjectKind>().unwrap(),
+            ObjectKind::Trigger
+        );
+    }
+
+    #[test]
+    fn relationship_type_created_display_and_from_str() {
+        assert_eq!(RelationshipType::Created.to_string(), "created");
+        assert_eq!(
+            "created".parse::<RelationshipType>().unwrap(),
+            RelationshipType::Created
+        );
     }
 }

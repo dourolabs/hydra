@@ -26,6 +26,7 @@ fn to_response(rel: &ObjectRelationship) -> RelationResponse {
         source_id: rel.source_id.clone(),
         target_id: rel.target_id.clone(),
         rel_type: rel.rel_type.as_str().to_string(),
+        created_at: rel.created_at,
     }
 }
 
@@ -284,11 +285,22 @@ pub async fn create_relation(
         .await
         .map_err(map_store_error)?;
 
-    let response_body = RelationResponse {
-        source_id: payload.source_id,
-        target_id: payload.target_id,
-        rel_type: rel_type.as_str().to_string(),
-    };
+    // Fetch the persisted row so the response carries the real DB-side
+    // `created_at` (whether we just inserted it or it already existed).
+    let stored = state
+        .store
+        .get_relationships(
+            Some(&payload.source_id),
+            Some(&payload.target_id),
+            Some(rel_type),
+        )
+        .await
+        .map_err(map_store_error)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::internal("relation missing after upsert"))?;
+
+    let response_body = to_response(&stored);
 
     let status = if was_created {
         StatusCode::CREATED
