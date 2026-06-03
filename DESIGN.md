@@ -92,6 +92,9 @@ the work from previous workers on the same issue. This approach is similar to ru
 agent in a loop on a single machine (though any changes not tracked by git are lost
 between agent runs).
 
-The branch invariant above is maintained by the bundle mount setup/save phases: setup
-creates (or tracks the remote copy of) the working branch and checks it out, and save
-auto-commits any uncommitted changes and pushes the branch to origin.
+The branch invariant above is maintained by the bundle mount setup/save phases. Setup
+creates (or tracks the remote copy of) the working branch and checks it out. Save
+auto-commits any uncommitted changes locally; for an issue-attached session it stops
+there (`hydra/<issue-id>/head` on origin only advances when the agent runs
+`hydra patches create/update`), and for a session without an issue id it pushes the
+fallback `hydra/<session-id>/head` so the remote reflects the worker's local state.

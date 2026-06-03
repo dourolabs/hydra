@@ -254,7 +254,7 @@ fn finalize_task_run(
 ) -> Result<()> {
     tracing::info!(
         target: "hydra::mounts::bundle",
-        "Auto-committing worker changes for task '{task_id}' and syncing working branch…"
+        "Auto-committing worker changes for task '{task_id}'…"
     );
     let diff = workdir_diff(repo_root)?;
     let has_changes = !diff.trim().is_empty();
@@ -271,7 +271,14 @@ fn finalize_task_run(
         );
     }
 
-    let working_branch = working_branch_name(issue_id, task_id);
+    // When attached to an issue, do not push the working branch: `hydra/<issue>/head`
+    // on origin must only advance via `hydra patches create/update`. Worker auto-commits
+    // stay local; the resulting risk of losing un-patched work is an accepted trade-off.
+    if issue_id.is_some() {
+        return Ok(());
+    }
+
+    let working_branch = working_branch_name(None, task_id);
     push_branch(repo_root, &working_branch, github_token, true).with_context(|| {
         format!("failed to push working branch '{working_branch}' to remote origin")
     })?;
@@ -582,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_task_run_commits_changes_and_pushes_issue_head_branch() -> Result<()> {
+    fn finalize_task_run_commits_locally_but_does_not_advance_issue_head_branch() -> Result<()> {
         let fixture = RemoteFixture::new()?;
         let issue_id = "i-worker-789";
         let job_id = task_id("t-worker-789");
@@ -630,8 +637,8 @@ mod tests {
             .context("failed to open remote repository for finalize assertions")?;
         assert_eq!(
             reference_target(&remote_repo, &format!("refs/heads/hydra/{issue_id}/head"))?,
-            head_oid,
-            "issue head branch should advance to the new commit so subsequent sessions resume from it"
+            issue_head_before,
+            "issue head branch should NOT advance during finalize_task_run; it only moves via hydra patches create/update"
         );
 
         Ok(())
