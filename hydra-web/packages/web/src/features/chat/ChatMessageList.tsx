@@ -68,7 +68,7 @@ function renderEvent(event: SessionEvent, index: number, ctx: RenderContext) {
     case "resumed":
       return <SystemEvent key={index} text="Session resumed" timestamp={event.timestamp} />;
     case "closed":
-      return <SystemEvent key={index} text="Conversation closed" timestamp={event.timestamp} />;
+      return <SystemEvent key={index} text="Session ended" timestamp={event.timestamp} />;
     case "tool_use":
     case "unknown":
       return null;
