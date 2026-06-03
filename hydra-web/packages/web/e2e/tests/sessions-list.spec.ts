@@ -4,7 +4,10 @@ test.describe("Sessions list page @sessions:list", () => {
   test("renders sessions with active-first ordering @sessions:list", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/sessions");
+    // `?scope=all` opts out of the Mine-as-default auto-seeded creator chip
+    // introduced in PR-3, so the assertions below can reference the full seed
+    // session set (alice/bob/carol/dev-user) instead of just dev-user's three.
+    await page.goto("/sessions?scope=all");
 
     const list = page.getByTestId("sessions-list");
     await expect(list).toBeVisible();
@@ -38,7 +41,10 @@ test.describe("Sessions list page @sessions:list", () => {
   test("bounds the first paint to PAGE_SIZE (≤ 50) and hides Load more when exhausted @sessions:list", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/sessions");
+    // `?scope=all` opts out of the Mine-as-default auto-seeded creator chip
+    // introduced in PR-3, so the assertions below can reference the full seed
+    // session set (alice/bob/carol/dev-user) instead of just dev-user's three.
+    await page.goto("/sessions?scope=all");
 
     const list = page.getByTestId("sessions-list");
     await expect(list).toBeVisible();
@@ -57,7 +63,10 @@ test.describe("Sessions list page @sessions:list", () => {
   test("clicking a session row navigates to the universal session detail page @sessions:list", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/sessions");
+    // `?scope=all` opts out of the Mine-as-default auto-seeded creator chip
+    // introduced in PR-3, so the assertions below can reference the full seed
+    // session set (alice/bob/carol/dev-user) instead of just dev-user's three.
+    await page.goto("/sessions?scope=all");
     // t-seed00002 is spawned_from i-seed00002 and running.
     const row = page.getByTestId("sessions-list-row-t-seed00002");
     await expect(row).toBeVisible();

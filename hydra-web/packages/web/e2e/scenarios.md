@@ -72,6 +72,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 ## Sessions
 
 - `@sessions:kill` — User can kill a running session with confirmation
+- `@sessions:filter-bar` — Sessions list toolbar uses the shared `<FilterBar>`. On first visit a creator chip is auto-added for the logged-in user (`?creator=users/<me>`) and `listSessions` narrows by creator; opening the + Filter menu, picking Status → running writes `?status=running` and refetches with the new server params; removing the auto-added creator chip strips `?creator=` from the URL and refetches without it; legacy `?scope=mine` redirects to the creator chip on first paint and the legacy param is stripped.
 
 ## Mobile Viewport
 

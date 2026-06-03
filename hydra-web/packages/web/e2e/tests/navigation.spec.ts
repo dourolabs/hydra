@@ -13,8 +13,10 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     await expect(page).toHaveURL(/\/agents/);
 
     // Navigate to the Sessions list via the site-header active-sessions slot.
+    // The Sessions FilterBar auto-seeds a `?creator=users/<me>` chip on first
+    // paint (Mine-as-default), so the URL may include that param.
     await page.getByTestId("site-header-sessions").click();
-    await expect(page).toHaveURL(/\/sessions$/);
+    await expect(page).toHaveURL(/\/sessions(\?|$)/);
 
     // Workspace > Issues link → all-issues landing page.
     await page.getByTestId("sidebar-issues-all").click();

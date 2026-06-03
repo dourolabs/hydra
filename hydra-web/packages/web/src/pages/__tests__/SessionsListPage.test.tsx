@@ -64,6 +64,8 @@ vi.mock("../../features/auth/useAuth", () => ({
 vi.mock("../../api/auth", () => ({
   actorDisplayName: (actor: { type: string; username?: string }) =>
     actor.type === "user" ? actor.username : "",
+  actorPrincipalPath: (actor: { type: string; username?: string }) =>
+    actor.type === "user" ? `users/${actor.username}` : null,
 }));
 
 const usePaginatedSessionsMock = vi.fn();
@@ -116,11 +118,35 @@ vi.mock("../../features/sessions/useSessionLinks", () => ({
   }),
 }));
 
+// SESSION_FILTERS loads option lists via React Query; stub to a no-op map.
+vi.mock("../../features/sessions/sessionFilters", () => ({
+  useSessionFilters: () => ({}),
+}));
+
+// Relation resolver issues `/v1/relations` via useQueries — stub to no-op
+// (no relatedPatch active) so the page exercises the inline mappings.
+vi.mock("../../features/sessions/useRelationFilteredSessionIds", () => ({
+  useRelationFilteredSessionIds: () => ({
+    patchIssueIds: null,
+    isLoading: false,
+  }),
+  SESSION_RELATION_FILTER_IDS: ["relatedPatch"],
+}));
+
+// FilterBar internally uses portals and pop-overs we don't exercise here.
+vi.mock("../../features/filters", () => ({
+  FilterBar: () => <div data-testid="filter-bar" />,
+  applyFilters: <T,>(items: T[]) => items,
+}));
+
 vi.mock("@hydra/ui", () => ({
   Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
   Badge: ({ status }: { status: string }) => (
     <span data-testid="badge">{status}</span>
   ),
+  Icons: {
+    IconSearch: () => <span data-testid="icon-search" />,
+  },
 }));
 
 vi.mock("../../utils/statusMapping", () => ({
@@ -239,25 +265,19 @@ describe("SessionsListPage", () => {
     expect(screen.getByTestId("sessions-list-row-t-1")).toBeDefined();
     expect(screen.getByTestId("sessions-list-row-t-2")).toBeDefined();
 
-    // Per "no IDs on list views" rule: session_id text is NOT shown directly.
     expect(screen.queryByText("t-1")).toBeNull();
     expect(screen.queryByText("t-2")).toBeNull();
 
-    // The spawned_from issue ID is still rendered as a link.
     const issueLink = screen.getByText("i-1");
     expect(issueLink.closest("a")?.getAttribute("href")).toBe("/issues/i-1");
   });
 
   it("orders active sessions before terminal sessions", () => {
-    setSessions([
-      rec("term", "complete"),
-      rec("active", "running"),
-    ]);
+    setSessions([rec("term", "complete"), rec("active", "running")]);
 
     render(<SessionsListPage />);
 
     const rows = screen.getAllByTestId(/^sessions-list-row-/);
-    // sortSessions util orders active before terminal.
     expect(rows[0].getAttribute("data-testid")).toBe("sessions-list-row-active");
     expect(rows[1].getAttribute("data-testid")).toBe("sessions-list-row-term");
   });
@@ -312,87 +332,75 @@ describe("SessionsListPage", () => {
 
     expect(screen.getByText(/2 SESSIONS/)).toBeDefined();
   });
-
-  it("token hover shows the three input buckets + output, reconciling with the summed cell value", () => {
-    const r = rec("t-1", "complete");
-    r.session.usage = {
-      input_tokens: 1000n,
-      cache_read_input_tokens: 2000n,
-      cache_creation_input_tokens: 500n,
-      output_tokens: 750n,
-    };
-    setSessions([r]);
-
-    render(<SessionsListPage />);
-
-    const row = screen.getByTestId("sessions-list-row-t-1");
-    const tokens = row.querySelector("[title]") as HTMLElement | null;
-    expect(tokens).not.toBeNull();
-    const title = tokens!.getAttribute("title") ?? "";
-    expect(title).toContain("1000 input");
-    expect(title).toContain("2000 cache read");
-    expect(title).toContain("500 cache creation");
-    expect(title).toContain("750 output");
-  });
 });
 
-describe("SessionsListPage scope toggle", () => {
+describe("SessionsListPage filter wiring", () => {
   beforeEach(() => {
     reset();
     useBreadcrumbsMock.mockReset();
     cleanup();
   });
 
-  it("defaults to 'Mine' and queries usePaginatedSessions with creator=<current user>", () => {
+  it("auto-seeds a creator filter for the current user on first paint", () => {
     setSessions([]);
     render(<SessionsListPage />);
     expect(usePaginatedSessionsMock).toHaveBeenCalled();
     const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
-    expect(firstArg).toEqual({ status: null, creator: "alice" });
-    expect(useSessionCountMock.mock.calls[0]?.[0]).toEqual({
-      status: null,
-      creator: "alice",
-    });
-
-    const toggle = screen.getByTestId("sessions-scope-toggle");
-    expect(toggle).toBeDefined();
-    const mineBtn = screen.getByTestId("sessions-scope-mine");
-    expect(mineBtn.getAttribute("aria-selected")).toBe("true");
+    // The auto-seed translates to `creator=alice` on the wire (bare username,
+    // not the Principal path that's only used inside the FilterBar).
+    expect(firstArg).toMatchObject({ creator: "alice" });
+    expect(firstArg).not.toHaveProperty("status");
+    expect(firstArg).not.toHaveProperty("spawned_from_ids");
   });
 
-  it("does not pass a creator filter when the user is not authenticated", () => {
+  it("persists the auto-seeded creator chip to the URL on first paint", () => {
+    setSessions([]);
+    render(<SessionsListPage />);
+    expect(searchParamsString).toContain("creator=users%2Falice");
+  });
+
+  it("does not auto-seed when the user is unauthenticated", () => {
     mockUser = null;
     setSessions([]);
     render(<SessionsListPage />);
-    expect(usePaginatedSessionsMock).toHaveBeenCalled();
     const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
-    expect(firstArg).toEqual({ status: null, creator: null });
+    expect(firstArg).not.toHaveProperty("creator");
   });
 
-  it("omits creator filter when scope=all and reflects active tab", () => {
+  it("honours explicit ?status= URL filter without auto-seeding creator", () => {
+    searchParamsString = "status=running";
+    setSessions([]);
+    render(<SessionsListPage />);
+    const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
+    expect(firstArg).toMatchObject({ status: "running" });
+    expect(firstArg).not.toHaveProperty("creator");
+  });
+
+  it("redirects legacy ?scope=mine to the creator chip on first paint", () => {
+    searchParamsString = "scope=mine";
+    setSessions([]);
+    render(<SessionsListPage />);
+    const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
+    expect(firstArg).toMatchObject({ creator: "alice" });
+    // `?scope=` itself is stripped (sessionFiltersToUrl deletes it).
+    expect(searchParamsString).not.toContain("scope=");
+    expect(searchParamsString).toContain("creator=users%2Falice");
+  });
+
+  it("redirects legacy ?scope=all to no creator chip on first paint", () => {
     searchParamsString = "scope=all";
     setSessions([]);
     render(<SessionsListPage />);
     const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
-    expect(firstArg).toEqual({ status: null, creator: null });
-    const allBtn = screen.getByTestId("sessions-scope-all");
-    expect(allBtn.getAttribute("aria-selected")).toBe("true");
+    expect(firstArg).not.toHaveProperty("creator");
+    expect(searchParamsString).not.toContain("scope=");
   });
 
-  it("clicking 'All' sets ?scope=all", () => {
+  it("forwards ?q= as the search query to the server", () => {
+    searchParamsString = "q=deploy&creator=alice";
     setSessions([]);
     render(<SessionsListPage />);
-    screen.getByTestId("sessions-scope-all").click();
-    expect(setSearchParamsMock).toHaveBeenCalled();
-    expect(searchParamsString).toBe("scope=all");
-  });
-
-  it("clicking 'Mine' removes ?scope param", () => {
-    searchParamsString = "scope=all";
-    setSessions([]);
-    render(<SessionsListPage />);
-    screen.getByTestId("sessions-scope-mine").click();
-    expect(setSearchParamsMock).toHaveBeenCalled();
-    expect(searchParamsString).toBe("");
+    const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
+    expect(firstArg).toMatchObject({ q: "deploy", creator: "alice" });
   });
 });

@@ -5,8 +5,14 @@ import { apiClient } from "../../api/client";
 const PAGE_SIZE = 50;
 
 export interface SessionFilters {
+  // `status` is a comma-separated list on the wire (`SearchSessionsQuery.status:
+  // Vec<Status>`), so the FilterBar mapper joins multi-select values into a
+  // single CSV string here.
   status?: string | null;
   creator?: string | null;
+  spawned_from_ids?: string | null;
+  conversation_id?: string | null;
+  q?: string | null;
 }
 
 function buildQuery(
@@ -18,6 +24,11 @@ function buildQuery(
   };
   if (filters.status) query.status = filters.status;
   if (filters.creator) query.creator = filters.creator;
+  if (filters.spawned_from_ids) query.spawned_from_ids = filters.spawned_from_ids;
+  if (filters.conversation_id) {
+    query.conversation_id = filters.conversation_id as SearchSessionsQuery["conversation_id"];
+  }
+  if (filters.q) query.q = filters.q;
   if (cursor) query.cursor = cursor;
   return query;
 }
@@ -53,6 +64,12 @@ export function useSessionCount(filters: SessionFilters, enabled = true) {
       };
       if (filters.status) query.status = filters.status;
       if (filters.creator) query.creator = filters.creator;
+      if (filters.spawned_from_ids) query.spawned_from_ids = filters.spawned_from_ids;
+      if (filters.conversation_id) {
+        query.conversation_id =
+          filters.conversation_id as SearchSessionsQuery["conversation_id"];
+      }
+      if (filters.q) query.q = filters.q;
       const resp = await apiClient.listSessions(query);
       return Number(resp.total_count ?? 0);
     },

@@ -1,14 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Avatar, Badge } from "@hydra/ui";
-import type { SessionSummaryRecord, Status as SessionStatus } from "@hydra/api";
-import { useAuth } from "../../auth/useAuth";
-import { actorDisplayName } from "../../../api/auth";
-import {
-  usePaginatedSessions,
-  useSessionCount,
-} from "../usePaginatedSessions";
-import { sortSessions } from "../sortSessions";
+import { useCallback } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Avatar, Badge, Icons } from "@hydra/ui";
+import type { SessionSummaryRecord } from "@hydra/api";
 import { normalizeSessionStatus } from "../../../utils/statusMapping";
 import { TokensCell } from "../TokensCell";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
@@ -17,28 +10,14 @@ import { useSingleSessionDuration } from "../../dashboard/useSessionDuration";
 import { SessionRailRow } from "../../related/RailRow";
 import { useSessionLinks } from "../useSessionLinks";
 import { resolveSessionDisplay } from "../sessionDisplay";
+import {
+  FilterBar,
+  type Filter,
+  type FilterDefinitions,
+} from "../../filters";
 import styles from "./SessionsView.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
-
-interface StatusFilter {
-  key: "all" | SessionStatus;
-  label: string;
-}
-
-const STATUS_FILTERS: StatusFilter[] = [
-  { key: "all", label: "All" },
-  { key: "running", label: "Running" },
-  { key: "pending", label: "Pending" },
-  { key: "complete", label: "Complete" },
-  { key: "failed", label: "Failed" },
-];
-
-type Scope = "mine" | "all";
-
-function parseScope(raw: string | null): Scope {
-  return raw === "all" ? "all" : "mine";
-}
 
 function SessionRuntimeCell({ record }: { record: SessionSummaryRecord }) {
   const { durationText, status } = useSingleSessionDuration(record);
@@ -46,125 +25,87 @@ function SessionRuntimeCell({ record }: { record: SessionSummaryRecord }) {
   return <RunTime value={durationText} status={status} />;
 }
 
-export function SessionsView() {
+interface SessionsViewProps {
+  rows: SessionSummaryRecord[];
+  isLoading: boolean;
+  error: Error | null;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  onLoadMore: () => void;
+  eyebrow: string;
+  // FilterBar state: the page owns it and persists it to URL.
+  filters: Filter[];
+  setFilters: (next: Filter[]) => void;
+  definitions: FilterDefinitions<SessionSummaryRecord>;
+  filteredCount: number;
+  totalCount: number;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+}
+
+export function SessionsView({
+  rows,
+  isLoading,
+  error,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
+  eyebrow,
+  filters,
+  setFilters,
+  definitions,
+  filteredCount,
+  totalCount,
+  searchValue,
+  onSearchChange,
+}: SessionsViewProps) {
   const navigate = useNavigate();
   const isMobile = useMediaQuery(MOBILE_QUERY);
-  const [selectedStatus, setSelectedStatus] = useState<SessionStatus | null>(null);
-  const { user } = useAuth();
-  const displayName = user ? actorDisplayName(user.actor) : null;
-  const [searchParams, setSearchParams] = useSearchParams();
-  const scope = parseScope(searchParams.get("scope"));
-
-  const creatorFilter = scope === "mine" && displayName ? displayName : null;
-
-  const filters = useMemo(
-    () => ({ status: selectedStatus, creator: creatorFilter }),
-    [selectedStatus, creatorFilter],
-  );
-
-  const {
-    data: paginatedData,
-    isLoading,
-    error,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = usePaginatedSessions(filters);
-
-  const { data: totalCount } = useSessionCount(filters);
-
-  const rows = useMemo<SessionSummaryRecord[]>(() => {
-    const flat = paginatedData?.pages.flatMap((p) => p.sessions) ?? [];
-    const seen = new Set<string>();
-    const deduped: SessionSummaryRecord[] = [];
-    for (const rec of flat) {
-      if (seen.has(rec.session_id)) continue;
-      seen.add(rec.session_id);
-      deduped.push(rec);
-    }
-    return sortSessions(deduped);
-  }, [paginatedData]);
 
   const { issueMap, conversationMap } = useSessionLinks(rows);
 
-  const handleRowClick = (id: string) => {
-    navigate(`/sessions/${id}`);
-  };
+  const handleRowClick = useCallback(
+    (id: string) => {
+      navigate(`/sessions/${id}`);
+    },
+    [navigate],
+  );
 
   const handleLoadMore = useCallback(() => {
-    if (hasNextPage && !isFetchingNextPage) fetchNextPage();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
-  const activeKey: StatusFilter["key"] = selectedStatus ?? "all";
-  const displayCount = totalCount ?? rows.length;
-  const totalLabel = displayCount === 1 ? "1 SESSION" : `${displayCount} SESSIONS`;
-
-  const setScope = (next: Scope) => {
-    setSearchParams((prev) => {
-      const params = new URLSearchParams(prev);
-      if (next === "all") {
-        params.set("scope", "all");
-      } else {
-        params.delete("scope");
-      }
-      return params;
-    });
-  };
+    if (hasNextPage && !isFetchingNextPage) onLoadMore();
+  }, [hasNextPage, isFetchingNextPage, onLoadMore]);
 
   return (
     <div className={styles.page}>
       <div className={styles.pageHead}>
         <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>WORK · {totalLabel}</span>
+          <span className={styles.eyebrow}>{eyebrow}</span>
           <h1 className={styles.pageTitle}>Sessions</h1>
         </div>
         <span className={styles.headSpacer} />
-        <div
-          className={styles.scopeToggle}
-          role="tablist"
-          aria-label="Session scope"
-          data-testid="sessions-scope-toggle"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scope === "mine"}
-            className={`${styles.scopeOption}${
-              scope === "mine" ? ` ${styles.scopeOptionActive}` : ""
-            }`}
-            onClick={() => setScope("mine")}
-            data-testid="sessions-scope-mine"
-          >
-            Mine
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scope === "all"}
-            className={`${styles.scopeOption}${
-              scope === "all" ? ` ${styles.scopeOptionActive}` : ""
-            }`}
-            onClick={() => setScope("all")}
-            data-testid="sessions-scope-all"
-          >
-            All
-          </button>
-        </div>
       </div>
 
       <div className={styles.toolbar}>
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            className={`${styles.chipFilter}${activeKey === f.key ? ` ${styles.chipFilterActive}` : ""}`}
-            onClick={() => setSelectedStatus(f.key === "all" ? null : f.key)}
-            data-testid={`sessions-filter-${f.key}`}
-          >
-            <span>{f.label}</span>
-          </button>
-        ))}
-        <span className={styles.toolbarSpacer} />
+        <div className={styles.searchBox}>
+          <span className={styles.searchIcon}>
+            <Icons.IconSearch size={14} />
+          </span>
+          <input
+            type="text"
+            placeholder="Search sessions…"
+            value={searchValue}
+            onChange={(e) => onSearchChange(e.target.value)}
+            aria-label="Search sessions"
+            data-testid="sessions-search"
+          />
+        </div>
+        <FilterBar
+          filters={filters}
+          setFilters={setFilters}
+          definitions={definitions}
+          count={filteredCount}
+          total={totalCount}
+        />
       </div>
 
       <div className={styles.body}>
@@ -173,11 +114,15 @@ export function SessionsView() {
         )}
 
         {error && (
-          <div className={styles.empty}>Failed to load sessions: {error.message}</div>
+          <div className={styles.empty}>
+            Failed to load sessions: {error.message}
+          </div>
         )}
 
         {!isLoading && !error && rows.length === 0 && (
-          <div className={styles.empty}>No sessions match the current filters.</div>
+          <div className={styles.empty}>
+            No sessions match the current filters.
+          </div>
         )}
 
         {rows.length > 0 && isMobile && (
