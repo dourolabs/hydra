@@ -19,6 +19,7 @@ use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::principal::Principal;
+use hydra_common::triggers::Trigger;
 use hydra_common::{
     ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId, TriggerId,
     VersionNumber, Versioned,
@@ -276,6 +277,8 @@ pub enum StoreError {
     SessionNotFound(SessionId),
     #[error("Conversation not found: {0}")]
     ConversationNotFound(ConversationId),
+    #[error("Trigger not found: {0}")]
+    TriggerNotFound(TriggerId),
     #[error("Issue not found: {0}")]
     IssueNotFound(IssueId),
     #[error("Patch not found: {0}")]
@@ -789,6 +792,28 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Retrieves the stored session-state blob for a session, if any.
     async fn get_session_state(&self, id: &SessionId) -> Result<Option<Vec<u8>>, StoreError>;
 
+    // ---- Trigger (read-only) ----
+
+    /// Retrieves a trigger by its TriggerId.
+    ///
+    /// # Arguments
+    /// * `id` - The TriggerId to look up
+    /// * `include_deleted` - If true, returns the trigger even if it has been soft-deleted.
+    ///   If false, returns `StoreError::TriggerNotFound` for deleted triggers.
+    async fn get_trigger(
+        &self,
+        id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Trigger>, StoreError>;
+
+    /// Lists all triggers.
+    ///
+    /// By default, deleted triggers are filtered out unless `include_deleted: true`.
+    async fn list_triggers(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError>;
+
     // ---- Object relationships (read-only) ----
 
     /// Returns object relationships matching the given filters.
@@ -1162,6 +1187,57 @@ pub trait Store: ReadOnlyStore {
         label_id: &LabelId,
         object_id: &HydraId,
     ) -> Result<bool, StoreError>;
+
+    // ---- Trigger mutations ----
+
+    /// Adds a new trigger to the store and assigns it a TriggerId.
+    ///
+    /// Returns the new TriggerId and its initial version number.
+    async fn add_trigger(
+        &self,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<(TriggerId, VersionNumber), StoreError>;
+
+    /// Updates an existing trigger in the store.
+    ///
+    /// Returns the new version number, or `StoreError::TriggerNotFound` if
+    /// the trigger does not exist. The previous `last_fired_at` value is
+    /// carried forward into the new version automatically — callers do not
+    /// need to copy it onto the supplied `trigger`.
+    async fn update_trigger(
+        &self,
+        id: &TriggerId,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Soft-deletes a trigger by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the trigger with `deleted: true`.
+    /// The trigger can still be retrieved via `get_trigger` with
+    /// `include_deleted: true` but is filtered from `list_triggers` by
+    /// default. Returns the version number of the deletion record.
+    async fn delete_trigger(
+        &self,
+        id: &TriggerId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Records that a trigger fired at `fired_at`, **in place** on the
+    /// current latest row.
+    ///
+    /// This is the one carve-out from the versioned-append pattern (see
+    /// `/designs/triggered-actions.md` §4.4 / §4.6): no new version row is
+    /// inserted, no `is_latest` flag flips, no actor is recorded, and no
+    /// `VersionNumber` is returned. Concurrent `update_trigger` calls
+    /// carry the latest `last_fired_at` forward into the new version row
+    /// so neither change is lost.
+    async fn record_trigger_fire(
+        &self,
+        id: &TriggerId,
+        fired_at: DateTime<Utc>,
+    ) -> Result<(), StoreError>;
 
     // ---- Object relationship mutations ----
 

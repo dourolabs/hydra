@@ -19,9 +19,10 @@ use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
+use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, LabelId, PatchId, RepoName, SessionId, VersionNumber,
-    Versioned,
+    ConversationId, DocumentId, HydraId, LabelId, PatchId, RepoName, SessionId, TriggerId,
+    VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -1574,6 +1575,23 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn get_objects_for_label(&self, label_id: &LabelId) -> Result<Vec<HydraId>, StoreError> {
         self.inner.get_objects_for_label(label_id).await
+    }
+
+    // ---- Trigger (read-only) ----
+
+    async fn get_trigger(
+        &self,
+        id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Trigger>, StoreError> {
+        self.inner.get_trigger(id, include_deleted).await
+    }
+
+    async fn list_triggers(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        self.inner.list_triggers(include_deleted).await
     }
 
     // ---- Object relationships (read-only) ----
