@@ -630,6 +630,18 @@ mod sqlite {
             .await?;
         }
 
+        // `conversations` carries its own `ActorRef` JSON column. Its
+        // PK is `(id, version_number)` rather than `id` alone (see
+        // `20260509000000_add_conversations.sql`).
+        rewrite_actor_ref_column(
+            pool,
+            "conversations",
+            "(id, version_number)",
+            &issue_to_actor,
+            &mut counts,
+        )
+        .await?;
+
         // Bare `ActorId` column: `actors_v2.actor_id`.
         rewrite_actor_id_column(
             pool,
@@ -640,6 +652,10 @@ mod sqlite {
             &mut counts,
         )
         .await?;
+
+        // Embedded `actor: ActorId` inside `issues_v2.form_response`
+        // JSON. PK is the single-column `id`.
+        rewrite_form_response_column(pool, &issue_to_actor, &mut counts).await?;
 
         // `patches_v2.reviews[*].author` — already typed `Principal`
         // post p-ajkfmhax (only User/Agent/External), so we don't walk
@@ -785,6 +801,33 @@ mod sqlite {
         Ok(())
     }
 
+    async fn rewrite_form_response_column(
+        pool: &SqlitePool,
+        issue_to_actor_id: &HashMap<String, Value>,
+        counts: &mut Counts,
+    ) -> Result<()> {
+        let rows =
+            sqlx::query("SELECT id, form_response FROM issues_v2 WHERE form_response IS NOT NULL")
+                .fetch_all(pool)
+                .await
+                .context("scan issues_v2.form_response")?;
+        for row in rows {
+            let form_response: String = row.try_get("form_response")?;
+            let parsed: Value = match serde_json::from_str(&form_response) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let rewrite = classify_form_response(&parsed, issue_to_actor_id);
+            let FormResponseRewrite::Replace(new_value) = rewrite else {
+                continue;
+            };
+            let new_json = new_value.to_string();
+            exec_pk_update(pool, "issues_v2", "form_response", "id", &row, &new_json).await?;
+            counts.rewrote("issues_v2");
+        }
+        Ok(())
+    }
+
     fn pk_cols_for(pk_sql: &str) -> Vec<&'static str> {
         match pk_sql {
             "id" => vec!["id"],
@@ -885,6 +928,18 @@ mod postgres {
             .await?;
         }
 
+        // `conversations_v2` carries its own `ActorRef` JSON column.
+        // PK is `(id, version_number)` per the
+        // `20260509000000_add_conversations_tables.sql` schema.
+        rewrite_actor_ref_column(
+            pool,
+            "conversations_v2",
+            "(id, version_number)",
+            &issue_to_actor,
+            &mut counts,
+        )
+        .await?;
+
         rewrite_actor_id_column(
             pool,
             "actors_v2",
@@ -894,6 +949,10 @@ mod postgres {
             &mut counts,
         )
         .await?;
+
+        // Embedded `actor: ActorId` inside `issues_v2.form_response`
+        // JSONB. PK is the single-column `id`.
+        rewrite_form_response_column(pool, &issue_to_actor, &mut counts).await?;
 
         log_counts(&counts);
         Ok(())
@@ -1018,11 +1077,41 @@ mod postgres {
         Ok(())
     }
 
+    async fn rewrite_form_response_column(
+        pool: &PgPool,
+        issue_to_actor_id: &HashMap<String, Value>,
+        counts: &mut Counts,
+    ) -> Result<()> {
+        let rows = sqlx::query(
+            "SELECT id, form_response FROM metis.issues_v2 WHERE form_response IS NOT NULL",
+        )
+        .fetch_all(pool)
+        .await
+        .context("scan metis.issues_v2.form_response")?;
+        for row in rows {
+            let form_response: Value = row.try_get("form_response")?;
+            let rewrite = classify_form_response(&form_response, issue_to_actor_id);
+            let FormResponseRewrite::Replace(new_value) = rewrite else {
+                continue;
+            };
+            let id: String = row.try_get("id")?;
+            sqlx::query("UPDATE metis.issues_v2 SET form_response = $1 WHERE id = $2")
+                .bind(new_value)
+                .bind(&id)
+                .execute(pool)
+                .await
+                .with_context(|| format!("update metis.issues_v2.form_response for id={id}"))?;
+            counts.rewrote("issues_v2");
+        }
+        Ok(())
+    }
+
     fn pk_cols_for(pk_sql: &str) -> Vec<&'static str> {
         match pk_sql {
             "id" => vec!["id"],
             "(session_id, version_number)" => vec!["session_id", "version_number"],
             "(conversation_id, version_number)" => vec!["conversation_id", "version_number"],
+            "(id, version_number)" => vec!["id", "version_number"],
             other => panic!("unsupported pk_sql expression for postgres: {other}"),
         }
     }
@@ -1062,6 +1151,47 @@ mod postgres {
             .with_context(|| format!("update metis.{table}.{column}"))?;
         Ok(())
     }
+}
+
+/// Outcome of attempting to rewrite a single stored `FormResponse`
+/// JSON blob's embedded `.actor` field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FormResponseRewrite {
+    /// `.actor` already in a post-cleanup shape (or the blob lacks an
+    /// `.actor` key entirely) — leave the row alone.
+    NoOp,
+    /// `.actor` was rewritten; write back the whole `FormResponse`
+    /// JSON with `.actor` replaced and sibling fields preserved.
+    Replace(Value),
+}
+
+/// Walk the embedded `actor: ActorId` field inside a stored
+/// `FormResponse` JSON object. Sibling fields (`action_id`, `values`,
+/// `submitted_at`) are preserved verbatim — only `.actor` is rewritten.
+///
+/// `FormResponse.actor` is a non-Option mandatory field, so unresolvable
+/// Issue lookups and Fallback outcomes both wrap into External-legacy
+/// via `resolve_for_outer_slot` rather than null-collapsing. A missing
+/// `.actor` key (defensive — the column was added in
+/// `20260326000000_add_form_to_issues.sql` and post-dates the
+/// pre-cleanup ActorId variants) is treated as `NoOp`.
+pub(crate) fn classify_form_response(
+    value: &Value,
+    issue_to_actor_id: &HashMap<String, Value>,
+) -> FormResponseRewrite {
+    let Some(obj) = value.as_object() else {
+        return FormResponseRewrite::NoOp;
+    };
+    let Some(actor) = obj.get("actor") else {
+        return FormResponseRewrite::NoOp;
+    };
+    let new_actor = match resolve_for_outer_slot(classify_actor_id(actor), issue_to_actor_id) {
+        OuterResolution::NoOp => return FormResponseRewrite::NoOp,
+        OuterResolution::Value(v) => v,
+    };
+    let mut new_obj = obj.clone();
+    new_obj.insert("actor".to_string(), new_actor);
+    FormResponseRewrite::Replace(Value::Object(new_obj))
 }
 
 /// Extract the inner `actor_id` from an `ActorRef::Authenticated` /
@@ -1611,6 +1741,139 @@ mod tests {
                     "automation_name": "github_pr_sync",
                     "triggered_by": null
                 }
+            }))
+        );
+    }
+
+    #[test]
+    fn form_response_username_actor_rewrites_to_user_preserves_siblings() {
+        let raw = json!({
+            "action_id": "approve",
+            "actor": {"Username": "alice"},
+            "values": {"score": 4},
+            "submitted_at": "2026-05-10T11:00:00Z"
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_form_response(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            FormResponseRewrite::Replace(json!({
+                "action_id": "approve",
+                "actor": {"User": {"name": "alice"}},
+                "values": {"score": 4},
+                "submitted_at": "2026-05-10T11:00:00Z"
+            }))
+        );
+    }
+
+    #[test]
+    fn form_response_post_cleanup_actor_is_noop() {
+        let raw = json!({
+            "action_id": "approve",
+            "actor": {"User": {"name": "alice"}},
+            "values": {},
+            "submitted_at": "2026-05-10T11:00:00Z"
+        });
+        let lookup = HashMap::new();
+        assert_eq!(
+            classify_form_response(&raw, &lookup),
+            FormResponseRewrite::NoOp
+        );
+    }
+
+    #[test]
+    fn form_response_multi_key_inner_actor_falls_back_to_external_legacy() {
+        let raw = json!({
+            "action_id": "approve",
+            "actor": {"kind": "user", "name": "alice"},
+            "values": {},
+            "submitted_at": "2026-05-10T11:00:00Z"
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_form_response(&raw, &lookup);
+        let expected_inner = json!({"kind": "user", "name": "alice"}).to_string();
+        assert_eq!(
+            rewrite,
+            FormResponseRewrite::Replace(json!({
+                "action_id": "approve",
+                "actor": {"External": {"system": "legacy", "username": expected_inner}},
+                "values": {},
+                "submitted_at": "2026-05-10T11:00:00Z"
+            }))
+        );
+    }
+
+    #[test]
+    fn form_response_unknown_tag_inner_actor_falls_back_to_external_legacy() {
+        let raw = json!({
+            "action_id": "approve",
+            "actor": {"Service": "has space"},
+            "values": {},
+            "submitted_at": "2026-05-10T11:00:00Z"
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_form_response(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            FormResponseRewrite::Replace(json!({
+                "action_id": "approve",
+                "actor": {"External": {"system": "legacy", "username": "has space"}},
+                "values": {},
+                "submitted_at": "2026-05-10T11:00:00Z"
+            }))
+        );
+    }
+
+    #[test]
+    fn form_response_missing_actor_key_is_noop() {
+        // Defensive: a FormResponse without an `.actor` key (shouldn't
+        // happen in practice — the field is mandatory) is left alone.
+        let raw = json!({
+            "action_id": "approve",
+            "values": {},
+            "submitted_at": "2026-05-10T11:00:00Z"
+        });
+        let lookup = HashMap::new();
+        assert_eq!(
+            classify_form_response(&raw, &lookup),
+            FormResponseRewrite::NoOp
+        );
+    }
+
+    #[test]
+    fn form_response_non_object_is_noop() {
+        // Defensive: an unexpected non-object form_response payload is
+        // left alone.
+        let lookup = HashMap::new();
+        for raw in [json!(null), json!("oops"), json!([1, 2, 3])] {
+            assert_eq!(
+                classify_form_response(&raw, &lookup),
+                FormResponseRewrite::NoOp,
+                "expected NoOp for {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn form_response_session_actor_rewrites_to_adhoc() {
+        // Mirrors the prod symptom in [[i-jyhvstcj]]: a Session-tagged
+        // ActorId embedded in a FormResponse must rewrite cleanly to
+        // Adhoc so `get_issue` stops failing to deserialize.
+        let raw = json!({
+            "action_id": "approve",
+            "actor": {"Session": "s-sessone"},
+            "values": {},
+            "submitted_at": "2026-05-10T11:00:00Z"
+        });
+        let lookup = HashMap::new();
+        let rewrite = classify_form_response(&raw, &lookup);
+        assert_eq!(
+            rewrite,
+            FormResponseRewrite::Replace(json!({
+                "action_id": "approve",
+                "actor": {"Adhoc": {"session_id": "s-sessone"}},
+                "values": {},
+                "submitted_at": "2026-05-10T11:00:00Z"
             }))
         );
     }

@@ -85,3 +85,26 @@ VALUES
     ('c-actclean', 4, 'suspending',
      '{"type":"suspending","reason":"z","timestamp":"2026-05-10T11:03:00Z"}',
      NULL);
+
+--------------------------------------------------------------------------------
+-- conversations.actor — the cleanup walks this table too, mirroring
+-- the postgres `conversations_v2` walker. Seeds the exact prod failure
+-- shape from [[i-jyhvstcj]] (`Session`-tagged inner actor_id) so the
+-- §3.3 store-level smoke proves `SqliteStore::get_conversation` stops
+-- failing to deserialize.
+--------------------------------------------------------------------------------
+INSERT INTO conversations (id, version_number, creator, is_latest, actor)
+VALUES
+    ('c-actconvx', 1, 'alice', 1,
+     '{"Authenticated":{"actor_id":{"Session":"s-csessacx"}}}');
+
+--------------------------------------------------------------------------------
+-- issues_v2.form_response — JSON blob (stored as TEXT in SQLite) with
+-- an embedded `actor: ActorId` field. The cleanup walks `.actor` while
+-- preserving sibling fields (`action_id`, `values`, `submitted_at`).
+-- Mirrors the postgres fixture row.
+--------------------------------------------------------------------------------
+INSERT INTO issues_v2 (id, version_number, issue_type, description, creator, is_latest, form_response)
+VALUES
+    ('i-actform',  1, 'task', 'form_response with Username actor', 'alice', 1,
+     '{"action_id":"approve","actor":{"Username":"alice"},"values":{"score":4},"submitted_at":"2026-05-10T11:00:00Z"}');

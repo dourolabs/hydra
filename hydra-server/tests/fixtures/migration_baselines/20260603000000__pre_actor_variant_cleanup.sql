@@ -316,3 +316,27 @@ VALUES
      '{"type":"user_message","content":"se hello","timestamp":"2026-05-10T10:35:00Z"}'::jsonb,
      '{"Authenticated":{"actor_id":{"Username":"alice"}}}'::jsonb,
      '2026-05-10T10:35:00Z');
+
+--------------------------------------------------------------------------------
+-- conversations_v2.actor — the cleanup walks this table too. The prod
+-- failure mode for [[i-jyhvstcj]] was a `{"Session":"s-..."}`-tagged
+-- actor surviving into `GET /v1/conversations`; the row below seeds
+-- that exact shape so the §3.3 store-level smoke proves the rewrite
+-- unblocks `get_conversation`.
+--------------------------------------------------------------------------------
+INSERT INTO metis.conversations_v2 (id, version_number, creator, actor)
+VALUES
+    ('c-actconvx', 1, 'alice',
+     '{"Authenticated":{"actor_id":{"Session":"s-csessacx"}}}'::jsonb);
+
+--------------------------------------------------------------------------------
+-- issues_v2.form_response — JSONB blob with an embedded `actor: ActorId`
+-- field. The cleanup walks `.actor` while preserving sibling fields
+-- (`action_id`, `values`, `submitted_at`). This is the second prod
+-- failure mode for [[i-jyhvstcj]] — `Username` survived into
+-- `GET /v1/issues` form_response deserialization.
+--------------------------------------------------------------------------------
+INSERT INTO metis.issues_v2 (id, version_number, issue_type, description, creator, form_response)
+VALUES
+    ('i-actform',  1, 'task', 'form_response with Username actor', 'alice',
+     '{"action_id":"approve","actor":{"Username":"alice"},"values":{"score":4},"submitted_at":"2026-05-10T11:00:00Z"}'::jsonb);
