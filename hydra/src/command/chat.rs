@@ -203,7 +203,7 @@ async fn run_interactive(client: &dyn HydraClientInterface, agent: Option<String
                                 break;
                             }
                             SessionEvent::Closed { .. } => {
-                                eprintln!("Conversation closed by server.");
+                                eprintln!("Session ended by server.");
                                 return Ok(());
                             }
                             SessionEvent::Suspending { reason, .. } => {
