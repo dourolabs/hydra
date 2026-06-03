@@ -20,7 +20,7 @@
 //! postgres; SQLite has no such constraint and uses `sqlite::memory:`.
 
 use anyhow::{Context, Result, bail};
-use hydra_common::SessionId;
+use hydra_common::{ConversationId, IssueId, SessionId};
 use hydra_server::domain::actors::{ActorId, ActorRef};
 use hydra_server::store::ReadOnlyStore;
 use hydra_server::store::sqlite_store::{self, MIGRATOR, SqliteStore};
@@ -68,6 +68,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     // `ConversationEvent` removal — there is nothing to assert against
     // post-migration.
     assert_store_level_session_events_smoke(&pool).await?;
+    assert_conversations_actor_rewrite(&pool).await?;
+    assert_form_response_actor_rewrite(&pool).await?;
+    assert_store_level_conversations_smoke(&pool).await?;
+    assert_store_level_form_response_smoke(&pool).await?;
 
     Ok(())
 }
@@ -276,4 +280,95 @@ fn external_legacy(username: impl Into<String>) -> serde_json::Value {
     serde_json::json!({
         "External": {"system": "legacy", "username": username.into()}
     })
+}
+
+// ---------------------------------------------------------------------------
+// actor_variant_cleanup rewrite assertions — conversations + form_response
+// (added in [[i-jyhvstcj]] to cover the prod failure shapes that the
+// original cleanup missed).
+// ---------------------------------------------------------------------------
+
+async fn assert_conversations_actor_rewrite(pool: &SqlitePool) -> Result<()> {
+    let row =
+        sqlx::query("SELECT actor FROM conversations WHERE id = 'c-actconvx' AND is_latest = 1")
+            .fetch_one(pool)
+            .await
+            .context("read conversations.actor for c-actconvx")?;
+    let raw: Option<String> = row.try_get("actor")?;
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("decode conversations.actor JSON for c-actconvx")?;
+    let expected = serde_json::json!({
+        "Authenticated": {"actor_id": {"Adhoc": {"session_id": "s-csessacx"}}}
+    });
+    if got.as_ref() != Some(&expected) {
+        bail!("conversations(c-actconvx).actor: expected {expected}; got {got:?}");
+    }
+    Ok(())
+}
+
+async fn assert_form_response_actor_rewrite(pool: &SqlitePool) -> Result<()> {
+    let row =
+        sqlx::query("SELECT form_response FROM issues_v2 WHERE id = 'i-actform' AND is_latest = 1")
+            .fetch_one(pool)
+            .await
+            .context("read issues_v2.form_response for i-actform")?;
+    let raw: Option<String> = row.try_get("form_response")?;
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("decode issues_v2.form_response JSON for i-actform")?;
+    let expected = serde_json::json!({
+        "action_id": "approve",
+        "actor": {"User": {"name": "alice"}},
+        "values": {"score": 4},
+        "submitted_at": "2026-05-10T11:00:00Z"
+    });
+    if got.as_ref() != Some(&expected) {
+        bail!("issues_v2(i-actform).form_response: expected {expected}; got {got:?}");
+    }
+    Ok(())
+}
+
+async fn assert_store_level_conversations_smoke(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+    let cid = ConversationId::from_str("c-actconvx").context("parse 'c-actconvx'")?;
+    let conv = store
+        .get_conversation(&cid, false)
+        .await
+        .context("SqliteStore::get_conversation(c-actconvx)")?;
+    let expected_sid: SessionId = "s-csessacx".parse().unwrap();
+    match conv.actor.as_ref() {
+        Some(ActorRef::Authenticated {
+            actor_id: ActorId::Adhoc(sid),
+            ..
+        }) if sid == &expected_sid => Ok(()),
+        other => bail!("c-actconvx: expected Authenticated(Adhoc(s-csessacx)); got {other:?}"),
+    }
+}
+
+async fn assert_store_level_form_response_smoke(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+    let iid = IssueId::from_str("i-actform").context("parse 'i-actform'")?;
+    let issue = store
+        .get_issue(&iid, false)
+        .await
+        .context("SqliteStore::get_issue(i-actform)")?;
+    let form_response = issue
+        .item
+        .form_response
+        .as_ref()
+        .context("i-actform: expected form_response to be Some after cleanup")?;
+    match &form_response.actor {
+        hydra_common::ActorId::User(name) if name.as_str() == "alice" => {}
+        other => bail!("i-actform.form_response.actor: expected User(alice); got {other:?}"),
+    }
+    if form_response.action_id != "approve" {
+        bail!(
+            "i-actform.form_response.action_id: expected 'approve'; got {:?}",
+            form_response.action_id
+        );
+    }
+    Ok(())
 }

@@ -29,7 +29,7 @@ use chrono::Utc;
 use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::principal::{ExternalSystem, Principal};
-use hydra_common::{DocumentId, HydraId, IssueId, PatchId, RepoName, SessionId};
+use hydra_common::{ConversationId, DocumentId, HydraId, IssueId, PatchId, RepoName, SessionId};
 use hydra_server::domain::actors::ActorRef;
 use hydra_server::domain::issues::{Issue, IssueStatus, IssueType};
 use hydra_server::domain::patches::{Patch, PatchStatus, Review};
@@ -777,6 +777,46 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         }
     }
 
+    // conversations_v2 — the new walker added in [[i-jyhvstcj]]
+    // rewrites the `actor` column on this table too. The fixture seeds
+    // the exact prod symptom (`Session`-tagged inner actor_id) so the
+    // §3.3 store-level smoke below proves `get_conversation` stops
+    // failing to deserialize.
+    expect_table_actor(
+        pool,
+        "conversations_v2",
+        "c-actconvx",
+        Some(serde_json::json!({
+            "Authenticated": {"actor_id": {"Adhoc": {"session_id": "s-csessacx"}}}
+        })),
+    )
+    .await?;
+
+    // issues_v2.form_response — the new walker added in [[i-jyhvstcj]]
+    // rewrites the embedded `.actor` while preserving sibling fields
+    // (`action_id`, `values`, `submitted_at`).
+    let row = sqlx::query(
+        "SELECT form_response::text AS pl FROM metis.issues_v2 \
+         WHERE id = 'i-actform' AND is_latest = TRUE",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read issues_v2.form_response for i-actform")?;
+    let raw: Option<String> = row.get("pl");
+    let got: Option<serde_json::Value> = raw
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("decode issues_v2.form_response JSON for i-actform")?;
+    let expected_form_response = serde_json::json!({
+        "action_id": "approve",
+        "actor": {"User": {"name": "alice"}},
+        "values": {"score": 4},
+        "submitted_at": "2026-05-10T11:00:00Z"
+    });
+    if got.as_ref() != Some(&expected_form_response) {
+        bail!("issues_v2(i-actform).form_response: expected {expected_form_response}; got {got:?}");
+    }
+
     // §3.3 smoke: read every row through the store and confirm
     // `ActorRef::deserialize` accepts the rewritten payload — including
     // the new External-legacy fallback shape that catches serde drift
@@ -971,6 +1011,49 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
     match document.actor.as_ref() {
         Some(DomainActorRef::Authenticated { actor_id, .. }) if actor_id == &multi_user => {}
         other => bail!("d-actdoclc: expected Authenticated(User(alice)); got {other:?}"),
+    }
+
+    // conversations_v2 store-level smoke — the load-bearing acceptance
+    // criterion for [[i-jyhvstcj]]: prod's `GET /v1/conversations` was
+    // failing on this exact shape pre-fix.
+    let conversation = store
+        .get_conversation(
+            &ConversationId::from_str("c-actconvx")
+                .context("parse c-actconvx as ConversationId")?,
+            false,
+        )
+        .await
+        .context("store-level read of c-actconvx")?;
+    let conv_session_id: SessionId = "s-csessacx".parse().unwrap();
+    match conversation.actor.as_ref() {
+        Some(DomainActorRef::Authenticated {
+            actor_id: ActorId::Adhoc(sid),
+            ..
+        }) if sid == &conv_session_id => {}
+        other => bail!("c-actconvx: expected Authenticated(Adhoc(s-csessacx)); got {other:?}"),
+    }
+
+    // issues_v2 form_response store-level smoke — the other load-bearing
+    // acceptance criterion for [[i-jyhvstcj]]: prod's `GET /v1/issues`
+    // was failing on the embedded `Username` actor pre-fix.
+    let form_issue = store
+        .get_issue(&parse_issue_id("i-actform")?, false)
+        .await
+        .context("store-level read of i-actform")?;
+    let form_response = form_issue
+        .item
+        .form_response
+        .as_ref()
+        .context("i-actform: expected form_response to be Some after cleanup")?;
+    match &form_response.actor {
+        hydra_common::ActorId::User(name) if name.as_str() == "alice" => {}
+        other => bail!("i-actform.form_response.actor: expected User(alice); got {other:?}"),
+    }
+    if form_response.action_id != "approve" {
+        bail!(
+            "i-actform.form_response.action_id: expected 'approve'; got {:?}",
+            form_response.action_id
+        );
     }
 
     Ok(())
