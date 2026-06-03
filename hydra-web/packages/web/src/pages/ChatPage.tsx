@@ -10,7 +10,7 @@ import { mergeOptimisticEvents } from "../features/chat/mergeOptimisticEvents";
 import { ChatHeader } from "../features/chat/ChatHeader";
 import { ChatMessageList } from "../features/chat/ChatMessageList";
 import { ChatActivityIndicator } from "../features/chat/ChatActivityIndicator";
-import { deriveActivityStatus } from "../features/chat/deriveActivityStatus";
+import { deriveActivitySteps } from "../features/chat/deriveActivitySteps";
 import { ChatInput } from "../features/chat/ChatInput";
 import { clearConversationDraft } from "../features/chat/useConversationDraft";
 import { ChatRightPanel, type ChatRightPanelTabKey } from "../features/chat/ChatRightPanel";
@@ -168,7 +168,7 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
 
   const canClose = conversation.status !== "closed";
   const chatPaneActive = mobileTab === "chat";
-  const activityStatus = deriveActivityStatus(events, conversation.status);
+  const activity = deriveActivitySteps(events, conversation.status);
 
   return (
     <div className={styles.chatLayout}>
@@ -191,7 +191,9 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
           creator={conversation.creator}
           currentUsername={currentUsername}
         />
-        {activityStatus ? <ChatActivityIndicator status={activityStatus} /> : null}
+        {activity.current ? (
+          <ChatActivityIndicator current={activity.current} />
+        ) : null}
         <ChatInput
           conversationId={conversationId}
           onSend={handleSend}

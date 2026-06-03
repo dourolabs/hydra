@@ -303,7 +303,7 @@ describe("ChatPage 2-pane layout", () => {
 
   // ── ChatActivityIndicator wiring ──────────────────────────────────────
   // The indicator lives below the transcript (not inside it) and is driven
-  // purely by `deriveActivityStatus(events, conversation.status)`. These
+  // purely by `deriveActivitySteps(events, conversation.status)`. These
   // tests verify the wiring picks the right inputs and shows/hides the
   // indicator correctly without re-testing the derivation mapping table.
 
