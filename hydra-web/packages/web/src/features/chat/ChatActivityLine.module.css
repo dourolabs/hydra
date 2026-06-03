@@ -1,0 +1,313 @@
+/* ──────────────────────────────────────────────────────────────
+   Inline activity-line indicator (`.ai` in spec).
+   `--cat` is set per-render from the active step's category and
+   drives the border, left strip, orb, verb, timer pill, and sweep.
+   ────────────────────────────────────────────────────────────── */
+
+.ai {
+  --cat: var(--c-run);
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-1);
+  overflow: hidden;
+  transition: border-color 220ms ease;
+}
+
+.ai[data-live="true"] {
+  border-color: color-mix(in oklch, var(--cat) 42%, var(--line));
+}
+
+/* Collapsed row — a button so the whole thing is keyboard-toggleable. */
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px 9px 14px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.row:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--cat) 55%, var(--line));
+  outline-offset: -2px;
+}
+
+/* 2px left accent strip — primary always-visible color cue. */
+.row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--cat);
+  transition: background-color 220ms ease;
+}
+
+/* ── Orb ── */
+.orb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: color-mix(in oklch, var(--cat) 16%, var(--bg-2));
+  color: var(--cat);
+  transition:
+    background-color 220ms ease,
+    color 220ms ease;
+}
+
+.ai[data-live="true"] .orb {
+  animation: ai-breathe 1.8s ease-out infinite;
+}
+
+@keyframes ai-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--cat) 38%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--cat) 0%, transparent);
+  }
+}
+
+/* ── Verb / detail ── */
+.text {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+}
+
+.verb {
+  font-family: var(--f-mono);
+  font-size: var(--t-md);
+  font-weight: 500;
+  color: var(--cat);
+  transition: color 220ms ease;
+  white-space: nowrap;
+}
+
+.detail {
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  color: var(--fg-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--fg-1);
+}
+
+/* ── Timer pill ── */
+.timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklch, var(--cat) 12%, transparent);
+  color: var(--cat);
+  transition:
+    background-color 220ms ease,
+    color 220ms ease;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 1;
+}
+
+.ai[data-live="true"] .dot {
+  animation: ai-dot-fade 1.3s ease-in-out infinite;
+}
+
+@keyframes ai-dot-fade {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── Chevron ── */
+.chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-3);
+  flex-shrink: 0;
+  transition:
+    color 110ms ease,
+    transform 110ms ease;
+}
+
+.row:hover .chev {
+  color: var(--fg-1);
+}
+
+.ai[data-open="true"] .chev {
+  transform: rotate(90deg);
+}
+
+/* ── Sweep underline ── */
+.sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.5px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.sweep::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--cat) 70%, transparent),
+    transparent
+  );
+  transform: translateX(-100%);
+}
+
+.ai[data-live="true"] .sweep::after {
+  animation: ai-sweep 1.7s linear infinite;
+}
+
+@keyframes ai-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ── Feed ── */
+.feed {
+  border-top: 1px solid var(--line);
+  padding: 6px 11px 9px 13px;
+  background: var(--bg-0);
+  display: flex;
+  flex-direction: column;
+}
+
+.step {
+  --sc: var(--c-run);
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 0;
+  font-size: var(--t-sm);
+}
+
+.node {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sc);
+  justify-self: center;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--sc) 14%, transparent);
+}
+
+.step[data-state="active"] .node {
+  animation: ai-dot-fade 1.2s ease-in-out infinite;
+}
+
+.step[data-state="pending"] .node {
+  background: transparent;
+  border: 1px solid color-mix(in oklch, var(--sc) 50%, var(--line));
+  box-shadow: none;
+}
+
+.step[data-state="pending"] .lbl {
+  opacity: 0.45;
+}
+
+.lbl {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.v {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  color: var(--sc);
+  white-space: nowrap;
+}
+
+.d {
+  font-family: var(--f-sans);
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.codeSm {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  padding: 0 4px;
+  border-radius: 3px;
+  color: var(--fg-1);
+}
+
+.dur {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-3);
+}
+
+/* ── Reduced motion: keep static colour coding, drop the animations. ── */
+@media (prefers-reduced-motion: reduce) {
+  .ai[data-live="true"] .orb,
+  .ai[data-live="true"] .dot,
+  .ai[data-live="true"] .sweep::after,
+  .step[data-state="active"] .node {
+    animation: none;
+  }
+  .sweep::after {
+    display: none;
+  }
+}

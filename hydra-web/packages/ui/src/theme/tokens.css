@@ -91,6 +91,18 @@
   --c-violet: oklch(0.74 0.16 290);
   --c-violet-soft: oklch(0.74 0.16 290 / 0.18);
 
+  /* ----- Activity-line categories -----
+     Color-codes what the agent is currently doing in the chat activity
+     indicator. Shared status colors (`--s-progress`, `--s-closed`,
+     `--s-failed`) cover run/done/error; the rest fill out the palette. */
+  --c-think: oklch(0.68 0.025 85); /* warm neutral — reasoning, no I/O */
+  --c-read: oklch(0.74 0.105 235); /* blue — read/search */
+  --c-edit: oklch(0.8 0.145 152); /* emerald — edits / writes */
+  --c-submit: oklch(0.74 0.15 292); /* violet — delegate / submit */
+  --c-run: var(--s-progress); /* amber — bash / tests / builds */
+  --c-done: var(--s-closed); /* green — terminal success */
+  --c-error: var(--s-failed); /* red — terminal failure */
+
   /* ----- Legacy color aliases (map old names → new tokens) ----- */
   --color-bg-primary: var(--bg-0);
   --color-bg-secondary: var(--bg-1);

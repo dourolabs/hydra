@@ -5,6 +5,8 @@ import { Markdown } from "../../components/Markdown";
 import { formatTimestamp } from "../../utils/time";
 import { AgoTime } from "../../components/Runtime/Runtime";
 import { MessageReferencesPreview } from "./MessageReferencesPreview";
+import { ChatActivityLine } from "./ChatActivityLine";
+import type { ActivityRun } from "./deriveActivitySteps";
 import styles from "./ChatMessageList.module.css";
 
 function SystemEvent({ text, timestamp }: { text: string; timestamp: string }) {
@@ -78,6 +80,17 @@ interface ChatMessageListProps {
   agentName?: string | null;
   creator?: string;
   currentUsername?: string | null;
+  /**
+   * Derived activity run, rendered as the trailing transcript item when an
+   * activity is live or just settled. Hidden when there's nothing to show.
+   */
+  activity?: ActivityRun;
+}
+
+/** Whether the activity line should occupy a transcript slot. */
+function shouldRenderActivity(activity: ActivityRun | undefined): boolean {
+  if (!activity) return false;
+  return activity.current !== null || activity.steps.length > 0;
 }
 
 export function ChatMessageList({
@@ -85,6 +98,7 @@ export function ChatMessageList({
   agentName,
   creator,
   currentUsername,
+  activity,
 }: ChatMessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -98,6 +112,12 @@ export function ChatMessageList({
     creator: resolvedCreator,
     userAuthorLabel,
   };
+
+  // The activity line appears/disappears between events, and that transition
+  // needs to participate in the same scroll-to-bottom behaviour as a new
+  // message — otherwise the newly rendered indicator can land behind the
+  // input. Include its presence in the effect's dep key.
+  const activityVisible = shouldRenderActivity(activity);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -136,9 +156,9 @@ export function ChatMessageList({
       container.removeEventListener("wheel", stopFollowing);
       container.removeEventListener("touchmove", stopFollowing);
     };
-  }, [events.length]);
+  }, [events.length, activityVisible]);
 
-  if (events.length === 0) {
+  if (events.length === 0 && !activityVisible) {
     return (
       <div
         ref={containerRef}
@@ -164,6 +184,11 @@ export function ChatMessageList({
     >
       <div ref={threadRef} className={styles.thread}>
         {events.map((event, i) => renderEvent(event, i, renderCtx))}
+        {activityVisible && activity ? (
+          <div className={styles.activitySlot}>
+            <ChatActivityLine run={activity} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
