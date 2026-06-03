@@ -9,13 +9,13 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DynamicRef {
-    PatchAuthor,
+    PatchCreator,
 }
 
 impl DynamicRef {
     pub fn shorthand(self) -> &'static str {
         match self {
-            DynamicRef::PatchAuthor => "patch.author",
+            DynamicRef::PatchCreator => "patch.creator",
         }
     }
 }
@@ -202,7 +202,7 @@ pub fn validate_merge_policy(policy: &MergePolicy) -> Result<(), MergePolicyVali
 impl From<api::repositories::DynamicRef> for DynamicRef {
     fn from(value: api::repositories::DynamicRef) -> Self {
         match value {
-            api::repositories::DynamicRef::PatchAuthor => DynamicRef::PatchAuthor,
+            api::repositories::DynamicRef::PatchCreator => DynamicRef::PatchCreator,
         }
     }
 }
@@ -210,7 +210,7 @@ impl From<api::repositories::DynamicRef> for DynamicRef {
 impl From<DynamicRef> for api::repositories::DynamicRef {
     fn from(value: DynamicRef) -> Self {
         match value {
-            DynamicRef::PatchAuthor => api::repositories::DynamicRef::PatchAuthor,
+            DynamicRef::PatchCreator => api::repositories::DynamicRef::PatchCreator,
         }
     }
 }
@@ -338,7 +338,10 @@ mod tests {
                 },
             ],
             mergers: Some(MergerRule {
-                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice")],
+                any_of: vec![
+                    AssigneeRef::Dynamic(DynamicRef::PatchCreator),
+                    user("alice"),
+                ],
             }),
         }
     }
@@ -361,7 +364,7 @@ mod tests {
             ],
             mergers: Some(api_repos::MergerRule {
                 any_of: vec![
-                    api_repos::AssigneeRef::Dynamic(api_repos::DynamicRef::PatchAuthor),
+                    api_repos::AssigneeRef::Dynamic(api_repos::DynamicRef::PatchCreator),
                     api_user("alice"),
                 ],
             }),

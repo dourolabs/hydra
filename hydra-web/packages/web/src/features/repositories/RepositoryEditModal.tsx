@@ -16,7 +16,7 @@ const MERGE_POLICY_PLACEHOLDER = `{
   "reviewers": [
     { "any_of": ["users/alice"], "count": 1 }
   ],
-  "mergers": { "any_of": ["@patch.author"] }
+  "mergers": { "any_of": ["@patch.creator"] }
 }`;
 
 function initialMergePolicyText(policy: MergePolicy | null | undefined): string {

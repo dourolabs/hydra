@@ -1621,7 +1621,7 @@ mod tests {
             reasons: vec![MergeBlockedReason::NotInMergers {
                 actor: "swe-session-abcd".to_string(),
                 allowed_mergers: vec![EligiblePrincipal::Dynamic {
-                    reference: DynamicRef::PatchAuthor,
+                    reference: DynamicRef::PatchCreator,
                     resolved_to: Some("jayantk".to_string()),
                 }],
                 suggested_action: SuggestedAction::FileMergeRequest {

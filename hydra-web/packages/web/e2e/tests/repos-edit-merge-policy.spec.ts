@@ -27,7 +27,7 @@ test.describe("Repository edit merge policy @repos:edit-merge-policy", () => {
         { label: "code-review", any_of: ["reviewer", "carol"], count: 2 },
         { label: "human-signoff", any_of: ["alice", "bob"] },
       ],
-      mergers: { any_of: ["@patch.author", "alice"] },
+      mergers: { any_of: ["@patch.creator", "alice"] },
     });
     // Pretty-printed with two-space indent.
     expect(initialText).toContain('\n  "reviewers"');
@@ -43,7 +43,7 @@ test.describe("Repository edit merge policy @repos:edit-merge-policy", () => {
     await expect(summary).toBeVisible();
     await expect(summary).toContainText("code-review");
     await expect(summary).toContainText("human-signoff");
-    await expect(summary).toContainText("@patch.author");
+    await expect(summary).toContainText("@patch.creator");
 
     // Criterion 6: invalid JSON disables Save and shows inline error.
     await page
@@ -69,7 +69,7 @@ test.describe("Repository edit merge policy @repos:edit-merge-policy", () => {
     // reflect the new policy without an explicit reload.
     const summaryAfter = page.getByTestId(`merge-policy-${REPO}`);
     await expect(summaryAfter).toContainText("users/alice");
-    await expect(summaryAfter).not.toContainText("@patch.author");
+    await expect(summaryAfter).not.toContainText("@patch.creator");
 
     // Criterion 5: Clear policy → save sends null → reload shows the
     // "no policy" placeholder via MergePolicySummary (rendered when policy is null).
