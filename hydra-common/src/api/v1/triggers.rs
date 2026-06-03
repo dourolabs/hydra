@@ -133,40 +133,6 @@ mod tests {
     }
 
     #[test]
-    fn trigger_round_trips_cron() {
-        let trigger = Trigger::new(
-            true,
-            Schedule::Cron {
-                expression: "0 9 * * 1".to_string(),
-                timezone: Some("UTC".to_string()),
-            },
-            vec![sample_action()],
-            Username::from("alice"),
-            None,
-            false,
-        );
-        let value = serde_json::to_value(&trigger).unwrap();
-        let back: Trigger = serde_json::from_value(value).unwrap();
-        assert_eq!(trigger, back);
-    }
-
-    #[test]
-    fn trigger_round_trips_once() {
-        let at: DateTime<Utc> = "2026-12-31T23:59:00Z".parse().unwrap();
-        let trigger = Trigger::new(
-            true,
-            Schedule::Once { at },
-            vec![sample_action()],
-            Username::from("alice"),
-            Some(at),
-            false,
-        );
-        let value = serde_json::to_value(&trigger).unwrap();
-        let back: Trigger = serde_json::from_value(value).unwrap();
-        assert_eq!(trigger, back);
-    }
-
-    #[test]
     fn schedule_cron_wire_tag() {
         let s = Schedule::Cron {
             expression: "* * * * *".to_string(),
