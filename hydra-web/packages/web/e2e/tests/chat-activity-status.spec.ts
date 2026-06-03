@@ -1,13 +1,17 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/auth";
 
-// `@chat:activity-status` — the transient activity indicator below the
-// message thread should:
+// `@chat:activity-status` — the inline `ChatActivityLine` rendered as the
+// trailing transcript item inside `ChatMessageList` should:
 //   1. Appear as `Thinking…` once the user sends a message (driven by the
 //      optimistic-merged `user_message` tail).
 //   2. Transition to a tool label (e.g. `Searching code`) when the worker
 //      emits a `ToolUse` SessionEvent live.
-//   3. Disappear once an `AssistantMessage` lands.
+//   3. Surface a tool's `payload.description` in the detail span when set
+//      (verb remains the friendly tool label).
+//   4. Settle into a `done`-state summary once an `AssistantMessage` lands —
+//      the line stays inside the transcript with the historical step count,
+//      since the run terminated with completed steps the user can review.
 //
 // In real prod usage `useSSE` invalidates `["sessionEvents", sid]` whenever
 // the server pushes a `session_event_created` event, driving the refetch +
@@ -60,30 +64,34 @@ async function invalidateSessionEvents(page: Page, sessionId: string): Promise<v
   }, sessionId);
 }
 
-test.describe("Chat activity indicator @chat:activity-status", () => {
+test.describe("Chat activity line @chat:activity-status", () => {
   test(
-    "appears as Thinking…, transitions to a ToolUse label, then disappears on AssistantMessage @chat:activity-status",
+    "appears as Thinking…, transitions through ToolUse labels, then settles to a done summary on AssistantMessage @chat:activity-status",
     async ({ authenticatedPage: page, request }) => {
       await page.goto(`/chat/${SEED_CONVERSATION_ID}`);
       await expect(page.getByTestId("chat-message-list")).toBeVisible();
 
-      // No indicator before the user has spoken (tail is an assistant_message
-      // from the seed fixture).
-      await expect(page.getByTestId("chat-activity-indicator")).toHaveCount(0);
+      // No activity line before the user has spoken (tail is an
+      // assistant_message from the seed fixture, no tool steps to summarise).
+      await expect(page.getByTestId("chat-activity-line")).toHaveCount(0);
 
       // Send a message via the composer. The optimistic merge makes the
-      // tail a user_message immediately, so the indicator pops as Thinking…
+      // tail a user_message immediately, so the line pops as Thinking…
       // BEFORE the SSE roundtrip — proves the optimistic path is wired up.
       const composer = page.getByPlaceholder("Type a message…");
       await composer.fill("Find references to the OAuth handler");
       await page.getByRole("button", { name: "Send" }).click();
 
-      const indicatorText = page.getByTestId("chat-activity-indicator-text");
-      await expect(indicatorText).toHaveText("Thinking…");
+      const activityLine = page.getByTestId("chat-activity-line");
+      const verb = page.getByTestId("chat-activity-line-verb");
+      const detail = page.getByTestId("chat-activity-line-detail");
+
+      await expect(verb).toHaveText("Thinking…");
+      await expect(activityLine).toHaveAttribute("data-state", "live");
 
       // Worker emits a Grep tool_use (no `description` in payload) →
-      // indicator should switch to the TOOL_LABELS entry `Searching code`
-      // without remounting (same testid still resolves).
+      // verb should switch to the TOOL_LABELS entry `Searching code` and no
+      // detail span renders (Grep payload has no description).
       await appendSessionEventToMock(request, SEED_SESSION_ID, {
         type: "tool_use",
         tool_name: "Grep",
@@ -91,11 +99,13 @@ test.describe("Chat activity indicator @chat:activity-status", () => {
         timestamp: new Date(Date.now() + 1000).toISOString(),
       });
       await invalidateSessionEvents(page, SEED_SESSION_ID);
-      await expect(indicatorText).toHaveText("Searching code");
+      await expect(verb).toHaveText("Searching code");
+      await expect(detail).toHaveCount(0);
 
       // Worker emits a Bash tool_use whose payload carries a human-readable
-      // `description` → indicator should switch to that description verbatim
-      // (per i-jxamlakh: description trumps the TOOL_LABELS entry).
+      // `description`. The new component splits the friendly tool label and
+      // the description across `verb` and `detail` spans (per i-jxamlakh:
+      // description surfaces as the detail; verb stays the TOOL_LABELS entry).
       await appendSessionEventToMock(request, SEED_SESSION_ID, {
         type: "tool_use",
         tool_name: "Bash",
@@ -106,26 +116,31 @@ test.describe("Chat activity indicator @chat:activity-status", () => {
         timestamp: new Date(Date.now() + 1500).toISOString(),
       });
       await invalidateSessionEvents(page, SEED_SESSION_ID);
-      await expect(indicatorText).toHaveText("Locate OAuth handler usages");
+      await expect(verb).toHaveText("Running command");
+      await expect(detail).toHaveText("Locate OAuth handler usages");
 
-      // Final assistant message lands → indicator hides.
+      // Final assistant message lands → run terminates. With historical
+      // steps present the line stays visible as a `done`-state summary
+      // ("2 steps" + total duration) so the user can review what happened.
       await appendSessionEventToMock(request, SEED_SESSION_ID, {
         type: "assistant_message",
         content: "Found 3 references — let me know which to focus on.",
         timestamp: new Date(Date.now() + 2000).toISOString(),
       });
       await invalidateSessionEvents(page, SEED_SESSION_ID);
-      await expect(page.getByTestId("chat-activity-indicator")).toHaveCount(0);
+      await expect(activityLine).toHaveAttribute("data-state", "done");
+      await expect(verb).toHaveText("2 steps");
 
-      // The indicator never appeared as a transcript row (it lives below the
-      // thread, not inside it). Final assistant message is part of history.
+      // The activity line lives INSIDE the message list (it's the trailing
+      // transcript item, not a sibling below the thread). The final
+      // assistant message is also part of the transcript.
       const list = page.getByTestId("chat-message-list");
       await expect(list).toContainText(
         "Found 3 references — let me know which to focus on.",
       );
       expect(
-        await list.locator('[data-testid="chat-activity-indicator"]').count(),
-      ).toBe(0);
+        await list.locator('[data-testid="chat-activity-line"]').count(),
+      ).toBe(1);
     },
   );
 });
