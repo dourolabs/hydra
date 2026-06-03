@@ -9,7 +9,6 @@ import { useChatTranscript } from "../features/chat/useChatTranscript";
 import { mergeOptimisticEvents } from "../features/chat/mergeOptimisticEvents";
 import { ChatHeader } from "../features/chat/ChatHeader";
 import { ChatMessageList } from "../features/chat/ChatMessageList";
-import { ChatActivityIndicator } from "../features/chat/ChatActivityIndicator";
 import { deriveActivitySteps } from "../features/chat/deriveActivitySteps";
 import { ChatInput } from "../features/chat/ChatInput";
 import { clearConversationDraft } from "../features/chat/useConversationDraft";
@@ -190,10 +189,8 @@ function ExistingChatPage({ conversationId }: { conversationId: string }) {
           agentName={conversation.agent_name}
           creator={conversation.creator}
           currentUsername={currentUsername}
+          activity={activity}
         />
-        {activity.current ? (
-          <ChatActivityIndicator current={activity.current} />
-        ) : null}
         <ChatInput
           conversationId={conversationId}
           onSend={handleSend}

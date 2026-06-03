@@ -74,3 +74,110 @@ test.describe("Visual Audit - Authenticated Pages", () => {
     });
   }
 });
+
+// ── ChatActivityLine inline activity indicator ─────────────────────────────
+// Captures the three reference states from the spec (live mid-tool-use,
+// expanded feed, terminal done). Seeds tool_use events into the chat's
+// session via the mock-server's `/v1/dev/sessions/:id/events` endpoint so
+// the on-disk fixture is left alone — only this test sees the injected
+// stream.
+
+const ACTIVITY_CONVERSATION_ID = "c-seed00001";
+const ACTIVITY_SESSION_ID = "t-seed00016";
+const AUTH_HEADER = { Authorization: "Bearer dev-token-12345" };
+
+async function appendSessionEvent(sessionId: string, event: unknown) {
+  const res = await fetch(`http://localhost:8080/v1/dev/sessions/${sessionId}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...AUTH_HEADER },
+    body: JSON.stringify(event),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `dev append-event failed (${res.status}): ${await res.text()}`,
+    );
+  }
+}
+
+test.describe("Visual Audit - Chat activity line", () => {
+  test("capture live, expanded, and done states for the inline activity indicator", async ({
+    authenticatedPage,
+  }) => {
+    const page = authenticatedPage;
+
+    // 1. Seed a multi-step run that ends on a tool_use (live tail).
+    const baseTs = Date.parse("2026-05-14T12:00:00Z");
+    await appendSessionEvent(ACTIVITY_SESSION_ID, {
+      type: "user_message",
+      content: "Look at the failing tests and propose a fix.",
+      timestamp: new Date(baseTs).toISOString(),
+    });
+    await appendSessionEvent(ACTIVITY_SESSION_ID, {
+      type: "tool_use",
+      tool_name: "Grep",
+      payload: { description: '"refreshToken" in src/auth' },
+      timestamp: new Date(baseTs + 800).toISOString(),
+    });
+    await appendSessionEvent(ACTIVITY_SESSION_ID, {
+      type: "tool_use",
+      tool_name: "Read",
+      payload: { description: "src/auth/oauth.ts" },
+      timestamp: new Date(baseTs + 3_200).toISOString(),
+    });
+    await appendSessionEvent(ACTIVITY_SESSION_ID, {
+      type: "tool_use",
+      tool_name: "Edit",
+      payload: { description: "Restore refreshToken default in oauth.ts" },
+      timestamp: new Date(baseTs + 8_400).toISOString(),
+    });
+
+    await page.goto(`/chat/${ACTIVITY_CONVERSATION_ID}`);
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForSelector('[data-testid="chat-activity-line"]', {
+      timeout: 5_000,
+    });
+    // Let CSS-only animations land in a deterministic frame before disabling
+    // animations in `captureScreenshot`.
+    await page.waitForTimeout(500);
+
+    await captureScreenshot(page, "chat-activity-line-live", DESKTOP_VIEWPORT, "desktop");
+    await captureScreenshot(page, "chat-activity-line-live", MOBILE_VIEWPORT, "mobile");
+
+    // 2. Expanded feed.
+    await page.setViewportSize(DESKTOP_VIEWPORT);
+    await page.locator('[data-testid="chat-activity-line-toggle"]').click();
+    await page.waitForSelector('[data-testid="chat-activity-line-feed"]');
+    await page.waitForTimeout(200);
+    await captureScreenshot(
+      page,
+      "chat-activity-line-expanded",
+      DESKTOP_VIEWPORT,
+      "desktop",
+    );
+    await captureScreenshot(
+      page,
+      "chat-activity-line-expanded",
+      MOBILE_VIEWPORT,
+      "mobile",
+    );
+
+    // 3. Terminal "done" — append an assistant_message and reload.
+    await appendSessionEvent(ACTIVITY_SESSION_ID, {
+      type: "assistant_message",
+      content: "Restored the default and re-ran the suite — green.",
+      timestamp: new Date(baseTs + 18_400).toISOString(),
+    });
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForSelector('[data-testid="chat-activity-line"]', {
+      timeout: 5_000,
+    });
+    await page
+      .locator('[data-testid="chat-activity-line-toggle"]')
+      .click(); // open the feed so the done summary shows the steps.
+    await page.waitForSelector('[data-testid="chat-activity-line-feed"]');
+    await page.waitForTimeout(200);
+    await captureScreenshot(page, "chat-activity-line-done", DESKTOP_VIEWPORT, "desktop");
+    await captureScreenshot(page, "chat-activity-line-done", MOBILE_VIEWPORT, "mobile");
+  });
+});

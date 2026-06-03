@@ -153,6 +153,12 @@
   padding: 0;
 }
 
+/* Wrap the activity line so it sits in the same column as agent bubbles. */
+.activitySlot {
+  display: flex;
+  flex-direction: column;
+}
+
 .systemEvent {
   display: flex;
   align-items: center;
