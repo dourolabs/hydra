@@ -339,6 +339,11 @@ fn principal_for_review_author(actor: &ActorRef) -> Result<Principal, UpsertPatc
                 "automation actor cannot author reviews via the patch upsert API",
             ));
         }
+        ActorRef::Trigger { .. } => {
+            return Err(invalid(
+                "trigger actor cannot author reviews via the patch upsert API",
+            ));
+        }
     };
     match actor_id {
         ActorId::User(name) => Ok(Principal::User { name: name.clone() }),

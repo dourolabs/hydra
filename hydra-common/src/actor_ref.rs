@@ -1,6 +1,6 @@
 use crate::api::v1::agents::AgentName;
 use crate::api::v1::users::Username;
-use crate::ids::SessionId;
+use crate::ids::{SessionId, TriggerId};
 use crate::principal::ExternalSystem;
 use crate::whoami::ActorIdentity;
 use serde::de::{Error as DeError, MapAccess, Visitor};
@@ -105,6 +105,10 @@ pub enum ActorRef {
         automation_name: String,
         triggered_by: Option<Box<ActorRef>>,
     },
+    Trigger {
+        trigger_id: TriggerId,
+        on_behalf_of: Option<ActorId>,
+    },
 }
 
 impl ActorRef {
@@ -136,6 +140,17 @@ impl ActorRef {
                     automation_name.clone()
                 }
             }
+            ActorRef::Trigger {
+                trigger_id,
+                on_behalf_of,
+            } => {
+                if let Some(behalf) = on_behalf_of {
+                    let behalf_name = actor_id_display_name(behalf);
+                    format!("{trigger_id} (on behalf of {behalf_name})")
+                } else {
+                    trigger_id.to_string()
+                }
+            }
         }
     }
 
@@ -161,6 +176,7 @@ impl ActorRef {
             ActorRef::Automation { triggered_by, .. } => {
                 triggered_by.as_ref().and_then(|t| t.on_behalf_of())
             }
+            ActorRef::Trigger { on_behalf_of, .. } => on_behalf_of.clone(),
         }
     }
 
@@ -183,6 +199,7 @@ impl ActorRef {
             ActorRef::Automation { triggered_by, .. } => triggered_by
                 .as_ref()
                 .and_then(|t| t.originating_session_id()),
+            ActorRef::Trigger { .. } => None,
         }
     }
 }
@@ -412,6 +429,10 @@ mod tests {
         }
     }
 
+    fn sample_trigger_id() -> TriggerId {
+        TriggerId::from_str("t-abcdef").unwrap()
+    }
+
     #[test]
     fn actor_ref_serialization_round_trip_authenticated() {
         let actor_ref = ActorRef::Authenticated {
@@ -442,6 +463,28 @@ mod tests {
                 actor_id: alice_user(),
                 session_id: None,
             })),
+        };
+        let json = serde_json::to_string(&actor_ref).unwrap();
+        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(actor_ref, deserialized);
+    }
+
+    #[test]
+    fn actor_ref_serialization_round_trip_trigger_with_on_behalf_of() {
+        let actor_ref = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: Some(alice_user()),
+        };
+        let json = serde_json::to_string(&actor_ref).unwrap();
+        let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(actor_ref, deserialized);
+    }
+
+    #[test]
+    fn actor_ref_serialization_round_trip_trigger_without_on_behalf_of() {
+        let actor_ref = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: None,
         };
         let json = serde_json::to_string(&actor_ref).unwrap();
         let deserialized: ActorRef = serde_json::from_str(&json).unwrap();
@@ -488,6 +531,24 @@ mod tests {
             })),
         };
         assert_eq!(actor_ref.display_name(), "cascade (triggered by alice)");
+    }
+
+    #[test]
+    fn actor_ref_display_name_trigger_with_on_behalf_of() {
+        let actor_ref = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: Some(alice_user()),
+        };
+        assert_eq!(actor_ref.display_name(), "t-abcdef (on behalf of alice)");
+    }
+
+    #[test]
+    fn actor_ref_display_name_trigger_without_on_behalf_of() {
+        let actor_ref = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: None,
+        };
+        assert_eq!(actor_ref.display_name(), "t-abcdef");
     }
 
     // --- FromStr / parse_actor_name accept the canonical path forms ---
@@ -666,6 +727,36 @@ mod tests {
             })),
         };
         assert_eq!(actor_ref.originating_session_id(), Some(&sid));
+    }
+
+    #[test]
+    fn originating_session_id_trigger_returns_none() {
+        let with_behalf = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: Some(swe_agent()),
+        };
+        assert_eq!(with_behalf.originating_session_id(), None);
+
+        let without_behalf = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: None,
+        };
+        assert_eq!(without_behalf.originating_session_id(), None);
+    }
+
+    #[test]
+    fn on_behalf_of_trigger_returns_inner_actor_id() {
+        let with_behalf = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: Some(alice_user()),
+        };
+        assert_eq!(with_behalf.on_behalf_of(), Some(alice_user()));
+
+        let without_behalf = ActorRef::Trigger {
+            trigger_id: sample_trigger_id(),
+            on_behalf_of: None,
+        };
+        assert_eq!(without_behalf.on_behalf_of(), None);
     }
 
     #[test]

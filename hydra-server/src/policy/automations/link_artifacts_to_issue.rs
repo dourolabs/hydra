@@ -104,8 +104,12 @@ impl Automation for LinkArtifactsToIssueAutomation {
             },
             // System and Automation actor refs aren't end-user principals;
             // artifacts they produce are linked (if at all) via the wrapped
-            // `triggered_by` actor handled by sibling automations.
-            ActorRef::System { .. } | ActorRef::Automation { .. } => return Ok(()),
+            // `triggered_by` actor handled by sibling automations. Trigger
+            // refs don't carry session/issue context either; their producer
+            // will land in PR 2+ of the triggered-actions feature.
+            ActorRef::System { .. } | ActorRef::Automation { .. } | ActorRef::Trigger { .. } => {
+                return Ok(());
+            }
         };
 
         let (target_id, rel_type): (HydraId, RelationshipType) = match ctx.event {

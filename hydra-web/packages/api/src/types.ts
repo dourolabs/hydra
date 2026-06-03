@@ -137,6 +137,7 @@ export type { Status } from "./generated/Status";
 export type { TaskError } from "./generated/TaskError";
 export type { TaskId } from "./generated/TaskId";
 export type { TokenUsage } from "./generated/TokenUsage";
+export type { TriggerId } from "./generated/TriggerId";
 export type { UpdateRepositoryRequest } from "./generated/UpdateRepositoryRequest";
 export type { UpsertAgentRequest } from "./generated/UpsertAgentRequest";
 export type { UpsertDocumentRequest } from "./generated/UpsertDocumentRequest";

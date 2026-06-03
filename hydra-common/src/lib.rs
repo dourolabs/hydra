@@ -33,7 +33,7 @@ pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageCo
 pub use document_path::{DocumentPath, DocumentPathError};
 pub use ids::{
     ConversationId, DocumentId, HydraId, HydraIdError, IssueId, LabelId, PatchId, SessionId,
-    random_len_for_count,
+    TriggerId, random_len_for_count,
 };
 pub use models::reviews::{ReviewCommentDraft, ReviewDraft};
 pub use principal::{
@@ -82,6 +82,7 @@ mod ts_export {
         crate::DocumentId::export_all(&cfg).expect("DocumentId");
         crate::SessionId::export_all(&cfg).expect("SessionId");
         crate::LabelId::export_all(&cfg).expect("LabelId");
+        crate::TriggerId::export_all(&cfg).expect("TriggerId");
         crate::DocumentPath::export_all(&cfg).expect("DocumentPath");
         crate::Rgb::export_all(&cfg).expect("Rgb");
         crate::RepoName::export_all(&cfg).expect("RepoName");

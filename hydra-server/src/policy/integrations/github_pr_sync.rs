@@ -166,6 +166,14 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 );
                 return Ok(());
             }
+            ActorRef::Trigger { trigger_id, .. } => {
+                warn!(
+                    patch_id = %patch_id,
+                    trigger_id = %trigger_id,
+                    "github_pr_sync: trigger actor cannot sync PRs, skipping"
+                );
+                return Ok(());
+            }
         };
 
         // Resolve the creator username from the actor identity.
