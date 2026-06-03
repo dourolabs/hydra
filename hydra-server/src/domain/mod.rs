@@ -9,5 +9,6 @@ pub mod repositories;
 pub mod secrets;
 pub mod sessions;
 pub mod task_status;
+pub mod triggers;
 pub mod users;
 pub mod whoami;
