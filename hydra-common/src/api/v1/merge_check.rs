@@ -11,7 +11,7 @@ use crate::api::v1::repositories::DynamicRef;
 use crate::api::v1::users::Username;
 use crate::principal::ExternalSystem;
 
-// `DynamicRef` already (de)serialises as the `@patch.author` shorthand the
+// `DynamicRef` already (de)serialises as the `@patch.creator` shorthand the
 // design assumes (see `hydra-common/src/api/v1/repositories.rs`). We reuse it
 // verbatim for the `ref` field of [`EligiblePrincipal::Dynamic`] rather than
 // introducing a parallel enum.
@@ -237,7 +237,7 @@ mod tests {
                     "allowed_mergers": [
                         {
                             "kind": "dynamic",
-                            "ref": "@patch.author",
+                            "ref": "@patch.creator",
                             "resolved_to": "jayantk"
                         }
                     ],
@@ -335,7 +335,7 @@ mod tests {
                 assert_eq!(
                     allowed_mergers,
                     &vec![EligiblePrincipal::Dynamic {
-                        reference: DynamicRef::PatchAuthor,
+                        reference: DynamicRef::PatchCreator,
                         resolved_to: Some("jayantk".to_string()),
                     }]
                 );
@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn dynamic_principal_with_unresolved_ref_serialises_as_null() {
         let principal = EligiblePrincipal::Dynamic {
-            reference: DynamicRef::PatchAuthor,
+            reference: DynamicRef::PatchCreator,
             resolved_to: None,
         };
         let value = serde_json::to_value(&principal).unwrap();
@@ -361,7 +361,7 @@ mod tests {
             value,
             json!({
                 "kind": "dynamic",
-                "ref": "@patch.author",
+                "ref": "@patch.creator",
                 "resolved_to": null,
             })
         );

@@ -119,7 +119,7 @@ impl AppState {
 
     /// Walk every static `Principal` in the policy's reviewer groups and
     /// `mergers` rule and ensure it resolves to a real Hydra row via
-    /// `Store::principal_exists`. Dynamic refs (e.g. `@patch.author`) are
+    /// `Store::principal_exists`. Dynamic refs (e.g. `@patch.creator`) are
     /// skipped: they're resolved at merge-attempt time against the patch,
     /// not the user/agent tables. `External` principals are accepted
     /// without a DB lookup (format-only validation, per design §4.5).
@@ -332,7 +332,7 @@ mod tests {
             .expect("external principals must succeed without DB lookup");
     }
 
-    /// Dynamic refs (`@patch.author`) are resolved at merge-attempt time
+    /// Dynamic refs (`@patch.creator`) are resolved at merge-attempt time
     /// against the patch, not the user/agent tables — config writes
     /// referencing them must never trigger `principal_exists`.
     #[tokio::test]
@@ -341,7 +341,7 @@ mod tests {
         let config = repo_with_policy(Some(MergePolicy {
             reviewers: vec![],
             mergers: Some(MergerRule {
-                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor)],
+                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchCreator)],
             }),
         }));
 

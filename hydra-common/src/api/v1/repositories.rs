@@ -31,27 +31,33 @@ fn is_default_exclude_author(b: &bool) -> bool {
 /// repo-policy YAML and JSON.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, type = "\"@patch.author\""))]
+#[cfg_attr(feature = "ts", ts(export, type = "\"@patch.creator\""))]
 pub enum DynamicRef {
-    /// The patch's author. Only useful inside `mergers`.
-    PatchAuthor,
+    /// The patch's creator. Only useful inside `mergers`.
+    PatchCreator,
 }
 
 impl DynamicRef {
     /// The wire form *without* the leading `@`.
     pub fn shorthand(self) -> &'static str {
         match self {
-            DynamicRef::PatchAuthor => "patch.author",
+            DynamicRef::PatchCreator => "patch.creator",
         }
     }
 
     /// Parse the part *after* the leading `@`. Returns a human-readable error
     /// listing the accepted values when the input does not match a known ref.
+    ///
+    /// Accepts `patch.author` as a deserialise-only alias for the canonical
+    /// `patch.creator`. Existing stored merge_policy JSON blobs reference
+    /// the old name; the lenient alias lets them continue to parse without a
+    /// JSON-shape migration over the `repositories` table (same approach
+    /// taken for the legacy bare-string form in [`parse_assignee_ref`]).
     pub fn from_shorthand(s: &str) -> Result<Self, String> {
         match s {
-            "patch.author" => Ok(DynamicRef::PatchAuthor),
+            "patch.creator" | "patch.author" => Ok(DynamicRef::PatchCreator),
             other => Err(format!(
-                "unknown dynamic reference '@{other}'; expected one of @patch.author"
+                "unknown dynamic reference '@{other}'; expected one of @patch.creator"
             )),
         }
     }
@@ -99,7 +105,7 @@ impl<'de> Deserialize<'de> for DynamicRef {
 /// - `"users/alice"`        → `Static(Principal::User { name })`
 /// - `"agents/swe"`         → `Static(Principal::Agent { name })`
 /// - `"external/github/x"`  → `Static(Principal::External { .. })`
-/// - `"@patch.author"`      → `Dynamic(DynamicRef::PatchAuthor)`
+/// - `"@patch.creator"`     → `Dynamic(DynamicRef::PatchCreator)`
 ///
 /// For backwards compatibility with pre-Phase-5a configs (and existing
 /// stored merge_policy JSON blobs), a bare username with no `/` or `@`
@@ -852,7 +858,10 @@ mod tests {
                 },
             ],
             mergers: Some(MergerRule {
-                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice")],
+                any_of: vec![
+                    AssigneeRef::Dynamic(DynamicRef::PatchCreator),
+                    user("alice"),
+                ],
             }),
         }
     }
@@ -888,7 +897,7 @@ reviewers:
 
 mergers:
   any_of:
-    - "@patch.author"
+    - "@patch.creator"
     - alice
 "#;
         let policy: MergePolicy = serde_yaml_ng::from_str(yaml).unwrap();
@@ -902,7 +911,10 @@ mergers:
         assert!(policy.reviewers[0].exclude_author);
         assert_eq!(
             policy.mergers.as_ref().unwrap().any_of,
-            vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice"),]
+            vec![
+                AssigneeRef::Dynamic(DynamicRef::PatchCreator),
+                user("alice"),
+            ]
         );
 
         // Re-serialising emits the new canonical path form
@@ -920,7 +932,7 @@ mergers:
     #[test]
     fn merge_policy_round_trips_through_yaml_path_form() {
         // Phase 5a canonical wire form: explicit path prefixes for every
-        // static principal kind plus the existing `@patch.author` shorthand
+        // static principal kind plus the existing `@patch.creator` shorthand
         // for dynamic refs.
         let yaml = r#"
 reviewers:
@@ -930,7 +942,7 @@ reviewers:
       - external/github/jayantk
 mergers:
   any_of:
-    - "@patch.author"
+    - "@patch.creator"
     - agents/swe
 "#;
         let policy: MergePolicy = serde_yaml_ng::from_str(yaml).unwrap();
@@ -940,7 +952,7 @@ mergers:
         );
         assert_eq!(
             policy.mergers.as_ref().unwrap().any_of,
-            vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), agent("swe"),]
+            vec![AssigneeRef::Dynamic(DynamicRef::PatchCreator), agent("swe"),]
         );
     }
 
@@ -962,8 +974,8 @@ mergers:
 
     #[test]
     fn assignee_ref_dynamic_serializes_with_at_prefix() {
-        let value = serde_json::to_value(AssigneeRef::Dynamic(DynamicRef::PatchAuthor)).unwrap();
-        assert_eq!(value, json!("@patch.author"));
+        let value = serde_json::to_value(AssigneeRef::Dynamic(DynamicRef::PatchCreator)).unwrap();
+        assert_eq!(value, json!("@patch.creator"));
     }
 
     #[test]
@@ -991,8 +1003,8 @@ mergers:
 
     #[test]
     fn dynamic_ref_shorthands_round_trip() {
-        let variant = DynamicRef::PatchAuthor;
-        let wire = "@patch.author";
+        let variant = DynamicRef::PatchCreator;
+        let wire = "@patch.creator";
         let principal = AssigneeRef::Dynamic(variant);
         let value = serde_json::to_value(&principal).unwrap();
         assert_eq!(value, json!(wire), "serialize {variant:?}");
@@ -1009,9 +1021,37 @@ mergers:
             "error should name the offending ref, got: {msg}"
         );
         assert!(
-            msg.contains("@patch.author"),
+            msg.contains("@patch.creator"),
             "error should list accepted refs, got: {msg}"
         );
+    }
+
+    #[test]
+    fn dynamic_ref_legacy_patch_author_alias_deserializes_to_patch_creator() {
+        // Stored merge_policy JSON blobs from before the rename use the
+        // `@patch.author` literal. The lenient deserialiser maps them onto
+        // the canonical `PatchCreator` variant so we do not need to migrate
+        // the `repositories` table.
+        let back: AssigneeRef = serde_json::from_value(json!("@patch.author")).unwrap();
+        assert_eq!(back, AssigneeRef::Dynamic(DynamicRef::PatchCreator));
+    }
+
+    #[test]
+    fn dynamic_ref_legacy_patch_author_alias_reserialises_as_patch_creator() {
+        // Round-trip: stored `@patch.author` deserialises, then re-serialises
+        // as the new canonical wire form `@patch.creator`.
+        let back: AssigneeRef = serde_json::from_value(json!("@patch.author")).unwrap();
+        let rewritten = serde_json::to_value(&back).unwrap();
+        assert_eq!(rewritten, json!("@patch.creator"));
+    }
+
+    #[test]
+    fn dynamic_ref_legacy_alias_equivalent_to_canonical_form() {
+        // A policy parsed from the legacy alias is structurally equal to
+        // one parsed from the canonical form.
+        let from_alias: AssigneeRef = serde_json::from_value(json!("@patch.author")).unwrap();
+        let from_canonical: AssigneeRef = serde_json::from_value(json!("@patch.creator")).unwrap();
+        assert_eq!(from_alias, from_canonical);
     }
 
     #[test]
@@ -1121,7 +1161,8 @@ mergers:
         // `hydra-web/packages/mock-server/fixtures/seed.json` ships for
         // `acme/api-gateway`). The lenient deserialiser must continue to
         // read it without a SQL-side migration, then re-serialise into
-        // the canonical path form.
+        // the canonical path form (and rename `@patch.author` to
+        // `@patch.creator`).
         let legacy = json!({
             "reviewers": [
                 {
@@ -1143,13 +1184,17 @@ mergers:
         );
         assert_eq!(
             policy.mergers.as_ref().unwrap().any_of,
-            vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor), user("alice"),]
+            vec![
+                AssigneeRef::Dynamic(DynamicRef::PatchCreator),
+                user("alice"),
+            ]
         );
-        // Reserialising migrates the bare strings to canonical path form.
+        // Reserialising migrates the bare strings to canonical path form
+        // and the legacy `@patch.author` alias to `@patch.creator`.
         let rewritten = serde_json::to_value(&policy).unwrap();
         assert_eq!(
             rewritten["mergers"]["any_of"],
-            json!(["@patch.author", "users/alice"])
+            json!(["@patch.creator", "users/alice"])
         );
         assert_eq!(
             rewritten["reviewers"][0]["any_of"],

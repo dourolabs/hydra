@@ -2733,7 +2733,7 @@ mod tests {
                 exclude_author: true,
             }],
             mergers: Some(MergerRule {
-                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchAuthor)],
+                any_of: vec![AssigneeRef::Dynamic(DynamicRef::PatchCreator)],
             }),
         });
 

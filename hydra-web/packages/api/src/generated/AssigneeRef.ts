@@ -16,7 +16,7 @@
  * - `"users/alice"`        → `Static(Principal::User { name })`
  * - `"agents/swe"`         → `Static(Principal::Agent { name })`
  * - `"external/github/x"`  → `Static(Principal::External { .. })`
- * - `"@patch.author"`      → `Dynamic(DynamicRef::PatchAuthor)`
+ * - `"@patch.creator"`     → `Dynamic(DynamicRef::PatchCreator)`
  *
  * For backwards compatibility with pre-Phase-5a configs (and existing
  * stored merge_policy JSON blobs), a bare username with no `/` or `@`

@@ -2098,7 +2098,7 @@
           }
         ],
         "mergers": {
-          "any_of": ["@patch.author", "alice"]
+          "any_of": ["@patch.creator", "alice"]
         }
       }
     }

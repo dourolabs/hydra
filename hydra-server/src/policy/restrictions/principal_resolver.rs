@@ -67,10 +67,10 @@ fn resolve_static_principal(p: &Principal) -> Principal {
 
 fn resolve_dynamic_ref(dref: DynamicRef, ctx: &ResolutionContext<'_>) -> Option<Principal> {
     match dref {
-        // `Patch.creator: Username` so the patch-author dynamic ref always
-        // resolves to `Principal::User` — patches today are not authored
+        // `Patch.creator: Username` so the patch-creator dynamic ref always
+        // resolves to `Principal::User` — patches today are not created
         // by `Agent` or `External` identities.
-        DynamicRef::PatchAuthor => Some(Principal::User {
+        DynamicRef::PatchCreator => Some(Principal::User {
             name: Username::from(ctx.patch.creator.as_str()),
         }),
     }
@@ -154,12 +154,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn patch_author_dynamic_ref_resolves_to_user_principal_for_creator() {
+    async fn patch_creator_dynamic_ref_resolves_to_user_principal_for_creator() {
         let store = MemoryStore::new();
         let patch = make_patch("author");
         let c = ctx(&patch, &store);
 
-        let p = AssigneeRef::Dynamic(DynamicRef::PatchAuthor);
+        let p = AssigneeRef::Dynamic(DynamicRef::PatchCreator);
         assert_eq!(resolve_principal(&p, &c), Some(user_principal("author")));
     }
 
@@ -171,7 +171,7 @@ mod tests {
 
         let principals = vec![
             user_ref("alice"),
-            AssigneeRef::Dynamic(DynamicRef::PatchAuthor),
+            AssigneeRef::Dynamic(DynamicRef::PatchCreator),
         ];
 
         let resolved = resolve_any_of(&principals, &c);
@@ -180,5 +180,21 @@ mod tests {
         assert_eq!(resolved[0].resolved_to, Some(user_principal("alice")));
         assert_eq!(resolved[1].source, principals[1]);
         assert_eq!(resolved[1].resolved_to, Some(user_principal("author")));
+    }
+
+    #[tokio::test]
+    async fn patch_creator_alias_round_trip_resolves_identically() {
+        // Verifies the lenient `@patch.author` alias resolves to the same
+        // typed principal as the canonical `@patch.creator` once parsed.
+        let store = MemoryStore::new();
+        let patch = make_patch("author");
+        let c = ctx(&patch, &store);
+
+        let from_alias: AssigneeRef = serde_json::from_str("\"@patch.author\"").unwrap();
+        let from_canonical: AssigneeRef = serde_json::from_str("\"@patch.creator\"").unwrap();
+        assert_eq!(
+            resolve_principal(&from_alias, &c),
+            resolve_principal(&from_canonical, &c),
+        );
     }
 }

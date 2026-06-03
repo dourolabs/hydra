@@ -113,7 +113,7 @@ pub struct UpdateRepositoryArgs {
     /// Read a YAML merge policy from PATH and apply it to the repository.
     ///
     /// The file is deserialised into a `MergePolicy`; strings starting with
-    /// `@` are parsed as dynamic principal references (e.g. `@patch.author`).
+    /// `@` are parsed as dynamic principal references (e.g. `@patch.creator`).
     #[arg(
         long = "merge-policy-file",
         value_name = "PATH",
@@ -1021,7 +1021,7 @@ reviewers:
 
 mergers:
   any_of:
-    - "@patch.author"
+    - "@patch.creator"
     - alice
 "#;
 
@@ -1127,7 +1127,7 @@ mergers:
                             }
                         ],
                         "mergers": {
-                            "any_of": ["@patch.author", "users/alice"]
+                            "any_of": ["@patch.creator", "users/alice"]
                         }
                     }
                 }));
@@ -1263,7 +1263,7 @@ mergers:
             "should print policy contents, got:\n{output}"
         );
         assert!(
-            output.contains("@patch.author"),
+            output.contains("@patch.creator"),
             "should retain dynamic-ref shorthand, got:\n{output}"
         );
     }
