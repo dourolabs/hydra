@@ -28,11 +28,14 @@ use hydra_common::{
     repositories::{Repository, SearchRepositoriesQuery},
 };
 use sqlx::migrate::Migrator;
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Duration;
 use tokio::sync::OnceCell;
 
 #[cfg(test)]
@@ -121,6 +124,12 @@ pub async fn run_migrations(pool: &SqlitePool, up_to: Option<u64>) -> anyhow::Re
 pub struct SqliteStore {
     pool: SqlitePool,
     row_counts: Arc<RowCountCache>,
+    // Serializes write transactions across tokio tasks so the first
+    // SELECT in a `SELECT … then INSERT` transaction can't have its
+    // snapshot invalidated by another writer (which manifests as
+    // `SQLITE_BUSY_SNAPSHOT` / code 517 — not retryable by
+    // `PRAGMA busy_timeout`). See `begin_write` below.
+    write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// In-memory row counts for the seven tables that drive `next_xxx_id`.
@@ -465,18 +474,45 @@ impl SqliteStore {
         Self {
             pool,
             row_counts: Arc::new(RowCountCache::default()),
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
+    /// Acquire the write mutex and open a transaction. Callers must use
+    /// this in place of `self.pool.begin()` for every multi-statement
+    /// write so that the read snapshot taken at `BEGIN` cannot be
+    /// invalidated by another writer mid-transaction. The returned
+    /// guard is dropped at scope exit, releasing the mutex.
+    async fn begin_write(
+        &self,
+    ) -> Result<
+        (
+            tokio::sync::MutexGuard<'_, ()>,
+            sqlx::Transaction<'_, sqlx::Sqlite>,
+        ),
+        StoreError,
+    > {
+        let guard = self.write_lock.lock().await;
+        let tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        Ok((guard, tx))
+    }
+
     pub async fn init_pool(database_url: &str) -> Result<SqlitePool, anyhow::Error> {
+        // Apply per-connection PRAGMAs so every pooled connection comes up
+        // identically. Without `busy_timeout`, sqlx defaults to 0 — second
+        // writers fail immediately with SQLITE_BUSY ("database is locked")
+        // rather than waiting for the writer lock to free. 30s gives the
+        // short transactions in this store ample headroom to drain even
+        // under bursty concurrency from the worker pool.
+        let connect_opts = SqliteConnectOptions::from_str(database_url)?
+            .busy_timeout(Duration::from_secs(30))
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal)
+            .foreign_keys(true);
+
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
-            .connect(database_url)
-            .await?;
-
-        // Enable WAL mode for concurrent read access
-        sqlx::query("PRAGMA journal_mode=WAL")
-            .execute(&pool)
+            .connect_with(connect_opts)
             .await?;
 
         Ok(pool)
@@ -656,7 +692,7 @@ impl SqliteStore {
             .map_err(|e| StoreError::Internal(format!("failed to serialize merge_policy: {e}")))?;
 
         // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
 
         // Clear is_latest on the previous latest version
         sqlx::query("UPDATE repositories_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
@@ -727,7 +763,7 @@ impl SqliteStore {
         let creator_str = actor.creator.to_string();
 
         // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
 
         // Clear is_latest on the previous latest version
         sqlx::query("UPDATE actors_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
@@ -785,7 +821,7 @@ impl SqliteStore {
         })?;
 
         // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
 
         // Clear is_latest on the previous latest version
         sqlx::query("UPDATE users_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
@@ -1125,7 +1161,7 @@ impl SqliteStore {
             .transpose()?;
 
         // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
 
         // Clear is_latest on the previous latest version
         sqlx::query(&format!(
@@ -1225,7 +1261,7 @@ impl SqliteStore {
         })?;
 
         // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
 
         // Clear is_latest on the previous latest version
         sqlx::query(&format!(
@@ -1342,7 +1378,7 @@ impl SqliteStore {
         let end_time_str = session.end_time.map(|t| t.to_rfc3339());
 
         // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
 
         // Clear is_latest on the previous latest version
         sqlx::query(&format!(
@@ -4358,7 +4394,7 @@ impl Store for SqliteStore {
         let id = self.next_issue_id().await?;
         let actor_json = actor_to_json_string(actor);
 
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
         // Clear is_latest on any previous version (no-op for new entities)
         sqlx::query(&format!(
             "UPDATE {TABLE_ISSUES_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
@@ -4394,7 +4430,7 @@ impl Store for SqliteStore {
 
         let actor_json = actor_to_json_string(actor);
 
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
         // Clear is_latest on the previous latest version
         sqlx::query(&format!(
             "UPDATE {TABLE_ISSUES_V2} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
@@ -5147,7 +5183,7 @@ impl Store for SqliteStore {
         let id = self.next_conversation_id().await?;
         let actor_json = actor_to_json_string(actor);
 
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
         // Clear is_latest on any previous version (no-op for new entities)
         sqlx::query(&format!(
             "UPDATE {TABLE_CONVERSATIONS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
@@ -5179,7 +5215,7 @@ impl Store for SqliteStore {
 
         let actor_json = actor_to_json_string(actor);
 
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
         sqlx::query(&format!(
             "UPDATE {TABLE_CONVERSATIONS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
         ))
@@ -5223,7 +5259,7 @@ impl Store for SqliteStore {
 
         // Single transaction: compute next version_number for this session and
         // insert the row atomically.
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let (_write_guard, mut tx) = self.begin_write().await?;
 
         let latest_version: Option<i64> = sqlx::query_scalar(&format!(
             "SELECT MAX(version_number) FROM {TABLE_SESSION_EVENTS} WHERE session_id = ?1"
@@ -11902,5 +11938,59 @@ mod tests {
                 serde_json::json!("external/github/jayantk"),
             ],
         );
+    }
+
+    // Regression test for [[i-kjpfsmxy]]: file-backed SQLite without a
+    // per-connection `busy_timeout` PRAGMA returns `database is locked`
+    // immediately when a second writer collides with the first. A handful
+    // of concurrent tokio tasks issuing `append_session_event` on the same
+    // session is enough to provoke the race because each call wraps a
+    // `SELECT MAX(version_number) + INSERT` in a single transaction, and
+    // sqlx's `begin()` upgrades the lock on first write. Without the fix
+    // this test reliably errors with `database is locked`; with the fix
+    // (`busy_timeout = 30s`) writers queue and all appends succeed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_session_event_writes_do_not_hit_database_is_locked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("contention.db");
+        let url = format!("sqlite://{}?mode=rwc", db_path.display());
+
+        let pool = SqliteStore::init_pool(&url).await.unwrap();
+        SqliteStore::run_migrations(&pool).await.unwrap();
+        let store = Arc::new(SqliteStore::new(pool));
+
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let writer_count = 8;
+        let writes_per_writer = 5;
+        let mut joins = Vec::new();
+        for w in 0..writer_count {
+            let store = Arc::clone(&store);
+            let sid = sid.clone();
+            joins.push(tokio::spawn(async move {
+                for i in 0..writes_per_writer {
+                    store
+                        .append_session_event(
+                            &sid,
+                            SessionEvent::UserMessage {
+                                content: format!("writer {w} msg {i}"),
+                                timestamp: Utc::now(),
+                            },
+                            &ActorRef::test(),
+                        )
+                        .await
+                        .expect("append_session_event must not surface SQLITE_BUSY");
+                }
+            }));
+        }
+        for j in joins {
+            j.await.unwrap();
+        }
+
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert_eq!(events.len(), writer_count * writes_per_writer);
     }
 }
