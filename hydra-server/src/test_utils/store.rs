@@ -23,8 +23,9 @@ use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
+use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId, TriggerId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     repositories::{Repository, SearchRepositoriesQuery},
@@ -278,6 +279,21 @@ impl ReadOnlyStore for FailingStore {
     }
 
     async fn get_objects_for_label(&self, _label_id: &LabelId) -> Result<Vec<HydraId>, StoreError> {
+        fail()
+    }
+
+    async fn get_trigger(
+        &self,
+        _id: &TriggerId,
+        _include_deleted: bool,
+    ) -> Result<Versioned<Trigger>, StoreError> {
+        fail()
+    }
+
+    async fn list_triggers(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
         fail()
     }
 
@@ -669,6 +685,39 @@ impl Store for FailingStore {
         _id: &SessionId,
         _data: Vec<u8>,
         _actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_trigger(
+        &self,
+        _trigger: Trigger,
+        _actor: &ActorRef,
+    ) -> Result<(TriggerId, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn update_trigger(
+        &self,
+        _id: &TriggerId,
+        _trigger: Trigger,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn delete_trigger(
+        &self,
+        _id: &TriggerId,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn record_trigger_fire(
+        &self,
+        _id: &TriggerId,
+        _fired_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         fail()
     }

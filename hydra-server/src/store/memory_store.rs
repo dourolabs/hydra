@@ -26,8 +26,9 @@ use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_M
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
+use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId, TriggerId,
     VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     ids::random_len_for_count,
@@ -76,6 +77,8 @@ pub struct MemoryStore {
         DashMap<(HydraId, super::RelationshipType, HydraId), super::ObjectRelationship>,
     /// Maps conversation IDs to their versioned Conversation data
     conversations: DashMap<ConversationId, Vec<Versioned<Conversation>>>,
+    /// Maps trigger IDs to their versioned Trigger data
+    triggers: DashMap<TriggerId, Vec<Versioned<Trigger>>>,
     /// Maps session IDs to their versioned session events. Each entry pairs
     /// the event with the monotonic `next_session_event_seq` value assigned
     /// at append time, which serves as the global ordering primitive used by
@@ -110,6 +113,7 @@ impl MemoryStore {
             user_secrets: DashMap::new(),
             object_relationships: DashMap::new(),
             conversations: DashMap::new(),
+            triggers: DashMap::new(),
             session_events: DashMap::new(),
             session_state: DashMap::new(),
             next_session_event_seq: AtomicU64::new(1),
@@ -149,6 +153,11 @@ impl MemoryStore {
     fn next_conversation_id(&self) -> ConversationId {
         let len = random_len_for_count(self.conversations.len() as u64);
         ConversationId::generate(len).expect("length within bounds")
+    }
+
+    fn next_trigger_id(&self) -> TriggerId {
+        let len = random_len_for_count(self.triggers.len() as u64);
+        TriggerId::generate(len).expect("length within bounds")
     }
 
     fn latest_versioned<T: Clone>(versions: &[Versioned<T>]) -> Option<Versioned<T>> {
@@ -1350,6 +1359,46 @@ impl ReadOnlyStore for MemoryStore {
         }
     }
 
+    // ---- Trigger (read-only) ----
+
+    async fn get_trigger(
+        &self,
+        id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Trigger>, StoreError> {
+        let entry = self
+            .triggers
+            .get(id)
+            .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+        let versioned = Self::latest_versioned(entry.value())
+            .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::TriggerNotFound(id.clone()));
+        }
+
+        Ok(versioned)
+    }
+
+    async fn list_triggers(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        let mut items: Vec<Versioned<Trigger>> = self
+            .triggers
+            .iter()
+            .filter_map(|entry| {
+                let versioned = Self::latest_versioned(entry.value())?;
+                if !include_deleted && versioned.item.deleted {
+                    return None;
+                }
+                Some(versioned)
+            })
+            .collect();
+        items.sort_by(|a, b| b.creation_time.cmp(&a.creation_time));
+        Ok(items)
+    }
+
     // ---- Object relationships (read-only) ----
 
     async fn get_relationships(
@@ -2477,6 +2526,74 @@ impl Store for MemoryStore {
             return Err(StoreError::SessionNotFound(id.clone()));
         }
         self.session_state.insert(id.clone(), data);
+        Ok(())
+    }
+
+    // ---- Trigger mutations ----
+
+    async fn add_trigger(
+        &self,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<(TriggerId, VersionNumber), StoreError> {
+        let id = self.next_trigger_id();
+        self.triggers.insert(
+            id.clone(),
+            vec![Self::versioned_now_with_actor(trigger, 1, actor)],
+        );
+        Ok((id, 1))
+    }
+
+    async fn update_trigger(
+        &self,
+        id: &TriggerId,
+        mut trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut entry = self
+            .triggers
+            .get_mut(id)
+            .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+        let versions = entry.value_mut();
+        // Carry the latest `last_fired_at` forward — `record_trigger_fire`
+        // mutates the latest row in place, and a concurrent update must
+        // not silently roll it back to whatever the caller's stale copy
+        // held.
+        if let Some(latest) = versions.last() {
+            if trigger.last_fired_at.is_none() && latest.item.last_fired_at.is_some() {
+                trigger.last_fired_at = latest.item.last_fired_at;
+            }
+        }
+        let next_version = Self::next_version(versions);
+        versions.push(Self::versioned_now_with_actor(trigger, next_version, actor));
+        Ok(next_version)
+    }
+
+    async fn delete_trigger(
+        &self,
+        id: &TriggerId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let current = self.get_trigger(id, true).await?;
+        let mut trigger = current.item;
+        trigger.deleted = true;
+        self.update_trigger(id, trigger, actor).await
+    }
+
+    async fn record_trigger_fire(
+        &self,
+        id: &TriggerId,
+        fired_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut entry = self
+            .triggers
+            .get_mut(id)
+            .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+        let versions = entry.value_mut();
+        let latest = versions
+            .last_mut()
+            .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+        latest.item.last_fired_at = Some(fired_at);
         Ok(())
     }
 }
@@ -8996,5 +9113,138 @@ mod tests {
             6,
             "soft-deleted labels must not inflate the suffix length"
         );
+    }
+
+    // ---- Trigger CRUD + record_trigger_fire tests --------------------------
+
+    fn sample_trigger() -> Trigger {
+        use hydra_common::api::v1::issues::{IssueStatus, IssueType, SessionSettings};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::triggers::{Action, CreateIssueAction, Schedule, Trigger as ApiTrigger};
+        ApiTrigger::new(
+            true,
+            Schedule::Cron {
+                expression: "0 9 * * MON".to_string(),
+                timezone: Some("UTC".to_string()),
+            },
+            vec![Action::CreateIssue(CreateIssueAction::new(
+                IssueType::Task,
+                "Daily triage".to_string(),
+                "Run triage for {{ now.date }}".to_string(),
+                Some("users/alice".to_string()),
+                Some(IssueStatus::Open),
+                SessionSettings::default(),
+            ))],
+            ApiUsername::from("alice"),
+            None,
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn trigger_round_trip_create_get_list_update_delete() {
+        let store = MemoryStore::new();
+        let (id, version) = store
+            .add_trigger(sample_trigger(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 1);
+        assert!(fetched.item.enabled);
+        assert_eq!(fetched.item.actions, sample_trigger().actions);
+
+        let listed = store.list_triggers(false).await.unwrap();
+        assert_eq!(listed.len(), 1);
+
+        let mut updated = sample_trigger();
+        updated.enabled = false;
+        let v2 = store
+            .update_trigger(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+        assert!(!store.get_trigger(&id, false).await.unwrap().item.enabled);
+
+        let v3 = store.delete_trigger(&id, &ActorRef::test()).await.unwrap();
+        assert_eq!(v3, 3);
+        // List excludes deleted by default.
+        assert!(store.list_triggers(false).await.unwrap().is_empty());
+        // List includes deleted on request.
+        assert_eq!(store.list_triggers(true).await.unwrap().len(), 1);
+        // Get without include_deleted returns NotFound.
+        assert!(matches!(
+            store.get_trigger(&id, false).await,
+            Err(StoreError::TriggerNotFound(_))
+        ));
+        // Get with include_deleted returns the tombstoned row.
+        let tombstoned = store.get_trigger(&id, true).await.unwrap();
+        assert!(tombstoned.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn get_trigger_not_found() {
+        let store = MemoryStore::new();
+        let id = TriggerId::new();
+        assert!(matches!(
+            store.get_trigger(&id, false).await,
+            Err(StoreError::TriggerNotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn record_trigger_fire_does_not_bump_version() {
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_trigger(sample_trigger(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fired_at: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
+        store.record_trigger_fire(&id, fired_at).await.unwrap();
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(
+            fetched.version, 1,
+            "record_trigger_fire must not bump version"
+        );
+        assert_eq!(fetched.item.last_fired_at, Some(fired_at));
+    }
+
+    #[tokio::test]
+    async fn update_after_record_trigger_fire_carries_forward_last_fired_at() {
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_trigger(sample_trigger(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fired_at: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
+        store.record_trigger_fire(&id, fired_at).await.unwrap();
+
+        // A caller that read the trigger before the fire would supply
+        // last_fired_at = None on update. The store must carry the latest
+        // last_fired_at forward instead of silently rolling it back.
+        let mut next = sample_trigger();
+        next.enabled = false;
+        assert!(next.last_fired_at.is_none());
+        store
+            .update_trigger(&id, next, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 2);
+        assert!(!fetched.item.enabled);
+        assert_eq!(fetched.item.last_fired_at, Some(fired_at));
+    }
+
+    #[tokio::test]
+    async fn record_trigger_fire_not_found() {
+        let store = MemoryStore::new();
+        let id = TriggerId::new();
+        let result = store.record_trigger_fire(&id, Utc::now()).await;
+        assert!(matches!(result, Err(StoreError::TriggerNotFound(_))));
     }
 }

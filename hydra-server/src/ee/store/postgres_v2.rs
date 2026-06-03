@@ -35,9 +35,10 @@ use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_M
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
+use hydra_common::triggers::Trigger;
 use hydra_common::{
     ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, Rgb, SessionId,
-    VersionNumber, Versioned,
+    TriggerId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -158,6 +159,7 @@ const TABLE_AUTH_TOKENS: &str = "metis.auth_tokens";
 const TABLE_USER_SECRETS: &str = "metis.user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 const TABLE_CONVERSATIONS_V2: &str = "metis.conversations_v2";
+const TABLE_TRIGGERS: &str = "metis.triggers";
 const TABLE_SESSION_EVENTS_V2: &str = "metis.session_events_v2";
 const TABLE_SESSION_STATE_V2: &str = "metis.session_state_v2";
 
@@ -307,6 +309,11 @@ impl PostgresStoreV2 {
     async fn next_conversation_id(&self) -> Result<ConversationId, StoreError> {
         let len = random_len_for_count(self.estimated_row_count(TABLE_CONVERSATIONS_V2).await?);
         Ok(ConversationId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_trigger_id(&self) -> Result<TriggerId, StoreError> {
+        let len = random_len_for_count(self.estimated_row_count(TABLE_TRIGGERS).await?);
+        Ok(TriggerId::generate(len).expect("length within bounds"))
     }
 
     async fn fetch_latest_version_number(
@@ -1224,6 +1231,68 @@ impl PostgresStoreV2 {
     // Conversation helpers
     // -------------------------------------------------------------------------
 
+    async fn insert_trigger_in_tx<'e, E>(
+        executor: E,
+        id: &TriggerId,
+        version_number: VersionNumber,
+        trigger: &Trigger,
+        actor: Option<&Value>,
+    ) -> Result<(), StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for trigger '{id}'"))
+        })?;
+
+        let schedule_json = serde_json::to_value(&trigger.schedule).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize trigger schedule: {e}"))
+        })?;
+        let actions_json = serde_json::to_value(&trigger.actions).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize trigger actions: {e}"))
+        })?;
+
+        let query = format!(
+            "INSERT INTO {TABLE_TRIGGERS} \
+             (id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(trigger.enabled)
+            .bind(trigger.creator.as_str())
+            .bind(&schedule_json)
+            .bind(&actions_json)
+            .bind(trigger.last_fired_at)
+            .bind(trigger.deleted)
+            .bind(actor)
+            .execute(executor)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_trigger(row: &TriggerRow) -> Result<Trigger, StoreError> {
+        let schedule: hydra_common::triggers::Schedule =
+            serde_json::from_value(row.schedule.clone()).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize trigger schedule: {e}"))
+            })?;
+        let actions: Vec<hydra_common::triggers::Action> =
+            serde_json::from_value(row.actions.clone()).map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize trigger actions: {e}"))
+            })?;
+        Ok(Trigger::new(
+            row.enabled,
+            schedule,
+            actions,
+            hydra_common::api::v1::users::Username::from(row.creator.clone()),
+            row.last_fired_at,
+            row.deleted,
+        ))
+    }
+
     async fn insert_conversation_in_tx<'e, E>(
         executor: E,
         id: &ConversationId,
@@ -1487,6 +1556,24 @@ struct ConversationRow {
     session_settings: Value,
     status: String,
     creator: String,
+    deleted: bool,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
+    #[allow(dead_code)]
+    updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct TriggerRow {
+    id: String,
+    version_number: i64,
+    enabled: bool,
+    creator: String,
+    schedule: Value,
+    actions: Value,
+    last_fired_at: Option<DateTime<Utc>>,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -3442,6 +3529,102 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .collect()
     }
 
+    // ---- Trigger (read-only) ----
+
+    async fn get_trigger(
+        &self,
+        id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Trigger>, StoreError> {
+        let row = sqlx::query_as::<_, TriggerRow>(&format!(
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = $1) AS creation_time \
+             FROM {TABLE_TRIGGERS} \
+             WHERE id = $1 \
+             ORDER BY version_number DESC \
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+        let trigger = Self::row_to_trigger(&row)?;
+
+        if trigger.deleted && !include_deleted {
+            return Err(StoreError::TriggerNotFound(id.clone()));
+        }
+
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for trigger '{}'",
+                row.id
+            ))
+        })?;
+        let creation_time = row.creation_time.unwrap_or(row.created_at);
+        let actor_ref = row
+            .actor
+            .map(serde_json::from_value::<ActorRef>)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to parse actor JSON: {e}")))?;
+
+        Ok(Versioned::with_optional_actor(
+            trigger,
+            version,
+            row.created_at,
+            actor_ref,
+            creation_time,
+        ))
+    }
+
+    async fn list_triggers(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        let mut sql = format!(
+            "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.deleted, t.actor, t.created_at, t.updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = t.id) AS creation_time \
+             FROM {TABLE_TRIGGERS} t \
+             WHERE t.is_latest = true"
+        );
+        if !include_deleted {
+            sql.push_str(" AND t.deleted = false");
+        }
+        sql.push_str(" ORDER BY t.created_at DESC, t.id DESC");
+
+        let rows = sqlx::query_as::<_, TriggerRow>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut triggers = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for trigger '{}'",
+                    row.id
+                ))
+            })?;
+            let creation_time = row.creation_time.unwrap_or(row.created_at);
+            let actor_ref = row
+                .actor
+                .clone()
+                .map(serde_json::from_value::<ActorRef>)
+                .transpose()
+                .map_err(|e| StoreError::Internal(format!("failed to parse actor JSON: {e}")))?;
+            let trigger = Self::row_to_trigger(&row)?;
+            triggers.push(Versioned::with_optional_actor(
+                trigger,
+                version,
+                row.created_at,
+                actor_ref,
+                creation_time,
+            ));
+        }
+        Ok(triggers)
+    }
+
     // ---- Object relationships (read-only) ----
 
     async fn get_relationships(
@@ -5142,6 +5325,91 @@ impl Store for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?;
 
+        Ok(())
+    }
+
+    // ---- Trigger mutations ----
+
+    async fn add_trigger(
+        &self,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<(TriggerId, VersionNumber), StoreError> {
+        let id = self.next_trigger_id().await?;
+        let actor_json = actor_to_json(actor);
+        Self::insert_trigger_in_tx(&self.pool, &id, 1, &trigger, Some(&actor_json)).await?;
+        Ok((id, 1))
+    }
+
+    async fn update_trigger(
+        &self,
+        id: &TriggerId,
+        mut trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        // Read the current latest row inside the transaction with FOR UPDATE
+        // so a concurrent record_trigger_fire's last_fired_at value is carried
+        // forward atomically.
+        let latest_row = sqlx::query_as::<_, TriggerRow>(&format!(
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at \
+             FROM {TABLE_TRIGGERS} \
+             WHERE id = $1 AND is_latest = true \
+             FOR UPDATE"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let latest_row = latest_row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+
+        if trigger.last_fired_at.is_none() && latest_row.last_fired_at.is_some() {
+            trigger.last_fired_at = latest_row.last_fired_at;
+        }
+
+        let latest_version = VersionNumber::try_from(latest_row.version_number).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for trigger '{id}'"))
+        })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for trigger '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json(actor);
+        Self::insert_trigger_in_tx(&mut *tx, id, next_version, &trigger, Some(&actor_json)).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok(next_version)
+    }
+
+    async fn delete_trigger(
+        &self,
+        id: &TriggerId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let current = self.get_trigger(id, true).await?;
+        let mut trigger = current.item;
+        trigger.deleted = true;
+        self.update_trigger(id, trigger, actor).await
+    }
+
+    async fn record_trigger_fire(
+        &self,
+        id: &TriggerId,
+        fired_at: DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query(&format!(
+            "UPDATE {TABLE_TRIGGERS} SET last_fired_at = $1 WHERE id = $2 AND is_latest = true"
+        ))
+        .bind(fired_at)
+        .bind(id.as_ref())
+        .execute(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if result.rows_affected() == 0 {
+            return Err(StoreError::TriggerNotFound(id.clone()));
+        }
         Ok(())
     }
 }
@@ -9513,5 +9781,119 @@ mod tests {
 
         let agent_config = agent_config.expect("agent_config is non-null");
         assert_eq!(agent_config["model"], "gpt-4o");
+    }
+
+    // ---- Trigger tests --------------------------------------------------
+
+    fn sample_trigger_pg() -> Trigger {
+        use hydra_common::api::v1::issues::{IssueStatus, IssueType, SessionSettings};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::triggers::{Action, CreateIssueAction, Schedule, Trigger as ApiTrigger};
+        ApiTrigger::new(
+            true,
+            Schedule::Cron {
+                expression: "0 9 * * MON".to_string(),
+                timezone: Some("UTC".to_string()),
+            },
+            vec![Action::CreateIssue(CreateIssueAction::new(
+                IssueType::Task,
+                "Daily triage".to_string(),
+                "Run triage for {{ now.date }}".to_string(),
+                Some("users/alice".to_string()),
+                Some(IssueStatus::Open),
+                SessionSettings::default(),
+            ))],
+            ApiUsername::from("alice"),
+            None,
+            false,
+        )
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn trigger_round_trip_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (id, version) = store
+            .add_trigger(sample_trigger_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 1);
+        assert!(fetched.item.enabled);
+        assert_eq!(fetched.item.actions, sample_trigger_pg().actions);
+
+        assert_eq!(store.list_triggers(false).await.unwrap().len(), 1);
+
+        let mut updated = sample_trigger_pg();
+        updated.enabled = false;
+        let v2 = store
+            .update_trigger(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+
+        let v3 = store.delete_trigger(&id, &ActorRef::test()).await.unwrap();
+        assert_eq!(v3, 3);
+        assert!(store.list_triggers(false).await.unwrap().is_empty());
+        assert_eq!(store.list_triggers(true).await.unwrap().len(), 1);
+        assert!(matches!(
+            store.get_trigger(&id, false).await,
+            Err(StoreError::TriggerNotFound(_))
+        ));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn record_trigger_fire_does_not_bump_version_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (id, _) = store
+            .add_trigger(sample_trigger_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fired_at: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
+        store.record_trigger_fire(&id, fired_at).await.unwrap();
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.last_fired_at, Some(fired_at));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn update_after_record_trigger_fire_carries_forward_last_fired_at_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (id, _) = store
+            .add_trigger(sample_trigger_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fired_at: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
+        store.record_trigger_fire(&id, fired_at).await.unwrap();
+
+        let mut next = sample_trigger_pg();
+        next.enabled = false;
+        assert!(next.last_fired_at.is_none());
+        store
+            .update_trigger(&id, next, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 2);
+        assert!(!fetched.item.enabled);
+        assert_eq!(fetched.item.last_fired_at, Some(fired_at));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn record_trigger_fire_not_found_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let result = store
+            .record_trigger_fire(&TriggerId::new(), Utc::now())
+            .await;
+        assert!(matches!(result, Err(StoreError::TriggerNotFound(_))));
     }
 }
