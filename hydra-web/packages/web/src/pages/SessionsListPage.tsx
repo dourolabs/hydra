@@ -73,8 +73,6 @@ export function SessionsListPage() {
   const { user } = useAuth();
   const currentUserPrincipalPath = user ? actorPrincipalPath(user.actor) : null;
 
-  const definitions = useSessionFilters();
-
   // Filters mirrored between URL and local state. Local state is the source
   // of truth for chip `_uid`s (anchors the FilterBar's just-added value
   // picker); URL is the source of truth for shareable/back-buttonable state.
@@ -86,6 +84,15 @@ export function SessionsListPage() {
     seededOnceRef.current = true;
     return seedFilters(searchParams, currentUserPrincipalPath);
   });
+
+  // Lazy-load gate for the relation-picker option lists in `useSessionFilters`:
+  // flipped on while the FilterBar's add-filter menu is open so the picker
+  // isn't empty when the user clicks "Related X". Combined inside the hook
+  // with a check on `filters` so URL-rehydrated relation chips also enable
+  // the right list immediately on first paint.
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+
+  const definitions = useSessionFilters({ filters, addMenuOpen });
 
   // On the very first paint, persist the seed (auto-creator chip and/or
   // legacy `?scope=mine` translation) back to the URL so deep links share
@@ -241,6 +248,7 @@ export function SessionsListPage() {
       totalCount={displayCount}
       searchValue={searchValue}
       onSearchChange={handleSearchChange}
+      onFilterMenuOpenChange={setAddMenuOpen}
     />
   );
 }
