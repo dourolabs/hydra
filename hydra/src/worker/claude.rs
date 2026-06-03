@@ -894,7 +894,14 @@ pub(crate) fn write_transcript_atomic(path: &Path, bytes: &[u8]) -> std::io::Res
 /// will trip over at load time (rather than re-validating every transcript
 /// invariant): the bytes must be UTF-8, must be non-empty, every non-empty
 /// line must parse as a JSON object, and at least one of those objects must
-/// carry a `session_id` field matching the payload's `expected_session_id`.
+/// carry a `sessionId` field matching the payload's `expected_session_id`.
+///
+/// Note the field name: the on-disk transcript Claude writes to
+/// `~/.claude/projects/<encoded-cwd>/<UUID>.jsonl` uses `sessionId`
+/// (camelCase), distinct from the `session_id` (snake_case) field on the
+/// `--output-format stream-json` stdout stream that [`extract_session_id`]
+/// parses. These are two different serializations from the CLI; do not unify.
+///
 /// On failure we return [`MaterializeError::WrongFormat`] so the dispatcher
 /// falls back to transcript replay rather than letting Claude crash on
 /// garbage at resume time.
@@ -917,7 +924,7 @@ fn validate_claude_transcript_bytes(
             return Err(MaterializeError::WrongFormat);
         }
         if value
-            .get("session_id")
+            .get("sessionId")
             .and_then(|v| v.as_str())
             .is_some_and(|s| s == expected_session_id)
         {
@@ -932,9 +939,10 @@ fn validate_claude_transcript_bytes(
 
 /// Install a Claude transcript file at the on-disk location Claude expects for
 /// `--resume <UUID>`. Reads the source file, extracts the session UUID from
-/// the first JSONL line's `session_id` field, writes the bytes atomically to
-/// `<home>/.claude/projects/<encoded(cwd)>/<UUID>.jsonl`, and returns the
-/// UUID.
+/// the first JSONL line's `sessionId` field (camelCase — see
+/// [`validate_claude_transcript_bytes`] for the rationale), writes the bytes
+/// atomically to `<home>/.claude/projects/<encoded(cwd)>/<UUID>.jsonl`, and
+/// returns the UUID.
 pub(crate) fn install_claude_transcript_file(
     home_dir: &Path,
     working_dir: &Path,
@@ -952,10 +960,10 @@ pub(crate) fn install_claude_transcript_file(
     let value: serde_json::Value =
         serde_json::from_str(first_line_str).context("transcript first line is not valid JSON")?;
     let session_id = value
-        .get("session_id")
+        .get("sessionId")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow!("transcript first line missing non-empty session_id"))?
+        .ok_or_else(|| anyhow!("transcript first line missing non-empty sessionId"))?
         .to_string();
     let target = transcript_path(home_dir, working_dir, &session_id);
     write_transcript_atomic(&target, &bytes)
@@ -1252,7 +1260,7 @@ mod tests {
         let src = tmp.path().join("src.jsonl");
         std::fs::write(
             &src,
-            br#"{"session_id":"abc-from-file","type":"summary"}
+            br#"{"sessionId":"abc-from-file","type":"summary"}
 {"type":"user"}
 "#,
         )
@@ -1295,8 +1303,9 @@ mod tests {
         let claude = claude_for_test(&home, &cwd).await;
 
         // The exact bytes the suspend-side uploader (`build_session_state_payload`
-        // in relay_adapter.rs) produces for a running Claude session.
-        let transcript = b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n".to_vec();
+        // in relay_adapter.rs) produces for a running Claude session. Note
+        // `sessionId` (camelCase) — see `validate_claude_transcript_bytes`.
+        let transcript = b"{\"sessionId\":\"abc-uuid\",\"type\":\"summary\"}\n".to_vec();
         let payload = hydra_common::api::v1::relay::SessionStatePayload::V1 {
             session_id: "abc-uuid".to_string(),
             transcript: Some(transcript.clone()),
@@ -1379,10 +1388,10 @@ mod tests {
         std::fs::create_dir_all(&cwd).unwrap();
         let claude = claude_for_test(&home, &cwd).await;
 
-        // First line is valid JSON with the right session_id, but the second
+        // First line is valid JSON with the right sessionId, but the second
         // line is plain garbage — Claude would crash trying to load it.
         let transcript =
-            b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n<<garbage>>\n".to_vec();
+            b"{\"sessionId\":\"abc-uuid\",\"type\":\"summary\"}\n<<garbage>>\n".to_vec();
         let bytes = payload_bytes("abc-uuid", Some(transcript));
 
         let result = claude.try_materialize(&bytes);
@@ -1423,10 +1432,10 @@ mod tests {
         std::fs::create_dir_all(&cwd).unwrap();
         let claude = claude_for_test(&home, &cwd).await;
 
-        // Valid JSONL but no line carries the expected session_id; could be
+        // Valid JSONL but no line carries the expected sessionId; could be
         // a cross-session blob mis-routed to this UUID.
         let transcript =
-            b"{\"session_id\":\"other-uuid\",\"type\":\"summary\"}\n{\"type\":\"user\"}\n".to_vec();
+            b"{\"sessionId\":\"other-uuid\",\"type\":\"summary\"}\n{\"type\":\"user\"}\n".to_vec();
         let bytes = payload_bytes("abc-uuid", Some(transcript));
 
         let result = claude.try_materialize(&bytes);
@@ -1447,7 +1456,7 @@ mod tests {
 
         // Valid JSON token but not an object — Claude's loader expects per-line
         // objects, not bare numbers/strings/arrays.
-        let transcript = b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n42\n".to_vec();
+        let transcript = b"{\"sessionId\":\"abc-uuid\",\"type\":\"summary\"}\n42\n".to_vec();
         let bytes = payload_bytes("abc-uuid", Some(transcript));
 
         let result = claude.try_materialize(&bytes);
@@ -1486,10 +1495,10 @@ mod tests {
         std::fs::create_dir_all(&cwd).unwrap();
         let claude = claude_for_test(&home, &cwd).await;
 
-        // Realistic-ish multi-line transcript: a summary line with session_id
+        // Realistic-ish multi-line transcript: a summary line with sessionId
         // plus a few content lines. Trailing newline + a blank line are
         // tolerated (Claude's loader ignores them).
-        let transcript = b"{\"session_id\":\"abc-uuid\",\"type\":\"summary\"}\n\
+        let transcript = b"{\"sessionId\":\"abc-uuid\",\"type\":\"summary\"}\n\
                            {\"type\":\"user\",\"text\":\"hi\"}\n\
                            {\"type\":\"assistant\",\"text\":\"hello\"}\n\
                            \n"
