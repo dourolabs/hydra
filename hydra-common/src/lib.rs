@@ -27,7 +27,7 @@ pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, conversations, documents, events, form, issues, labels, login, logs, merge_check,
     merge_queues, patches, relay, repositories, secrets, session_status, sessions, task_status,
-    users, version, whoami,
+    triggers, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -171,6 +171,12 @@ mod ts_export {
         crate::issues::ListIssuesResponse::export_all(&cfg).expect("ListIssuesResponse");
         crate::issues::ListIssueVersionsResponse::export_all(&cfg)
             .expect("ListIssueVersionsResponse");
+
+        // API v1: triggers
+        crate::triggers::Trigger::export_all(&cfg).expect("Trigger");
+        crate::triggers::Schedule::export_all(&cfg).expect("TriggerSchedule");
+        crate::triggers::Action::export_all(&cfg).expect("TriggerAction");
+        crate::triggers::CreateIssueAction::export_all(&cfg).expect("CreateIssueAction");
 
         // API v1: form
         crate::form::Form::export_all(&cfg).expect("Form");

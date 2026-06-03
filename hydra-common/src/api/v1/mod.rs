@@ -20,6 +20,7 @@ pub mod serde_helpers;
 pub mod session_status;
 pub mod sessions;
 pub mod task_status;
+pub mod triggers;
 pub mod users;
 pub mod version;
 pub mod whoami;
