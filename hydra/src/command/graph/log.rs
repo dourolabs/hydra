@@ -458,7 +458,7 @@ mod tests {
             String::new(),
             Username::from("creator"),
             String::new(),
-            status,
+            status.into(),
             None,
             Some(SessionSettings::default()),
             Vec::new(),

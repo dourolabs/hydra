@@ -207,7 +207,7 @@ mod tests {
             "parent issue".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),

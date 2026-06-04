@@ -1,8 +1,9 @@
 use super::users::Username;
 use hydra_common::api::v1 as api;
 use hydra_common::api::v1::form::{Form, FormResponse};
+use hydra_common::api::v1::projects::StatusKey;
 use hydra_common::principal::Principal;
-use hydra_common::{IssueId, PatchId, RepoName};
+use hydra_common::{IssueId, PatchId, ProjectId, RepoName};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -42,6 +43,13 @@ impl IssueStatus {
     pub fn is_active(&self) -> bool {
         matches!(self, IssueStatus::Open | IssueStatus::InProgress)
     }
+
+    /// Returns the [`StatusKey`] equivalent of this legacy enum variant.
+    /// Always succeeds: the five legacy strings are well-formed
+    /// [`StatusKey`]s by construction.
+    pub fn as_status_key(&self) -> StatusKey {
+        StatusKey::try_new(self.as_str()).expect("legacy status strings are well-formed StatusKeys")
+    }
 }
 
 impl fmt::Display for IssueStatus {
@@ -65,6 +73,12 @@ impl FromStr for IssueStatus {
             "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),
         }
+    }
+}
+
+impl From<IssueStatus> for StatusKey {
+    fn from(value: IssueStatus) -> Self {
+        value.as_status_key()
     }
 }
 
@@ -178,8 +192,15 @@ pub struct Issue {
     pub creator: Username,
     #[serde(default)]
     pub progress: String,
-    #[serde(default)]
-    pub status: IssueStatus,
+    /// Project-scoped status key. Validated against the resolved project's
+    /// status list at the route layer (`/v1/issues`); the store does not
+    /// reinterpret unknown keys.
+    #[serde(default = "default_status_key")]
+    pub status: StatusKey,
+    /// Optional project membership. `None` resolves through the
+    /// synthesized default project (no DB row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
@@ -198,6 +219,10 @@ pub struct Issue {
     pub feedback: Option<String>,
 }
 
+fn default_status_key() -> StatusKey {
+    IssueStatus::Open.as_status_key()
+}
+
 impl Issue {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -206,7 +231,7 @@ impl Issue {
         description: String,
         creator: Username,
         progress: String,
-        status: IssueStatus,
+        status: StatusKey,
         assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
@@ -222,6 +247,7 @@ impl Issue {
             creator,
             progress,
             status,
+            project_id: None,
             assignee,
             session_settings: session_settings.unwrap_or_default(),
             dependencies,
@@ -231,6 +257,17 @@ impl Issue {
             form_response,
             feedback,
         }
+    }
+
+    /// Legacy adapter: parse the wire status string back to the
+    /// closed [`IssueStatus`] enum.
+    ///
+    /// Returns `None` for custom statuses defined on a project outside
+    /// the default project. Used by PR 3 consumer code that still
+    /// pattern-matches on [`IssueStatus`]; PR 4 replaces these call
+    /// sites with `AppState::resolve_status` flag reads.
+    pub fn status_as_legacy(&self) -> Option<IssueStatus> {
+        IssueStatus::from_str(self.status.as_str()).ok()
     }
 }
 
@@ -417,13 +454,17 @@ impl From<SessionSettings> for api::issues::SessionSettings {
 
 impl From<api::issues::Issue> for Issue {
     fn from(value: api::issues::Issue) -> Self {
+        // `resolved_status` is a server-computed read-only response field;
+        // dropping it on the way in preserves the "never stored" invariant
+        // from /designs/per-project-issue-statuses.md §4.
         Self {
             issue_type: value.issue_type.into(),
             title: value.title,
             description: value.description,
             creator: value.creator.into(),
             progress: value.progress,
-            status: value.status.into(),
+            status: value.status,
+            project_id: value.project_id,
             assignee: value.assignee,
             session_settings: value.session_settings.into(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
@@ -438,13 +479,13 @@ impl From<api::issues::Issue> for Issue {
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        api::issues::Issue::new(
+        let mut out = api::issues::Issue::new(
             value.issue_type.into(),
             value.title,
             value.description,
             value.creator.into(),
             value.progress,
-            value.status.into(),
+            value.status,
             value.assignee,
             Some(value.session_settings.into()),
             value.dependencies.into_iter().map(Into::into).collect(),
@@ -453,7 +494,9 @@ impl From<Issue> for api::issues::Issue {
             value.form,
             value.form_response,
             value.feedback,
-        )
+        );
+        out.project_id = value.project_id;
+        out
     }
 }
 

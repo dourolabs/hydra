@@ -9,4 +9,11 @@ import type { Username } from "./Username";
  * [`Self::default_status_key`] for new issues. See
  * `/designs/per-project-issue-statuses.md` §4.
  */
-export type Project = { key: ProjectKey, name: string, statuses: Array<StatusDefinition>, default_status_key: StatusKey, creator: Username, deleted?: boolean, };
+export type Project = {
+  key: ProjectKey;
+  name: string;
+  statuses: Array<StatusDefinition>;
+  default_status_key: StatusKey;
+  creator: Username;
+  deleted?: boolean;
+};

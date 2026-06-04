@@ -29,7 +29,7 @@ async fn create_issue(
                 format!("description for {title}"),
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                IssueStatus::Open.into(),
                 None,
                 None,
                 vec![],

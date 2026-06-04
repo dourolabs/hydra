@@ -319,6 +319,20 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
                 .delete(routes::labels::remove_label_association),
         )
         .route(
+            "/v1/projects",
+            get(routes::projects::list_projects).post(routes::projects::create_project),
+        )
+        .route(
+            "/v1/projects/:project_id",
+            get(routes::projects::get_project)
+                .put(routes::projects::update_project)
+                .delete(routes::projects::delete_project),
+        )
+        .route(
+            "/v1/projects/:project_id/statuses",
+            get(routes::projects::get_project_statuses),
+        )
+        .route(
             "/v1/repositories",
             get(routes::repositories::list_repositories)
                 .post(routes::repositories::create_repository),

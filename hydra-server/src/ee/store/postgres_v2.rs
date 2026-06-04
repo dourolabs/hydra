@@ -391,8 +391,8 @@ impl PostgresStoreV2 {
         // keep working.
         let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, project_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -411,6 +411,7 @@ impl PostgresStoreV2 {
             .bind(&form_json)
             .bind(&form_response_json)
             .bind(issue.feedback.as_deref())
+            .bind(issue.project_id.as_ref().map(|p| p.as_ref()))
             .execute(executor)
             .await
             .map_err(map_sqlx_error)?;
@@ -479,7 +480,8 @@ impl PostgresStoreV2 {
     fn row_to_issue(&self, row: &IssueRow) -> Result<Issue, StoreError> {
         let issue_type = IssueType::from_str(&row.issue_type)
             .map_err(|e| StoreError::Internal(format!("invalid issue_type: {e}")))?;
-        let status = IssueStatus::from_str(&row.status).map_err(StoreError::InvalidIssueStatus)?;
+        let status = StatusKey::try_new(row.status.clone())
+            .map_err(|e| StoreError::InvalidIssueStatus(e.to_string()))?;
         let session_settings: SessionSettings = serde_json::from_value(row.job_settings.clone())
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
@@ -509,13 +511,20 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize assignee_principal: {e}"))
             })?;
+        let project_id = row
+            .project_id
+            .as_ref()
+            .map(|s| ProjectId::try_from(s.clone()))
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("invalid project_id: {e}")))?;
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
             description: row.description.clone(),
             creator: Username::from(row.creator.clone()),
             progress: row.progress.clone(),
-            status,
+            status: status.into(),
+            project_id,
             assignee,
             session_settings,
             dependencies: vec![],
@@ -742,7 +751,7 @@ impl PostgresStoreV2 {
             title: row.title.clone(),
             description: row.description.clone(),
             diff: row.diff.clone(),
-            status,
+            status: status.into(),
             is_automatic_backup: row.is_automatic_backup,
             creator,
             reviews,
@@ -941,7 +950,7 @@ impl PostgresStoreV2 {
             memory_limit: row.memory_limit.clone(),
             secrets,
             mode,
-            status,
+            status: status.into(),
             last_message: row.last_message.clone(),
             error,
             deleted: row.deleted,
@@ -1453,7 +1462,7 @@ impl PostgresStoreV2 {
         Ok(Conversation {
             title: row.title.clone(),
             agent_name,
-            status,
+            status: status.into(),
             creator: Username::from(row.creator.as_str()),
             session_settings,
             deleted: row.deleted,
@@ -1535,6 +1544,8 @@ struct IssueRow {
     form_response: Option<Value>,
     #[sqlx(default)]
     feedback: Option<String>,
+    #[sqlx(default)]
+    project_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -5863,7 +5874,7 @@ mod tests {
             "details".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             dependencies,
@@ -6045,7 +6056,7 @@ mod tests {
             "full description".to_string(),
             Username::from("issue-creator"),
             "50%".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             Some(hydra_common::principal::Principal::User {
                 name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
             }),
@@ -6135,6 +6146,7 @@ mod tests {
                         requires: vec!["name".to_string(), "agree".to_string()],
                         effect: Effect::UpdateIssue {
                             status: IssueStatus::Closed.into(),
+                            project_id: None,
                         },
                     },
                     Action {
@@ -7128,7 +7140,7 @@ mod tests {
             "original_unique_description_abc123".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             vec![],
@@ -7146,7 +7158,7 @@ mod tests {
             "changed_unique_description_xyz789".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             vec![],
@@ -8332,7 +8344,7 @@ mod tests {
             "a bug".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -8349,7 +8361,7 @@ mod tests {
             "closed task".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Closed,
+            IssueStatus::Closed.into(),
             None,
             None,
             Vec::new(),
@@ -8598,7 +8610,7 @@ mod tests {
 
         let mut updated = sample_issue(vec![]);
         updated.progress = "v3 progress".to_string();
-        updated.status = IssueStatus::InProgress;
+        updated.status = IssueStatus::InProgress.into();
         store.update_issue(&ids[0], updated, &actor).await.unwrap();
 
         // list_issues should return 3 issues, each at their latest version.
@@ -8609,7 +8621,7 @@ mod tests {
         // The first issue (ids[0]) should reflect the latest update.
         let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
         assert_eq!(first.1.item.progress, "v3 progress");
-        assert_eq!(first.1.item.status, IssueStatus::InProgress);
+        assert_eq!(first.1.item.status, IssueStatus::InProgress.as_status_key());
         assert_eq!(first.1.version, 3);
 
         // Paginate with limit=2 and verify we get 2 results, then use cursor

@@ -79,7 +79,7 @@ async fn issue_labels_returned_from_all_routes() -> anyhow::Result<()> {
                 "label test issue".to_string(),
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                IssueStatus::Open.into(),
                 None,
                 None,
                 vec![],

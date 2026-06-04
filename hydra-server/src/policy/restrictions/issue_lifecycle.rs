@@ -28,8 +28,8 @@ impl Restriction for IssueLifecycleRestriction {
             return Ok(());
         };
 
-        // Only validate when closing
-        if new.status != IssueStatus::Closed {
+        // Only validate when closing (PR 4 will swap in `resolve_status` flag reads).
+        if new.status_as_legacy() != Some(IssueStatus::Closed) {
             return Ok(());
         }
 
@@ -50,8 +50,8 @@ impl Restriction for IssueLifecycleRestriction {
                 })?;
 
             if !matches!(
-                blocker.item.status,
-                IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
+                blocker.item.status_as_legacy(),
+                Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed)
             ) {
                 open_blockers.push(dependency.issue_id.clone());
             }
@@ -79,8 +79,8 @@ impl Restriction for IssueLifecycleRestriction {
                             message: format!("Failed to look up child issue {child_id}: {e}"),
                         })?;
                 if !matches!(
-                    child.item.status,
-                    IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
+                    child.item.status_as_legacy(),
+                    Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed)
                 ) {
                     open_children.push(child_id);
                 }
@@ -130,7 +130,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            status,
+            status.into(),
             None,
             None,
             Vec::new(),

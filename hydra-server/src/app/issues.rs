@@ -207,6 +207,42 @@ impl AppState {
             form.validate_field_keys()
                 .map_err(|message| UpsertIssueError::InvalidForm { message })?;
         }
+        // Validate that `status` is one of the resolved project's status
+        // keys (per /designs/per-project-issue-statuses.md §4
+        // "Default-project synthesis"). When `project_id` is None this
+        // resolves against the synthesized default project; otherwise
+        // it reads the project from the store.
+        match self.resolve_status(&issue).await {
+            Ok(_) => {}
+            Err(crate::app::projects::ResolveStatusError::ProjectNotFound(project_id)) => {
+                return Err(UpsertIssueError::PolicyViolation(
+                    crate::policy::PolicyViolation {
+                        policy_name: "project_status_validation".to_string(),
+                        message: format!("project '{project_id}' not found"),
+                    },
+                ));
+            }
+            Err(
+                crate::app::projects::ResolveStatusError::UnknownStatus(_)
+                | crate::app::projects::ResolveStatusError::InvalidKey(_),
+            ) => {
+                return Err(UpsertIssueError::PolicyViolation(
+                    crate::policy::PolicyViolation {
+                        policy_name: "project_status_validation".to_string(),
+                        message: format!(
+                            "status '{}' is not declared in the resolved project",
+                            issue.status
+                        ),
+                    },
+                ));
+            }
+            Err(crate::app::projects::ResolveStatusError::Store(source)) => {
+                return Err(UpsertIssueError::Store {
+                    source,
+                    issue_id: issue_id.clone(),
+                });
+            }
+        }
         let is_create = issue_id.is_none();
         let dependencies = issue.dependencies.clone();
 
@@ -598,8 +634,8 @@ impl AppState {
         issue.feedback = Some(feedback);
 
         // 3. If status is terminal, transition to InProgress
-        if issue.status.is_terminal() {
-            issue.status = IssueStatus::InProgress;
+        if issue.status_as_legacy().is_some_and(|s| s.is_terminal()) {
+            issue.status = IssueStatus::InProgress.into();
         }
 
         // 4. Update the issue
@@ -665,21 +701,23 @@ fn issue_ready<'a>(
         let issue = store.get_issue(issue_id, false).await?;
         let issue = issue.item;
 
-        match issue.status {
-            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed => Ok(false),
-            IssueStatus::Open => {
+        match issue.status_as_legacy() {
+            Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed) => Ok(false),
+            // Treat custom (non-default-project) statuses as Open for readiness purposes
+            // in PR 3. PR 4 will replace this with `resolve_status` flag reads.
+            Some(IssueStatus::Open) | None => {
                 for dependency in issue.dependencies.iter().filter(|dependency| {
                     dependency.dependency_type == IssueDependencyType::BlockedOn
                 }) {
                     let blocker = store.get_issue(&dependency.issue_id, false).await?;
-                    if blocker.item.status != IssueStatus::Closed {
+                    if blocker.item.status_as_legacy() != Some(IssueStatus::Closed) {
                         return Ok(false);
                     }
                 }
 
                 Ok(true)
             }
-            IssueStatus::InProgress => {
+            Some(IssueStatus::InProgress) => {
                 // Parent is ready when no issue in its entire child subtree is ready.
                 // This enables re-planning: if all descendants are stuck, the parent can spawn.
                 // We must check the full subtree, not just direct children, because a
@@ -715,21 +753,23 @@ fn subtree_has_ready_issue<'a>(
         let issue = store.get_issue(issue_id, false).await?;
         let issue = issue.item;
 
-        match issue.status {
-            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed => Ok(false),
-            IssueStatus::Open => {
+        match issue.status_as_legacy() {
+            Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed) => Ok(false),
+            // Treat custom (non-default-project) statuses as Open for readiness purposes
+            // in PR 3. PR 4 will replace this with `resolve_status` flag reads.
+            Some(IssueStatus::Open) | None => {
                 // An Open issue is ready if all its blockers are closed.
                 for dependency in issue.dependencies.iter().filter(|dependency| {
                     dependency.dependency_type == IssueDependencyType::BlockedOn
                 }) {
                     let blocker = store.get_issue(&dependency.issue_id, false).await?;
-                    if blocker.item.status != IssueStatus::Closed {
+                    if blocker.item.status_as_legacy() != Some(IssueStatus::Closed) {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
-            IssueStatus::InProgress => {
+            Some(IssueStatus::InProgress) => {
                 // An InProgress node's subtree always contains at least one ready issue:
                 // either a ready descendant, or the InProgress node itself (which is ready
                 // when all descendants are stuck). We still recurse into children so the
@@ -1308,7 +1348,7 @@ mod tests {
             .await;
 
         let mut dropped_parent = parent_issue.clone();
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         state
             .upsert_issue(
                 Some(parent_id.clone()),
@@ -1325,7 +1365,7 @@ mod tests {
             // Open children should be dropped
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Dropped
+                IssueStatus::Dropped.as_status_key()
             );
             assert_eq!(
                 store
@@ -1334,7 +1374,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Dropped
+                IssueStatus::Dropped.as_status_key()
             );
             // Terminal-state children should retain their original status
             assert_eq!(
@@ -1344,7 +1384,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Closed
+                IssueStatus::Closed.as_status_key()
             );
             assert_eq!(
                 store
@@ -1353,7 +1393,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Failed
+                IssueStatus::Failed.as_status_key()
             );
         }
 
@@ -1838,7 +1878,7 @@ mod tests {
             .await;
 
         let mut dropped_parent = parent_issue;
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         state
             .upsert_issue(
                 Some(parent_id.clone()),
@@ -1854,7 +1894,7 @@ mod tests {
             let store = state.store.as_ref();
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Dropped
+                IssueStatus::Dropped.as_status_key()
             );
         }
 
@@ -1897,7 +1937,7 @@ mod tests {
             .unwrap();
 
         let mut failed_parent = parent_issue;
-        failed_parent.status = IssueStatus::Failed;
+        failed_parent.status = IssueStatus::Failed.into();
         state
             .upsert_issue(
                 Some(parent_id.clone()),
@@ -1913,7 +1953,7 @@ mod tests {
             let store = state.store.as_ref();
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Dropped
+                IssueStatus::Dropped.as_status_key()
             );
         }
 
@@ -1949,7 +1989,7 @@ mod tests {
             .unwrap();
 
         let mut dropped_blocker = blocker_issue;
-        dropped_blocker.status = IssueStatus::Dropped;
+        dropped_blocker.status = IssueStatus::Dropped.into();
         state
             .upsert_issue(
                 Some(blocker_id.clone()),
@@ -1972,7 +2012,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Open
+                IssueStatus::Open.as_status_key()
             );
         }
 

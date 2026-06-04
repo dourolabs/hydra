@@ -16,6 +16,7 @@ mod local_auth;
 mod login;
 pub(crate) mod merge_queues;
 mod patches;
+mod projects;
 mod relations;
 mod repositories;
 mod secrets;

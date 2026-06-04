@@ -137,35 +137,35 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
     let parent = user.get_issue(&parent_id).await?;
     assert_eq!(
         parent.issue.status,
-        IssueStatus::Dropped,
+        IssueStatus::Dropped.into(),
         "parent should be Dropped"
     );
 
     let child_a = user.get_issue(&child_a_id).await?;
     assert_eq!(
         child_a.issue.status,
-        IssueStatus::Dropped,
+        IssueStatus::Dropped.into(),
         "child A should be Dropped (child of dropped parent)"
     );
 
     let child_b = user.get_issue(&child_b_id).await?;
     assert_eq!(
         child_b.issue.status,
-        IssueStatus::Dropped,
+        IssueStatus::Dropped.into(),
         "child B should be Dropped"
     );
 
     let child_c = user.get_issue(&child_c_id).await?;
     assert_eq!(
         child_c.issue.status,
-        IssueStatus::Dropped,
+        IssueStatus::Dropped.into(),
         "child C should be Dropped (child of dropped parent)"
     );
 
     let grandchild_d = user.get_issue(&grandchild_d_id).await?;
     assert_eq!(
         grandchild_d.issue.status,
-        IssueStatus::Dropped,
+        IssueStatus::Dropped.into(),
         "grandchild D should be Dropped (recursive cascade)"
     );
 

@@ -1159,6 +1159,33 @@ impl StoreWithEvents {
         Ok(())
     }
 
+    // ---- Project mutations ----
+
+    pub async fn add_project(
+        &self,
+        project: hydra_common::api::v1::projects::Project,
+        actor: &ActorRef,
+    ) -> Result<(ProjectId, VersionNumber), StoreError> {
+        self.inner.add_project(project, actor).await
+    }
+
+    pub async fn update_project(
+        &self,
+        id: &ProjectId,
+        project: hydra_common::api::v1::projects::Project,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.update_project(id, project, actor).await
+    }
+
+    pub async fn delete_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.delete_project(id, actor).await
+    }
+
     // ---- Label association mutations ----
 
     pub async fn add_label_association(
@@ -1810,7 +1837,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -1894,7 +1921,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -1939,7 +1966,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -1956,7 +1983,7 @@ mod tests {
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         let mut updated = issue;
-        updated.status = IssueStatus::InProgress;
+        updated.status = IssueStatus::InProgress.into();
         store
             .update_issue_with_actor(&issue_id, updated, ActorRef::test())
             .await
@@ -1992,7 +2019,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -2043,7 +2070,7 @@ mod tests {
             "payload test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -2064,7 +2091,7 @@ mod tests {
                 MutationPayload::Issue { old, new, .. } => {
                     assert!(old.is_none(), "create event should have no old state");
                     assert_eq!(new.description, "payload test");
-                    assert_eq!(new.status, IssueStatus::Open);
+                    assert_eq!(new.status, IssueStatus::Open.as_status_key());
                 }
                 other => panic!("expected Issue payload, got {other:?}"),
             },
@@ -2088,7 +2115,7 @@ mod tests {
             "before update".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -2105,7 +2132,7 @@ mod tests {
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         let mut updated = issue;
-        updated.status = IssueStatus::InProgress;
+        updated.status = IssueStatus::InProgress.into();
         updated.description = "after update".to_string();
         store
             .update_issue_with_actor(&issue_id, updated, ActorRef::test())
@@ -2117,9 +2144,9 @@ mod tests {
             ServerEvent::IssueUpdated { payload, .. } => match payload.as_ref() {
                 MutationPayload::Issue { old, new, .. } => {
                     let old = old.as_ref().expect("update event should carry old state");
-                    assert_eq!(old.status, IssueStatus::Open);
+                    assert_eq!(old.status, IssueStatus::Open.as_status_key());
                     assert_eq!(old.description, "before update");
-                    assert_eq!(new.status, IssueStatus::InProgress);
+                    assert_eq!(new.status, IssueStatus::InProgress.as_status_key());
                     assert_eq!(new.description, "after update");
                 }
                 other => panic!("expected Issue payload, got {other:?}"),
@@ -2144,7 +2171,7 @@ mod tests {
             "to be deleted".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -2268,7 +2295,7 @@ mod tests {
             "actor test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -2321,7 +2348,7 @@ mod tests {
             "system actor test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),

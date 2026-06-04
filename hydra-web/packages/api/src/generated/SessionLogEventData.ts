@@ -7,4 +7,4 @@
  * streams over the global events SSE rather than opening a separate
  * EventSource per session.
  */
-export type SessionLogEventData = { session_id: string, chunk: string, };
+export type SessionLogEventData = { session_id: string; chunk: string };

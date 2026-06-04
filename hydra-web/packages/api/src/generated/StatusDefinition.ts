@@ -8,4 +8,13 @@ import type { StatusOnEnter } from "./StatusOnEnter";
  * Declares one status within a project: display props, dependency
  * semantics, and an optional `on_enter` automation.
  */
-export type StatusDefinition = { key: StatusKey, label: string, icon: IconKey, color: Rgb, unblocks_parents: boolean, unblocks_dependents: boolean, cascades_to_children: boolean, on_enter?: StatusOnEnter | null, };
+export type StatusDefinition = {
+  key: StatusKey;
+  label: string;
+  icon: IconKey;
+  color: Rgb;
+  unblocks_parents: boolean;
+  unblocks_dependents: boolean;
+  cascades_to_children: boolean;
+  on_enter?: StatusOnEnter | null;
+};

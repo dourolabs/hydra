@@ -6,10 +6,14 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Append-only log of model-context events for a session. The transcript the
  * model "sees" is the projection of this log onto `UserMessage` and
- * `AssistantMessage` variants in insertion order.
- *
- * Mirrors [`ConversationEvent`](crate::conversations::ConversationEvent) so
- * the same store / cache / SSE plumbing can be reused once Phase B wires the
- * new storage in. See `/designs/sessions-orthogonality-redesign.md` §3.2.
+ * `AssistantMessage` variants in insertion order. See
+ * `/designs/sessions-orthogonality-redesign.md` §3.2.
  */
-export type SessionEvent = { "type": "user_message", content: string, timestamp: string, } | { "type": "assistant_message", content: string, timestamp: string, } | { "type": "tool_use", tool_name: string, payload: JsonValue, timestamp: string, } | { "type": "suspending", reason: string, timestamp: string, } | { "type": "resumed", from_session_id: SessionId, source: ResumeSource, timestamp: string, } | { "type": "closed", timestamp: string, } | { "type": "unknown" };
+export type SessionEvent =
+  | { type: "user_message"; content: string; timestamp: string }
+  | { type: "assistant_message"; content: string; timestamp: string }
+  | { type: "tool_use"; tool_name: string; payload: JsonValue; timestamp: string }
+  | { type: "suspending"; reason: string; timestamp: string }
+  | { type: "resumed"; from_session_id: SessionId; source: ResumeSource; timestamp: string }
+  | { type: "closed"; timestamp: string }
+  | { type: "unknown" };

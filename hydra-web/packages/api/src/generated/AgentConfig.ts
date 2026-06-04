@@ -18,4 +18,9 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * fail to deserialize loudly — that's the design's intended Phase-2
  * backfill story.
  */
-export type AgentConfig = { agent_name?: AgentName | null, model?: string | null, system_prompt?: string | null, mcp_config?: JsonValue | null, };
+export type AgentConfig = {
+  agent_name?: AgentName | null;
+  model?: string | null;
+  system_prompt?: string | null;
+  mcp_config?: JsonValue | null;
+};

@@ -4,4 +4,6 @@
  * Non-binding hint for the SWE / CLI: which kind of follow-up issue to file
  * in response to a particular reason, and who to assign it to.
  */
-export type SuggestedAction = { "kind": "file_review_request", assign_to_one_of: Array<string>, title_hint: string, } | { "kind": "file_merge_request", assign_to_one_of: Array<string>, };
+export type SuggestedAction =
+  | { kind: "file_review_request"; assign_to_one_of: Array<string>; title_hint: string }
+  | { kind: "file_merge_request"; assign_to_one_of: Array<string> };

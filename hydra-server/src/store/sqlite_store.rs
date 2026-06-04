@@ -3,9 +3,7 @@ use crate::domain::{
     actors::{Actor, ActorId, ActorRef},
     agents::Agent,
     documents::Document,
-    issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
-    },
+    issues::{Issue, IssueDependency, IssueDependencyType, IssueType, SessionSettings},
     labels::Label,
     patches::{CommitRange, GithubPr, Patch, PatchStatus, Review},
     secrets::SecretRef,
@@ -350,6 +348,8 @@ struct IssueRow {
     form_response: Option<String>,
     #[sqlx(default)]
     feedback: Option<String>,
+    #[sqlx(default)]
+    project_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1189,8 +1189,8 @@ impl SqliteStore {
         // old column keep working.
         let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, project_id, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -1208,6 +1208,7 @@ impl SqliteStore {
         .bind(&form_json)
         .bind(&form_response_json)
         .bind(issue.feedback.as_deref())
+        .bind(issue.project_id.as_ref().map(|p| p.as_ref()))
         .execute(executor)
         .await
         .map_err(map_sqlx_error)?;
@@ -1771,7 +1772,8 @@ impl SqliteStore {
     fn row_to_issue(&self, row: &IssueRow) -> Result<Issue, StoreError> {
         let issue_type = IssueType::from_str(&row.issue_type)
             .map_err(|e| StoreError::Internal(format!("invalid issue_type: {e}")))?;
-        let status = IssueStatus::from_str(&row.status).map_err(StoreError::InvalidIssueStatus)?;
+        let status = StatusKey::try_new(row.status.clone())
+            .map_err(|e| StoreError::InvalidIssueStatus(e.to_string()))?;
         let session_settings: SessionSettings = serde_json::from_str(&row.session_settings)
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize session_settings: {e}"))
@@ -1801,6 +1803,12 @@ impl SqliteStore {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize assignee_principal: {e}"))
             })?;
+        let project_id = row
+            .project_id
+            .as_ref()
+            .map(|s| ProjectId::try_from(s.clone()))
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("invalid project_id: {e}")))?;
         Ok(Issue {
             issue_type,
             title: row.title.clone(),
@@ -1808,6 +1816,7 @@ impl SqliteStore {
             creator: Username::from(row.creator.clone()),
             progress: row.progress.clone(),
             status,
+            project_id,
             assignee,
             session_settings,
             dependencies: vec![],
@@ -5986,6 +5995,7 @@ fn apply_pagination_sql_sqlite(
 mod tests {
     use super::*;
     use crate::domain::actors::{ActorId, ActorRef};
+    use crate::domain::issues::IssueStatus;
     use chrono::Duration;
     use hydra_common::SessionId;
     use std::collections::HashSet;
@@ -6728,7 +6738,7 @@ mod tests {
             "issue details".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             dependencies,
@@ -6746,7 +6756,7 @@ mod tests {
             "full description".to_string(),
             Username::from("issue-creator"),
             "50%".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             Some(hydra_common::principal::Principal::User {
                 name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
             }),
@@ -7050,7 +7060,7 @@ mod tests {
             .unwrap();
 
         let mut closed_issue = sample_issue(vec![]);
-        closed_issue.status = IssueStatus::Closed;
+        closed_issue.status = IssueStatus::Closed.into();
         store
             .add_issue(closed_issue, &ActorRef::test())
             .await
@@ -7074,14 +7084,14 @@ mod tests {
             .unwrap();
 
         let mut in_progress_issue = sample_issue(vec![]);
-        in_progress_issue.status = IssueStatus::InProgress;
+        in_progress_issue.status = IssueStatus::InProgress.into();
         let (ip_id, _) = store
             .add_issue(in_progress_issue, &ActorRef::test())
             .await
             .unwrap();
 
         let mut closed_issue = sample_issue(vec![]);
-        closed_issue.status = IssueStatus::Closed;
+        closed_issue.status = IssueStatus::Closed.into();
         store
             .add_issue(closed_issue, &ActorRef::test())
             .await
@@ -9760,7 +9770,7 @@ mod tests {
             "a bug".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -9777,7 +9787,7 @@ mod tests {
             "closed task".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Closed,
+            IssueStatus::Closed.into(),
             None,
             None,
             Vec::new(),

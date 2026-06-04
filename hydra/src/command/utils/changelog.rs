@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 use hydra_common::{
-    issues::{Issue, IssueStatus, IssueType},
+    api::v1::projects::StatusKey,
+    issues::{Issue, IssueType},
     patches::{PatchStatus, Review},
     sessions::Session,
     task_status::Status,
@@ -55,7 +56,7 @@ pub struct ActivityFieldChangeSummary {
 pub enum ActivityObjectSummary {
     Issue {
         issue_type: IssueType,
-        status: IssueStatus,
+        status: StatusKey,
         description: String,
         assignee: Option<hydra_common::principal::Principal>,
         progress: String,

@@ -8,17 +8,25 @@ import type { TriggerId } from "./TriggerId";
  *
  * Used in event payloads (`MutationPayload`) to attribute mutations.
  */
-export type ActorRef = { "Authenticated": { actor_id: ActorId, 
-/**
- * Session that minted the authenticating token, if any.
- *
- * Phase 3a of `/designs/actor-system-overhaul.md` (§5.2) carries
- * the originating session id end-to-end on session-spawned
- * actors (`ActorId::Agent` / `ActorId::Adhoc`). User logins are
- * not session-scoped, so `None` is valid for those.
- *
- * `#[serde(default)]` keeps existing version-history rows (which
- * predate this field) deserializing as `session_id: None`
- * (§5.4).
- */
-session_id?: SessionId | null, } } | { "System": { worker_name: string, on_behalf_of: ActorId | null, } } | { "Automation": { automation_name: string, triggered_by: ActorRef | null, } } | { "Trigger": { trigger_id: TriggerId, on_behalf_of: ActorId | null, } };
+export type ActorRef =
+  | {
+      Authenticated: {
+        actor_id: ActorId;
+        /**
+         * Session that minted the authenticating token, if any.
+         *
+         * Phase 3a of `/designs/actor-system-overhaul.md` (§5.2) carries
+         * the originating session id end-to-end on session-spawned
+         * actors (`ActorId::Agent` / `ActorId::Adhoc`). User logins are
+         * not session-scoped, so `None` is valid for those.
+         *
+         * `#[serde(default)]` keeps existing version-history rows (which
+         * predate this field) deserializing as `session_id: None`
+         * (§5.4).
+         */
+        session_id?: SessionId | null;
+      };
+    }
+  | { System: { worker_name: string; on_behalf_of: ActorId | null } }
+  | { Automation: { automation_name: string; triggered_by: ActorRef | null } }
+  | { Trigger: { trigger_id: TriggerId; on_behalf_of: ActorId | null } };

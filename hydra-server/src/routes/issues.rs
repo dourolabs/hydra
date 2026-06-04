@@ -1,4 +1,5 @@
 use crate::domain::actors::{Actor, ActorRef};
+use crate::routes::issue_response::{build_issue_response, build_issue_summary_response};
 use crate::{
     app::{AppState, SubmitFormActionError, UpsertIssueError},
     store::StoreError,
@@ -126,11 +127,12 @@ pub async fn get_issue(
         })?;
 
     info!(issue_id = %issue_id, "get_issue completed");
+    let api_issue = build_issue_response(&state, issue.item).await?;
     let response = api_issues::IssueVersionRecord::new(
         issue_id,
         issue.version,
         issue.timestamp,
-        issue.item.into(),
+        api_issue,
         issue.actor,
         issue.creation_time,
         labels,
@@ -157,20 +159,19 @@ pub async fn list_issue_versions(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    let records = versions
-        .into_iter()
-        .map(|version| {
-            api_issues::IssueVersionRecord::new(
-                issue_id.clone(),
-                version.version,
-                version.timestamp,
-                version.item.into(),
-                version.actor,
-                version.creation_time,
-                labels.clone(),
-            )
-        })
-        .collect();
+    let mut records = Vec::with_capacity(versions.len());
+    for version in versions {
+        let api_issue = build_issue_response(&state, version.item).await?;
+        records.push(api_issues::IssueVersionRecord::new(
+            issue_id.clone(),
+            version.version,
+            version.timestamp,
+            api_issue,
+            version.actor,
+            version.creation_time,
+            labels.clone(),
+        ));
+    }
 
     let response = api_issues::ListIssueVersionsResponse::new(records);
     info!(
@@ -213,11 +214,12 @@ pub async fn get_issue_version(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
+    let api_issue = build_issue_response(&state, entry.item).await?;
     let response = api_issues::IssueVersionRecord::new(
         issue_id.clone(),
         entry.version,
         entry.timestamp,
-        entry.item.into(),
+        api_issue,
         entry.actor,
         entry.creation_time,
         labels,
@@ -268,8 +270,7 @@ pub async fn list_issues(
         let object_id = HydraId::from(id.clone());
         let labels = labels_map.get(&object_id).cloned().unwrap_or_default();
 
-        let api_issue: api_issues::Issue = versioned.item.into();
-        let summary = api_issues::IssueSummary::from(&api_issue);
+        let summary = build_issue_summary_response(&state, &versioned.item).await?;
         let record = api_issues::IssueSummaryRecord::new(
             id.clone(),
             versioned.version,
@@ -341,11 +342,12 @@ pub async fn submit_feedback(
         })?;
 
     info!(issue_id = %issue_id, version, "submit_feedback completed");
+    let api_issue = build_issue_response(&state, issue.item).await?;
     let response = api_issues::IssueVersionRecord::new(
         issue_id,
         issue.version,
         issue.timestamp,
-        issue.item.into(),
+        api_issue,
         issue.actor,
         issue.creation_time,
         labels,
@@ -482,11 +484,12 @@ pub async fn delete_issue(
         })?;
 
     info!(issue_id = %issue_id, "delete_issue completed");
+    let api_issue = build_issue_response(&state, issue.item).await?;
     let response = api_issues::IssueVersionRecord::new(
         issue_id,
         issue.version,
         issue.timestamp,
-        issue.item.into(),
+        api_issue,
         issue.actor,
         issue.creation_time,
         labels,

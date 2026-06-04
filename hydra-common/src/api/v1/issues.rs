@@ -1,13 +1,22 @@
 use super::form::{Form, FormResponse};
 use super::labels::LabelSummary;
+use super::projects::{StatusDefinition, StatusKey};
 use super::users::Username;
 pub use crate::IssueId;
 use crate::principal::Principal;
-use crate::{LabelId, PatchId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
+use crate::{LabelId, PatchId, ProjectId, RepoName, SessionId, VersionNumber, actor_ref::ActorRef};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::{collections::HashMap, fmt, str::FromStr};
+
+/// Default value for `Issue.status` and `IssueSummary.status` when the field
+/// is omitted from a request body. Matches the `default_status_key` of
+/// `DefaultProject` so existing clients that don't set a status still land
+/// in `open` exactly like they did before the PR 3 wire-shape change.
+fn default_status_key() -> StatusKey {
+    StatusKey::try_new("open").expect("\"open\" is a well-formed StatusKey")
+}
 
 /// Serialize an `Option<Principal>` as its canonical path form
 /// (`users/<x>` / `agents/<x>` / `external/<sys>/<x>`) so it survives URL
@@ -99,6 +108,16 @@ impl FromStr for IssueStatus {
             "failed" => Ok(IssueStatus::Failed),
             other => Err(format!("unsupported issue status '{other}'")),
         }
+    }
+}
+
+impl From<IssueStatus> for StatusKey {
+    /// Legacy adapter: returns the wire string of the enum variant as a
+    /// [`StatusKey`]. Always succeeds (the five legacy strings are
+    /// well-formed keys by construction). `Unknown` falls back to
+    /// `unknown` which is also a valid key.
+    fn from(value: IssueStatus) -> Self {
+        StatusKey::try_new(value.as_str()).expect("IssueStatus wire string is a valid StatusKey")
     }
 }
 
@@ -230,8 +249,23 @@ pub struct Issue {
     pub creator: Username,
     #[serde(default)]
     pub progress: String,
-    #[serde(default)]
-    pub status: IssueStatus,
+    /// Status key for this issue; resolved against its project's status
+    /// list (or [`super::projects::Project`]'s synthesized default project
+    /// when [`Self::project_id`] is None). The wire string is unchanged
+    /// for the five legacy statuses (`open`, `in-progress`, `closed`,
+    /// `dropped`, `failed`) so older clients keep working.
+    #[serde(default = "default_status_key")]
+    pub status: StatusKey,
+    /// Optional project this issue belongs to. When None, the issue
+    /// resolves through the synthesized default project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
+    /// Server-computed status definition (display props + dependency
+    /// flags) — never stored, always populated on responses, omitted on
+    /// create/update requests. See `/designs/per-project-issue-statuses.md`
+    /// §4 "Frontend display".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_status: Option<StatusDefinition>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
     #[serde(
@@ -262,7 +296,7 @@ impl Issue {
         description: String,
         creator: Username,
         progress: String,
-        status: IssueStatus,
+        status: StatusKey,
         assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
@@ -279,6 +313,8 @@ impl Issue {
             creator,
             progress,
             status,
+            project_id: None,
+            resolved_status: None,
             assignee,
             session_settings: session_settings.unwrap_or_default(),
             dependencies,
@@ -297,7 +333,7 @@ impl crate::graph::GraphView for Issue {
     fn view_l1(&self) -> Value {
         serde_json::json!({
             "title": self.title,
-            "status": self.status,
+            "status": self.status.as_str(),
         })
     }
 
@@ -311,7 +347,7 @@ impl crate::graph::GraphView for Issue {
         };
         serde_json::json!({
             "title": self.title,
-            "status": self.status,
+            "status": self.status.as_str(),
             "assignee": self.assignee,
             "progress": progress,
             "dependencies": self.dependencies,
@@ -571,8 +607,14 @@ pub struct IssueSummary {
     pub title: String,
     pub description: String,
     pub creator: Username,
-    #[serde(default)]
-    pub status: IssueStatus,
+    #[serde(default = "default_status_key")]
+    pub status: StatusKey,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
+    /// Server-computed status definition; populated by the route handler
+    /// before serialization (omitted on requests).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_status: Option<StatusDefinition>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
     #[serde(default)]
@@ -605,7 +647,9 @@ impl From<&Issue> for IssueSummary {
             title: issue.title.clone(),
             description: truncated,
             creator: issue.creator.clone(),
-            status: issue.status,
+            status: issue.status.clone(),
+            project_id: issue.project_id.clone(),
+            resolved_status: issue.resolved_status.clone(),
             assignee: issue.assignee.clone(),
             progress,
             dependencies: issue.dependencies.clone(),
@@ -955,7 +999,9 @@ mod tests {
             description: "test".to_string(),
             creator: Username::from("alice"),
             progress: String::new(),
-            status: IssueStatus::Open,
+            status: status_key("open"),
+            project_id: None,
+            resolved_status: None,
             assignee: None,
             session_settings: Default::default(),
             dependencies: Vec::new(),
@@ -988,7 +1034,9 @@ mod tests {
             description: "test".to_string(),
             creator: Username::from("alice"),
             progress: String::new(),
-            status: IssueStatus::Open,
+            status: status_key("open"),
+            project_id: None,
+            resolved_status: None,
             assignee: None,
             session_settings: Default::default(),
             dependencies: Vec::new(),
@@ -1024,6 +1072,10 @@ mod tests {
         assert_eq!(record.actor, None);
     }
 
+    fn status_key(value: &str) -> StatusKey {
+        StatusKey::try_new(value).expect("well-formed status key")
+    }
+
     fn make_test_issue(description: &str) -> Issue {
         Issue {
             issue_type: IssueType::Task,
@@ -1031,7 +1083,9 @@ mod tests {
             description: description.to_string(),
             creator: Username::from("alice"),
             progress: "some progress text".to_string(),
-            status: IssueStatus::InProgress,
+            status: status_key("in-progress"),
+            project_id: None,
+            resolved_status: None,
             assignee: Some(Principal::User {
                 name: Username::from("bob"),
             }),
@@ -1098,7 +1152,7 @@ mod tests {
         assert_eq!(summary.issue_type, IssueType::Task);
         assert_eq!(summary.creator, Username::from("alice"));
         assert_eq!(summary.progress, "some progress text");
-        assert_eq!(summary.status, IssueStatus::InProgress);
+        assert_eq!(summary.status, status_key("in-progress"));
         assert_eq!(
             summary.assignee,
             Some(Principal::User {
@@ -1141,7 +1195,9 @@ mod tests {
                 description: "Investigate flaky CI".to_string(),
                 creator: Username::from("alice"),
                 progress: "started".to_string(),
-                status: IssueStatus::InProgress,
+                status: super::status_key("in-progress"),
+                project_id: None,
+                resolved_status: None,
                 assignee: Some(Principal::User {
                     name: Username::from("bob"),
                 }),

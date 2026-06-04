@@ -2,11 +2,47 @@
 import type { Form } from "./Form";
 import type { FormResponse } from "./FormResponse";
 import type { IssueDependency } from "./IssueDependency";
-import type { IssueStatus } from "./IssueStatus";
 import type { IssueType } from "./IssueType";
 import type { PatchId } from "./PatchId";
 import type { Principal } from "./Principal";
+import type { ProjectId } from "./ProjectId";
 import type { SessionSettings } from "./SessionSettings";
+import type { StatusDefinition } from "./StatusDefinition";
+import type { StatusKey } from "./StatusKey";
 import type { Username } from "./Username";
 
-export type Issue = { type: IssueType, title: string, description: string, creator: Username, progress: string, status: IssueStatus, assignee?: Principal | null, session_settings?: SessionSettings, dependencies: Array<IssueDependency>, patches: Array<PatchId>, deleted?: boolean, form?: Form | null, form_response?: FormResponse | null, feedback?: string | null, };
+export type Issue = {
+  type: IssueType;
+  title: string;
+  description: string;
+  creator: Username;
+  progress: string;
+  /**
+   * Status key for this issue; resolved against its project's status
+   * list (or [`super::projects::Project`]'s synthesized default project
+   * when [`Self::project_id`] is None). The wire string is unchanged
+   * for the five legacy statuses (`open`, `in-progress`, `closed`,
+   * `dropped`, `failed`) so older clients keep working.
+   */
+  status: StatusKey;
+  /**
+   * Optional project this issue belongs to. When None, the issue
+   * resolves through the synthesized default project.
+   */
+  project_id?: ProjectId | null;
+  /**
+   * Server-computed status definition (display props + dependency
+   * flags) — never stored, always populated on responses, omitted on
+   * create/update requests. See `/designs/per-project-issue-statuses.md`
+   * §4 "Frontend display".
+   */
+  resolved_status?: StatusDefinition | null;
+  assignee?: Principal | null;
+  session_settings?: SessionSettings;
+  dependencies: Array<IssueDependency>;
+  patches: Array<PatchId>;
+  deleted?: boolean;
+  form?: Form | null;
+  form_response?: FormResponse | null;
+  feedback?: string | null;
+};

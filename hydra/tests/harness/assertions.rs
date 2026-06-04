@@ -54,9 +54,12 @@ pub trait IssueAssertions {
 impl IssueAssertions for IssueVersionRecord {
     fn assert_status(&self, expected: IssueStatus) {
         assert_eq!(
-            self.issue.status, expected,
+            self.issue.status.as_str(),
+            expected.as_str(),
             "issue {}: expected status {:?}, got {:?}",
-            self.issue_id, expected, self.issue.status
+            self.issue_id,
+            expected,
+            self.issue.status
         );
     }
 
@@ -77,7 +80,8 @@ impl IssueAssertions for IssueVersionRecord {
             .collect();
 
         let matching = children.iter().find(|child| {
-            child.issue.description.contains(desc_contains) && child.issue.status == status
+            child.issue.description.contains(desc_contains)
+                && child.issue.status.as_str() == status.as_str()
         });
 
         if matching.is_none() {
@@ -122,7 +126,8 @@ impl IssueAssertions for IssueVersionRecord {
             .collect();
 
         let matching = children.iter().find(|child| {
-            child.issue.description.contains(desc_contains) && child.issue.status == status
+            child.issue.description.contains(desc_contains)
+                && child.issue.status.as_str() == status.as_str()
         });
 
         if matching.is_none() {
@@ -185,9 +190,12 @@ pub trait IssueSummaryAssertions {
 impl IssueSummaryAssertions for IssueSummaryRecord {
     fn assert_status(&self, expected: IssueStatus) {
         assert_eq!(
-            self.issue.status, expected,
+            self.issue.status.as_str(),
+            expected.as_str(),
             "issue {}: expected status {:?}, got {:?}",
-            self.issue_id, expected, self.issue.status
+            self.issue_id,
+            expected,
+            self.issue.status
         );
     }
 
@@ -208,7 +216,8 @@ impl IssueSummaryAssertions for IssueSummaryRecord {
             .collect();
 
         let matching = children.iter().find(|child| {
-            child.issue.description.contains(desc_contains) && child.issue.status == status
+            child.issue.description.contains(desc_contains)
+                && child.issue.status.as_str() == status.as_str()
         });
 
         if matching.is_none() {
@@ -428,7 +437,7 @@ pub fn find_children_by_type_and_status<'a>(
         .iter()
         .filter(|i| {
             i.issue.issue_type == issue_type
-                && i.issue.status == status
+                && i.issue.status.as_str() == status.as_str()
                 && i.issue.dependencies.iter().any(|d| {
                     d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
                 })
@@ -491,7 +500,7 @@ pub fn find_summary_children_by_type_and_status<'a>(
         .iter()
         .filter(|i| {
             i.issue.issue_type == issue_type
-                && i.issue.status == status
+                && i.issue.status.as_str() == status.as_str()
                 && i.issue.dependencies.iter().any(|d| {
                     d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
                 })

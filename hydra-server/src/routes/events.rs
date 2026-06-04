@@ -881,7 +881,7 @@ mod tests {
             "sse entity test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -970,7 +970,7 @@ mod tests {
         let issue_id = IssueId::new();
         let old_issue = dummy_issue();
         let mut new_issue = old_issue.clone();
-        new_issue.status = IssueStatus::InProgress;
+        new_issue.status = IssueStatus::InProgress.into();
         new_issue.description = "updated description".to_string();
 
         let payload = Arc::new(MutationPayload::Issue {
