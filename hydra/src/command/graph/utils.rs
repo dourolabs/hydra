@@ -101,9 +101,10 @@ pub(crate) fn node_ids_from_edges(response: &ListRelationsResponse) -> Vec<Hydra
     out
 }
 
-/// Resolve `--scope <ID>` to the full node set per the design doc:
-/// {scope} ∪ descendants(child-of, transitive) ∪ has-patch targets ∪ has-document targets.
-/// `refers-to` is intentionally **not** fanned out.
+/// Resolve `--scope <ID>` to its full node set:
+/// `{scope} ∪ descendants(child-of, transitive) ∪ has-patch targets ∪
+/// has-document targets`. `refers-to` is intentionally **not** fanned out
+/// (it expresses a soft reference, not containment).
 async fn resolve_scope_node_ids(
     client: &dyn HydraClientInterface,
     scope: &HydraId,

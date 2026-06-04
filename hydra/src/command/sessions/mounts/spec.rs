@@ -1,9 +1,12 @@
 //! `MountSpec` → `Vec<Box<dyn Mount>>` adapter.
 //!
-//! The wire-level [`MountSpec`] / [`MountItem`] types describe **what** to
-//! mount; this module decides **how** by mapping each [`MountItem`] to the
-//! corresponding mount constructor in this crate. See
-//! `/designs/worker-context-mount-spec.md` for the full design.
+//! `MountSpec` is the server-supplied layout of a worker's mounted
+//! filesystem: an ordered list of [`MountItem`]s, each declaring the kind of
+//! mount (repo bundle, build cache, documents sync, ...), the target path
+//! relative to the worker root, and any per-kind parameters. The wire types
+//! describe **what** to mount; this module decides **how** by translating
+//! each [`MountItem`] into a concrete [`Mount`] implementation from this
+//! crate, while validating the target path stays within the worker root.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;

@@ -53,9 +53,11 @@ pub struct CreateProjectArgs {
     #[arg(long, value_name = "NAME")]
     pub name: String,
 
-    /// Path to a JSON or YAML file containing the project body (`statuses`
-    /// list and `default_status_key`). See `/designs/per-project-issue-statuses.md`
-    /// for the shape.
+    /// Path to a JSON or YAML file containing the project body: a
+    /// `statuses` list (the project-specific set of issue statuses) and a
+    /// `default_status_key` selecting the status applied to issues that
+    /// don't declare one explicitly. `default_status_key` must reference a
+    /// key in the `statuses` list.
     #[arg(long = "body-file", value_name = "PATH")]
     pub body_file: PathBuf,
 }

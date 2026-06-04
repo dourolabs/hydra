@@ -122,10 +122,10 @@ pub enum PatchesCommand {
 
     /// Add a review to an existing patch.
     ///
-    /// Phase 5b of `/designs/actor-system-overhaul.md` (§6) drops the
-    /// `--author` flag: the server stamps the review's `Principal`
-    /// author from the authenticated actor (the agent / user that the
-    /// CLI's token resolves to).
+    /// There is no `--author` flag: the server stamps the review's
+    /// typed `Principal` author from the authenticated actor (the agent /
+    /// user that the CLI's token resolves to). A bare-string author is no
+    /// longer accepted on the wire.
     Review {
         /// Patch id to review.
         #[arg(value_name = "PATCH_ID")]
