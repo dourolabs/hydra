@@ -67,11 +67,15 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./sqlite-migrations");
 /// including) `up_to`, or to HEAD when `up_to == None`. The production
 /// startup path calls this with `None`; the integration test passes
 /// per-baseline pins. See `store/migrations/mod.rs` for the planning
-/// helper and `/designs/migration-testing-redesign.md` §6 for the
-/// semantics. Note for future migration authors: SQLite migrations that
-/// reorder columns must NOT `INSERT INTO new_table SELECT * FROM
-/// old_table` — column order in `SELECT *` is unstable across schema
-/// changes and silently corrupts data ([[migrations]] memory).
+/// helper. The numbered SQL migration list (under `sqlite-migrations/`)
+/// plus the Rust migration registry is the single source of truth for
+/// the combined SQL+Rust ordering; new migrations append at the end and
+/// must not edit prior entries — sqlx checksums each SQL migration body
+/// and refuses to start if a previously applied checksum changes. Note
+/// for future migration authors: SQLite migrations that reorder columns
+/// must NOT `INSERT INTO new_table SELECT * FROM old_table` — column
+/// order in `SELECT *` is unstable across schema changes and silently
+/// corrupts data ([[migrations]] memory).
 pub async fn run_migrations(pool: &SqlitePool, up_to: Option<u64>) -> anyhow::Result<()> {
     use crate::store::migrations::{Backend, MigrationStep, plan_migrations, rust_migrations};
     use anyhow::Context;
@@ -419,19 +423,21 @@ struct TaskRow {
     #[sqlx(default)]
     end_time: Option<String>,
     // Denormalized from `mode.Interactive.conversation_id` at insert time
-    // and never edited independently. Retained per design §6 step 16 as
-    // the §3.4.1 single-query lookup index; SELECTed to keep the row
-    // shape consistent with the table even though the read path reads
-    // `mode` JSON.
+    // and never edited independently. Retained as a single-query lookup
+    // index for `list_session_ids_by_conversation_id`; SELECTed to keep
+    // the row shape consistent with the table even though the read path
+    // reads `mode` JSON.
     #[allow(dead_code)]
     #[sqlx(default)]
     conversation_id: Option<String>,
     #[sqlx(default)]
     usage: Option<String>,
-    // Phase D step 12 (PR-1) populated these columns on every INSERT;
-    // Phase E step 16 (PR-5) made them the sole source of session shape
-    // after dropping the legacy `context` / `prompt` / `model` /
-    // `mcp_config` / `interactive` columns.
+    // These columns are the canonical source for session shape
+    // (`mount_spec`, `agent_config`, `mode`); INSERTs populate them from
+    // the domain object's typed fields and reads deserialize them back
+    // into those fields. The legacy `context` / `prompt` / `model` /
+    // `mcp_config` / `interactive` columns they replaced have been
+    // dropped from the schema.
     mount_spec: String,
     agent_config: String,
     mode: String,
@@ -1696,10 +1702,11 @@ impl SqliteStore {
             })
             .transpose()?;
 
-        // Phase E step 16: the legacy `context` / `prompt` / `model` /
-        // `mcp_config` / `interactive` columns are gone. `mount_spec`,
-        // `agent_config`, and `mode` are now NOT NULL in every row
-        // (backfilled by PR-1, dual-written since PR-2).
+        // The legacy `context` / `prompt` / `model` / `mcp_config` /
+        // `interactive` columns are no longer written and have been
+        // dropped from the schema. `mount_spec`, `agent_config`, and
+        // `mode` are NOT NULL in every row and are the canonical source
+        // for session shape on this read path.
         let mount_spec = serde_json::from_str(&row.mount_spec)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
         let agent_config = serde_json::from_str(&row.agent_config).map_err(|e| {
@@ -11740,12 +11747,13 @@ mod tests {
 
     // ---- Session-shape column dual-write + backfill tests ----
     //
-    // These tests cover Phase D step 12: the `mount_spec`, `agent_config`,
-    // `mode`, and `resumed_from` columns added in
-    // `20260523020000_add_session_shape_columns.sql`. They assert both the
-    // runtime dual-write path (via `add_session` / our updated INSERT) and
-    // the migration backfill SQL (replayed against raw inserts that bypass
-    // the application path and leave the new columns NULL).
+    // These tests cover the canonical session-shape columns
+    // (`mount_spec`, `agent_config`, `mode`, `resumed_from`) added in
+    // `20260523020000_add_session_shape_columns.sql`, on the INSERT /
+    // SELECT round-trip. They assert both the runtime path (via
+    // `add_session` / our updated INSERT) and the migration backfill SQL
+    // (replayed against raw inserts that bypass the application path and
+    // leave the new columns NULL).
 
     #[derive(sqlx::FromRow)]
     struct SessionShapeRow {

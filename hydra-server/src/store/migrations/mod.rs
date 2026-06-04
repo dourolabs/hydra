@@ -3,8 +3,14 @@
 //! Each store impl's `run_migrations(pool, up_to)` walks the sqlx `Migrator`
 //! and the registry returned by [`rust_migrations`] in a single interleaved
 //! sequence, so the events backfill (and any future Rust migration) runs at
-//! its declared SQL version rather than as a separate post-SQL step. See
-//! `/designs/migration-testing-redesign.md` §5 and §6.
+//! its declared SQL version rather than as a separate post-SQL step.
+//!
+//! The numbered SQL migration list (under `sqlite-migrations/` and
+//! `migrations/`) plus the Rust migration registry below is the single
+//! source of truth for the combined SQL+Rust ordering. New migrations
+//! append at the end and must not edit prior entries — sqlx checksums
+//! each SQL migration body on startup and refuses to run if a previously
+//! applied checksum changes.
 //!
 //! ## Adding a new Rust migration
 //!

@@ -1330,12 +1330,14 @@ pub trait Store: ReadOnlyStore {
     /// Records that a trigger fired at `fired_at`, **in place** on the
     /// current latest row.
     ///
-    /// This is the one carve-out from the versioned-append pattern (see
-    /// `/designs/triggered-actions.md` §4.4 / §4.6): no new version row is
-    /// inserted, no `is_latest` flag flips, no actor is recorded, and no
-    /// `VersionNumber` is returned. Concurrent `update_trigger` calls
-    /// carry the latest `last_fired_at` forward into the new version row
-    /// so neither change is lost.
+    /// This is the one carve-out from the versioned-append pattern:
+    /// worker-driven bookkeeping (`last_fired_at`) is written in place,
+    /// so no new version row is inserted, no `is_latest` flag flips, no
+    /// actor is recorded, and no `VersionNumber` is returned. The
+    /// trigger's version log then reflects only user-driven config
+    /// changes. Concurrent `update_trigger` calls carry the latest
+    /// `last_fired_at` forward into the new version row so neither
+    /// change is lost.
     async fn record_trigger_fire(
         &self,
         id: &TriggerId,

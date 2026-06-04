@@ -96,8 +96,11 @@ pub async fn init_pool(config: &DatabaseSection) -> Result<Option<PgStorePool>> 
 /// including) `up_to`, or to HEAD when `up_to == None`. Replaces the prior
 /// `MIGRATOR.run(pool)` + background events-backfill spawn with a single
 /// interleaved sequence. See `store/migrations/mod.rs` for the planning
-/// helper and `/designs/migration-testing-redesign.md` §6 for the
-/// semantics.
+/// helper. The numbered SQL migration list (under `migrations/`) plus
+/// the Rust migration registry is the single source of truth for the
+/// combined SQL+Rust ordering; new migrations append at the end and
+/// must not edit prior entries — sqlx checksums each SQL migration body
+/// and refuses to start if a previously applied checksum changes.
 pub async fn run_migrations(pool: &PgStorePool, up_to: Option<u64>) -> Result<()> {
     use crate::store::migrations::{Backend, MigrationStep, plan_migrations, rust_migrations};
     use sqlx::migrate::Migrate;
@@ -916,10 +919,11 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        // Phase E step 16: the legacy `context` / `prompt` / `model` /
-        // `mcp_config` / `interactive` columns are gone. `mount_spec`,
-        // `agent_config`, and `mode` are NOT NULL in every row (backfilled
-        // by PR-1, dual-written since PR-2).
+        // The legacy `context` / `prompt` / `model` / `mcp_config` /
+        // `interactive` columns are no longer written and have been
+        // dropped from the schema. `mount_spec`, `agent_config`, and
+        // `mode` are NOT NULL in every row and are the canonical source
+        // for session shape on this read path.
         let mount_spec = serde_json::from_value(row.mount_spec.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
         let agent_config = serde_json::from_value(row.agent_config.clone()).map_err(|e| {
@@ -1597,19 +1601,20 @@ struct TaskRow {
     #[sqlx(default)]
     end_time: Option<DateTime<Utc>>,
     // Denormalized from `mode.Interactive.conversation_id` at insert time
-    // and never edited independently. Retained per design §6 step 16 as
-    // the §3.4.1 single-query lookup index; SELECTed to keep the row
-    // shape consistent with the table even though the read path reads
-    // `mode` JSON.
+    // and never edited independently. Retained as a single-query lookup
+    // index for `list_session_ids_by_conversation_id`; SELECTed to keep
+    // the row shape consistent with the table even though the read path
+    // reads `mode` JSON.
     #[allow(dead_code)]
     #[sqlx(default)]
     conversation_id: Option<String>,
     #[sqlx(default)]
     usage: Option<Value>,
-    // Phase E step 16: the legacy `context` / `prompt` / `model` /
-    // `mcp_config` / `interactive` columns are gone; `mount_spec` /
-    // `agent_config` / `mode` are the sole source of session shape
-    // (NOT NULL after the backfill in PR-1).
+    // The legacy `context` / `prompt` / `model` / `mcp_config` /
+    // `interactive` columns have been dropped from the schema;
+    // `mount_spec` / `agent_config` / `mode` are the canonical source
+    // for session shape, NOT NULL in every row and populated from the
+    // domain object's typed fields on INSERT.
     mount_spec: Value,
     agent_config: Value,
     mode: Value,
@@ -10002,7 +10007,7 @@ mod tests {
         assert!(empty.is_empty());
     }
 
-    // ---- Session-shape column dual-write round-trip (Phase D step 12) ----
+    // ---- Session-shape column dual-write round-trip ----
     //
     // These tests cover the postgres `INSERT` path added in the same migration
     // as `mount_spec`, `agent_config`, `mode` (see

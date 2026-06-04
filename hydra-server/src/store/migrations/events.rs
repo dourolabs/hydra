@@ -742,9 +742,11 @@ mod tests {
         creator: &str,
         creation_time: DateTime<Utc>,
     ) {
-        // Phase E step 16 dropped `prompt` / `context` / `interactive`;
-        // hand-crafted rows now only populate the surviving columns
-        // (mount_spec / agent_config / mode / conversation_id).
+        // The legacy `prompt` / `context` / `interactive` columns have
+        // been dropped from the schema now that all reads come from
+        // `mount_spec` / `agent_config` / `mode`. Hand-crafted rows only
+        // populate the surviving columns (mount_spec / agent_config /
+        // mode / conversation_id).
         sqlx::query(
             "INSERT INTO tasks_v2 \
                 (id, version_number, creator, image, env_vars, \
