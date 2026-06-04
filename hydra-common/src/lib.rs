@@ -154,6 +154,12 @@ mod ts_export {
         crate::projects::StatusOnEnter::export_all(&cfg).expect("StatusOnEnter");
         crate::projects::StatusDefinition::export_all(&cfg).expect("StatusDefinition");
         crate::projects::Project::export_all(&cfg).expect("Project");
+        crate::projects::UpsertProjectRequest::export_all(&cfg).expect("UpsertProjectRequest");
+        crate::projects::UpsertProjectResponse::export_all(&cfg).expect("UpsertProjectResponse");
+        crate::projects::ProjectRecord::export_all(&cfg).expect("ProjectRecord");
+        crate::projects::ListProjectsResponse::export_all(&cfg).expect("ListProjectsResponse");
+        crate::projects::ProjectStatusesResponse::export_all(&cfg)
+            .expect("ProjectStatusesResponse");
 
         // API v1: labels
         crate::labels::Label::export_all(&cfg).expect("Label");

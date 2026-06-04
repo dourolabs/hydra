@@ -12,51 +12,15 @@ use axum::{
     Extension, Json,
     extract::{Path, State},
 };
+use hydra_common::ProjectId;
 use hydra_common::api::v1::{
     ApiError,
-    projects::{Project, ProjectValidationError, StatusDefinition},
+    projects::{
+        ListProjectsResponse, ProjectRecord, ProjectStatusesResponse, ProjectValidationError,
+        UpsertProjectRequest, UpsertProjectResponse,
+    },
 };
-use hydra_common::{ProjectId, VersionNumber};
-use serde::{Deserialize, Serialize};
 use tracing::{error, info};
-
-/// Request body for `POST /v1/projects` and `PUT /v1/projects/:id`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertProjectRequest {
-    pub project: Project,
-}
-
-/// Response body for `POST /v1/projects` and `PUT /v1/projects/:id`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertProjectResponse {
-    pub project_id: ProjectId,
-    pub version: VersionNumber,
-}
-
-/// Response body for `GET /v1/projects/:id`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectRecord {
-    pub project_id: ProjectId,
-    pub version: VersionNumber,
-    pub project: Project,
-}
-
-/// Response body for `GET /v1/projects`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListProjectsResponse {
-    pub projects: Vec<ProjectRecord>,
-}
-
-/// Response body for `GET /v1/projects/:id/statuses` and
-/// `GET /v1/projects/default/statuses`. Returned as an ordered list
-/// matching the project's declaration order.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectStatusesResponse {
-    pub statuses: Vec<StatusDefinition>,
-    /// The project's `default_status_key`. Included so a status-picker
-    /// modal can pre-select the right entry without a second request.
-    pub default_status_key: String,
-}
 
 /// POST /v1/projects — create a new project.
 pub async fn create_project(
@@ -76,10 +40,7 @@ pub async fn create_project(
         .map_err(map_store_error)?;
 
     info!(actor = %actor.name(), project_id = %project_id, "create_project completed");
-    Ok(Json(UpsertProjectResponse {
-        project_id,
-        version,
-    }))
+    Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
 /// GET /v1/projects — list non-deleted projects.
@@ -94,10 +55,8 @@ pub async fn list_projects(
 
     let projects = entries
         .into_iter()
-        .map(|(project_id, versioned)| ProjectRecord {
-            project_id,
-            version: versioned.version,
-            project: versioned.item,
+        .map(|(project_id, versioned)| {
+            ProjectRecord::new(project_id, versioned.version, versioned.item)
         })
         .collect::<Vec<_>>();
 
@@ -106,7 +65,7 @@ pub async fn list_projects(
         count = projects.len(),
         "list_projects completed"
     );
-    Ok(Json(ListProjectsResponse { projects }))
+    Ok(Json(ListProjectsResponse::new(projects)))
 }
 
 /// GET /v1/projects/:project_id — fetch a single project. The literal
@@ -145,11 +104,11 @@ pub async fn get_project(
         "get_project completed"
     );
 
-    Ok(Json(ProjectRecord {
-        project_id: project_id_typed,
-        version: versioned.version,
-        project: versioned.item,
-    }))
+    Ok(Json(ProjectRecord::new(
+        project_id_typed,
+        versioned.version,
+        versioned.item,
+    )))
 }
 
 /// PUT /v1/projects/:project_id — full-replace update (version-bumping).
@@ -181,10 +140,7 @@ pub async fn update_project(
         version,
         "update_project completed"
     );
-    Ok(Json(UpsertProjectResponse {
-        project_id,
-        version,
-    }))
+    Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
 /// DELETE /v1/projects/:project_id — soft-delete a project.
@@ -208,10 +164,7 @@ pub async fn delete_project(
         version,
         "delete_project completed"
     );
-    Ok(Json(UpsertProjectResponse {
-        project_id,
-        version,
-    }))
+    Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
 /// GET /v1/projects/:project_id/statuses — return the project's status list.
@@ -224,10 +177,10 @@ pub async fn get_project_statuses(
 
     if project_id == DEFAULT_PROJECT_KEY {
         let proj = default_project();
-        return Ok(Json(ProjectStatusesResponse {
-            statuses: proj.statuses.clone(),
-            default_status_key: proj.default_status_key.as_str().to_string(),
-        }));
+        return Ok(Json(ProjectStatusesResponse::new(
+            proj.statuses.clone(),
+            proj.default_status_key.as_str().to_string(),
+        )));
     }
 
     let project_id_typed = ProjectId::try_from(project_id.clone())
@@ -239,10 +192,10 @@ pub async fn get_project_statuses(
         .await
         .map_err(|e| map_project_not_found(e, &project_id_typed))?;
 
-    let response = ProjectStatusesResponse {
-        statuses: versioned.item.statuses.clone(),
-        default_status_key: versioned.item.default_status_key.as_str().to_string(),
-    };
+    let response = ProjectStatusesResponse::new(
+        versioned.item.statuses.clone(),
+        versioned.item.default_status_key.as_str().to_string(),
+    );
 
     info!(
         actor = %actor.name(),

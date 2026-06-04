@@ -6,7 +6,7 @@
 
 use crate::document_path::DocumentPath;
 use crate::principal::Principal;
-use crate::{Rgb, api::v1::users::Username, ids::ProjectId};
+use crate::{Rgb, VersionNumber, api::v1::users::Username, ids::ProjectId};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashSet;
 use std::fmt;
@@ -298,6 +298,99 @@ impl Project {
 pub enum ProjectScope {
     Default,
     Project(ProjectId),
+}
+
+/// Request body for `POST /v1/projects` and `PUT /v1/projects/:id`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct UpsertProjectRequest {
+    pub project: Project,
+}
+
+impl UpsertProjectRequest {
+    pub fn new(project: Project) -> Self {
+        Self { project }
+    }
+}
+
+/// Response body for `POST /v1/projects` and `PUT /v1/projects/:id`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct UpsertProjectResponse {
+    pub project_id: ProjectId,
+    pub version: VersionNumber,
+}
+
+impl UpsertProjectResponse {
+    pub fn new(project_id: ProjectId, version: VersionNumber) -> Self {
+        Self {
+            project_id,
+            version,
+        }
+    }
+}
+
+/// Response body for `GET /v1/projects/:id`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct ProjectRecord {
+    pub project_id: ProjectId,
+    pub version: VersionNumber,
+    pub project: Project,
+}
+
+impl ProjectRecord {
+    pub fn new(project_id: ProjectId, version: VersionNumber, project: Project) -> Self {
+        Self {
+            project_id,
+            version,
+            project,
+        }
+    }
+}
+
+/// Response body for `GET /v1/projects`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct ListProjectsResponse {
+    pub projects: Vec<ProjectRecord>,
+}
+
+impl ListProjectsResponse {
+    pub fn new(projects: Vec<ProjectRecord>) -> Self {
+        Self { projects }
+    }
+}
+
+/// Response body for `GET /v1/projects/:id/statuses` and
+/// `GET /v1/projects/default/statuses`. Returned as an ordered list
+/// matching the project's declaration order.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct ProjectStatusesResponse {
+    pub statuses: Vec<StatusDefinition>,
+    /// The project's `default_status_key`. Included so a status-picker
+    /// modal can pre-select the right entry without a second request.
+    pub default_status_key: String,
+}
+
+impl ProjectStatusesResponse {
+    pub fn new(statuses: Vec<StatusDefinition>, default_status_key: String) -> Self {
+        Self {
+            statuses,
+            default_status_key,
+        }
+    }
 }
 
 #[cfg(test)]

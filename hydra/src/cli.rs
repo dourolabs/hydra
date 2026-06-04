@@ -94,6 +94,10 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
+// Some subcommand groups (e.g. `Issues`) inline a wide `Update` form with
+// many optional flags; the CLI parses one variant per invocation so the size
+// difference is irrelevant in practice.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Commands {
     /// Manage sessions.
@@ -130,6 +134,11 @@ pub enum Commands {
     Graph {
         #[command(subcommand)]
         command: command::graph::GraphCommand,
+    },
+    /// Manage projects (per-project status configuration).
+    Projects {
+        #[command(subcommand)]
+        command: command::projects::ProjectsCommand,
     },
     /// Manage service repositories.
     Repos {
@@ -302,6 +311,9 @@ pub async fn dispatch(cli: Cli, client: Arc<HydraClient>, context: &CommandConte
         }
         Commands::Graph { command } => {
             command::graph::run(client.as_ref(), command, context).await?
+        }
+        Commands::Projects { command } => {
+            command::projects::run(client.as_ref(), command, context).await?
         }
         Commands::Repos { command } => {
             command::repos::run(client.as_ref(), command, context).await?

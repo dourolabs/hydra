@@ -2,6 +2,7 @@ use crate::{
     client::HydraClientInterface,
     command::{
         output::{render, CommandContext, IssueRecords, IssueSummaryRecords, ResolvedOutputFormat},
+        projects::ProjectRef,
         utils::resolve_username,
     },
     output_writer::write_stdout,
@@ -11,6 +12,7 @@ use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
+    api::v1::projects::StatusKey,
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
@@ -20,7 +22,7 @@ use hydra_common::{
     },
     principal::{Principal, PrincipalParseError},
     users::Username,
-    HydraId, LabelId, PatchId, RelativeVersionNumber, RepoName,
+    HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
 };
 use std::str::FromStr;
 
@@ -42,6 +44,11 @@ fn parse_assignee_principal(value: &str) -> Result<Principal, String> {
     })
 }
 
+// The `Update` variant has many optional flags by design (one per field of
+// `Issue` plus matching `clear-*` toggles). Boxing each variant individually
+// would clutter dispatch; the CLI parses one of these per invocation, so the
+// stack cost is irrelevant.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
     /// List Hydra issues. Returns summary records with truncated descriptions; use `get` for complete details.
@@ -85,9 +92,17 @@ pub enum IssueCommands {
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
 
-        /// Issue status: open, in-progress, or closed (defaults to open).
-        #[arg(long, value_name = "ISSUE_STATUS", default_value_t = IssueStatus::Open)]
-        status: IssueStatus,
+        /// Issue status key. Validity depends on the issue's project:
+        /// default-project issues accept `open`, `in-progress`, `closed`,
+        /// `dropped`, `failed`; bespoke projects accept any of their declared
+        /// status keys. The server validates the value. Defaults to `open`.
+        #[arg(long, value_name = "STATUS_KEY", default_value = "open")]
+        status: StatusKey,
+
+        /// Project id or key to attach this issue to. Omit for the
+        /// synthesized default project.
+        #[arg(long, value_name = "PROJECT_ID_OR_KEY")]
+        project: Option<ProjectRef>,
 
         /// Issue dependencies in the format dependency-type:ISSUE_ID where dependency-type is child-of or blocked-on (e.g. child-of:i-abcd).
         #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency)]
@@ -177,9 +192,24 @@ pub enum IssueCommands {
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
 
-        /// New issue status.
-        #[arg(long, value_name = "ISSUE_STATUS")]
-        status: Option<IssueStatus>,
+        /// New issue status key. Validity depends on the issue's project;
+        /// the server validates the value.
+        #[arg(long, value_name = "STATUS_KEY")]
+        status: Option<StatusKey>,
+
+        /// Move the issue to a different project (by id or key), or clear
+        /// it with `--clear-project`.
+        #[arg(
+            long,
+            value_name = "PROJECT_ID_OR_KEY",
+            conflicts_with = "clear_project"
+        )]
+        project: Option<ProjectRef>,
+
+        /// Detach the issue from its current project (falls back to the
+        /// default project's status semantics).
+        #[arg(long = "clear-project")]
+        clear_project: bool,
 
         /// Updated assignee. Requires the full canonical path form:
         /// `users/<name>`, `agents/<name>`, or `external/<system>/<name>`.
@@ -387,6 +417,7 @@ pub async fn run(
             r#type,
             title,
             status,
+            project,
             dependencies,
             patches,
             assignee,
@@ -407,11 +438,16 @@ pub async fn run(
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             let creator = resolve_username(client).await?;
+            let project_id = match project {
+                Some(reference) => Some(reference.resolve(client).await?),
+                None => None,
+            };
             create_issue(
                 client,
                 r#type,
                 title.unwrap_or_default(),
                 status,
+                project_id,
                 dependencies,
                 patches,
                 assignee,
@@ -438,6 +474,8 @@ pub async fn run(
             r#type,
             title,
             status,
+            project,
+            clear_project,
             assignee,
             clear_assignee,
             description,
@@ -465,12 +503,20 @@ pub async fn run(
             clear_feedback,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
+            let project_update = if clear_project {
+                Some(None)
+            } else if let Some(reference) = project {
+                Some(Some(reference.resolve(client).await?))
+            } else {
+                None
+            };
             update_issue(
                 client,
                 id,
                 r#type,
                 title,
                 status,
+                project_update,
                 assignee,
                 clear_assignee,
                 description,
@@ -810,11 +856,13 @@ async fn submit_form(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_issue(
     client: &dyn HydraClientInterface,
     issue_type: IssueType,
     title: String,
-    status: IssueStatus,
+    status: StatusKey,
+    project_id: Option<ProjectId>,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
     assignee: Option<Principal>,
@@ -859,13 +907,13 @@ async fn create_issue(
     let job_settings = (job_settings_requested || !SessionSettings::is_default(&job_settings))
         .then_some(job_settings);
 
-    let issue = Issue::new(
+    let mut issue = Issue::new(
         issue_type,
         title,
         description.to_string(),
         creator,
         progress,
-        status.into(),
+        status,
         assignee,
         job_settings,
         dependencies,
@@ -875,6 +923,7 @@ async fn create_issue(
         None,
         feedback,
     );
+    issue.project_id = project_id;
     let mut request = UpsertIssueRequest::new(issue.clone(), None);
     let label_names: Vec<String> = labels
         .into_iter()
@@ -901,12 +950,14 @@ async fn create_issue(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_issue(
     client: &dyn HydraClientInterface,
     id: IssueId,
     issue_type: Option<IssueType>,
     title: Option<String>,
-    status: Option<IssueStatus>,
+    status: Option<StatusKey>,
+    project_update: Option<Option<ProjectId>>,
     assignee: Option<Principal>,
     clear_assignee: bool,
     description: Option<String>,
@@ -1002,6 +1053,7 @@ async fn update_issue(
     let no_changes = issue_type.is_none()
         && title.is_none()
         && status.is_none()
+        && project_update.is_none()
         && assignee.is_none()
         && description.is_none()
         && dependencies_update.is_none()
@@ -1047,6 +1099,7 @@ async fn update_issue(
     let issue_fields_changed = issue_type.is_some()
         || title.is_some()
         || status.is_some()
+        || project_update.is_some()
         || assignee.is_some()
         || description.is_some()
         || dependencies_update.is_some()
@@ -1057,13 +1110,13 @@ async fn update_issue(
         || form_update.is_some();
 
     let result = if issue_fields_changed {
-        let updated_issue = Issue::new(
+        let mut updated_issue = Issue::new(
             issue_type.unwrap_or(current.issue.issue_type),
             title.unwrap_or(current.issue.title),
             description.unwrap_or(current.issue.description),
             current.issue.creator,
             progress_update.unwrap_or(current.issue.progress),
-            status.map(Into::into).unwrap_or(current.issue.status),
+            status.unwrap_or(current.issue.status),
             assignee.unwrap_or(current.issue.assignee),
             job_settings,
             dependencies_update.unwrap_or(current.issue.dependencies),
@@ -1073,6 +1126,10 @@ async fn update_issue(
             current.issue.form_response,
             feedback_update.unwrap_or(current.issue.feedback),
         );
+        updated_issue.project_id = match project_update {
+            Some(value) => value,
+            None => current.issue.project_id,
+        };
 
         let response = client
             .update_issue(
@@ -1551,7 +1608,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Closed,
+            IssueStatus::Closed.into(),
+            None,
             Vec::new(),
             patch_ids.clone(),
             Some(user_principal("team-a")),
@@ -1619,7 +1677,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Closed,
+            IssueStatus::Closed.into(),
+            None,
             Vec::new(),
             vec![],
             Some(user_principal("team-a")),
@@ -1716,7 +1775,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -1821,7 +1881,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -1887,7 +1948,8 @@ mod tests {
             &client,
             IssueType::Task,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -1981,7 +2043,8 @@ mod tests {
             &client,
             IssueType::Task,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -2017,7 +2080,8 @@ mod tests {
             &client,
             IssueType::Bug,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             vec![],
             Vec::new(),
             None,
@@ -2140,7 +2204,8 @@ mod tests {
             target_issue_id,
             Some(IssueType::Bug),
             None,
-            Some(IssueStatus::Closed),
+            Some(IssueStatus::Closed.into()),
+            None,
             Some(user_principal("owner-b")),
             false,
             Some("Updated issue description".into()),
@@ -2245,6 +2310,7 @@ mod tests {
         update_issue(
             &client,
             target_issue_id,
+            None,
             None,
             None,
             None,
@@ -2357,6 +2423,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             false,
             None,
             vec![],
@@ -2460,6 +2527,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             false,
             None,
             vec![],
@@ -2559,6 +2627,7 @@ mod tests {
         update_issue(
             &client,
             target_issue_id,
+            None,
             None,
             None,
             None,

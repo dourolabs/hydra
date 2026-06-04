@@ -7,15 +7,14 @@ use crate::{
         issues::{Issue, IssueStatus, IssueType},
         users::Username,
     },
-    routes::projects::{
-        ListProjectsResponse, ProjectRecord, ProjectStatusesResponse, UpsertProjectRequest,
-        UpsertProjectResponse,
-    },
     test_utils::{spawn_test_server, test_client},
 };
 use hydra_common::api::v1::{
     issues::{IssueVersionRecord, UpsertIssueRequest, UpsertIssueResponse},
-    projects::{IconKey, Project, ProjectKey, StatusDefinition, StatusKey},
+    projects::{
+        IconKey, ListProjectsResponse, Project, ProjectKey, ProjectRecord, ProjectStatusesResponse,
+        StatusDefinition, StatusKey, UpsertProjectRequest, UpsertProjectResponse,
+    },
     users::Username as ApiUsername,
 };
 
@@ -76,9 +75,7 @@ async fn project_crud_round_trip() -> anyhow::Result<()> {
     let project = sample_project();
     let create_resp: UpsertProjectResponse = client
         .post(format!("{base}/v1/projects"))
-        .json(&UpsertProjectRequest {
-            project: project.clone(),
-        })
+        .json(&UpsertProjectRequest::new(project.clone()))
         .send()
         .await?
         .error_for_status()?
@@ -113,9 +110,7 @@ async fn project_crud_round_trip() -> anyhow::Result<()> {
     updated_project.name = "Engineering v2".to_string();
     let update_resp: UpsertProjectResponse = client
         .put(format!("{base}/v1/projects/{project_id}"))
-        .json(&UpsertProjectRequest {
-            project: updated_project,
-        })
+        .json(&UpsertProjectRequest::new(updated_project))
         .send()
         .await?
         .error_for_status()?
@@ -156,9 +151,7 @@ async fn project_statuses_route_returns_status_list() -> anyhow::Result<()> {
 
     let create_resp: UpsertProjectResponse = client
         .post(format!("{base}/v1/projects"))
-        .json(&UpsertProjectRequest {
-            project: sample_project(),
-        })
+        .json(&UpsertProjectRequest::new(sample_project()))
         .send()
         .await?
         .error_for_status()?
@@ -228,9 +221,7 @@ async fn issue_with_project_id_and_custom_status_succeeds() -> anyhow::Result<()
 
     let create_resp: UpsertProjectResponse = client
         .post(format!("{base}/v1/projects"))
-        .json(&UpsertProjectRequest {
-            project: sample_project(),
-        })
+        .json(&UpsertProjectRequest::new(sample_project()))
         .send()
         .await?
         .error_for_status()?
@@ -296,9 +287,7 @@ async fn issue_with_unknown_status_key_returns_400() -> anyhow::Result<()> {
 
     let create_resp: UpsertProjectResponse = client
         .post(format!("{base}/v1/projects"))
-        .json(&UpsertProjectRequest {
-            project: sample_project(),
-        })
+        .json(&UpsertProjectRequest::new(sample_project()))
         .send()
         .await?
         .error_for_status()?
@@ -420,18 +409,14 @@ async fn duplicate_project_key_returns_400() -> anyhow::Result<()> {
 
     client
         .post(format!("{base}/v1/projects"))
-        .json(&UpsertProjectRequest {
-            project: sample_project(),
-        })
+        .json(&UpsertProjectRequest::new(sample_project()))
         .send()
         .await?
         .error_for_status()?;
 
     let resp = client
         .post(format!("{base}/v1/projects"))
-        .json(&UpsertProjectRequest {
-            project: sample_project(),
-        })
+        .json(&UpsertProjectRequest::new(sample_project()))
         .send()
         .await?;
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);

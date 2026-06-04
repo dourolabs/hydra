@@ -516,6 +516,11 @@ impl UserHandle {
             .args(args)
             .env("HYDRA_SERVER_URL", &self.server_url)
             .env("HYDRA_TOKEN", &self.token)
+            // Avoid leaking a HYDRA_ISSUE_ID from the test runner's session
+            // into the spawned CLI: clap picks it up for `--current-issue-id`
+            // and tries to fetch an issue that doesn't exist on the per-test
+            // mock server.
+            .env_remove(hydra_common::constants::ENV_HYDRA_ISSUE_ID)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
