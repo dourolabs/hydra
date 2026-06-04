@@ -50,6 +50,7 @@ pub struct Field {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum Input {
     /// Single-line text input. Produces a string.
     #[serde(rename = "text")]
@@ -116,14 +117,15 @@ pub struct SelectOption {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ActionStyle {
-    #[serde(rename = "primary")]
     Primary,
-    #[serde(rename = "danger")]
     Danger,
     #[default]
-    #[serde(rename = "default")]
     Default,
+    #[serde(other)]
+    Unknown,
 }
 
 /// An action button on the form.
@@ -154,6 +156,7 @@ pub struct Action {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum Effect {
     /// Update the issue's status.
     #[serde(rename = "update_issue")]
@@ -427,6 +430,25 @@ mod tests {
         assert_eq!(json, json!({"type": "update_issue", "status": "closed"}));
         let round_trip: Effect = serde_json::from_value(json).unwrap();
         assert_eq!(effect, round_trip);
+    }
+
+    #[test]
+    fn action_style_unknown_round_trip() {
+        let json = json!("frobnicate");
+        let style: ActionStyle = serde_json::from_value(json).unwrap();
+        assert_eq!(style, ActionStyle::Unknown);
+
+        for (style, wire) in [
+            (ActionStyle::Primary, "primary"),
+            (ActionStyle::Danger, "danger"),
+            (ActionStyle::Default, "default"),
+            (ActionStyle::Unknown, "unknown"),
+        ] {
+            let json = serde_json::to_value(&style).unwrap();
+            assert_eq!(json, json!(wire));
+            let round_trip: ActionStyle = serde_json::from_value(json).unwrap();
+            assert_eq!(style, round_trip);
+        }
     }
 
     #[test]
