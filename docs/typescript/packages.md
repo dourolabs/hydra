@@ -45,13 +45,28 @@ These already exist — extend them, don't fork them:
 | `conversationOrder.ts` | conversation ordering helpers |
 | `tokens.ts` | id/token helpers |
 
-## Check `@hydra/ui` before building inline
+## No inline components
 
-Exported components — full list in `packages/ui/src/index.ts`:
+Two rules, in order:
+
+1. Generic components **MUST** live in `@hydra/ui` — pills, popovers, dialogs, and the like are never written inline.
+2. App-specific components **MUST** be extracted into `packages/web/src/features/<name>/` (or `packages/web/src/components/` if cross-feature) — not defined inside a page file.
+
+Existing generic components — full list in `packages/ui/src/index.ts`; new generic components join this list:
 
 `Avatar`, `Badge`, `Button`, `Chip`, `CopyButton`, `DiffViewer`, `ErrorBoundary`, `HydraMark`, `Icons`, `Input`, `Kbd`, `LogViewer`, `MarkdownViewer`, `Modal`, `Panel`, `Picker`, `PreviewCard`, `Select`, `SessionStatusIndicator`, `Spinner`, `Tabs`, `Textarea`, `Toast`, `Tooltip`, `TreeView`, `TypeChip`
 
-Search this list before writing a new pill, popover, or dialog by hand — most of the surface area is covered.
+App-specific extraction:
+
+```tsx
+// wrong — component defined inline in pages/FooPage.tsx
+function FooHeader({ foo }: { foo: Foo }) { /* ... */ }
+export function FooPage() { return <FooHeader foo={foo} />; }
+
+// correct — extracted to features/foo/FooHeader.tsx
+import { FooHeader } from "../features/foo/FooHeader";
+export function FooPage() { return <FooHeader foo={foo} />; }
+```
 
 ## See also
 
