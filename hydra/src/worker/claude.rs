@@ -190,7 +190,10 @@ impl Claude {
         let SessionStatePayload::V1 {
             session_id,
             transcript,
-        } = payload;
+        } = payload
+        else {
+            return Err(MaterializeError::WrongFormat);
+        };
         let bytes = transcript.ok_or(MaterializeError::MissingTranscript)?;
         validate_claude_transcript_bytes(&bytes, &session_id)?;
         let target = transcript_path(&self.home_dir, &self.working_dir, &session_id);
