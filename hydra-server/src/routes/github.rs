@@ -12,6 +12,7 @@ pub async fn get_github_app_client_id(
     })?;
     let client_id = github_app.client_id().to_string();
 
+    info!("get_github_app_client_id completed");
     Ok(Json(GithubAppClientIdResponse { client_id }))
 }
 
@@ -19,6 +20,8 @@ pub async fn get_github_token(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
 ) -> Result<Json<GithubTokenResponse>, ApiError> {
+    info!(actor = %actor.name(), "get_github_token invoked");
     let response = actor.get_github_token(&state).await?;
+    info!(actor = %actor.name(), "get_github_token completed");
     Ok(Json(response))
 }
