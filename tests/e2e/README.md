@@ -67,6 +67,10 @@ navigate to pages, click buttons, fill forms, wait for state changes.>
 4. Ensure all steps describe dashboard UI interactions, not CLI commands.
 5. List prerequisites so the testing agent knows which scenarios must pass first.
 
+### Queued (planned) scenarios
+
+Specs for behavior that depends on a feature still in flight live in `scenarios/planned/` (see `scenarios/planned/README.md`). The tester's enumeration is the non-recursive glob `ls tests/e2e/scenarios/*.md`, so files in `planned/` are skipped by design — no in-file flag or prompt change required. Use this when you want the scenario checked in next to the spec it describes; move it out with `git mv` once the gate-PRs merge.
+
 ## Test Environment
 
 | Requirement | Details |
