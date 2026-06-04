@@ -30,10 +30,11 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "pnpm --filter @hydra/mock-server dev",
+      command: "pnpm --filter @hydra/api build && pnpm --filter @hydra/mock-server dev",
       port: 8080,
       reuseExistingServer: !process.env.CI,
       cwd: "../..",
+      timeout: 120000,
       // Freeze the synthetic-events loop during e2e runs so background
       // `tool_use` / `assistant_message` emissions on running sessions don't
       // race against assertions about session-event tails (e.g. the

@@ -66,14 +66,16 @@ wait_for_url() {
   echo "$name is ready"
 }
 
+# Build API package first — the mock server has a runtime import from
+# `@hydra/api` (see `routes/labels.ts`) so the dist bundle must exist before
+# `tsx` starts the mock server.
+echo "Building API and UI packages..."
+pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build
+
 # Start mock server (port 8080)
 echo "Starting mock server..."
 pnpm --filter @hydra/mock-server dev &
 wait_for_url "http://localhost:8080/health" "Mock server" 30
-
-# Build API and UI packages, then start Vite dev server (port 3000)
-echo "Building API and UI packages..."
-pnpm --filter @hydra/api build && pnpm --filter @hydra/ui build
 echo "Starting Vite dev server..."
 pnpm --filter @hydra/web dev &
 wait_for_port 3000 "Vite dev server" 60

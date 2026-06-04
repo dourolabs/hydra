@@ -17,10 +17,11 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "pnpm --filter @hydra/mock-server dev",
+      command: "pnpm --filter @hydra/api build && pnpm --filter @hydra/mock-server dev",
       port: 8080,
       reuseExistingServer: !process.env.CI,
       cwd: "../..",
+      timeout: 120000,
     },
     {
       command:
