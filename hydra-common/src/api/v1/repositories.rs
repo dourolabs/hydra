@@ -433,6 +433,12 @@ impl From<(RepoName, Repository)> for RepositoryRecord {
 #[non_exhaustive]
 pub struct CreateRepositoryRequest {
     pub name: RepoName,
+    // Flattened so the wire payload is
+    // `{"name": ..., "remote_url": ..., "default_branch": ..., ...}` — the
+    // historical shape consumed by `hydra repos create`, the web UI repo
+    // form, and the generated ts-rs bindings. Nesting would be a breaking
+    // wire change with no back-compat shim. `Repository` shares no field
+    // name with `CreateRepositoryRequest`, so the flatten is unambiguous.
     #[serde(flatten)]
     pub repository: Repository,
 }
@@ -448,6 +454,11 @@ impl CreateRepositoryRequest {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpdateRepositoryRequest {
+    // Flattened so the wire payload is
+    // `{"remote_url": ..., "default_branch": ..., ...}` — the historical
+    // shape consumed by `hydra repos update`, the web UI repo form, and
+    // the generated ts-rs bindings. Nesting would be a breaking wire
+    // change with no back-compat shim.
     #[serde(flatten)]
     pub repository: Repository,
 }
