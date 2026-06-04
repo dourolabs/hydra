@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, SerdeSerialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum ActivityObjectKind {
     Issue,
