@@ -446,7 +446,7 @@ where
 /// of how the worker shut down. Order matters: the `SessionStateUpload`
 /// arrives before the `Closed` event so the server commits state before
 /// marking the log closed. `EndSessionAck` is the very last `WorkerMessage`
-/// frame so the server-side waiter (PR-2) can know its termination request
+/// frame so the server-side waiter can know its termination request
 /// was honored. After this helper returns, the `drive_*` callers drive a
 /// `WorkerSocket::close` so the server's `pump_phase3` observes the
 /// WebSocket Close-frame arm (`info!("WebSocket closed by worker")`) rather

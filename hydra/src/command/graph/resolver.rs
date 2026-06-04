@@ -104,8 +104,8 @@ async fn apply_relations_stage(
         },
         Direction::Object => {
             // Use the singular `object_id` parameter when V has one element;
-            // it's the original (pre-PR-1) shape and avoids touching the new
-            // plural code path unnecessarily.
+            // the API has both singular and plural shapes, and using the
+            // singular avoids touching the plural code path unnecessarily.
             if vertices.len() == 1 {
                 ListRelationsRequest {
                     object_id: Some(vertices[0].clone()),

@@ -110,8 +110,8 @@ pub fn has_approved_non_dismissed_review(
 ) -> bool {
     // Collect unique authors keyed on canonical path form (case-folded
     // for User/Agent/External name segments). Using a String key keeps
-    // the per-actor uniqueness identical to the pre-Phase-5b
-    // `to_ascii_lowercase()` deduplication.
+    // dedup and lookup agree on case-folded equivalence (matches what
+    // `find_latest_review_by_author` uses).
     let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     for review in reviews {
         let key = review.author.canonical_key();

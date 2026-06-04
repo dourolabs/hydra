@@ -277,7 +277,7 @@ async fn spawn_session(
 
     // The conversation's `Active` status itself is now the lifecycle
     // signal (the transition that triggered this spawn). `SessionEvent::Resumed`
-    // is emitted by the worker post-`try_materialize` (design §6 / §1.4).
+    // is emitted by the worker post-`try_materialize`.
 
     tracing::info!(
         automation = AUTOMATION_NAME,

@@ -6827,8 +6827,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Reset both columns so the row looks pre-Phase-4a: typed NULL,
-        // legacy string populated.
+        // Reset both columns to simulate a row written before the
+        // typed-principal migration: typed NULL, legacy string populated.
         sqlx::query("UPDATE issues_v2 SET assignee = ?1, assignee_principal = NULL WHERE id = ?2")
             .bind("users/alice")
             .bind(issue_id.as_ref())
@@ -12482,8 +12482,8 @@ mod tests {
 
     #[tokio::test]
     async fn review_author_backfill_preserves_already_typed_author() {
-        // If `author` is already an object (the Phase-5b shape), the
-        // migration's first CASE arm matches and leaves it untouched.
+        // If `author` is already an object (the typed-principal shape),
+        // the migration's first CASE arm matches and leaves it untouched.
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
         setup_pre_review_author_principal_schema(&pool).await;
 

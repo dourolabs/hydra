@@ -208,8 +208,7 @@ impl ActorRef {
 
 /// Parse a canonical path-form string into an `ActorId`.
 ///
-/// Recognised forms (design §3.3):
-/// `users/<x>`, `agents/<x>`, `adhoc/<x>`, `external/<sys>/<x>`.
+/// Recognised forms: `users/<x>`, `agents/<x>`, `adhoc/<x>`, `external/<sys>/<x>`.
 impl FromStr for ActorId {
     type Err = String;
 
