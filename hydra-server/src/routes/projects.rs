@@ -37,7 +37,6 @@ pub async fn create_project(
 
     let actor_ref = ActorRef::from(&actor);
     let (project_id, version) = state
-        .store
         .add_project(project, &actor_ref)
         .await
         .map_err(map_store_error)?;
@@ -127,7 +126,6 @@ pub async fn update_project(
 
     let actor_ref = ActorRef::from(&actor);
     let version = state
-        .store
         .update_project(&project_id, project, &actor_ref)
         .await
         .map_err(|e| match e {
@@ -156,7 +154,6 @@ pub async fn delete_project(
 
     let actor_ref = ActorRef::from(&actor);
     let version = state
-        .store
         .delete_project(&project_id, &actor_ref)
         .await
         .map_err(|e| map_project_not_found(e, &project_id))?;
