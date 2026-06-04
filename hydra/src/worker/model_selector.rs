@@ -17,7 +17,7 @@ use std::{collections::HashMap, path::PathBuf, time::Duration};
 use anyhow::{anyhow, Result};
 use futures::{Sink, Stream};
 use hydra_common::api::v1::{
-    relay::{ServerMessage, SessionStatePayload, WorkerMessage},
+    relay::{ServerMessage, WorkerMessage},
     sessions::{ResumeSource, SessionEvent},
 };
 use hydra_common::SessionId;
@@ -441,21 +441,6 @@ where
     Ok((primer, transcript_agent_prompt))
 }
 
-/// Build a `SessionStatePayload` from a [`RunReport`] for the unified
-/// cleanup `SessionStateUpload`. Returns `None` if the report didn't
-/// observe an on-disk session-state file or didn't extract a model
-/// session id — in either case there is nothing to upload that the
-/// resumer can use.
-fn build_session_state_payload(report: &RunReport) -> Option<SessionStatePayload> {
-    let state_ref = report.session_state.as_ref()?;
-    let session_id = report.model_session_id.clone()?;
-    let transcript = std::fs::read(&state_ref.local_path).ok();
-    Some(SessionStatePayload::V1 {
-        session_id,
-        transcript,
-    })
-}
-
 /// Unified end-of-session cleanup. Sent on BOTH the natural-exit and the
 /// `EndSession`-driven paths so the resumer sees `session_state` regardless
 /// of how the worker shut down. Order matters: the `SessionStateUpload`
@@ -484,7 +469,7 @@ async fn send_unified_cleanup<S>(
         + Stream<Item = std::result::Result<tungstenite::Message, tungstenite::Error>>
         + Unpin,
 {
-    if let Some(payload) = build_session_state_payload(report) {
+    if let Some(payload) = report.session_state_payload() {
         match serde_json::to_vec(&payload) {
             Ok(data) => {
                 if let Err(err) = ws.send(WorkerMessage::SessionStateUpload { data }).await {
@@ -1292,6 +1277,7 @@ mod tests {
         use super::*;
         use crate::worker::report::{RunReport, SessionStateFormat, SessionStateRef, TokenUsage};
         use crate::worker::ws_test_util::{collect_worker_msgs, duplex, push_server_msg};
+        use hydra_common::api::v1::relay::SessionStatePayload;
         use std::io::Write;
 
         fn report_with_state(transcript_bytes: &[u8]) -> (tempfile::NamedTempFile, RunReport) {
@@ -1311,27 +1297,27 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn build_session_state_payload_skips_when_no_session_id() {
+        async fn session_state_payload_skips_when_no_session_id() {
             let (_tmp, mut report) = report_with_state(b"{}\n");
             report.model_session_id = None;
-            assert!(build_session_state_payload(&report).is_none());
+            assert!(report.session_state_payload().is_none());
         }
 
         #[tokio::test]
-        async fn build_session_state_payload_skips_when_no_state_ref() {
+        async fn session_state_payload_skips_when_no_state_ref() {
             let report = RunReport {
                 last_message: String::new(),
                 usage: TokenUsage::default(),
                 model_session_id: Some("sess".to_string()),
                 session_state: None,
             };
-            assert!(build_session_state_payload(&report).is_none());
+            assert!(report.session_state_payload().is_none());
         }
 
         #[tokio::test]
-        async fn build_session_state_payload_reads_transcript_bytes() {
+        async fn session_state_payload_reads_transcript_bytes() {
             let (_tmp, report) = report_with_state(b"{\"hello\":true}\n");
-            let payload = build_session_state_payload(&report).expect("payload");
+            let payload = report.session_state_payload().expect("payload");
             match payload {
                 SessionStatePayload::V1 {
                     session_id,
@@ -1344,7 +1330,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn build_session_state_payload_missing_file_yields_none_transcript() {
+        async fn session_state_payload_missing_file_yields_none_transcript() {
             // local_path that doesn't exist — the payload still carries a
             // session_id so the resumer at least sees it; transcript is None
             // and the resumer falls back to the primer path.
@@ -1357,7 +1343,7 @@ mod tests {
                     format: SessionStateFormat::ClaudeJsonl,
                 }),
             };
-            let payload = build_session_state_payload(&report).expect("payload");
+            let payload = report.session_state_payload().expect("payload");
             match payload {
                 SessionStatePayload::V1 {
                     session_id,

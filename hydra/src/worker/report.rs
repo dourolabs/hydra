@@ -13,8 +13,10 @@
 
 use std::path::PathBuf;
 
+use hydra_common::api::v1::relay::SessionStatePayload;
 pub use hydra_common::sessions::TokenUsage;
 
+use crate::util::format_thousands;
 use crate::worker::claude::ClaudeResume;
 use crate::worker::codex::CodexResume;
 
@@ -33,6 +35,62 @@ pub struct RunReport {
     /// Pointer to the on-disk session-state file (Claude transcript or Codex
     /// JSONL), if such a file exists for this run.
     pub session_state: Option<SessionStateRef>,
+}
+
+impl RunReport {
+    /// Build a `SessionStatePayload` for the unified cleanup
+    /// `SessionStateUpload`. Returns `None` if the report didn't observe an
+    /// on-disk session-state file or didn't extract a model session id — in
+    /// either case there is nothing to upload that the resumer can use.
+    pub(crate) fn session_state_payload(&self) -> Option<SessionStatePayload> {
+        let state_ref = self.session_state.as_ref()?;
+        let session_id = self.model_session_id.clone()?;
+        let transcript = std::fs::read(&state_ref.local_path).ok();
+        Some(SessionStatePayload::V1 {
+            session_id,
+            transcript,
+        })
+    }
+
+    /// Print a human-readable summary of this report via `println!`.
+    pub(crate) fn log(&self) {
+        for line in self.format_lines() {
+            println!("{line}");
+        }
+    }
+
+    /// Format this report as a vector of human-readable lines, one per
+    /// summary row (tokens, model session id, session state).
+    pub(crate) fn format_lines(&self) -> Vec<String> {
+        let mut lines = Vec::with_capacity(3);
+        let total = self
+            .usage
+            .input_tokens
+            .saturating_add(self.usage.output_tokens)
+            .saturating_add(self.usage.cache_read_input_tokens)
+            .saturating_add(self.usage.cache_creation_input_tokens);
+        lines.push(format!(
+            "  tokens: input={} output={} cache_read={} cache_create={} total={}",
+            format_thousands(self.usage.input_tokens),
+            format_thousands(self.usage.output_tokens),
+            format_thousands(self.usage.cache_read_input_tokens),
+            format_thousands(self.usage.cache_creation_input_tokens),
+            format_thousands(total),
+        ));
+        match &self.model_session_id {
+            Some(id) => lines.push(format!("  model_session_id: {id}")),
+            None => lines.push("  model_session_id: <none>".to_string()),
+        }
+        match &self.session_state {
+            Some(s) => lines.push(format!(
+                "  session_state: {} ({:?})",
+                s.local_path.display(),
+                s.format,
+            )),
+            None => lines.push("  session_state: <none>".to_string()),
+        }
+        lines
+    }
 }
 
 /// Pointer to a session-state file on disk.
