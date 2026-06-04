@@ -1,4 +1,4 @@
-import type { IssueSummaryRecord, IssueStatus } from "@hydra/api";
+import type { IssueSummaryRecord, StatusKey } from "@hydra/api";
 
 export interface BlockedStatus {
   blocked: boolean;
@@ -7,7 +7,7 @@ export interface BlockedStatus {
   hardBlockedBy: string[];
 }
 
-const HARD_BLOCKED_STATUSES: ReadonlySet<IssueStatus> = new Set([
+const HARD_BLOCKED_STATUSES: ReadonlySet<StatusKey> = new Set([
   "failed",
   "dropped",
 ]);
