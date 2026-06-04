@@ -20,7 +20,7 @@ mod users;
 pub use agents::AgentRecords;
 pub use conversations::{ConversationSummaryRecords, ConversationView};
 pub use documents::{DocumentRecordsView, DocumentSummaryRecords};
-pub use issues::{IssueRecords, IssueSummaryRecords};
+pub use issues::{IssueRecords, IssueSummaryRecords, SubmitFormOutcome};
 pub use patches::{PatchRecords, PatchSummaryRecords};
 pub use projects::{ProjectRecords, ProjectStatuses};
 pub use repositories::RepositoryRecords;
