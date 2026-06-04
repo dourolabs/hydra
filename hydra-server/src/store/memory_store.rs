@@ -169,6 +169,26 @@ impl MemoryStore {
         ProjectId::generate(len).expect("length within bounds")
     }
 
+    /// Returns true if any live (latest, non-deleted) project other than
+    /// `excluded_id` carries the given [`ProjectKey`]. Mirrors the partial
+    /// unique index on `(projects.key) WHERE is_latest AND NOT deleted` in
+    /// the SQL backends.
+    fn project_key_in_use(
+        &self,
+        key: &hydra_common::api::v1::projects::ProjectKey,
+        excluded_id: Option<&ProjectId>,
+    ) -> bool {
+        self.projects.iter().any(|entry| {
+            if Some(entry.key()) == excluded_id {
+                return false;
+            }
+            match Self::latest_versioned(entry.value()) {
+                Some(v) if !v.item.deleted => &v.item.key == key,
+                _ => false,
+            }
+        })
+    }
+
     fn latest_versioned<T: Clone>(versions: &[Versioned<T>]) -> Option<Versioned<T>> {
         versions.last().cloned()
     }
@@ -2650,6 +2670,9 @@ impl Store for MemoryStore {
         project: Project,
         actor: &ActorRef,
     ) -> Result<(ProjectId, VersionNumber), StoreError> {
+        if self.project_key_in_use(&project.key, None) {
+            return Err(StoreError::ProjectKeyExists(project.key.clone()));
+        }
         let id = self.next_project_id();
         self.projects.insert(
             id.clone(),
@@ -2664,6 +2687,9 @@ impl Store for MemoryStore {
         project: Project,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
+        if self.project_key_in_use(&project.key, Some(id)) {
+            return Err(StoreError::ProjectKeyExists(project.key.clone()));
+        }
         let mut entry = self
             .projects
             .get_mut(id)
@@ -9367,9 +9393,14 @@ mod tests {
 
     // ---- Project CRUD tests -------------------------------------------------
 
+    /// Fully-populated sample, including `on_enter` so the serde path for
+    /// `StatusOnEnter` is exercised by the round-trip test.
     fn sample_project() -> Project {
-        use hydra_common::api::v1::projects::{IconKey, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::projects::{
+            IconKey, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+        };
         use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::principal::Principal;
 
         let statuses = vec![
             StatusDefinition::new(
@@ -9380,7 +9411,12 @@ mod tests {
                 false,
                 false,
                 false,
-                None,
+                Some(StatusOnEnter::new(
+                    Some(Principal::Agent {
+                        name: "reviewer".parse().unwrap(),
+                    }),
+                    Some("forms/review.yaml".parse().unwrap()),
+                )),
             ),
             StatusDefinition::new(
                 StatusKey::try_new("done").unwrap(),
@@ -9390,7 +9426,12 @@ mod tests {
                 true,
                 true,
                 false,
-                None,
+                Some(StatusOnEnter::new(
+                    Some(Principal::Agent {
+                        name: "swe".parse().unwrap(),
+                    }),
+                    None,
+                )),
             ),
         ];
         Project::new(
@@ -9416,6 +9457,8 @@ mod tests {
         assert_eq!(fetched.version, 1);
         assert_eq!(fetched.item.name, "Engineering");
         assert_eq!(fetched.item.statuses.len(), 2);
+        // `on_enter` must round-trip through the store unchanged.
+        assert_eq!(fetched.item.statuses, sample_project().statuses);
 
         let listed = store.list_projects(false).await.unwrap();
         assert_eq!(listed.len(), 1);
@@ -9467,5 +9510,75 @@ mod tests {
             .update_project(&id, sample_project(), &ActorRef::test())
             .await;
         assert!(matches!(result, Err(StoreError::ProjectNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn add_project_with_duplicate_key_returns_error() {
+        let store = MemoryStore::new();
+        store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        let result = store.add_project(sample_project(), &ActorRef::test()).await;
+        assert!(
+            matches!(result, Err(StoreError::ProjectKeyExists(ref k)) if k.as_str() == "engineering"),
+            "expected ProjectKeyExists(engineering), got {result:?}"
+        );
+    }
+
+    /// A soft-deleted project frees its key for re-use, mirroring the
+    /// partial unique index `WHERE is_latest AND NOT deleted`.
+    #[tokio::test]
+    async fn add_project_after_delete_releases_key() {
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        let result = store.add_project(sample_project(), &ActorRef::test()).await;
+        assert!(
+            result.is_ok(),
+            "expected re-add after delete, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_project_to_collide_with_another_returns_error() {
+        use hydra_common::api::v1::projects::ProjectKey;
+        let store = MemoryStore::new();
+        let mut a = sample_project();
+        a.key = ProjectKey::try_new("a").unwrap();
+        let mut b = sample_project();
+        b.key = ProjectKey::try_new("b").unwrap();
+        store.add_project(a, &ActorRef::test()).await.unwrap();
+        let (b_id, _) = store.add_project(b, &ActorRef::test()).await.unwrap();
+        let mut collide = sample_project();
+        collide.key = ProjectKey::try_new("a").unwrap();
+        let result = store
+            .update_project(&b_id, collide, &ActorRef::test())
+            .await;
+        assert!(
+            matches!(result, Err(StoreError::ProjectKeyExists(ref k)) if k.as_str() == "a"),
+            "expected ProjectKeyExists(a), got {result:?}"
+        );
+    }
+
+    /// Updating a project to its current key is a no-op for the
+    /// uniqueness check (self-exclusion via `excluded_id`).
+    #[tokio::test]
+    async fn update_project_keeping_same_key_succeeds() {
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut next = sample_project();
+        next.name = "Engineering Renamed".to_string();
+        let result = store.update_project(&id, next, &ActorRef::test()).await;
+        assert!(
+            result.is_ok(),
+            "expected ok keeping same key, got {result:?}"
+        );
     }
 }

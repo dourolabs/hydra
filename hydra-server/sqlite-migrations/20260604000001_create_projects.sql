@@ -25,6 +25,13 @@ CREATE INDEX IF NOT EXISTS projects_latest_idx ON projects (id, version_number D
 CREATE INDEX IF NOT EXISTS projects_creator_idx ON projects (creator) WHERE is_latest = 1;
 CREATE INDEX IF NOT EXISTS projects_is_latest_idx ON projects (id) WHERE is_latest = 1;
 
+-- Enforce uniqueness of `ProjectKey` across live projects. Mirrors the
+-- pattern from `documents_v2_path_unique_active_idx`: only the latest,
+-- non-deleted row participates, so soft-deleted projects do not prevent
+-- a new project from reusing the same key.
+CREATE UNIQUE INDEX IF NOT EXISTS projects_key_unique_active_idx
+    ON projects (key) WHERE is_latest = 1 AND deleted = 0;
+
 ALTER TABLE issues_v2 ADD COLUMN project_id TEXT;
 
 CREATE INDEX IF NOT EXISTS issues_v2_project_id_idx ON issues_v2 (project_id);

@@ -16,7 +16,7 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::Project;
+use hydra_common::api::v1::projects::{Project, ProjectKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::principal::Principal;
@@ -282,6 +282,8 @@ pub enum StoreError {
     TriggerNotFound(TriggerId),
     #[error("Project not found: {0}")]
     ProjectNotFound(ProjectId),
+    #[error("Project key already in use: {0}")]
+    ProjectKeyExists(ProjectKey),
     #[error("Issue not found: {0}")]
     IssueNotFound(IssueId),
     #[error("Patch not found: {0}")]
@@ -1256,7 +1258,9 @@ pub trait Store: ReadOnlyStore {
 
     /// Adds a new project to the store and assigns it a [`ProjectId`].
     ///
-    /// Returns the new ProjectId and its initial version number.
+    /// Returns the new ProjectId and its initial version number, or
+    /// `StoreError::ProjectKeyExists` if a non-deleted project with the
+    /// same [`ProjectKey`] already exists.
     async fn add_project(
         &self,
         project: Project,
@@ -1265,8 +1269,10 @@ pub trait Store: ReadOnlyStore {
 
     /// Updates an existing project in the store.
     ///
-    /// Returns the new version number, or `StoreError::ProjectNotFound` if
-    /// the project does not exist.
+    /// Returns the new version number, `StoreError::ProjectNotFound` if
+    /// the project does not exist, or `StoreError::ProjectKeyExists` if
+    /// the new [`ProjectKey`] would collide with another non-deleted
+    /// project.
     async fn update_project(
         &self,
         id: &ProjectId,

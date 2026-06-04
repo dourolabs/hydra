@@ -1102,7 +1102,13 @@ impl SqliteStore {
         .bind(actor)
         .execute(executor)
         .await
-        .map_err(map_sqlx_error)?;
+        .map_err(|err| {
+            if is_project_key_unique_violation_sqlite(&err) {
+                StoreError::ProjectKeyExists(project.key.clone())
+            } else {
+                map_sqlx_error(err)
+            }
+        })?;
 
         Ok(())
     }
@@ -2416,6 +2422,24 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
         }
     }
     StoreError::Internal(err.to_string())
+}
+
+/// True iff `err` is a SQLite unique-violation on the partial
+/// `projects_key_unique_active_idx` index (the `projects.key` column).
+/// Used by `add_project` / `update_project` to translate the raw sqlx
+/// error into a [`StoreError::ProjectKeyExists`] that carries the
+/// colliding key.
+fn is_project_key_unique_violation_sqlite(err: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = err {
+        if db_err.code().as_deref() == Some("2067") {
+            // SQLite reports either the column path (`projects.key`) or
+            // the index name depending on the index kind; match both so
+            // we are robust to the exact message format.
+            let msg = db_err.message();
+            return msg.contains("projects.key") || msg.contains("projects_key_unique_active_idx");
+        }
+    }
+    false
 }
 
 #[async_trait]
@@ -12647,9 +12671,15 @@ mod tests {
 
     // ---- Project tests --------------------------------------------------
 
+    /// Fully-populated sample, including `on_enter` so the JSON serde
+    /// path for `StatusOnEnter` is exercised end-to-end in the round-trip
+    /// test.
     fn sample_project() -> Project {
-        use hydra_common::api::v1::projects::{IconKey, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::projects::{
+            IconKey, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+        };
         use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::principal::Principal;
 
         let statuses = vec![
             StatusDefinition::new(
@@ -12660,7 +12690,12 @@ mod tests {
                 false,
                 false,
                 false,
-                None,
+                Some(StatusOnEnter::new(
+                    Some(Principal::Agent {
+                        name: "reviewer".parse().unwrap(),
+                    }),
+                    Some("forms/review.yaml".parse().unwrap()),
+                )),
             ),
             StatusDefinition::new(
                 StatusKey::try_new("done").unwrap(),
@@ -12670,7 +12705,12 @@ mod tests {
                 true,
                 true,
                 false,
-                None,
+                Some(StatusOnEnter::new(
+                    Some(Principal::Agent {
+                        name: "swe".parse().unwrap(),
+                    }),
+                    None,
+                )),
             ),
         ];
         Project::new(
@@ -12696,6 +12736,8 @@ mod tests {
         assert_eq!(fetched.version, 1);
         assert_eq!(fetched.item.name, "Engineering");
         assert_eq!(fetched.item.statuses.len(), 2);
+        // `on_enter` must round-trip through the JSON column unchanged.
+        assert_eq!(fetched.item.statuses, sample_project().statuses);
 
         let listed = store.list_projects(false).await.unwrap();
         assert_eq!(listed.len(), 1);
@@ -12788,6 +12830,77 @@ mod tests {
         assert!(
             project_id.is_none(),
             "legacy rows must default project_id to NULL"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_project_with_duplicate_key_returns_error_sqlite() {
+        let store = create_test_store().await;
+        store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        let result = store.add_project(sample_project(), &ActorRef::test()).await;
+        assert!(
+            matches!(result, Err(StoreError::ProjectKeyExists(ref k)) if k.as_str() == "engineering"),
+            "expected ProjectKeyExists(engineering), got {result:?}"
+        );
+    }
+
+    /// A soft-deleted project frees its key for re-use — the partial
+    /// unique index applies only to `is_latest = 1 AND deleted = 0`.
+    #[tokio::test]
+    async fn add_project_after_delete_releases_key_sqlite() {
+        let store = create_test_store().await;
+        let (id, _) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        let result = store.add_project(sample_project(), &ActorRef::test()).await;
+        assert!(
+            result.is_ok(),
+            "expected re-add after delete, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_project_to_collide_with_another_returns_error_sqlite() {
+        use hydra_common::api::v1::projects::ProjectKey;
+        let store = create_test_store().await;
+        let mut a = sample_project();
+        a.key = ProjectKey::try_new("a").unwrap();
+        let mut b = sample_project();
+        b.key = ProjectKey::try_new("b").unwrap();
+        store.add_project(a, &ActorRef::test()).await.unwrap();
+        let (b_id, _) = store.add_project(b, &ActorRef::test()).await.unwrap();
+        let mut collide = sample_project();
+        collide.key = ProjectKey::try_new("a").unwrap();
+        let result = store
+            .update_project(&b_id, collide, &ActorRef::test())
+            .await;
+        assert!(
+            matches!(result, Err(StoreError::ProjectKeyExists(ref k)) if k.as_str() == "a"),
+            "expected ProjectKeyExists(a), got {result:?}"
+        );
+    }
+
+    /// Updating a project to its current key must succeed even though the
+    /// partial unique index is in place — only a *different* live row
+    /// holding the same key counts as a collision.
+    #[tokio::test]
+    async fn update_project_keeping_same_key_succeeds_sqlite() {
+        let store = create_test_store().await;
+        let (id, _) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut next = sample_project();
+        next.name = "Engineering Renamed".to_string();
+        let result = store.update_project(&id, next, &ActorRef::test()).await;
+        assert!(
+            result.is_ok(),
+            "expected ok keeping same key, got {result:?}"
         );
     }
 }

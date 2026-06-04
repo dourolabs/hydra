@@ -1335,7 +1335,13 @@ impl PostgresStoreV2 {
             .bind(actor)
             .execute(executor)
             .await
-            .map_err(map_sqlx_error)?;
+            .map_err(|err| {
+                if is_project_key_unique_violation_pg(&err) {
+                    StoreError::ProjectKeyExists(project.key.clone())
+                } else {
+                    map_sqlx_error(err)
+                }
+            })?;
 
         Ok(())
     }
@@ -2185,6 +2191,19 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
         }
     }
     StoreError::Internal(err.to_string())
+}
+
+/// True iff `err` is a Postgres unique-violation on the partial
+/// `projects_key_unique_active_idx` index. Used by `add_project` /
+/// `update_project` to translate the raw sqlx error into a
+/// [`StoreError::ProjectKeyExists`] that carries the colliding key.
+fn is_project_key_unique_violation_pg(err: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = err {
+        if db_err.code().as_deref() == Some("23505") {
+            return db_err.constraint() == Some("projects_key_unique_active_idx");
+        }
+    }
+    false
 }
 
 fn actor_to_json(actor: &ActorRef) -> Value {
@@ -10180,9 +10199,15 @@ mod tests {
 
     // ---- Project tests --------------------------------------------------
 
+    /// Fully-populated sample, including `on_enter` so the JSONB serde
+    /// path for `StatusOnEnter` is exercised end-to-end in the round-trip
+    /// test.
     fn sample_project_pg() -> Project {
-        use hydra_common::api::v1::projects::{IconKey, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::projects::{
+            IconKey, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+        };
         use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::principal::Principal;
 
         let statuses = vec![
             StatusDefinition::new(
@@ -10193,7 +10218,12 @@ mod tests {
                 false,
                 false,
                 false,
-                None,
+                Some(StatusOnEnter::new(
+                    Some(Principal::Agent {
+                        name: "reviewer".parse().unwrap(),
+                    }),
+                    Some("forms/review.yaml".parse().unwrap()),
+                )),
             ),
             StatusDefinition::new(
                 StatusKey::try_new("done").unwrap(),
@@ -10203,7 +10233,12 @@ mod tests {
                 true,
                 true,
                 false,
-                None,
+                Some(StatusOnEnter::new(
+                    Some(Principal::Agent {
+                        name: "swe".parse().unwrap(),
+                    }),
+                    None,
+                )),
             ),
         ];
         Project::new(
@@ -10230,6 +10265,8 @@ mod tests {
         assert_eq!(fetched.version, 1);
         assert_eq!(fetched.item.name, "Engineering");
         assert_eq!(fetched.item.statuses.len(), 2);
+        // `on_enter` must round-trip through the JSONB column unchanged.
+        assert_eq!(fetched.item.statuses, sample_project_pg().statuses);
 
         let listed = store.list_projects(false).await.unwrap();
         assert_eq!(listed.len(), 1);
@@ -10320,5 +10357,84 @@ mod tests {
         .unwrap();
         assert_eq!(row.0, "text");
         assert_eq!(row.1, "YES");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_project_with_duplicate_key_returns_error_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+        let result = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await;
+        assert!(
+            matches!(result, Err(StoreError::ProjectKeyExists(ref k)) if k.as_str() == "engineering"),
+            "expected ProjectKeyExists(engineering), got {result:?}"
+        );
+    }
+
+    /// A soft-deleted project frees its key for re-use — the partial
+    /// unique index applies only to `is_latest AND NOT deleted`.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_project_after_delete_releases_key_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (id, _) = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        let result = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await;
+        assert!(
+            result.is_ok(),
+            "expected re-add after delete, got {result:?}"
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn update_project_to_collide_with_another_returns_error_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::ProjectKey;
+        let store = PostgresStoreV2::new(pool);
+        let mut a = sample_project_pg();
+        a.key = ProjectKey::try_new("a").unwrap();
+        let mut b = sample_project_pg();
+        b.key = ProjectKey::try_new("b").unwrap();
+        store.add_project(a, &ActorRef::test()).await.unwrap();
+        let (b_id, _) = store.add_project(b, &ActorRef::test()).await.unwrap();
+        let mut collide = sample_project_pg();
+        collide.key = ProjectKey::try_new("a").unwrap();
+        let result = store
+            .update_project(&b_id, collide, &ActorRef::test())
+            .await;
+        assert!(
+            matches!(result, Err(StoreError::ProjectKeyExists(ref k)) if k.as_str() == "a"),
+            "expected ProjectKeyExists(a), got {result:?}"
+        );
+    }
+
+    /// Updating a project to its current key must succeed even though the
+    /// partial unique index is in place — only a *different* live row
+    /// holding the same key counts as a collision.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn update_project_keeping_same_key_succeeds_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (id, _) = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut next = sample_project_pg();
+        next.name = "Engineering Renamed".to_string();
+        let result = store.update_project(&id, next, &ActorRef::test()).await;
+        assert!(
+            result.is_ok(),
+            "expected ok keeping same key, got {result:?}"
+        );
     }
 }
