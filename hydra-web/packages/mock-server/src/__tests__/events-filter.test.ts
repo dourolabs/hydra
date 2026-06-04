@@ -119,7 +119,6 @@ describe("eventCategory", () => {
     expect(eventCategory("document_updated")).toBe("documents");
     expect(eventCategory("label_created")).toBe("labels");
     expect(eventCategory("conversation_created")).toBe("conversations");
-    expect(eventCategory("conversation_event_created")).toBe("conversations");
   });
 
   it("returns null for non-entity event types", () => {

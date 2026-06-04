@@ -206,7 +206,7 @@ export class Store {
 
   /**
    * Emit an SSE event for entities that don't live in a versioned collection
-   * (e.g. `session_event_created`, `conversation_event_created`). The caller
+   * (e.g. `session_event_created`). The caller
    * supplies the per-entity `version` (typically the new length of the
    * append-only log) and a `timestamp`. Bumps the global event seq, appends
    * to the replay buffer, and fans out to live listeners — same shape as
