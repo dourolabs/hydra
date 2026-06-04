@@ -50,6 +50,7 @@
 use super::{Backend, RustMigration};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use hydra_common::{ConversationId, SessionId};
 use std::collections::HashMap;
 
 /// The sqlx migration version this Rust step must run *after*. Both target
@@ -246,7 +247,7 @@ mod sqlite {
             return Ok(());
         }
         // Conversations to process: any with at least one message event.
-        let conv_ids: Vec<String> = sqlx::query_scalar(
+        let raw_conv_ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT id FROM conversation_events \
              WHERE event_type IN ('user_message', 'assistant_message') \
              ORDER BY id ASC",
@@ -255,7 +256,10 @@ mod sqlite {
         .await
         .context("listing conversations with message events")?;
 
-        for conv_id in conv_ids {
+        for raw in raw_conv_ids {
+            let conv_id: ConversationId = raw.parse().with_context(|| {
+                format!("invalid conversation id `{raw}` from conversation_events")
+            })?;
             process_conversation(pool, &conv_id).await?;
         }
         Ok(())
@@ -271,7 +275,7 @@ mod sqlite {
         Ok(row.is_some())
     }
 
-    async fn process_conversation(pool: &SqlitePool, conv_id: &str) -> Result<()> {
+    async fn process_conversation(pool: &SqlitePool, conv_id: &ConversationId) -> Result<()> {
         let sessions = load_sessions_in_chain(pool, conv_id).await?;
         let rows = load_message_rows(pool, conv_id).await?;
 
@@ -291,16 +295,19 @@ mod sqlite {
         }
         let windows = build_windows(&sessions);
 
-        let mut per_session: HashMap<String, Vec<&MessageRowSqlite>> = HashMap::new();
+        let mut per_session: HashMap<SessionId, Vec<&MessageRowSqlite>> = HashMap::new();
         for row in &rows {
             let target = assign_event(&windows, row.created_at);
-            per_session.entry(target.to_string()).or_default().push(row);
+            let target_id: SessionId = target
+                .parse()
+                .with_context(|| format!("invalid session id `{target}` from tasks_v2"))?;
+            per_session.entry(target_id).or_default().push(row);
         }
 
         for (session_id, rows) in &per_session {
             let existing: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM session_events WHERE session_id = ?1")
-                    .bind(session_id)
+                    .bind(session_id.as_ref())
                     .fetch_one(pool)
                     .await
                     .with_context(|| {
@@ -321,7 +328,7 @@ mod sqlite {
 
     async fn load_sessions_in_chain(
         pool: &SqlitePool,
-        conv_id: &str,
+        conv_id: &ConversationId,
     ) -> Result<Vec<SessionInChain>> {
         // tasks_v2.creation_time is TEXT (RFC3339). We pull it as a string
         // and parse manually to share one timestamp-parsing path with the
@@ -331,7 +338,7 @@ mod sqlite {
              WHERE conversation_id = ?1 AND is_latest = 1 AND deleted = 0 \
              ORDER BY creation_time ASC, id ASC",
         )
-        .bind(conv_id)
+        .bind(conv_id.as_ref())
         .fetch_all(pool)
         .await
         .with_context(|| format!("loading linked sessions for {conv_id}"))?;
@@ -356,7 +363,7 @@ mod sqlite {
              WHERE id = ?1 AND event_type IN ('suspending', 'closed') \
              ORDER BY version_number ASC",
         )
-        .bind(conv_id)
+        .bind(conv_id.as_ref())
         .fetch_all(pool)
         .await
         .with_context(|| format!("loading boundary events for {conv_id}"))?;
@@ -382,7 +389,10 @@ mod sqlite {
         Ok(sessions)
     }
 
-    async fn load_message_rows(pool: &SqlitePool, conv_id: &str) -> Result<Vec<MessageRowSqlite>> {
+    async fn load_message_rows(
+        pool: &SqlitePool,
+        conv_id: &ConversationId,
+    ) -> Result<Vec<MessageRowSqlite>> {
         // Order by created_at then version_number so events that share a
         // sub-millisecond timestamp still have a stable order (matches the
         // production append order, since version_number is monotonic per
@@ -393,7 +403,7 @@ mod sqlite {
              WHERE id = ?1 AND event_type IN ('user_message', 'assistant_message') \
              ORDER BY created_at ASC, version_number ASC",
         )
-        .bind(conv_id)
+        .bind(conv_id.as_ref())
         .fetch_all(pool)
         .await
         .with_context(|| format!("loading message events for {conv_id}"))?;
@@ -419,7 +429,11 @@ mod sqlite {
         Ok(out)
     }
 
-    async fn insert_row(pool: &SqlitePool, session_id: &str, row: &MessageRowSqlite) -> Result<()> {
+    async fn insert_row(
+        pool: &SqlitePool,
+        session_id: &SessionId,
+        row: &MessageRowSqlite,
+    ) -> Result<()> {
         // Atomic: compute next version inside the same transaction as the
         // INSERT to avoid races with concurrent appenders (the production
         // dual-write path opens its own append on a different session, but
@@ -429,7 +443,7 @@ mod sqlite {
             "SELECT COALESCE(MAX(version_number), 0) + 1 \
              FROM session_events WHERE session_id = ?1",
         )
-        .bind(session_id)
+        .bind(session_id.as_ref())
         .fetch_one(&mut *tx)
         .await
         .with_context(|| format!("computing next version_number for {session_id}"))?;
@@ -446,7 +460,7 @@ mod sqlite {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
              ON CONFLICT(session_id, version_number) DO NOTHING",
         )
-        .bind(session_id)
+        .bind(session_id.as_ref())
         .bind(next_version)
         .bind(&row.event_type)
         .bind(&row.event_data)
@@ -500,7 +514,7 @@ mod postgres {
         if !table_exists(pool, "conversation_events_v2").await? {
             return Ok(());
         }
-        let conv_ids: Vec<String> = sqlx::query_scalar(
+        let raw_conv_ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT conversation_id FROM metis.conversation_events_v2 \
              WHERE event_type IN ('user_message', 'assistant_message') \
              ORDER BY conversation_id ASC",
@@ -509,7 +523,10 @@ mod postgres {
         .await
         .context("listing conversations with message events")?;
 
-        for conv_id in conv_ids {
+        for raw in raw_conv_ids {
+            let conv_id: ConversationId = raw.parse().with_context(|| {
+                format!("invalid conversation id `{raw}` from conversation_events")
+            })?;
             process_conversation(pool, &conv_id).await?;
         }
         Ok(())
@@ -527,7 +544,7 @@ mod postgres {
         Ok(row.map(|(b,)| b).unwrap_or(false))
     }
 
-    async fn process_conversation(pool: &PgPool, conv_id: &str) -> Result<()> {
+    async fn process_conversation(pool: &PgPool, conv_id: &ConversationId) -> Result<()> {
         let sessions = load_sessions_in_chain(pool, conv_id).await?;
         let rows = load_message_rows(pool, conv_id).await?;
 
@@ -543,17 +560,20 @@ mod postgres {
         }
         let windows = build_windows(&sessions);
 
-        let mut per_session: HashMap<String, Vec<&MessageRowPostgres>> = HashMap::new();
+        let mut per_session: HashMap<SessionId, Vec<&MessageRowPostgres>> = HashMap::new();
         for row in &rows {
             let target = assign_event(&windows, row.created_at);
-            per_session.entry(target.to_string()).or_default().push(row);
+            let target_id: SessionId = target
+                .parse()
+                .with_context(|| format!("invalid session id `{target}` from tasks_v2"))?;
+            per_session.entry(target_id).or_default().push(row);
         }
 
         for (session_id, rows) in &per_session {
             let existing: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM metis.session_events_v2 WHERE session_id = $1",
             )
-            .bind(session_id)
+            .bind(session_id.as_ref())
             .fetch_one(pool)
             .await
             .with_context(|| format!("checking existing session_events_v2 for {session_id}"))?;
@@ -570,13 +590,16 @@ mod postgres {
         Ok(())
     }
 
-    async fn load_sessions_in_chain(pool: &PgPool, conv_id: &str) -> Result<Vec<SessionInChain>> {
+    async fn load_sessions_in_chain(
+        pool: &PgPool,
+        conv_id: &ConversationId,
+    ) -> Result<Vec<SessionInChain>> {
         let session_rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
             "SELECT id, creation_time FROM metis.tasks_v2 \
              WHERE conversation_id = $1 AND is_latest = TRUE AND deleted = FALSE \
              ORDER BY creation_time ASC, id ASC",
         )
-        .bind(conv_id)
+        .bind(conv_id.as_ref())
         .fetch_all(pool)
         .await
         .with_context(|| format!("loading linked sessions for {conv_id}"))?;
@@ -595,7 +618,7 @@ mod postgres {
              WHERE conversation_id = $1 AND event_type IN ('suspending', 'closed') \
              ORDER BY version_number ASC",
         )
-        .bind(conv_id)
+        .bind(conv_id.as_ref())
         .fetch_all(pool)
         .await
         .with_context(|| format!("loading boundary events for {conv_id}"))?;
@@ -617,7 +640,10 @@ mod postgres {
         Ok(sessions)
     }
 
-    async fn load_message_rows(pool: &PgPool, conv_id: &str) -> Result<Vec<MessageRowPostgres>> {
+    async fn load_message_rows(
+        pool: &PgPool,
+        conv_id: &ConversationId,
+    ) -> Result<Vec<MessageRowPostgres>> {
         let rows = sqlx::query(
             "SELECT version_number, event_type, event_data, actor, created_at \
              FROM metis.conversation_events_v2 \
@@ -625,7 +651,7 @@ mod postgres {
                AND event_type IN ('user_message', 'assistant_message') \
              ORDER BY created_at ASC, version_number ASC",
         )
-        .bind(conv_id)
+        .bind(conv_id.as_ref())
         .fetch_all(pool)
         .await
         .with_context(|| format!("loading message events for {conv_id}"))?;
@@ -648,7 +674,11 @@ mod postgres {
         Ok(out)
     }
 
-    async fn insert_row(pool: &PgPool, session_id: &str, row: &MessageRowPostgres) -> Result<()> {
+    async fn insert_row(
+        pool: &PgPool,
+        session_id: &SessionId,
+        row: &MessageRowPostgres,
+    ) -> Result<()> {
         let mut tx = pool.begin().await.context("begin tx")?;
         // Lock existing rows for this session to serialize concurrent
         // appenders (mirrors the FOR UPDATE pattern in
@@ -656,7 +686,7 @@ mod postgres {
         let _lock: Vec<i64> = sqlx::query_scalar(
             "SELECT id FROM metis.session_events_v2 WHERE session_id = $1 FOR UPDATE",
         )
-        .bind(session_id)
+        .bind(session_id.as_ref())
         .fetch_all(&mut *tx)
         .await
         .with_context(|| format!("locking session_events_v2 for {session_id}"))?;
@@ -665,7 +695,7 @@ mod postgres {
             "SELECT COALESCE(MAX(version_number), 0) + 1 \
              FROM metis.session_events_v2 WHERE session_id = $1",
         )
-        .bind(session_id)
+        .bind(session_id.as_ref())
         .fetch_one(&mut *tx)
         .await
         .with_context(|| format!("computing next version_number for {session_id}"))?;
@@ -676,7 +706,7 @@ mod postgres {
              VALUES ($1, $2, $3, $4, $5, $6) \
              ON CONFLICT (session_id, version_number) DO NOTHING",
         )
-        .bind(session_id)
+        .bind(session_id.as_ref())
         .bind(next_version)
         .bind(&row.event_type)
         .bind(&row.event_data)
