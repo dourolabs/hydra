@@ -509,6 +509,18 @@ struct SyncManifest {
     documents: BTreeMap<String, SyncManifestEntry>,
 }
 
+impl SyncManifest {
+    fn save(&self, directory: &Path) -> Result<()> {
+        let manifest_path = directory.join(MANIFEST_FILENAME);
+        let contents =
+            serde_json::to_string_pretty(self).context("failed to serialize manifest")?;
+        fs::write(&manifest_path, contents).with_context(|| {
+            format!("failed to write manifest to '{}'", manifest_path.display())
+        })?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SyncManifestEntry {
     document_id: DocumentId,
@@ -534,15 +546,6 @@ fn load_manifest(directory: &Path) -> Result<Option<SyncManifest>> {
     let manifest: SyncManifest = serde_json::from_str(&contents)
         .with_context(|| format!("failed to parse manifest at '{}'", manifest_path.display()))?;
     Ok(Some(manifest))
-}
-
-fn save_manifest(directory: &Path, manifest: &SyncManifest) -> Result<()> {
-    let manifest_path = directory.join(MANIFEST_FILENAME);
-    let contents =
-        serde_json::to_string_pretty(manifest).context("failed to serialize manifest")?;
-    fs::write(&manifest_path, contents)
-        .with_context(|| format!("failed to write manifest to '{}'", manifest_path.display()))?;
-    Ok(())
 }
 
 fn emit_sync_event(event: SyncEvent<'_>, format: ResolvedOutputFormat) -> Result<()> {
@@ -681,7 +684,7 @@ pub async fn sync_documents(
         path_prefix: args.path_prefix,
         documents: new_entries,
     };
-    save_manifest(directory, &manifest)?;
+    manifest.save(directory)?;
 
     emit_sync_summary(
         SyncSummary::Synced {
@@ -1079,7 +1082,7 @@ pub async fn push_documents(
             path_prefix: manifest.path_prefix.clone(),
             documents: new_entries,
         };
-        save_manifest(directory, &updated_manifest)?;
+        updated_manifest.save(directory)?;
     }
 
     let total = updated_count + created_count + deleted_count;
@@ -1587,7 +1590,7 @@ mod tests {
             documents,
         };
 
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
         let loaded = load_manifest(dir.path()).unwrap().unwrap();
 
         assert_eq!(loaded, manifest);
@@ -2047,7 +2050,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Write modified local file
         fs::create_dir_all(dir.path().join("docs")).unwrap();
@@ -2137,7 +2140,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         fs::create_dir_all(dir.path().join("docs")).unwrap();
         fs::write(dir.path().join("docs/stable.md"), body).unwrap();
@@ -2197,7 +2200,7 @@ mod tests {
             path_prefix: None,
             documents: BTreeMap::new(),
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Create a new local file
         fs::create_dir_all(dir.path().join("guides")).unwrap();
@@ -2267,7 +2270,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         fs::create_dir_all(dir.path().join("docs")).unwrap();
         fs::write(dir.path().join("docs/guide.md"), "# Modified").unwrap();
@@ -2350,7 +2353,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Write locally modified file
         fs::create_dir_all(dir.path().join("docs")).unwrap();
@@ -2437,7 +2440,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Write local file with SAME content (unchanged locally)
         fs::create_dir_all(dir.path().join("docs")).unwrap();
@@ -2572,7 +2575,7 @@ mod tests {
             path_prefix: None,
             documents: BTreeMap::new(),
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Create files in different directories
         fs::create_dir_all(dir.path().join("playbooks")).unwrap();
@@ -2687,7 +2690,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Create the docs directory but not the file (simulating local deletion)
         fs::create_dir_all(dir.path().join("docs")).unwrap();
@@ -2756,7 +2759,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         let server = MockServer::start();
         // Mock list_documents (required by push)
@@ -2815,7 +2818,7 @@ mod tests {
             path_prefix: None,
             documents,
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Don't create either file locally (both "deleted"),
         // but only push with --path-prefix /playbooks
@@ -2879,7 +2882,7 @@ mod tests {
             path_prefix: None,
             documents: BTreeMap::new(),
         };
-        save_manifest(dir.path(), &manifest).unwrap();
+        manifest.save(dir.path()).unwrap();
 
         // Create a new local file
         fs::create_dir_all(dir.path().join("guides")).unwrap();
