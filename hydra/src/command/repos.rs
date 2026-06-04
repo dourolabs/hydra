@@ -1,6 +1,6 @@
 use crate::{
     client::HydraClient,
-    command::output::{render, CommandContext, RepositoryRecords},
+    command::output::{render, CommandContext, RepositoryRecords, ResolvedOutputFormat},
     git::clone_repo,
     output_writer::write_stdout,
 };
@@ -181,7 +181,7 @@ pub async fn run(
             )?;
         }
         ReposCommand::Clone(args) => {
-            clone_repository(client, args).await?;
+            clone_repository(client, args, context.output_format).await?;
         }
     }
     write_stdout(&buffer)?;
@@ -236,7 +236,11 @@ async fn update_repository(
     Ok(response.repository)
 }
 
-async fn clone_repository(client: &HydraClient, args: CloneRepositoryArgs) -> Result<()> {
+async fn clone_repository(
+    client: &HydraClient,
+    args: CloneRepositoryArgs,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
     let repositories = fetch_repositories(client, false).await?;
     let repository = repositories
         .into_iter()
@@ -265,7 +269,9 @@ async fn clone_repository(client: &HydraClient, args: CloneRepositoryArgs) -> Re
         },
     )?;
 
-    eprintln!("Cloned {} to {}", args.name, destination.display());
+    if output_format == ResolvedOutputFormat::Pretty {
+        eprintln!("Cloned {} to {}", args.name, destination.display());
+    }
     Ok(())
 }
 
@@ -898,7 +904,7 @@ mod tests {
         });
         let client = mock_client(&server);
 
-        let error = clone_repository(&client, sample_clone_args())
+        let error = clone_repository(&client, sample_clone_args(), ResolvedOutputFormat::Pretty)
             .await
             .unwrap_err();
         assert!(

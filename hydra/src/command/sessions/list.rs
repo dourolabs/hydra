@@ -35,7 +35,7 @@ pub async fn run(
     write_stdout(&buffer)?;
 
     if truncated && context.output_format == ResolvedOutputFormat::Pretty {
-        println!("Showing {limit} of {total_sessions} sessions. Use --limit to display more.");
+        eprintln!("Showing {limit} of {total_sessions} sessions. Use --limit to display more.");
     }
 
     Ok(())
