@@ -336,10 +336,8 @@ pub trait HydraClientInterface: Send + Sync {
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
 
-    async fn create_trigger(
-        &self,
-        request: &UpsertTriggerRequest,
-    ) -> Result<UpsertTriggerResponse>;
+    async fn create_trigger(&self, request: &UpsertTriggerRequest)
+        -> Result<UpsertTriggerResponse>;
     async fn update_trigger(
         &self,
         trigger_id: &TriggerId,
@@ -1917,10 +1915,7 @@ impl HydraClient {
     }
 
     /// Call `GET /v1/triggers` to list triggers.
-    pub async fn list_triggers(
-        &self,
-        query: &SearchTriggersQuery,
-    ) -> Result<ListTriggersResponse> {
+    pub async fn list_triggers(&self, query: &SearchTriggersQuery) -> Result<ListTriggersResponse> {
         let url = self.endpoint("/v1/triggers")?;
         let response = self
             .authed(self.http.get(url))

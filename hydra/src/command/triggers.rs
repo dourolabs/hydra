@@ -12,8 +12,7 @@ use clap::Subcommand;
 use hydra_common::{
     triggers::{
         render as render_template, Action, CreateIssueAction, RenderContext, Schedule,
-        SearchTriggersQuery, Trigger, TriggerVersionRecord, UpsertTriggerRequest,
-        UpsertTriggerResponse,
+        SearchTriggersQuery, TriggerVersionRecord, UpsertTriggerRequest, UpsertTriggerResponse,
     },
     users::Username,
     TriggerId,
@@ -162,17 +161,12 @@ impl TriggerSpec {
     fn into_request(self, creator: Username) -> UpsertTriggerRequest {
         UpsertTriggerRequest::new(self.enabled, self.schedule, self.actions, creator)
     }
-
-    fn into_trigger(self, creator: Username) -> Trigger {
-        Trigger::new(self.enabled, self.schedule, self.actions, creator, None, false)
-    }
 }
 
 fn read_spec(path: &str) -> Result<TriggerSpec> {
     let yaml = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read trigger spec file '{path}'"))?;
-    parse_spec(&yaml)
-        .with_context(|| format!("failed to parse trigger spec YAML in '{path}'"))
+    parse_spec(&yaml).with_context(|| format!("failed to parse trigger spec YAML in '{path}'"))
 }
 
 /// Parse the YAML spec via a JSON intermediate so externally-tagged enum
@@ -225,11 +219,8 @@ fn run_test(spec: TriggerSpec, at: DateTime<Utc>, format: ResolvedOutputFormat) 
     let placeholder_id = TriggerId::from_str("t-aaaaaa")
         .map_err(|err| anyhow!("internal: placeholder trigger id rejected: {err}"))?;
     let ctx = RenderContext::new(at, at, placeholder_id);
-    // The trigger needs a creator field; for the local renderer the value
-    // is irrelevant — it never reaches the server.
-    let trigger = spec.into_trigger(Username::from(""));
 
-    let rendered: Vec<RenderedAction> = trigger
+    let rendered: Vec<RenderedAction> = spec
         .actions
         .iter()
         .enumerate()
@@ -275,11 +266,7 @@ struct RenderedCreateIssue {
     repo_name: Option<String>,
 }
 
-fn render_action(
-    idx: usize,
-    action: &Action,
-    ctx: &RenderContext,
-) -> Result<RenderedAction> {
+fn render_action(idx: usize, action: &Action, ctx: &RenderContext) -> Result<RenderedAction> {
     match action {
         Action::CreateIssue(create) => {
             let CreateIssueAction {
@@ -291,8 +278,8 @@ fn render_action(
                 session_settings,
                 ..
             } = create;
-            let title = render_template(title, ctx)
-                .map_err(|err| anyhow!("action {idx}: title: {err}"))?;
+            let title =
+                render_template(title, ctx).map_err(|err| anyhow!("action {idx}: title: {err}"))?;
             let description = render_template(description, ctx)
                 .map_err(|err| anyhow!("action {idx}: description: {err}"))?;
             let assignee = match assignee {
@@ -367,7 +354,14 @@ mod tests {
     fn sample_trigger() -> Trigger {
         let yaml = sample_yaml();
         let spec: TriggerSpec = parse_spec(yaml).expect("sample yaml must parse");
-        spec.into_trigger(Username::from("alice"))
+        Trigger::new(
+            spec.enabled,
+            spec.schedule,
+            spec.actions,
+            Username::from("alice"),
+            None,
+            false,
+        )
     }
 
     fn sample_yaml() -> &'static str {
@@ -423,7 +417,11 @@ actions:
         assert_eq!(action.assignee.as_deref(), Some("users/alice"));
         assert_eq!(action.status, Some(IssueStatus::Open));
         assert_eq!(
-            action.session_settings.repo_name.as_ref().map(|r| r.to_string()),
+            action
+                .session_settings
+                .repo_name
+                .as_ref()
+                .map(|r| r.to_string()),
             Some("dourolabs/hydra".to_string()),
         );
 
@@ -463,8 +461,7 @@ actions:
         let placeholder = TriggerId::from_str("t-aaaaaa").unwrap();
         let ctx = RenderContext::new(at, at, placeholder.clone());
 
-        let trigger = spec.into_trigger(Username::from(""));
-        let rendered = trigger
+        let rendered = spec
             .actions
             .iter()
             .enumerate()
@@ -499,8 +496,7 @@ actions:
         let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
         let placeholder = TriggerId::from_str("t-aaaaaa").unwrap();
         let ctx = RenderContext::new(at, at, placeholder);
-        let trigger = spec.into_trigger(Username::from(""));
-        let err = render_action(0, &trigger.actions[0], &ctx).unwrap_err();
+        let err = render_action(0, &spec.actions[0], &ctx).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("action 0"), "got {msg}");
         assert!(msg.contains("title"), "got {msg}");
@@ -546,10 +542,7 @@ actions:
         assert_eq!(json["creator"].as_str(), Some("alice"));
         let schedule = &json["schedule"]["Cron"];
         assert_eq!(schedule["expression"].as_str(), Some("0 9 * * MON"));
-        assert_eq!(
-            schedule["timezone"].as_str(),
-            Some("America/Los_Angeles"),
-        );
+        assert_eq!(schedule["timezone"].as_str(), Some("America/Los_Angeles"),);
         let action = &json["actions"][0]["CreateIssue"];
         assert_eq!(action["type"].as_str(), Some("task"));
         assert!(action["title"].as_str().unwrap().contains("Weekly triage"));
@@ -562,8 +555,7 @@ actions:
         let tid = trigger_id("t-mockmock");
         let trigger = sample_trigger();
 
-        let create_response =
-            hydra_common::triggers::UpsertTriggerResponse::new(tid.clone(), 1);
+        let create_response = hydra_common::triggers::UpsertTriggerResponse::new(tid.clone(), 1);
         let create_mock = server.mock(|when, then| {
             when.method(POST).path("/v1/triggers");
             then.status(200).json_body_obj(&create_response);

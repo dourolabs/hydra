@@ -84,8 +84,8 @@ pub enum Action {
 /// Create an issue when the parent trigger fires.
 ///
 /// `title`, `description`, and `assignee` are template strings rendered
-/// through `hydra-server/src/domain/triggers.rs::render`. `assignee` is
-/// parsed as a `Principal` after rendering.
+/// through [`render`]. `assignee` is parsed as a `Principal` after
+/// rendering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
