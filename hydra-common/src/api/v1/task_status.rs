@@ -36,6 +36,7 @@ impl FromStr for Status {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+// wire-casing-exempt: data-bearing variants (`JobEngineError { reason }`) are out of scope for the unit-variant kebab-case guard.
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TaskError {
@@ -47,6 +48,7 @@ pub enum TaskError {
 }
 
 #[derive(Deserialize)]
+// wire-casing-exempt: data-bearing helper enum used to deserialize `TaskError`; out of scope for the unit-variant kebab-case guard.
 #[serde(rename_all = "snake_case")]
 enum TaskErrorHelper {
     JobEngineError { reason: String },

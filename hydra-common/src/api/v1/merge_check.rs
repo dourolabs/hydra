@@ -112,6 +112,7 @@ impl MergeBlockedError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+// wire-casing-exempt: `MergeBlocked` → `"merge_blocked"` is the published `code` field on every merge_blocked error envelope (consumed by `hydra patches merge --json` and the SWE retry loop); coordinated rename tracked under parent issue i-glwrexmf.
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum MergeBlockedCode {
