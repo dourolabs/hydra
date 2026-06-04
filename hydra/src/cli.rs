@@ -172,47 +172,68 @@ pub enum Commands {
     },
 }
 
-/// Check whether both server URL and token are available via CLI flags or env vars.
-fn has_env_credentials(cli: &Cli) -> bool {
-    let has_url = cli
-        .server_url
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|s| !s.is_empty());
-    let has_token = cli
-        .token
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|s| !s.is_empty());
-    has_url && has_token
-}
-
-/// Resolve the app config: if env vars provide both server URL and token,
-/// skip config file loading entirely; otherwise load from the config file.
-pub fn resolve_app_config(cli: &Cli) -> Result<(AppConfig, PathBuf)> {
-    let config_path = resolve_config_path(cli);
-    if has_env_credentials(cli) {
-        Ok((empty_app_config(), config_path))
-    } else {
-        let app_config = load_app_config(&config_path)?;
-        Ok((app_config, config_path))
+impl Cli {
+    /// Check whether both server URL and token are available via CLI flags or env vars.
+    fn has_env_credentials(&self) -> bool {
+        let has_url = self
+            .server_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty());
+        let has_token = self
+            .token
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty());
+        has_url && has_token
     }
-}
 
-/// Build the HTTP timeouts from the parsed CLI args.
-pub fn resolve_http_timeouts(cli: &Cli) -> HydraClientTimeouts {
-    HydraClientTimeouts {
-        request_timeout: Duration::from_secs(cli.http_timeout_secs),
-        connect_timeout: Duration::from_secs(cli.http_connect_timeout_secs),
-        pool_idle_timeout: Duration::from_secs(cli.http_pool_idle_timeout_secs),
+    /// Resolve the app config: if env vars provide both server URL and token,
+    /// skip config file loading entirely; otherwise load from the config file.
+    pub fn resolve_app_config(&self) -> Result<(AppConfig, PathBuf)> {
+        let config_path = self.resolve_config_path();
+        if self.has_env_credentials() {
+            Ok((empty_app_config(), config_path))
+        } else {
+            let app_config = load_app_config(&config_path)?;
+            Ok((app_config, config_path))
+        }
+    }
+
+    /// Build the HTTP timeouts from the parsed CLI args.
+    pub fn resolve_http_timeouts(&self) -> HydraClientTimeouts {
+        HydraClientTimeouts {
+            request_timeout: Duration::from_secs(self.http_timeout_secs),
+            connect_timeout: Duration::from_secs(self.http_connect_timeout_secs),
+            pool_idle_timeout: Duration::from_secs(self.http_pool_idle_timeout_secs),
+        }
+    }
+
+    pub fn resolve_config_path(&self) -> PathBuf {
+        self.config
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE))
+    }
+
+    pub fn resolve_server_url(&self, app_config: &AppConfig) -> Result<String> {
+        if let Some(url) = self
+            .server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+        {
+            return Ok(url.to_string());
+        }
+
+        Ok(app_config.default_server()?.url.clone())
     }
 }
 
 /// Run the CLI with the given parsed arguments.
 pub async fn run(cli: Cli) -> Result<()> {
-    let (app_config, config_path) = resolve_app_config(&cli)?;
-    let server_url = resolve_server_url(&cli, &app_config)?;
-    let timeouts = resolve_http_timeouts(&cli);
+    let (app_config, config_path) = cli.resolve_app_config()?;
+    let server_url = cli.resolve_server_url(&app_config)?;
+    let timeouts = cli.resolve_http_timeouts();
     let unauth_client = HydraClientUnauthenticated::new(&server_url, &timeouts)?;
     let client = resolve_client(
         &cli,
@@ -335,12 +356,6 @@ pub async fn dispatch(cli: Cli, client: Arc<HydraClient>, context: &CommandConte
     Ok(())
 }
 
-pub fn resolve_config_path(cli: &Cli) -> PathBuf {
-    cli.config
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(constants::DEFAULT_CONFIG_FILE))
-}
-
 pub fn load_app_config(config_path: &Path) -> Result<AppConfig> {
     let resolved_path = config::expand_path(config_path);
     if !resolved_path.exists() {
@@ -351,19 +366,6 @@ pub fn load_app_config(config_path: &Path) -> Result<AppConfig> {
     }
 
     AppConfig::load(&resolved_path)
-}
-
-pub fn resolve_server_url(cli: &Cli, app_config: &AppConfig) -> Result<String> {
-    if let Some(url) = cli
-        .server_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-    {
-        return Ok(url.to_string());
-    }
-
-    Ok(app_config.default_server()?.url.clone())
 }
 
 #[cfg(test)]
@@ -396,7 +398,7 @@ mod tests {
         };
 
         let config = empty_app_config();
-        let server_url = resolve_server_url(&cli, &config).expect("resolve server url");
+        let server_url = cli.resolve_server_url(&config).expect("resolve server url");
         assert_eq!(server_url, "http://localhost:9000");
     }
 
@@ -457,7 +459,7 @@ mod tests {
             ..base_cli()
         };
 
-        let (config, _) = resolve_app_config(&cli).expect("resolve app config");
+        let (config, _) = cli.resolve_app_config().expect("resolve app config");
         assert!(
             config.servers.is_empty(),
             "expected empty config when env vars are set"
@@ -474,7 +476,9 @@ mod tests {
             ..base_cli()
         };
 
-        let (config, _) = resolve_app_config(&cli).expect("should not fail on missing config");
+        let (config, _) = cli
+            .resolve_app_config()
+            .expect("should not fail on missing config");
         assert!(config.servers.is_empty());
     }
 
@@ -493,7 +497,7 @@ mod tests {
             ..base_cli()
         };
 
-        let (config, _) = resolve_app_config(&cli).expect("resolve app config");
+        let (config, _) = cli.resolve_app_config().expect("resolve app config");
         let server = config.default_server().expect("default server");
         assert_eq!(server.url, "http://127.0.0.1:8080");
     }
@@ -505,7 +509,7 @@ mod tests {
             ..base_cli()
         };
 
-        let err = resolve_app_config(&cli).unwrap_err();
+        let err = cli.resolve_app_config().unwrap_err();
         assert!(
             err.to_string().contains("No configuration file found"),
             "expected config file error, got: {err}"
@@ -519,14 +523,14 @@ mod tests {
             server_url: Some("http://localhost:9000".to_string()),
             ..base_cli()
         };
-        assert!(!has_env_credentials(&cli));
+        assert!(!cli.has_env_credentials());
 
         // Only token set
         let cli = Cli {
             token: Some("test-token".to_string()),
             ..base_cli()
         };
-        assert!(!has_env_credentials(&cli));
+        assert!(!cli.has_env_credentials());
 
         // Both set
         let cli = Cli {
@@ -534,10 +538,10 @@ mod tests {
             token: Some("test-token".to_string()),
             ..base_cli()
         };
-        assert!(has_env_credentials(&cli));
+        assert!(cli.has_env_credentials());
 
         // Neither set
-        assert!(!has_env_credentials(&base_cli()));
+        assert!(!base_cli().has_env_credentials());
     }
 
     #[test]
@@ -547,13 +551,13 @@ mod tests {
             token: Some("test-token".to_string()),
             ..base_cli()
         };
-        assert!(!has_env_credentials(&cli));
+        assert!(!cli.has_env_credentials());
 
         let cli = Cli {
             server_url: Some("http://localhost:9000".to_string()),
             token: Some("  ".to_string()),
             ..base_cli()
         };
-        assert!(!has_env_credentials(&cli));
+        assert!(!cli.has_env_credentials());
     }
 }
