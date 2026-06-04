@@ -186,7 +186,7 @@ impl Codex {
                 match serde_json::from_str::<CodexEvent>(trimmed) {
                     Ok(event) => {
                         if let Some(tx) = event_tx.as_ref() {
-                            if let Some(we) = codex_event_to_worker_event(&event) {
+                            if let Some(we) = event.to_worker_event() {
                                 if tx.send(we).await.is_err() {
                                     event_tx = None;
                                 }
@@ -389,19 +389,6 @@ fn session_state_if_exists(
     }
 }
 
-/// Translate a parsed [`CodexEvent`] into the wrapper-agnostic [`WorkerEvent`]
-/// shape the headless dispatcher forwards to the server. Only assistant
-/// message text currently maps; other event types are dropped here (the
-/// server-side `worker_event_to_session_event` would discard them anyway).
-fn codex_event_to_worker_event(event: &CodexEvent) -> Option<WorkerEvent> {
-    match event {
-        CodexEvent::ItemCompleted {
-            item: CodexItem::AgentMessage { text },
-        } => Some(WorkerEvent::AssistantText { text: text.clone() }),
-        _ => None,
-    }
-}
-
 /// In-memory state accumulated while parsing the `codex exec --json` JSONL
 /// stream.
 #[derive(Default)]
@@ -450,6 +437,22 @@ enum CodexEvent {
     ItemCompleted { item: CodexItem },
     #[serde(other)]
     Other,
+}
+
+impl CodexEvent {
+    /// Translate this event into the wrapper-agnostic [`WorkerEvent`] shape
+    /// the headless dispatcher forwards to the server. Only assistant
+    /// message text currently maps; other event types are dropped here (the
+    /// server-side `worker_event_to_session_event` would discard them
+    /// anyway).
+    fn to_worker_event(&self) -> Option<WorkerEvent> {
+        match self {
+            CodexEvent::ItemCompleted {
+                item: CodexItem::AgentMessage { text },
+            } => Some(WorkerEvent::AssistantText { text: text.clone() }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -641,20 +644,20 @@ mod tests {
     }
 
     #[test]
-    fn codex_event_to_worker_event_maps_agent_message_to_assistant_text() {
+    fn to_worker_event_maps_agent_message_to_assistant_text() {
         let event = CodexEvent::ItemCompleted {
             item: CodexItem::AgentMessage {
                 text: "hello".to_string(),
             },
         };
-        match codex_event_to_worker_event(&event) {
+        match event.to_worker_event() {
             Some(WorkerEvent::AssistantText { text }) => assert_eq!(text, "hello"),
             other => panic!("expected AssistantText, got {other:?}"),
         }
     }
 
     #[test]
-    fn codex_event_to_worker_event_drops_non_assistant_events() {
+    fn to_worker_event_drops_non_assistant_events() {
         for event in [
             CodexEvent::ThreadStarted {
                 thread_id: "tid".to_string(),
@@ -667,7 +670,7 @@ mod tests {
             },
             CodexEvent::Other,
         ] {
-            assert!(codex_event_to_worker_event(&event).is_none());
+            assert!(event.to_worker_event().is_none());
         }
     }
 

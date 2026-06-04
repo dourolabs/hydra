@@ -18,11 +18,10 @@ use hydra_common::{
 
 use crate::command::sessions::mounts;
 use crate::command::sessions::mounts::orchestrator::run_phase;
-use crate::util::format_thousands;
 use crate::worker::model_selector::ModelSelector;
 use crate::worker::reaper::reap_other_processes;
 use crate::worker::relay_adapter::ReconnectFn;
-use crate::worker::report::{RunReport, TokenUsage};
+use crate::worker::report::TokenUsage;
 use crate::worker::socket::WorkerSocket;
 use crate::{
     client::{ConflictError, HydraClientInterface},
@@ -184,7 +183,7 @@ pub async fn run(
                         log_status(format!(
                             "Phase: agent execution — completed successfully ({elapsed:.2}s)"
                         ));
-                        log_run_report(&report);
+                        report.log();
                         run_usage = Some(report.usage.clone());
                         report.last_message
                     }
@@ -367,43 +366,6 @@ fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
 }
 
-fn log_run_report(report: &RunReport) {
-    for line in format_run_report_lines(report) {
-        log_status(line);
-    }
-}
-
-fn format_run_report_lines(report: &RunReport) -> Vec<String> {
-    let mut lines = Vec::with_capacity(3);
-    let total = report
-        .usage
-        .input_tokens
-        .saturating_add(report.usage.output_tokens)
-        .saturating_add(report.usage.cache_read_input_tokens)
-        .saturating_add(report.usage.cache_creation_input_tokens);
-    lines.push(format!(
-        "  tokens: input={} output={} cache_read={} cache_create={} total={}",
-        format_thousands(report.usage.input_tokens),
-        format_thousands(report.usage.output_tokens),
-        format_thousands(report.usage.cache_read_input_tokens),
-        format_thousands(report.usage.cache_creation_input_tokens),
-        format_thousands(total),
-    ));
-    match &report.model_session_id {
-        Some(id) => lines.push(format!("  model_session_id: {id}")),
-        None => lines.push("  model_session_id: <none>".to_string()),
-    }
-    match &report.session_state {
-        Some(s) => lines.push(format!(
-            "  session_state: {} ({:?})",
-            s.local_path.display(),
-            s.format,
-        )),
-        None => lines.push("  session_state: <none>".to_string()),
-    }
-    lines
-}
-
 fn resolve_worker_home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
@@ -425,6 +387,7 @@ mod tests {
             stage_all_changes as git_stage_all_changes,
         },
         test_utils::ids::task_id,
+        worker::report::RunReport,
     };
     use git2::Repository;
     use std::collections::HashMap;
@@ -464,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn format_run_report_lines_full_report() {
+    fn format_lines_full_report() {
         use crate::worker::report::{SessionStateFormat, SessionStateRef, TokenUsage};
 
         let report = RunReport {
@@ -481,7 +444,7 @@ mod tests {
                 format: SessionStateFormat::CodexJsonl,
             }),
         };
-        let lines = format_run_report_lines(&report);
+        let lines = report.format_lines();
         assert_eq!(lines.len(), 3);
         assert_eq!(
             lines[0],
@@ -500,14 +463,14 @@ mod tests {
     }
 
     #[test]
-    fn format_run_report_lines_missing_fields() {
+    fn format_lines_missing_fields() {
         let report = RunReport {
             last_message: String::new(),
             usage: Default::default(),
             model_session_id: None,
             session_state: None,
         };
-        let lines = format_run_report_lines(&report);
+        let lines = report.format_lines();
         assert_eq!(lines.len(), 3);
         assert_eq!(
             lines[0],

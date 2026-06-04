@@ -1309,9 +1309,10 @@ mod tests {
         std::fs::create_dir_all(&cwd).unwrap();
         let claude = claude_for_test(&home, &cwd).await;
 
-        // The exact bytes the suspend-side uploader (`build_session_state_payload`
-        // in relay_adapter.rs) produces for a running Claude session. Note
-        // `sessionId` (camelCase) — see `validate_claude_transcript_bytes`.
+        // The exact bytes the suspend-side uploader
+        // (`RunReport::session_state_payload` in report.rs) produces for a
+        // running Claude session. Note `sessionId` (camelCase) — see
+        // `validate_claude_transcript_bytes`.
         let transcript = b"{\"sessionId\":\"abc-uuid\",\"type\":\"summary\"}\n".to_vec();
         let payload = hydra_common::api::v1::relay::SessionStatePayload::V1 {
             session_id: "abc-uuid".to_string(),
