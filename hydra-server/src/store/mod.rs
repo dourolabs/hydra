@@ -370,12 +370,7 @@ impl StoreError {
 /// Trait for read-only store operations: queries and lookups.
 #[async_trait]
 pub trait ReadOnlyStore: Send + Sync {
-    /// Retrieves a repository configuration by name.
-    ///
-    /// # Arguments
-    /// * `name` - The RepoName to look up
-    /// * `include_deleted` - If true, returns the repository even if it has been soft-deleted.
-    ///   If false, returns `StoreError::RepositoryNotFound` for deleted repositories.
+    /// Returns `StoreError::RepositoryNotFound` for deleted repositories unless `include_deleted` is true.
     async fn get_repository(
         &self,
         name: &RepoName,
@@ -391,12 +386,7 @@ pub trait ReadOnlyStore: Send + Sync {
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError>;
 
-    /// Retrieves an issue by its IssueId.
-    ///
-    /// # Arguments
-    /// * `id` - The IssueId to look up
-    /// * `include_deleted` - If true, returns the issue even if it has been soft-deleted.
-    ///   If false, returns `StoreError::IssueNotFound` for deleted issues.
+    /// Returns `StoreError::IssueNotFound` for deleted issues unless `include_deleted` is true.
     async fn get_issue(
         &self,
         id: &IssueId,
@@ -431,12 +421,7 @@ pub trait ReadOnlyStore: Send + Sync {
         issue_id: &IssueId,
     ) -> Result<Vec<SessionId>, StoreError>;
 
-    /// Retrieves a patch by its PatchId.
-    ///
-    /// # Arguments
-    /// * `id` - The PatchId to look up
-    /// * `include_deleted` - If true, returns the patch even if it has been soft-deleted.
-    ///   If false, returns `StoreError::PatchNotFound` for deleted patches.
+    /// Returns `StoreError::PatchNotFound` for deleted patches unless `include_deleted` is true.
     async fn get_patch(
         &self,
         id: &PatchId,
@@ -458,12 +443,7 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
 
-    /// Retrieves a document by its DocumentId.
-    ///
-    /// # Arguments
-    /// * `id` - The DocumentId to look up
-    /// * `include_deleted` - If true, returns the document even if it has been soft-deleted.
-    ///   If false, returns `StoreError::DocumentNotFound` for deleted documents.
+    /// Returns `StoreError::DocumentNotFound` for deleted documents unless `include_deleted` is true.
     async fn get_document(
         &self,
         id: &DocumentId,
@@ -516,15 +496,7 @@ pub trait ReadOnlyStore: Send + Sync {
         prefix: &str,
     ) -> Result<Vec<(String, String, u64, bool)>, StoreError>;
 
-    /// Gets a session by its SessionId.
-    ///
-    /// # Arguments
-    /// * `id` - The SessionId to look up
-    /// * `include_deleted` - If true, returns the session even if it has been soft-deleted.
-    ///   If false, returns `StoreError::SessionNotFound` for deleted sessions.
-    ///
-    /// # Returns
-    /// The session if found, or an error if not found
+    /// Returns `StoreError::SessionNotFound` for deleted sessions unless `include_deleted` is true.
     async fn get_session(
         &self,
         id: &SessionId,
@@ -537,19 +509,8 @@ pub trait ReadOnlyStore: Send + Sync {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError>;
 
-    /// Lists all sessions in the store that match the provided search query.
-    ///
-    /// # Arguments
-    /// * `query` - Search query containing optional filters:
-    ///   - `q`: Text search term that matches session ID, prompt, or status (case-insensitive)
-    ///   - `spawned_from`: Filter sessions spawned from a specific issue
-    ///   - `include_deleted`: Whether to include deleted sessions (default: false)
-    ///
-    /// Note: Text search does NOT match against notes since notes are derived
+    /// Text search (`query.q`) does NOT match against notes, since notes are derived
     /// from the status_log and not stored in the Session struct itself.
-    ///
-    /// # Returns
-    /// A vector of all matching sessions in the store
     async fn list_sessions(
         &self,
         query: &SearchSessionsQuery,
@@ -558,40 +519,22 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Counts sessions matching the search query, ignoring pagination (cursor/limit).
     async fn count_sessions(&self, query: &SearchSessionsQuery) -> Result<u64, StoreError>;
 
-    /// Gets the status log for a session by its SessionId.
-    ///
-    /// The status log contains timing information about the session's lifecycle,
-    /// including when it was created, when it started running, when it completed,
-    /// and any failure reason if applicable.
-    ///
-    /// # Arguments
-    /// * `id` - The SessionId to look up
-    ///
-    /// # Returns
-    /// The TaskStatusLog if found, or an error if not found
+    /// The status log carries timing information about the session's lifecycle —
+    /// when it was created, when it started running, when it completed, and any
+    /// failure reason if applicable.
     async fn get_status_log(&self, id: &SessionId) -> Result<TaskStatusLog, StoreError>;
 
-    /// Gets the status logs for multiple sessions in a single batch operation.
-    ///
-    /// Returns a map from SessionId to TaskStatusLog. Sessions that are not found
-    /// are silently omitted from the result.
+    /// Sessions that are not found are silently omitted from the result.
     async fn get_status_logs(
         &self,
         ids: &[SessionId],
     ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError>;
 
-    /// Gets an actor by its canonical name.
     async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError>;
 
-    /// Lists all actors with their canonical names.
     async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
 
-    /// Gets a user by their username.
-    ///
-    /// # Arguments
-    /// * `username` - The Username to look up
-    /// * `include_deleted` - If true, returns the user even if it has been soft-deleted.
-    ///   If false, returns `StoreError::UserNotFound` for deleted users.
+    /// Returns `StoreError::UserNotFound` for deleted users unless `include_deleted` is true.
     async fn get_user(
         &self,
         username: &Username,
@@ -738,12 +681,7 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Conversation (read-only) ----
 
-    /// Retrieves a conversation by its ConversationId.
-    ///
-    /// # Arguments
-    /// * `id` - The ConversationId to look up
-    /// * `include_deleted` - If true, returns the conversation even if it has been soft-deleted.
-    ///   If false, returns `StoreError::ConversationNotFound` for deleted conversations.
+    /// Returns `StoreError::ConversationNotFound` for deleted conversations unless `include_deleted` is true.
     async fn get_conversation(
         &self,
         id: &ConversationId,
@@ -827,12 +765,7 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Trigger (read-only) ----
 
-    /// Retrieves a trigger by its TriggerId.
-    ///
-    /// # Arguments
-    /// * `id` - The TriggerId to look up
-    /// * `include_deleted` - If true, returns the trigger even if it has been soft-deleted.
-    ///   If false, returns `StoreError::TriggerNotFound` for deleted triggers.
+    /// Returns `StoreError::TriggerNotFound` for deleted triggers unless `include_deleted` is true.
     async fn get_trigger(
         &self,
         id: &TriggerId,
@@ -855,13 +788,7 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Project (read-only) ----
 
-    /// Retrieves a project by its [`ProjectId`].
-    ///
-    /// # Arguments
-    /// * `id` - The ProjectId to look up
-    /// * `include_deleted` - If true, returns the project even if it has been
-    ///   soft-deleted. If false, returns `StoreError::ProjectNotFound` for
-    ///   deleted projects.
+    /// Returns `StoreError::ProjectNotFound` for deleted projects unless `include_deleted` is true.
     async fn get_project(
         &self,
         id: &ProjectId,
@@ -1113,15 +1040,7 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<(), StoreError>;
 
-    /// Adds a session to the store.
-    ///
-    /// Sessions start in the Created state.
-    /// # Arguments
-    /// * `session` - The session to add
-    /// * `creation_time` - The timestamp when the session is being created
-    /// * `actor` - The actor performing this mutation
-    ///
-    /// Returns the new SessionId and its initial version number.
+    /// Sessions start in the `Created` state.
     async fn add_session(
         &self,
         session: Session,
@@ -1129,17 +1048,7 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<(SessionId, VersionNumber), StoreError>;
 
-    /// Updates an existing session in the store.
-    ///
-    /// This function overwrites the session data for the given vertex.
-    ///
-    /// # Arguments
-    /// * `hydra_id` - The SessionId of the session to update
-    /// * `task` - The new Task to store for this vertex
-    /// * `actor` - The actor performing this mutation
-    ///
-    /// # Returns
-    /// The stored session version if successful, or an error if the session doesn't exist
+    /// Overwrites the session row wholesale — fields are not merged with prior state.
     async fn update_session(
         &self,
         hydra_id: &SessionId,
