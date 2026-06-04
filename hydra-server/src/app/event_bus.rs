@@ -674,6 +674,16 @@ impl StoreWithEvents {
         &self.event_bus
     }
 
+    /// Returns a reference to the inner `Store` implementation.
+    ///
+    /// This bypasses the event-bus wrappers and is intended for callers
+    /// like `Action::run` whose signature is `&dyn Store` and that do
+    /// their own event handling (or, for v1, intentionally skip it — see
+    /// `ScheduledTriggerWorker`).
+    pub fn inner(&self) -> &Arc<dyn Store> {
+        &self.inner
+    }
+
     // ---- Actor-aware mutation methods ----
     //
     // These inherent methods accept an explicit `actor: ActorRef` parameter
@@ -1591,7 +1601,7 @@ impl ReadOnlyStore for StoreWithEvents {
     async fn list_triggers(
         &self,
         include_deleted: bool,
-    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         self.inner.list_triggers(include_deleted).await
     }
 

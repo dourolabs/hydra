@@ -2,16 +2,23 @@
 //!
 //! See `/designs/triggered-actions.md` §4.3 and §4.5.
 //!
-//! This module owns the template renderer and `Trigger::validate`. The
-//! `impl Action { pub async fn run(...) }` body lands in PR 5 alongside
-//! the worker that calls it.
+//! This module owns the template renderer, `Trigger::validate`, and the
+//! `Action::run` dispatch — the one place per-action logic lives. The
+//! `ScheduledTriggerWorker` calls `Action::run` for each due trigger.
 
+use crate::domain::actors::ActorRef;
+use crate::domain::issues::Issue as DomainIssue;
+use crate::store::{RelationshipType, Store, StoreError};
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
+use hydra_common::HydraId;
+use hydra_common::issues::IssueStatus;
+use hydra_common::principal::Principal;
 use hydra_common::triggers::{Action, CreateIssueAction, Schedule, Trigger};
 use hydra_common::{IssueId, RepoName, TriggerId};
 use std::str::FromStr;
 use thiserror::Error;
+use tracing::warn;
 
 /// Object produced by a successful `Action::run`.
 ///
@@ -276,6 +283,176 @@ impl TriggerValidation for Trigger {
         known_repos: &[RepoName],
     ) -> Result<Vec<ValidationWarning>, ValidationError> {
         validate(self, known_repos)
+    }
+}
+
+/// Failure modes produced by [`run_action`].
+///
+/// `Render` and `ParseAssignee` are deterministic config errors caught
+/// per the §4.5 contract — the worker logs them and continues. `Store`
+/// is a transient persistence failure; the worker still records the
+/// fire (per §4.6) and moves on.
+#[derive(Debug, Error)]
+pub enum ActionError {
+    #[error("template field '{field}' failed to render: {source}")]
+    Render {
+        field: &'static str,
+        #[source]
+        source: RenderError,
+    },
+    #[error("rendered assignee '{rendered}' did not parse as a Principal: {detail}")]
+    ParseAssignee { rendered: String, detail: String },
+    #[error("store operation failed: {source}")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+}
+
+/// Dispatch entry-point for one action of a firing trigger.
+///
+/// `store` is the raw `&dyn Store` so this module stays domain-level
+/// (it does not depend on `StoreWithEvents` or the event bus). The
+/// `ScheduledTriggerWorker` is the only production caller; unit tests
+/// drive it directly against a `MemoryStore`.
+///
+/// Returns `ActionTarget::Issue(id)` on success. Errors are surfaced
+/// to the worker which logs them and continues to the next action.
+pub async fn run_action(
+    action: &Action,
+    ctx: &RenderContext,
+    store: &dyn Store,
+    actor: &ActorRef,
+    trigger_id: &TriggerId,
+) -> Result<ActionTarget, ActionError> {
+    match action {
+        Action::CreateIssue(create) => {
+            run_create_issue(create, ctx, store, actor, trigger_id).await
+        }
+    }
+}
+
+async fn run_create_issue(
+    action: &CreateIssueAction,
+    ctx: &RenderContext,
+    store: &dyn Store,
+    actor: &ActorRef,
+    trigger_id: &TriggerId,
+) -> Result<ActionTarget, ActionError> {
+    let title = render(&action.title, ctx).map_err(|source| ActionError::Render {
+        field: "title",
+        source,
+    })?;
+    let description = render(&action.description, ctx).map_err(|source| ActionError::Render {
+        field: "description",
+        source,
+    })?;
+    let assignee = match action.assignee.as_deref() {
+        Some(template) => {
+            let rendered = render(template, ctx).map_err(|source| ActionError::Render {
+                field: "assignee",
+                source,
+            })?;
+            let trimmed = rendered.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                let parsed =
+                    Principal::from_str(trimmed).map_err(|err| ActionError::ParseAssignee {
+                        rendered: rendered.clone(),
+                        detail: err.to_string(),
+                    })?;
+                Some(parsed)
+            }
+        }
+        None => None,
+    };
+
+    // Resolve the trigger's creator from the `on_behalf_of` field. v1's
+    // worker always sets this to `Some(ActorId::User(creator))`, so a
+    // missing or non-user `on_behalf_of` is a worker contract bug — we
+    // surface it as a Store error so the per-action log mentions the
+    // trigger and the next action still gets a chance to run.
+    let creator = match actor.on_behalf_of() {
+        Some(hydra_common::ActorId::User(name)) => name,
+        _ => {
+            return Err(ActionError::Store {
+                source: StoreError::Internal(format!(
+                    "ActorRef::Trigger for {trigger_id} did not carry a User on_behalf_of",
+                )),
+            });
+        }
+    };
+
+    let issue = DomainIssue::new(
+        action.issue_type.into(),
+        title,
+        description,
+        creator.into(),
+        String::new(),
+        action.status.unwrap_or(IssueStatus::Open).into(),
+        assignee,
+        Some(action.session_settings.clone().into()),
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+        None,
+    );
+
+    let (issue_id, _version) = store
+        .add_issue(issue, actor)
+        .await
+        .map_err(|source| ActionError::Store { source })?;
+
+    // Follow-up `created` edge — best-effort per §4.2. A failure here
+    // leaves the issue intact (and still attributed to `ActorRef::Trigger`,
+    // so audit lineage holds) and only loses one row of the firing-history
+    // panel. The design accepts that trade-off.
+    let source = HydraId::from(trigger_id.clone());
+    let target = HydraId::from(issue_id.clone());
+    if let Err(err) = store
+        .add_relationship(&source, &target, RelationshipType::Created)
+        .await
+    {
+        warn!(
+            trigger_id = %trigger_id,
+            issue_id = %issue_id,
+            error = %err,
+            "failed to write Trigger -created-> Issue edge; firing-history panel will miss one row"
+        );
+    }
+
+    Ok(ActionTarget::Issue(issue_id))
+}
+
+/// Extension trait so callers can write `action.run(...)`. `Action`
+/// lives in `hydra-common`, so the inherent method form (`impl Action {
+/// pub async fn run(...) }`) is not available — the trait is the
+/// orphan-rule workaround. Semantics match [`run_action`].
+pub trait ActionRun {
+    fn run<'a>(
+        &'a self,
+        ctx: &'a RenderContext,
+        store: &'a dyn Store,
+        actor: &'a ActorRef,
+        trigger_id: &'a TriggerId,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ActionTarget, ActionError>> + Send + 'a>,
+    >;
+}
+
+impl ActionRun for Action {
+    fn run<'a>(
+        &'a self,
+        ctx: &'a RenderContext,
+        store: &'a dyn Store,
+        actor: &'a ActorRef,
+        trigger_id: &'a TriggerId,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ActionTarget, ActionError>> + Send + 'a>,
+    > {
+        Box::pin(run_action(self, ctx, store, actor, trigger_id))
     }
 }
 
@@ -637,5 +814,146 @@ mod tests {
             matches!(err, ValidationError::UnknownIssueStatus { action_index: 0 }),
             "got {err:?}"
         );
+    }
+
+    // ---- Action::run --------------------------------------------------
+
+    mod run_tests {
+        use super::*;
+        use crate::store::{MemoryStore, ReadOnlyStore, RelationshipType, Store};
+        use hydra_common::ActorId;
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        fn trigger_actor(trigger_id: TriggerId, creator: &str) -> ActorRef {
+            ActorRef::Trigger {
+                trigger_id,
+                on_behalf_of: Some(ActorId::User(ApiUsername::from(creator))),
+            }
+        }
+
+        async fn add_user(store: &MemoryStore, username: &str) {
+            use crate::domain::users::{User, Username};
+            store
+                .add_user(
+                    User::new(Username::from(username), None, false),
+                    &ActorRef::test(),
+                )
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn create_issue_renders_fields_and_writes_created_edge() {
+            let store = MemoryStore::new();
+            add_user(&store, "alice").await;
+            let trigger_id = TriggerId::new();
+            let actor = trigger_actor(trigger_id.clone(), "alice");
+            let action = create_issue(
+                "Daily {{ now.date }}",
+                "Trigger {{ trigger.id }} fired at {{ scheduled_at }}",
+                Some("users/alice"),
+                None,
+            );
+
+            let ctx = RenderContext::new(
+                "2026-06-03T15:04:05Z".parse().unwrap(),
+                "2026-06-03T15:00:00Z".parse().unwrap(),
+                trigger_id.clone(),
+            );
+
+            let target = run_action(&action, &ctx, &store, &actor, &trigger_id)
+                .await
+                .expect("action should succeed");
+            let ActionTarget::Issue(issue_id) = target;
+
+            // Issue persisted with rendered fields and the trigger actor.
+            let versioned = store.get_issue(&issue_id, false).await.unwrap();
+            assert_eq!(versioned.item.title, "Daily 2026-06-03");
+            assert_eq!(
+                versioned.item.description,
+                format!("Trigger {trigger_id} fired at 2026-06-03T15:00:00+00:00"),
+            );
+            assert_eq!(versioned.item.creator.as_str(), "alice");
+            assert!(matches!(versioned.actor, Some(ActorRef::Trigger { .. }),));
+
+            // Exactly one created edge between the trigger and the issue.
+            let source = HydraId::from(trigger_id.clone());
+            let target = HydraId::from(issue_id.clone());
+            let edges = store
+                .get_relationships(
+                    Some(&source),
+                    Some(&target),
+                    Some(RelationshipType::Created),
+                )
+                .await
+                .unwrap();
+            assert_eq!(edges.len(), 1);
+            assert_eq!(edges[0].rel_type, RelationshipType::Created);
+        }
+
+        #[tokio::test]
+        async fn create_issue_with_no_assignee_template_leaves_unassigned() {
+            let store = MemoryStore::new();
+            let trigger_id = TriggerId::new();
+            let actor = trigger_actor(trigger_id.clone(), "alice");
+            let action = create_issue("t", "d", None, None);
+
+            let ctx = RenderContext::new(Utc::now(), Utc::now(), trigger_id.clone());
+            let target = run_action(&action, &ctx, &store, &actor, &trigger_id)
+                .await
+                .unwrap();
+            let ActionTarget::Issue(issue_id) = target;
+            let issue = store.get_issue(&issue_id, false).await.unwrap();
+            assert!(issue.item.assignee.is_none());
+        }
+
+        #[tokio::test]
+        async fn missing_template_variable_returns_render_error() {
+            let store = MemoryStore::new();
+            let trigger_id = TriggerId::new();
+            let actor = trigger_actor(trigger_id.clone(), "alice");
+            // `{{ bogus }}` is not in `KNOWN_VARIABLES`. The renderer
+            // surfaces `RenderError::UnknownVariable`; `Action::run`
+            // wraps it in `ActionError::Render`.
+            let action = create_issue("hi {{ bogus }}", "d", None, None);
+
+            let ctx = RenderContext::new(Utc::now(), Utc::now(), trigger_id.clone());
+            let err = run_action(&action, &ctx, &store, &actor, &trigger_id)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ActionError::Render {
+                        field: "title",
+                        source: RenderError::UnknownVariable { .. }
+                    }
+                ),
+                "got {err:?}"
+            );
+            // No issue was created.
+            let listed = store.list_issues(&Default::default()).await.unwrap();
+            assert!(listed.is_empty(), "no issue should be created on failure");
+        }
+
+        #[tokio::test]
+        async fn unparseable_assignee_returns_parse_error() {
+            let store = MemoryStore::new();
+            let trigger_id = TriggerId::new();
+            let actor = trigger_actor(trigger_id.clone(), "alice");
+            // `not-a-principal` is not in the `users/<x>` form.
+            let action = create_issue("t", "d", Some("not-a-principal"), None);
+
+            let ctx = RenderContext::new(Utc::now(), Utc::now(), trigger_id.clone());
+            let err = run_action(&action, &ctx, &store, &actor, &trigger_id)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, ActionError::ParseAssignee { .. }),
+                "got {err:?}"
+            );
+            let listed = store.list_issues(&Default::default()).await.unwrap();
+            assert!(listed.is_empty());
+        }
     }
 }

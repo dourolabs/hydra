@@ -1412,8 +1412,8 @@ impl ReadOnlyStore for MemoryStore {
     async fn list_triggers(
         &self,
         include_deleted: bool,
-    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
-        let mut items: Vec<Versioned<Trigger>> = self
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
+        let mut items: Vec<(TriggerId, Versioned<Trigger>)> = self
             .triggers
             .iter()
             .filter_map(|entry| {
@@ -1421,10 +1421,10 @@ impl ReadOnlyStore for MemoryStore {
                 if !include_deleted && versioned.item.deleted {
                     return None;
                 }
-                Some(versioned)
+                Some((entry.key().clone(), versioned))
             })
             .collect();
-        items.sort_by(|a, b| b.creation_time.cmp(&a.creation_time));
+        items.sort_by(|a, b| b.1.creation_time.cmp(&a.1.creation_time));
         Ok(items)
     }
 
@@ -2624,9 +2624,10 @@ impl Store for MemoryStore {
             .get_mut(id)
             .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
         let versions = entry.value_mut();
-        // Always take `last_fired_at` from the current latest row —
-        // `record_trigger_fire` mutates that row in place, and a stale
-        // value round-tripped by the caller must not regress it.
+        // Always overwrite the supplied `last_fired_at` with the latest
+        // row's value. `record_trigger_fire` mutates the latest row in
+        // place; a concurrent update must not regress it even if the
+        // caller round-trips a stale `Some(_)` snapshot.
         if let Some(latest) = versions.last() {
             trigger.last_fired_at = latest.item.last_fired_at;
         }

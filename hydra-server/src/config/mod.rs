@@ -682,6 +682,8 @@ pub struct SchedulerSection {
     pub github_poller: WorkerSchedulerConfig,
     #[serde(default = "default_cleanup_branches_scheduler")]
     pub cleanup_branches: WorkerSchedulerConfig,
+    #[serde(default = "default_scheduled_triggers_scheduler")]
+    pub scheduled_triggers: WorkerSchedulerConfig,
 }
 
 impl Default for SchedulerSection {
@@ -690,6 +692,7 @@ impl Default for SchedulerSection {
             monitor_running_sessions: default_monitor_running_scheduler(),
             github_poller: default_github_poller_scheduler(),
             cleanup_branches: default_cleanup_branches_scheduler(),
+            scheduled_triggers: default_scheduled_triggers_scheduler(),
         }
     }
 }
@@ -805,6 +808,14 @@ fn default_github_poller_scheduler() -> WorkerSchedulerConfig {
 fn default_cleanup_branches_scheduler() -> WorkerSchedulerConfig {
     WorkerSchedulerConfig {
         interval_secs: 300,
+        ..Default::default()
+    }
+}
+
+fn default_scheduled_triggers_scheduler() -> WorkerSchedulerConfig {
+    // §4 of /designs/triggered-actions.md commits to a 10s tick.
+    WorkerSchedulerConfig {
+        interval_secs: 10,
         ..Default::default()
     }
 }

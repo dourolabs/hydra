@@ -186,6 +186,13 @@ mod ts_export {
         crate::triggers::Schedule::export_all(&cfg).expect("TriggerSchedule");
         crate::triggers::Action::export_all(&cfg).expect("TriggerAction");
         crate::triggers::CreateIssueAction::export_all(&cfg).expect("CreateIssueAction");
+        crate::triggers::UpsertTriggerRequest::export_all(&cfg).expect("UpsertTriggerRequest");
+        crate::triggers::UpsertTriggerResponse::export_all(&cfg).expect("UpsertTriggerResponse");
+        crate::triggers::TriggerVersionRecord::export_all(&cfg).expect("TriggerVersionRecord");
+        crate::triggers::ListTriggersResponse::export_all(&cfg).expect("ListTriggersResponse");
+        crate::triggers::ListTriggerVersionsResponse::export_all(&cfg)
+            .expect("ListTriggerVersionsResponse");
+        crate::triggers::SearchTriggersQuery::export_all(&cfg).expect("SearchTriggersQuery");
 
         // API v1: form
         crate::form::Form::export_all(&cfg).expect("Form");

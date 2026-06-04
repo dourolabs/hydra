@@ -413,6 +413,24 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/conversations/:conversation_id/close",
             post(routes::conversations::close_conversation),
         )
+        .route(
+            "/v1/triggers",
+            get(routes::triggers::list_triggers).post(routes::triggers::create_trigger),
+        )
+        .route(
+            "/v1/triggers/:trigger_id",
+            get(routes::triggers::get_trigger)
+                .put(routes::triggers::update_trigger)
+                .delete(routes::triggers::delete_trigger),
+        )
+        .route(
+            "/v1/triggers/:trigger_id/versions",
+            get(routes::triggers::list_trigger_versions),
+        )
+        .route(
+            "/v1/triggers/:trigger_id/versions/:version_number",
+            get(routes::triggers::get_trigger_version),
+        )
         .route("/v1/events", get(routes::events::get_events))
         .layer(middleware::from_fn_with_state(
             state.clone(),

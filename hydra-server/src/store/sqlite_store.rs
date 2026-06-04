@@ -3915,7 +3915,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn list_triggers(
         &self,
         include_deleted: bool,
-    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.deleted, t.actor, t.created_at, t.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = t.id) AS creation_time
@@ -3948,12 +3948,18 @@ impl ReadOnlyStore for SqliteStore {
                 .map(parse_sqlite_timestamp)
                 .transpose()?
                 .unwrap_or(timestamp);
-            triggers.push(Versioned::with_optional_actor(
-                trigger,
-                version,
-                timestamp,
-                parse_actor_json_string(row.actor.as_deref())?,
-                creation_time,
+            let trigger_id = TriggerId::from_str(&row.id).map_err(|err| {
+                StoreError::Internal(format!("invalid trigger id stored '{}': {err}", row.id))
+            })?;
+            triggers.push((
+                trigger_id,
+                Versioned::with_optional_actor(
+                    trigger,
+                    version,
+                    timestamp,
+                    parse_actor_json_string(row.actor.as_deref())?,
+                    creation_time,
+                ),
             ));
         }
         Ok(triggers)
@@ -5749,9 +5755,10 @@ impl Store for SqliteStore {
 
         let latest_row = latest_row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
 
-        // Always take `last_fired_at` from the latest row inside this tx —
-        // ignore whatever the caller supplied so a stale value cannot
-        // regress a concurrent `record_trigger_fire` write.
+        // Always overwrite the supplied `last_fired_at` with the latest
+        // row's value (Some or None) — `record_trigger_fire` mutates the
+        // latest row in place, so a stale snapshot round-tripped by the
+        // caller must not regress it.
         trigger.last_fired_at = latest_row
             .last_fired_at
             .as_deref()

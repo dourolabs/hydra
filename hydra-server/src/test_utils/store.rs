@@ -294,7 +294,7 @@ impl ReadOnlyStore for FailingStore {
     async fn list_triggers(
         &self,
         _include_deleted: bool,
-    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         fail()
     }
 

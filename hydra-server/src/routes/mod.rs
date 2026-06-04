@@ -15,6 +15,7 @@ pub mod relations;
 pub mod repositories;
 pub mod secrets;
 pub mod sessions;
+pub mod triggers;
 pub mod users;
 pub mod version;
 pub mod whoami;

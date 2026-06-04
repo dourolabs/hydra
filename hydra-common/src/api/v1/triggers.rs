@@ -1,5 +1,8 @@
 use super::issues::{IssueStatus, IssueType, SessionSettings};
 use super::users::Username;
+use crate::actor_ref::ActorRef;
+use crate::ids::TriggerId;
+use crate::versioning::VersionNumber;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -115,6 +118,133 @@ impl CreateIssueAction {
             session_settings,
         }
     }
+}
+
+/// Body for `POST /v1/triggers` and `PUT /v1/triggers/:id`.
+///
+/// `last_fired_at` and `deleted` are stripped — they are owned by the
+/// server (see `/designs/triggered-actions.md` §4.4 and §4.6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct UpsertTriggerRequest {
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    pub schedule: Schedule,
+    #[serde(default)]
+    pub actions: Vec<Action>,
+    pub creator: Username,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+impl UpsertTriggerRequest {
+    pub fn new(enabled: bool, schedule: Schedule, actions: Vec<Action>, creator: Username) -> Self {
+        Self {
+            enabled,
+            schedule,
+            actions,
+            creator,
+        }
+    }
+}
+
+/// `POST /v1/triggers` and `PUT /v1/triggers/:id` response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct UpsertTriggerResponse {
+    pub trigger_id: TriggerId,
+    pub version: VersionNumber,
+}
+
+impl UpsertTriggerResponse {
+    pub fn new(trigger_id: TriggerId, version: VersionNumber) -> Self {
+        Self {
+            trigger_id,
+            version,
+        }
+    }
+}
+
+/// One version row for `GET /v1/triggers/:id`,
+/// `GET /v1/triggers/:id/versions/:n`, and entries in
+/// `ListTriggerVersionsResponse`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct TriggerVersionRecord {
+    pub trigger_id: TriggerId,
+    pub version: VersionNumber,
+    pub timestamp: DateTime<Utc>,
+    pub trigger: Trigger,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<ActorRef>,
+    pub creation_time: DateTime<Utc>,
+}
+
+impl TriggerVersionRecord {
+    pub fn new(
+        trigger_id: TriggerId,
+        version: VersionNumber,
+        timestamp: DateTime<Utc>,
+        trigger: Trigger,
+        actor: Option<ActorRef>,
+        creation_time: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            trigger_id,
+            version,
+            timestamp,
+            trigger,
+            actor,
+            creation_time,
+        }
+    }
+}
+
+/// `GET /v1/triggers` response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct ListTriggersResponse {
+    pub triggers: Vec<TriggerVersionRecord>,
+}
+
+impl ListTriggersResponse {
+    pub fn new(triggers: Vec<TriggerVersionRecord>) -> Self {
+        Self { triggers }
+    }
+}
+
+/// `GET /v1/triggers/:id/versions` response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct ListTriggerVersionsResponse {
+    pub versions: Vec<TriggerVersionRecord>,
+}
+
+impl ListTriggerVersionsResponse {
+    pub fn new(versions: Vec<TriggerVersionRecord>) -> Self {
+        Self { versions }
+    }
+}
+
+/// `GET /v1/triggers` query string.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct SearchTriggersQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_deleted: Option<bool>,
 }
 
 #[cfg(test)]

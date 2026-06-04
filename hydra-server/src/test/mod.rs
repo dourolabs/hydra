@@ -20,6 +20,7 @@ mod relations;
 mod repositories;
 mod secrets;
 mod sessions;
+mod triggers;
 mod users;
 mod whoami;
 
