@@ -20,6 +20,10 @@ use hydra_common::{
         DevicePollRequest, DevicePollResponse, DeviceStartResponse, LoginRequest, LoginResponse,
     },
     api::v1::merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
+    api::v1::projects::{
+        ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
+        UpsertProjectRequest, UpsertProjectResponse,
+    },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
         RemoveRelationResponse,
@@ -58,8 +62,8 @@ use hydra_common::{
     },
     users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
-    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
-    RepoName, SessionId, TriggerId,
+    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId,
+    RelativeVersionNumber, RepoName, SessionId, TriggerId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode, Url};
 use sse::SseEventStream;
@@ -308,6 +312,20 @@ pub trait HydraClientInterface: Send + Sync {
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
     async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord>;
+    async fn list_projects(&self) -> Result<ListProjectsResponse>;
+    async fn create_project(&self, request: &UpsertProjectRequest)
+        -> Result<UpsertProjectResponse>;
+    async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord>;
+    async fn update_project(
+        &self,
+        project_id: &ProjectId,
+        request: &UpsertProjectRequest,
+    ) -> Result<UpsertProjectResponse>;
+    async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse>;
+    async fn get_project_statuses(
+        &self,
+        project: &ProjectIdOrDefault,
+    ) -> Result<ProjectStatusesResponse>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn list_users(&self, query: &SearchUsersQuery) -> Result<ListUsersResponse>;
     async fn get_user(&self, username: &str) -> Result<UserSummary>;
@@ -1474,6 +1492,124 @@ impl HydraClient {
             .context("failed to decode delete repository response")?;
 
         Ok(delete_response.repository)
+    }
+
+    /// Call `GET /v1/projects` to list non-deleted projects.
+    pub async fn list_projects(&self) -> Result<ListProjectsResponse> {
+        let url = self.endpoint("/v1/projects")?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch projects list")?
+            .error_for_status_with_body("hydra-server returned an error while listing projects")
+            .await?;
+
+        response
+            .json::<ListProjectsResponse>()
+            .await
+            .context("failed to decode list projects response")
+    }
+
+    /// Call `POST /v1/projects` to create a new project.
+    pub async fn create_project(
+        &self,
+        request: &UpsertProjectRequest,
+    ) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint("/v1/projects")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create project request")?
+            .error_for_status_with_body("hydra-server rejected create project request")
+            .await?;
+
+        response
+            .json::<UpsertProjectResponse>()
+            .await
+            .context("failed to decode create project response")
+    }
+
+    /// Call `GET /v1/projects/:project_id` to fetch a single project.
+    pub async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord> {
+        let url = self.endpoint(&format!("/v1/projects/{project_id}"))?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch project")?
+            .error_for_status_with_body("hydra-server returned an error while fetching project")
+            .await?;
+
+        response
+            .json::<ProjectRecord>()
+            .await
+            .context("failed to decode project response")
+    }
+
+    /// Call `PUT /v1/projects/:project_id` to replace a project (full update).
+    pub async fn update_project(
+        &self,
+        project_id: &ProjectId,
+        request: &UpsertProjectRequest,
+    ) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_id}"))?;
+        let response = self
+            .authed(self.http.put(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update project request")?
+            .error_for_status_with_body("hydra-server rejected update project request")
+            .await?;
+
+        response
+            .json::<UpsertProjectResponse>()
+            .await
+            .context("failed to decode update project response")
+    }
+
+    /// Call `DELETE /v1/projects/:project_id` to soft-delete a project.
+    pub async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_id}"))?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete project request")?
+            .error_for_status_with_body("hydra-server returned an error while deleting project")
+            .await?;
+
+        response
+            .json::<UpsertProjectResponse>()
+            .await
+            .context("failed to decode delete project response")
+    }
+
+    /// Call `GET /v1/projects/:project/statuses` to list the project's status
+    /// definitions. Pass [`ProjectIdOrDefault::Default`] to get the
+    /// synthesized default project's statuses.
+    pub async fn get_project_statuses(
+        &self,
+        project: &ProjectIdOrDefault,
+    ) -> Result<ProjectStatusesResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project}/statuses"))?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch project statuses")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while fetching project statuses",
+            )
+            .await?;
+
+        response
+            .json::<ProjectStatusesResponse>()
+            .await
+            .context("failed to decode project statuses response")
     }
 
     /// Call `GET /v1/github/token` to fetch the authenticated user's GitHub token.
@@ -2674,6 +2810,40 @@ impl HydraClientInterface for HydraClient {
 
     async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
         HydraClient::delete_repository(self, repo_name).await
+    }
+
+    async fn list_projects(&self) -> Result<ListProjectsResponse> {
+        HydraClient::list_projects(self).await
+    }
+
+    async fn create_project(
+        &self,
+        request: &UpsertProjectRequest,
+    ) -> Result<UpsertProjectResponse> {
+        HydraClient::create_project(self, request).await
+    }
+
+    async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord> {
+        HydraClient::get_project(self, project_id).await
+    }
+
+    async fn update_project(
+        &self,
+        project_id: &ProjectId,
+        request: &UpsertProjectRequest,
+    ) -> Result<UpsertProjectResponse> {
+        HydraClient::update_project(self, project_id, request).await
+    }
+
+    async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
+        HydraClient::delete_project(self, project_id).await
+    }
+
+    async fn get_project_statuses(
+        &self,
+        project: &ProjectIdOrDefault,
+    ) -> Result<ProjectStatusesResponse> {
+        HydraClient::get_project_statuses(self, project).await
     }
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {

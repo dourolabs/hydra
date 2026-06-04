@@ -143,6 +143,7 @@ impl UserHandle {
             IssueStatus::Open.into(),
             None,
             None,
+            None,
             Vec::new(),
             Vec::new(),
             false,
@@ -168,6 +169,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             IssueStatus::Open.into(),
+            None,
             None,
             None,
             vec![IssueDependency::new(
@@ -342,6 +344,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status.into(),
+            None,
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent
@@ -392,6 +395,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status.into(),
+            None,
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent
@@ -516,6 +520,11 @@ impl UserHandle {
             .args(args)
             .env("HYDRA_SERVER_URL", &self.server_url)
             .env("HYDRA_TOKEN", &self.token)
+            // Avoid leaking a HYDRA_ISSUE_ID from the test runner's session
+            // into the spawned CLI: clap picks it up for `--current-issue-id`
+            // and tries to fetch an issue that doesn't exist on the per-test
+            // mock server.
+            .env_remove(hydra_common::constants::ENV_HYDRA_ISSUE_ID)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()

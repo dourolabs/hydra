@@ -32,6 +32,10 @@ use hydra_common::{
         ListLabelsResponse, SearchLabelsQuery, UpsertLabelRequest, UpsertLabelResponse,
     },
     api::v1::merge_check::MergeCheckResponse,
+    api::v1::projects::{
+        ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
+        UpsertProjectRequest, UpsertProjectResponse,
+    },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
     },
@@ -66,8 +70,8 @@ use hydra_common::{
     },
     users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
-    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
-    RepoName, SessionId, TriggerId,
+    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId,
+    RelativeVersionNumber, RepoName, SessionId, TriggerId,
 };
 use reqwest::Url;
 
@@ -305,6 +309,40 @@ impl HydraClientInterface for RelayCallCountingClient {
 
     async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
         self.inner.delete_repository(repo_name).await
+    }
+
+    async fn list_projects(&self) -> Result<ListProjectsResponse> {
+        self.inner.list_projects().await
+    }
+
+    async fn create_project(
+        &self,
+        request: &UpsertProjectRequest,
+    ) -> Result<UpsertProjectResponse> {
+        self.inner.create_project(request).await
+    }
+
+    async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord> {
+        self.inner.get_project(project_id).await
+    }
+
+    async fn update_project(
+        &self,
+        project_id: &ProjectId,
+        request: &UpsertProjectRequest,
+    ) -> Result<UpsertProjectResponse> {
+        self.inner.update_project(project_id, request).await
+    }
+
+    async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
+        self.inner.delete_project(project_id).await
+    }
+
+    async fn get_project_statuses(
+        &self,
+        project: &ProjectIdOrDefault,
+    ) -> Result<ProjectStatusesResponse> {
+        self.inner.get_project_statuses(project).await
     }
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {

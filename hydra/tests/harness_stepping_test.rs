@@ -26,6 +26,7 @@ async fn create_spawnable_issue(
         Username::from("default"),
         String::new(),
         IssueStatus::Open.into(),
+        None,
         // The agent_queue assignment check is typed: it only picks up
         // `Principal::Agent { name: agent.name }`. The harness builder
         // (`with_agent`) seeds the agent row so `principal_exists` passes.

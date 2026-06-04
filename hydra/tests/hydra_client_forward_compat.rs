@@ -6,6 +6,9 @@ use futures::StreamExt;
 use httpmock::prelude::*;
 use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
+    api::v1::projects::{
+        Project, ProjectIdOrDefault, ProjectKey, StatusDefinition, StatusKey, UpsertProjectRequest,
+    },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
     issues::{
         Issue, IssueDependencyType, IssueStatus, IssueType, SearchIssuesQuery, UpsertIssueRequest,
@@ -21,7 +24,7 @@ use hydra_common::{
     task_status::Status,
     users::Username,
     whoami::ActorIdentity,
-    DocumentId, IssueId, PatchId, RelativeVersionNumber, RepoName, SessionId,
+    DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName, SessionId,
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -41,6 +44,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue_id = IssueId::new();
     let dependency_id = IssueId::new();
     let patch_id = PatchId::new();
+    let project_id = ProjectId::new();
     let repo_name = RepoName::new("dourolabs", "hydra")?;
     let username: Username = "future-user".into();
 
@@ -76,6 +80,11 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     );
     let github_token_lookup_path = "/v1/github/token";
     let whoami_path = "/v1/whoami";
+    let project_path = format!("/v1/projects/{project_id}");
+    let project_statuses_path = format!("{project_path}/statuses");
+    let project_record_body = forward_project_json(&project_id);
+    let project_record_for_get = project_record_body.clone();
+    let project_record_for_list = project_record_body.clone();
     let merge_queue_path = format!(
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
@@ -366,6 +375,76 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    let project_id_for_create = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path("/v1/projects");
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_create,
+            "version": 0,
+            "note": "create-project"
+        }));
+    });
+
+    let project_record_for_list_clone = project_record_for_list.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path("/v1/projects");
+        then.status(200).json_body(json!({
+            "projects": [project_record_for_list_clone.clone()],
+            "extra": "list-projects"
+        }));
+    });
+
+    let project_get_path = project_path.clone();
+    let project_record_for_get_clone = project_record_for_get.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(project_get_path.as_str());
+        then.status(200)
+            .json_body(project_record_for_get_clone.clone());
+    });
+
+    let project_update_path = project_path.clone();
+    let project_id_for_update = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(project_update_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_update,
+            "version": 1,
+            "note": "update-project"
+        }));
+    });
+
+    let project_delete_path = project_path.clone();
+    let project_id_for_delete = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(project_delete_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_delete,
+            "version": 2,
+            "note": "delete-project"
+        }));
+    });
+
+    let project_statuses_path_clone = project_statuses_path.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(project_statuses_path_clone.as_str());
+        then.status(200).json_body(json!({
+            "statuses": [
+                {
+                    "key": "open",
+                    "label": "Open",
+                    "icon": "circle",
+                    "color": "#abcdef",
+                    "unblocks_parents": false,
+                    "unblocks_dependents": false,
+                    "cascades_to_children": false,
+                    "future": "field"
+                }
+            ],
+            "default_status_key": "open",
+            "extra": "statuses"
+        }));
+    });
+
     server.mock(|when, then| {
         when.method(GET).path("/v1/github/app/client-id");
         then.status(200)
@@ -461,6 +540,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         Username::from("creator"),
         "progress".to_string(),
         IssueStatus::Open.into(),
+        None,
         Some(hydra_common::principal::Principal::User {
             name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
         }),
@@ -530,6 +610,47 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let patches = client.list_patches(&SearchPatchesQuery::default()).await?;
     assert_eq!(patches.patches.len(), 1);
+
+    // Projects
+    let project = Project::new(
+        ProjectKey::try_new("future-project").unwrap(),
+        "Future Project".to_string(),
+        vec![StatusDefinition::new(
+            StatusKey::try_new("open").unwrap(),
+            "Open".to_string(),
+            hydra_common::api::v1::projects::IconKey::try_new("circle").unwrap(),
+            "#abcdef".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        )],
+        StatusKey::try_new("open").unwrap(),
+        Username::from("test-creator"),
+        false,
+    );
+    let upsert_project = UpsertProjectRequest::new(project);
+
+    let created_project = client.create_project(&upsert_project).await?;
+    assert_eq!(created_project.project_id, project_id);
+
+    let updated_project = client.update_project(&project_id, &upsert_project).await?;
+    assert_eq!(updated_project.project_id, project_id);
+
+    let fetched_project = client.get_project(&project_id).await?;
+    assert_eq!(fetched_project.project_id, project_id);
+
+    let listed_projects = client.list_projects().await?;
+    assert_eq!(listed_projects.projects.len(), 1);
+
+    let statuses = client
+        .get_project_statuses(&ProjectIdOrDefault::Id(project_id.clone()))
+        .await?;
+    assert_eq!(statuses.statuses.len(), 1);
+    assert_eq!(statuses.default_status_key, "open");
+
+    let deleted_project = client.delete_project(&project_id).await?;
+    assert_eq!(deleted_project.project_id, project_id);
 
     // Documents
     let document = Document::new(
@@ -697,6 +818,33 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
         },
         "extra": "issue",
         "creation_time": Utc::now()
+    })
+}
+
+fn forward_project_json(project_id: &ProjectId) -> Value {
+    json!({
+        "project_id": project_id,
+        "version": 0,
+        "project": {
+            "key": "future-project",
+            "name": "Future Project",
+            "statuses": [
+                {
+                    "key": "open",
+                    "label": "Open",
+                    "icon": "circle",
+                    "color": "#abcdef",
+                    "unblocks_parents": false,
+                    "unblocks_dependents": false,
+                    "cascades_to_children": false,
+                    "future": "status-field"
+                }
+            ],
+            "default_status_key": "open",
+            "creator": "test-creator",
+            "future": "project-field"
+        },
+        "extra": "project"
     })
 }
 

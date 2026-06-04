@@ -2,6 +2,7 @@ use crate::{
     client::HydraClientInterface,
     command::{
         output::{render, CommandContext, IssueRecords, IssueSummaryRecords, ResolvedOutputFormat},
+        projects::ProjectRef,
         utils::resolve_username,
     },
     output_writer::write_stdout,
@@ -11,6 +12,7 @@ use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
+    api::v1::projects::StatusKey,
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
@@ -20,9 +22,17 @@ use hydra_common::{
     },
     principal::{Principal, PrincipalParseError},
     users::Username,
-    HydraId, LabelId, PatchId, RelativeVersionNumber, RepoName,
+    HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
 };
 use std::str::FromStr;
+
+/// Tri-state for the `--project` / `--clear-project` pair on `hydra issues update`:
+/// `Unchanged` keeps the existing value, `Set` replaces it, `Clear` detaches.
+enum ProjectUpdate {
+    Unchanged,
+    Set(ProjectId),
+    Clear,
+}
 
 /// clap value parser for `--assignee`. Phase 4b requires the full
 /// canonical path form (`users/<name>`, `agents/<name>`, or
@@ -42,6 +52,11 @@ fn parse_assignee_principal(value: &str) -> Result<Principal, String> {
     })
 }
 
+// The `Update` variant has many optional flags by design (one per field of
+// `Issue` plus matching `clear-*` toggles). Boxing each variant individually
+// would clutter dispatch; the CLI parses one of these per invocation, so the
+// stack cost is irrelevant.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 pub enum IssueCommands {
     /// List Hydra issues. Returns summary records with truncated descriptions; use `get` for complete details.
@@ -85,9 +100,17 @@ pub enum IssueCommands {
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
 
-        /// Issue status: open, in-progress, or closed (defaults to open).
-        #[arg(long, value_name = "ISSUE_STATUS", default_value_t = IssueStatus::Open)]
-        status: IssueStatus,
+        /// Issue status key. Validity depends on the issue's project:
+        /// default-project issues accept `open`, `in-progress`, `closed`,
+        /// `dropped`, `failed`; bespoke projects accept any of their declared
+        /// status keys. The server validates the value. Defaults to `open`.
+        #[arg(long, value_name = "STATUS_KEY", default_value = "open")]
+        status: StatusKey,
+
+        /// Project id or key to attach this issue to. Omit for the
+        /// synthesized default project.
+        #[arg(long, value_name = "PROJECT_ID_OR_KEY")]
+        project: Option<ProjectRef>,
 
         /// Issue dependencies in the format dependency-type:ISSUE_ID where dependency-type is child-of or blocked-on (e.g. child-of:i-abcd).
         #[arg(long = "deps", value_name = "TYPE:ISSUE_ID", value_parser = parse_issue_dependency)]
@@ -177,9 +200,24 @@ pub enum IssueCommands {
         #[arg(long, value_name = "TITLE")]
         title: Option<String>,
 
-        /// New issue status.
-        #[arg(long, value_name = "ISSUE_STATUS")]
-        status: Option<IssueStatus>,
+        /// New issue status key. Validity depends on the issue's project;
+        /// the server validates the value.
+        #[arg(long, value_name = "STATUS_KEY")]
+        status: Option<StatusKey>,
+
+        /// Move the issue to a different project (by id or key), or clear
+        /// it with `--clear-project`.
+        #[arg(
+            long,
+            value_name = "PROJECT_ID_OR_KEY",
+            conflicts_with = "clear_project"
+        )]
+        project: Option<ProjectRef>,
+
+        /// Detach the issue from its current project (falls back to the
+        /// default project's status semantics).
+        #[arg(long = "clear-project")]
+        clear_project: bool,
 
         /// Updated assignee. Requires the full canonical path form:
         /// `users/<name>`, `agents/<name>`, or `external/<system>/<name>`.
@@ -387,6 +425,7 @@ pub async fn run(
             r#type,
             title,
             status,
+            project,
             dependencies,
             patches,
             assignee,
@@ -407,11 +446,16 @@ pub async fn run(
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             let creator = resolve_username(client).await?;
+            let project_id = match project {
+                Some(reference) => Some(reference.resolve(client).await?),
+                None => None,
+            };
             create_issue(
                 client,
                 r#type,
                 title.unwrap_or_default(),
                 status,
+                project_id,
                 dependencies,
                 patches,
                 assignee,
@@ -438,6 +482,8 @@ pub async fn run(
             r#type,
             title,
             status,
+            project,
+            clear_project,
             assignee,
             clear_assignee,
             description,
@@ -465,12 +511,20 @@ pub async fn run(
             clear_feedback,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
+            let project_update = if clear_project {
+                ProjectUpdate::Clear
+            } else if let Some(reference) = project {
+                ProjectUpdate::Set(reference.resolve(client).await?)
+            } else {
+                ProjectUpdate::Unchanged
+            };
             update_issue(
                 client,
                 id,
                 r#type,
                 title,
                 status,
+                project_update,
                 assignee,
                 clear_assignee,
                 description,
@@ -810,11 +864,13 @@ async fn submit_form(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_issue(
     client: &dyn HydraClientInterface,
     issue_type: IssueType,
     title: String,
-    status: IssueStatus,
+    status: StatusKey,
+    project_id: Option<ProjectId>,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
     assignee: Option<Principal>,
@@ -865,7 +921,8 @@ async fn create_issue(
         description.to_string(),
         creator,
         progress,
-        status.into(),
+        status,
+        project_id,
         assignee,
         job_settings,
         dependencies,
@@ -901,12 +958,14 @@ async fn create_issue(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_issue(
     client: &dyn HydraClientInterface,
     id: IssueId,
     issue_type: Option<IssueType>,
     title: Option<String>,
-    status: Option<IssueStatus>,
+    status: Option<StatusKey>,
+    project_update: ProjectUpdate,
     assignee: Option<Principal>,
     clear_assignee: bool,
     description: Option<String>,
@@ -1002,6 +1061,7 @@ async fn update_issue(
     let no_changes = issue_type.is_none()
         && title.is_none()
         && status.is_none()
+        && matches!(project_update, ProjectUpdate::Unchanged)
         && assignee.is_none()
         && description.is_none()
         && dependencies_update.is_none()
@@ -1047,6 +1107,7 @@ async fn update_issue(
     let issue_fields_changed = issue_type.is_some()
         || title.is_some()
         || status.is_some()
+        || !matches!(project_update, ProjectUpdate::Unchanged)
         || assignee.is_some()
         || description.is_some()
         || dependencies_update.is_some()
@@ -1057,13 +1118,19 @@ async fn update_issue(
         || form_update.is_some();
 
     let result = if issue_fields_changed {
+        let project_id = match project_update {
+            ProjectUpdate::Unchanged => current.issue.project_id,
+            ProjectUpdate::Set(id) => Some(id),
+            ProjectUpdate::Clear => None,
+        };
         let updated_issue = Issue::new(
             issue_type.unwrap_or(current.issue.issue_type),
             title.unwrap_or(current.issue.title),
             description.unwrap_or(current.issue.description),
             current.issue.creator,
             progress_update.unwrap_or(current.issue.progress),
-            status.map(Into::into).unwrap_or(current.issue.status),
+            status.unwrap_or(current.issue.status),
+            project_id,
             assignee.unwrap_or(current.issue.assignee),
             job_settings,
             dependencies_update.unwrap_or(current.issue.dependencies),
@@ -1322,6 +1389,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 status.into(),
+                None,
                 assignee.map(user_principal),
                 None,
                 dependencies,
@@ -1353,6 +1421,7 @@ mod tests {
                     empty_user(),
                     String::new(),
                     IssueStatus::Open.into(),
+                    None,
                     None,
                     None,
                     vec![],
@@ -1423,6 +1492,7 @@ mod tests {
                 IssueStatus::InProgress.into(),
                 None,
                 None,
+                None,
                 vec![],
                 Vec::new(),
                 false,
@@ -1475,6 +1545,7 @@ mod tests {
                     empty_user(),
                     String::new(),
                     IssueStatus::Open.into(),
+                    None,
                     Some(user_principal("owner-a")),
                     None,
                     vec![],
@@ -1528,6 +1599,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed.into(),
+                None,
                 Some(user_principal("team-a")),
                 None,
                 Vec::new(),
@@ -1551,7 +1623,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Closed,
+            IssueStatus::Closed.into(),
+            None,
             Vec::new(),
             patch_ids.clone(),
             Some(user_principal("team-a")),
@@ -1596,6 +1669,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed.into(),
+                None,
                 Some(user_principal("team-a")),
                 Some(job_settings.clone()),
                 Vec::new(),
@@ -1619,7 +1693,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Closed,
+            IssueStatus::Closed.into(),
+            None,
             Vec::new(),
             vec![],
             Some(user_principal("team-a")),
@@ -1668,6 +1743,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(inherited_settings.clone()),
                 Vec::new(),
                 Vec::new(),
@@ -1694,6 +1770,7 @@ mod tests {
                 "Initial notes".into(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(inherited_settings),
                 Vec::new(),
                 vec![],
@@ -1716,7 +1793,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -1767,6 +1845,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(inherited_settings.clone()),
                 Vec::new(),
                 Vec::new(),
@@ -1799,6 +1878,7 @@ mod tests {
                 "Initial notes".into(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(expected_settings.clone()),
                 Vec::new(),
                 vec![],
@@ -1821,7 +1901,8 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -1865,6 +1946,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(job_settings.clone()),
                 Vec::new(),
                 vec![],
@@ -1887,7 +1969,8 @@ mod tests {
             &client,
             IssueType::Task,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -1933,6 +2016,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(inherited_settings.clone()),
                 Vec::new(),
                 Vec::new(),
@@ -1959,6 +2043,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(inherited_settings),
                 Vec::new(),
                 vec![],
@@ -1981,7 +2066,8 @@ mod tests {
             &client,
             IssueType::Task,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             Vec::new(),
             vec![],
             None,
@@ -2017,7 +2103,8 @@ mod tests {
             &client,
             IssueType::Bug,
             "Test Title".to_string(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
+            None,
             vec![],
             Vec::new(),
             None,
@@ -2108,6 +2195,7 @@ mod tests {
                 empty_user(),
                 "New progress".into(),
                 IssueStatus::Closed.into(),
+                None,
                 Some(user_principal("owner-b")),
                 Some(job_settings.clone()),
                 vec![IssueDependency::new(
@@ -2140,7 +2228,8 @@ mod tests {
             target_issue_id,
             Some(IssueType::Bug),
             None,
-            Some(IssueStatus::Closed),
+            Some(IssueStatus::Closed.into()),
+            ProjectUpdate::Unchanged,
             Some(user_principal("owner-b")),
             false,
             Some("Updated issue description".into()),
@@ -2194,6 +2283,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress.into(),
+                None,
                 Some(user_principal("owner-a")),
                 None,
                 vec![IssueDependency::new(
@@ -2218,6 +2308,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::InProgress.into(),
+                None,
                 None,
                 None,
                 vec![],
@@ -2248,6 +2339,7 @@ mod tests {
             None,
             None,
             None,
+            ProjectUpdate::Unchanged,
             None,
             true,
             None,
@@ -2299,6 +2391,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress.into(),
+                None,
                 Some(user_principal("owner-a")),
                 Some(job_settings),
                 vec![IssueDependency::new(
@@ -2323,6 +2416,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress.into(),
+                None,
                 Some(user_principal("owner-a")),
                 None,
                 vec![IssueDependency::new(
@@ -2356,6 +2450,7 @@ mod tests {
             None,
             None,
             None,
+            ProjectUpdate::Unchanged,
             None,
             false,
             None,
@@ -2408,6 +2503,7 @@ mod tests {
                 IssueStatus::Open.into(),
                 None,
                 None,
+                None,
                 Vec::new(),
                 Vec::new(),
                 false,
@@ -2429,6 +2525,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
+                None,
                 None,
                 Some(expected_settings),
                 Vec::new(),
@@ -2459,6 +2556,7 @@ mod tests {
             None,
             None,
             None,
+            ProjectUpdate::Unchanged,
             None,
             false,
             None,
@@ -2512,6 +2610,7 @@ mod tests {
                 String::new(),
                 IssueStatus::Open.into(),
                 None,
+                None,
                 Some(existing_settings),
                 Vec::new(),
                 Vec::new(),
@@ -2532,6 +2631,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
+                None,
                 None,
                 Some(SessionSettings::default()),
                 Vec::new(),
@@ -2562,6 +2662,7 @@ mod tests {
             None,
             None,
             None,
+            ProjectUpdate::Unchanged,
             None,
             false,
             None,
@@ -2610,6 +2711,7 @@ mod tests {
                     empty_user(),
                     "Working on repro".into(),
                     IssueStatus::Open.into(),
+                    None,
                     Some(user_principal("owner-a")),
                     None,
                     vec![IssueDependency::new(
@@ -2637,6 +2739,7 @@ mod tests {
                     empty_user(),
                     String::new(),
                     IssueStatus::InProgress.into(),
+                    None,
                     None,
                     None,
                     vec![],

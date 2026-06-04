@@ -208,6 +208,7 @@ mod tests {
             String::new(),
             IssueStatus::Open.into(),
             None,
+            None,
             Some(SessionSettings::default()),
             Vec::new(),
             Vec::new(),
