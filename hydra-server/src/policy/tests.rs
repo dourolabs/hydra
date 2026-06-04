@@ -936,10 +936,9 @@ fn unknown_policy_name_in_config_errors() {
     );
 }
 
-/// Test: Unknown automation names error during validation; provides a
-/// stand-in for the previous "invalid params" check now that
-/// `cascade_issue_status` ignores its params entirely (PR 4 dropped the
-/// `trigger_statuses` knob in favor of `cascades_to_children`).
+/// Test: Unknown automation names error during validation. This stands
+/// in for the "invalid params" check now that `cascade_issue_status`
+/// ignores its params entirely.
 #[test]
 fn invalid_params_produce_error_during_validation() {
     let registry = registry::build_default_registry();

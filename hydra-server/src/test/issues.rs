@@ -1352,12 +1352,12 @@ async fn submit_form_action_valid_submission() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::Result<()> {
-    // PR 4: `Effect::UpdateIssue { set_feedback_from: Some(field) }`
-    // writes the named form-field value into `issue.feedback` in the
-    // same write that sets `status`. This powers the same-issue review
-    // hand-off — the reviewer's `request_changes` action both moves the
-    // issue back to in-development and stamps the review comment as
-    // feedback so the SWE respawn picks it up.
+    // `Effect::UpdateIssue { set_feedback_from: Some(field) }` writes
+    // the named form-field value into `issue.feedback` in the same write
+    // that sets `status`. This powers the same-issue review hand-off —
+    // the reviewer's `request_changes` action both moves the issue back
+    // to in-development and stamps the review comment as feedback so
+    // the SWE respawn picks it up.
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -1381,8 +1381,7 @@ async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::R
             style: ActionStyle::Danger,
             requires: vec!["review_comment".to_string()],
             effect: Effect::UpdateIssue {
-                status: hydra_common::api::v1::projects::StatusKey::try_new("in-progress")
-                    .unwrap(),
+                status: hydra_common::api::v1::projects::StatusKey::try_new("in-progress").unwrap(),
                 set_feedback_from: Some("review_comment".to_string()),
             },
         }],
@@ -1425,6 +1424,71 @@ async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::R
         fetched.issue.feedback,
         Some("please address X and Y".to_string()),
         "set_feedback_from must copy the named field's value into issue.feedback"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_set_feedback_from_rejects_missing_field() -> anyhow::Result<()> {
+    // A misconfigured action that names a `set_feedback_from` field but
+    // does not list it in `requires` (so the field can legally be absent
+    // from a submission) must fail loudly rather than silently stamping
+    // an empty feedback string.
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let form = Form {
+        prompt: "Reviewer".to_string(),
+        fields: vec![Field {
+            key: "review_comment".to_string(),
+            label: "Comment".to_string(),
+            description: None,
+            input: Input::Textarea {
+                placeholder: None,
+                min_length: None,
+                max_length: None,
+                rows: 4,
+            },
+            default: None,
+        }],
+        // Note: `requires` intentionally empty — this is the misconfiguration.
+        actions: vec![Action {
+            id: "request_changes".to_string(),
+            label: "Request changes".to_string(),
+            style: ActionStyle::Danger,
+            requires: vec![],
+            effect: Effect::UpdateIssue {
+                status: hydra_common::api::v1::projects::StatusKey::try_new("in-progress").unwrap(),
+                set_feedback_from: Some("review_comment".to_string()),
+            },
+        }],
+    };
+    let issue_id = create_issue_with_form(&client, &server.base_url(), form).await?;
+
+    let resp = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new(
+            "request_changes".to_string(),
+            HashMap::new(),
+        ))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let fetched: IssueVersionRecord = client
+        .get(format!("{}/v1/issues/{}", server.base_url(), issue_id))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        fetched.issue.feedback, None,
+        "issue.feedback must not be touched when the action fails"
     );
 
     Ok(())
@@ -1707,10 +1771,10 @@ async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn submit_feedback_leaves_closed_status_unchanged() -> anyhow::Result<()> {
-    // Behavior shift in PR 4: `submit_feedback` no longer mutates status.
-    // Callers that want to re-route the issue submit an explicit status
-    // transition (typically via a form action), which gives the project's
-    // `on_enter` automation a chance to reassign deterministically.
+    // `submit_feedback` does not mutate status. Callers that want to
+    // re-route the issue submit an explicit status transition (typically
+    // via a form action), which gives the project's `on_enter` automation
+    // a chance to reassign deterministically.
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -1753,7 +1817,7 @@ async fn submit_feedback_leaves_closed_status_unchanged() -> anyhow::Result<()> 
     assert_eq!(
         resp.issue.status.as_str(),
         hydra_common::api::v1::issues::IssueStatus::Closed.as_str(),
-        "closed issues stay closed when feedback is submitted (PR 4 behavior shift)"
+        "closed issues stay closed when feedback is submitted"
     );
 
     Ok(())
@@ -1804,7 +1868,7 @@ async fn submit_feedback_leaves_failed_status_unchanged() -> anyhow::Result<()> 
     assert_eq!(
         resp.issue.status.as_str(),
         hydra_common::api::v1::issues::IssueStatus::Failed.as_str(),
-        "failed issues stay failed when feedback is submitted (PR 4 behavior shift)"
+        "failed issues stay failed when feedback is submitted"
     );
 
     Ok(())

@@ -1,12 +1,11 @@
 //! `apply_status_on_enter` — runs an issue's resolved
 //! [`StatusDefinition::on_enter`] rule whenever its status changes.
 //!
-//! Wired up per `/designs/per-project-issue-statuses.md` §4 "Spawn
-//! dispatch and on_enter automation". The same-issue review hand-off is
-//! a direct consequence of this automation: when SWE moves an issue to
-//! `in-review`, the resolved status's `on_enter` reassigns to the
-//! reviewer agent and attaches the review form; the existing
-//! assignee-driven spawn dispatcher picks the reviewer up automatically.
+//! The same-issue review hand-off is a direct consequence of this
+//! automation: when SWE moves an issue to `in-review`, the resolved
+//! status's `on_enter` reassigns to the reviewer agent and attaches the
+//! review form; the existing assignee-driven spawn dispatcher picks the
+//! reviewer up automatically.
 //!
 //! Idempotent — re-entering the same status with the resulting state
 //! already in place is a no-op (no `upsert_issue`, no version bump).
@@ -172,10 +171,7 @@ impl Automation for ApplyStatusOnEnterAutomation {
 
 /// Look up a document by path and parse its body as a YAML [`Form`].
 /// This is the same wire format the CLI accepts via `--form`.
-async fn load_form_from_document(
-    ctx: &AutomationContext<'_>,
-    path: &str,
-) -> anyhow::Result<Form> {
+async fn load_form_from_document(ctx: &AutomationContext<'_>, path: &str) -> anyhow::Result<Form> {
     use crate::store::StoreError;
 
     let store = ctx.app_state.store();
@@ -275,11 +271,7 @@ mod tests {
         id
     }
 
-    fn issue_updated_event(
-        issue_id: hydra_common::IssueId,
-        old: Issue,
-        new: Issue,
-    ) -> ServerEvent {
+    fn issue_updated_event(issue_id: hydra_common::IssueId, old: Issue, new: Issue) -> ServerEvent {
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(old),
             new,
@@ -303,7 +295,12 @@ mod tests {
 
         let project_id = build_engineering_project(
             &handles,
-            StatusOnEnter::new(Some(Principal::Agent { name: agent.clone() }), None),
+            StatusOnEnter::new(
+                Some(Principal::Agent {
+                    name: agent.clone(),
+                }),
+                None,
+            ),
         )
         .await;
 
@@ -363,10 +360,7 @@ mod tests {
 
         let project_id = build_engineering_project(
             &handles,
-            StatusOnEnter::new(
-                None,
-                Some("/forms/review_escalation.yaml".parse().unwrap()),
-            ),
+            StatusOnEnter::new(None, Some("/forms/review_escalation.yaml".parse().unwrap())),
         )
         .await;
 
@@ -411,8 +405,7 @@ mod tests {
     #[tokio::test]
     async fn no_on_enter_is_noop() {
         let handles = test_utils::test_state_handles();
-        let project_id =
-            build_engineering_project(&handles, StatusOnEnter::new(None, None)).await;
+        let project_id = build_engineering_project(&handles, StatusOnEnter::new(None, None)).await;
         // Override: project's `in-review` status has no on_enter at all.
         // Use `closed` instead which has no on_enter.
 
@@ -474,7 +467,12 @@ mod tests {
 
         let project_id = build_engineering_project(
             &handles,
-            StatusOnEnter::new(Some(Principal::Agent { name: agent.clone() }), None),
+            StatusOnEnter::new(
+                Some(Principal::Agent {
+                    name: agent.clone(),
+                }),
+                None,
+            ),
         )
         .await;
 
@@ -526,18 +524,16 @@ mod tests {
 
     #[tokio::test]
     async fn registered_in_default_engine_wiring() {
-        // Regression guard for the §6 "registration vs activation" trap:
-        // building the policy engine from the production defaults must
-        // include this automation among the active ones.
+        // Building the policy engine from the production defaults must
+        // include this automation among the active ones. Catches the case
+        // where the automation is registered in the registry but never
+        // listed in `default_policy_config`.
         use crate::app::default_policy_config;
         let engine = crate::app::AppState::build_policy_engine(Some(&default_policy_config()));
-        // Count is the simplest accessible probe; cross-check by name via
-        // a private test hook would be tighter but isn't part of the
-        // PolicyEngine API.
         assert!(
-            engine.automation_count() >= 9,
-            "expected at least 9 default automations including apply_status_on_enter, got {}",
-            engine.automation_count()
+            engine.automation_names().contains(&AUTOMATION_NAME),
+            "default engine wiring missing {AUTOMATION_NAME}; got {:?}",
+            engine.automation_names()
         );
     }
 }

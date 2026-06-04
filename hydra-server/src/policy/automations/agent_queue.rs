@@ -1,4 +1,6 @@
 #[cfg(test)]
+use crate::domain::issues::IssueStatus;
+#[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
 use crate::domain::users::Username;
@@ -12,8 +14,6 @@ use crate::{
     },
     store::{Status, StoreError},
 };
-#[cfg(test)]
-use crate::domain::issues::IssueStatus;
 use anyhow::Context;
 #[cfg(test)]
 use hydra_common::RepoName;
@@ -1545,7 +1545,7 @@ mod tests {
 
         // Create a terminal (Closed) child issue — counts as progress on
         // the parent, and a `unblocks_parents=true` child keeps the
-        // parent ready under PR 4's unified readiness rule.
+        // parent ready under the unified readiness rule.
         // Assign to a different agent so it doesn't spawn here.
         handles
             .store
@@ -1588,7 +1588,7 @@ mod tests {
 
     #[tokio::test]
     async fn resets_attempt_counter_when_child_updated() -> anyhow::Result<()> {
-        // Per PR 4's unified readiness rule, a parent is only ready when
+        // Under the unified readiness rule, a parent is only ready when
         // every direct child has `unblocks_parents = true`. We use a
         // Closed child throughout so the parent stays ready; the
         // children_snapshot still changes when the child's version bumps,
@@ -1689,7 +1689,7 @@ mod tests {
             .await?;
 
         // Create a terminal (Closed) child so the parent stays ready
-        // under PR 4's unified readiness rule.
+        // under the unified readiness rule.
         let (_child_id, _) = handles
             .store
             .add_issue(

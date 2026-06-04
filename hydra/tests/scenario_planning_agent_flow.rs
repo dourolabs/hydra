@@ -23,7 +23,7 @@ use std::str::FromStr;
 /// Verifies:
 /// - Agent explicitly sets issue status to failed via CLI
 /// - Failed child does not block parent re-planning once siblings terminal
-/// - Parent ready under PR 4's unified rule once every direct child has
+/// - Parent ready under the unified rule once every direct child has
 ///   `unblocks_parents = true`
 /// - Replacement child issues work correctly
 /// - Original failed child remains in terminal state
@@ -124,10 +124,11 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     // ── Step 4: User drops the blocked sibling ───────────────────────
     // Child 2 is blocked-on the failed child 1. Cascade only walks
     // child-of edges, so it stays Open until the user drops it. Under
-    // PR 4's unified readiness rule, the parent is not ready while any
+    // the unified readiness rule, the parent is not ready while any
     // direct child is non-terminal — so dropping child 2 is the gate
     // that lets PM re-spawn.
-    user.update_issue_status(&child2_id, IssueStatus::Dropped).await?;
+    user.update_issue_status(&child2_id, IssueStatus::Dropped)
+        .await?;
     let child2_dropped = user.get_issue(&child2_id).await?;
     child2_dropped.assert_status(IssueStatus::Dropped);
 
@@ -149,14 +150,12 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     harness
         .run_worker(
             pm_task_round2,
-            vec![
-                &format!(
-                    "hydra issues create 'Add Memcached cache integration (retry)' \
+            vec![&format!(
+                "hydra issues create 'Add Memcached cache integration (retry)' \
                      --type task --assignee agents/swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
-                ),
-            ],
+            )],
         )
         .await?;
 
@@ -261,8 +260,8 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 /// Verifies:
 /// - User can drop an issue to trigger re-planning
 /// - Dropped issue is terminal and does not block parent
-/// - Under PR 4's unified rule, blocked siblings still gate re-spawn
-///   until explicitly dropped
+/// - Under the unified readiness rule, blocked siblings still gate
+///   re-spawn until explicitly dropped
 /// - PM re-spawns after rejection once all children are terminal
 /// - Replacement child completes the work
 #[tokio::test]
@@ -365,8 +364,8 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     // ── Step 5: User drops blocked sibling ───────────────────────────
     // Child 2 is blocked-on the dropped child 1 — cascade only walks
     // child-of edges, so the user drops child 2 explicitly. This makes
-    // every direct child of the parent terminal, satisfying PR 4's
-    // unified readiness rule for parent re-spawn.
+    // every direct child of the parent terminal, satisfying the unified
+    // readiness rule for parent re-spawn.
     user.update_issue_status(&child2_id, IssueStatus::Dropped)
         .await?;
     let child2_dropped = user.get_issue(&child2_id).await?;
@@ -388,14 +387,12 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     harness
         .run_worker(
             pm_task_round2,
-            vec![
-                &format!(
-                    "hydra issues create 'Build search with SQLite FTS5' \
+            vec![&format!(
+                "hydra issues create 'Build search with SQLite FTS5' \
                      --type task --assignee agents/swe \
                      --deps child-of:{parent_id} \
                      --repo-name {repo_str}"
-                ),
-            ],
+            )],
         )
         .await?;
 

@@ -106,6 +106,12 @@ pub enum SubmitFormActionError {
     ValidationFailed {
         field_errors: HashMap<String, String>,
     },
+    #[error(
+        "form action's `set_feedback_from = {field_key}` references a field \
+         not present in the submitted response; the action should list it \
+         under `requires:`"
+    )]
+    SetFeedbackFromMissingField { field_key: String },
     #[error("issue store operation failed")]
     Store {
         #[source]
@@ -453,8 +459,7 @@ impl AppState {
         self.issue_ready(issue_id, &mut visited).await
     }
 
-    /// Unified readiness rule per `/designs/per-project-issue-statuses.md` §4
-    /// "Dependencies, readiness, cascade":
+    /// Unified readiness rule:
     ///
     /// ```text
     /// ready ⇔
@@ -685,15 +690,15 @@ impl AppState {
             } => {
                 issue.status = status;
                 if let Some(field_key) = set_feedback_from {
-                    let coerced = form_response
-                        .values
-                        .get(&field_key)
-                        .map(|v| match v {
-                            Value::String(s) => s.clone(),
-                            Value::Null => String::new(),
-                            other => other.to_string(),
-                        })
-                        .unwrap_or_default();
+                    let coerced = match form_response.values.get(&field_key) {
+                        None | Some(Value::Null) => {
+                            return Err(SubmitFormActionError::SetFeedbackFromMissingField {
+                                field_key,
+                            });
+                        }
+                        Some(Value::String(s)) => s.clone(),
+                        Some(other) => other.to_string(),
+                    };
                     issue.feedback = Some(coerced);
                 }
             }
@@ -742,8 +747,7 @@ impl AppState {
         // that want to re-route work issue an explicit status transition
         // (typically through a form action), which gives the project's
         // `on_enter` automation a chance to reassign and attach a form
-        // deterministically. See `/designs/per-project-issue-statuses.md`
-        // §4 "Submit feedback".
+        // deterministically.
         issue.feedback = Some(feedback);
 
         // Update the issue
@@ -794,7 +798,6 @@ impl AppState {
         Ok(version)
     }
 }
-
 
 static REGEX_CACHE: LazyLock<Mutex<HashMap<String, regex::Regex>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -1995,8 +1998,7 @@ mod tests {
 
         {
             let store = state.store.as_ref();
-            // PR 4 documented behavior shift: failed cascades to failed
-            // (was dropped). See /designs/per-project-issue-statuses.md §4.
+            // A failed parent cascades children to `failed`.
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
                 IssueStatus::Failed.as_status_key()

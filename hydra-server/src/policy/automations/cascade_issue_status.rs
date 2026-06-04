@@ -14,12 +14,10 @@ const AUTOMATION_NAME: &str = "cascade_issue_status";
 /// When an issue transitions into a status whose `cascades_to_children`
 /// flag is `true`, recursively transition every non-`unblocks_parents`
 /// descendant to the **same status key** the parent landed in (per child's
-/// own project resolution). See
-/// `/designs/per-project-issue-statuses.md` §4 "Dependencies, readiness,
-/// cascade".
+/// own project resolution).
 ///
-/// PR 4 removes the hardcoded `trigger_statuses` enum list — the trigger
-/// is now data-driven via `resolve_status(...).cascades_to_children`.
+/// The trigger is data-driven via `resolve_status(...).cascades_to_children`,
+/// not a hardcoded enum list.
 pub struct CascadeIssueStatusAutomation;
 
 impl CascadeIssueStatusAutomation {
@@ -181,7 +179,7 @@ async fn cascade_to_descendants(
         if !is_terminal_child {
             // Check that the child's resolved project declares `target_key`.
             // Cross-project children where the key is missing are skipped
-            // and logged per design §4.
+            // and logged.
             let target_in_child_project: Result<bool, _> =
                 child_project_has_key(app_state, &child_issue, target_key).await;
             match target_in_child_project {
@@ -402,10 +400,8 @@ mod tests {
 
     #[tokio::test]
     async fn fails_children_when_parent_failed() {
-        // Documented behavior shift in PR 4: `failed` parents now cascade
-        // children to `failed` (was `dropped`). Both are terminal; the
-        // shift is for observability — a cascaded child reads as "failed
-        // because parent failed" rather than "dropped." See design §4.
+        // A `failed` parent cascades children to `failed`. A cascaded child
+        // then reads as "failed because parent failed" rather than "dropped."
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
