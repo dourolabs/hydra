@@ -5,6 +5,7 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{AutomationError, EventFilter, panic_message};
 use async_trait::async_trait;
 use futures::FutureExt;
+use hydra_common::PatchId;
 use octocrab::Octocrab;
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
@@ -16,7 +17,7 @@ const AUTOMATION_NAME: &str = "github_pr_sync";
 /// mapping errors to `AutomationError` with operation-specific context.
 async fn run_github_api_call<T>(
     fut: impl std::future::Future<Output = Result<T, octocrab::Error>>,
-    patch_id: &str,
+    patch_id: &PatchId,
     context: &str,
 ) -> Result<T, AutomationError> {
     let result = AssertUnwindSafe(tokio::time::timeout(Duration::from_secs(30), fut))
@@ -282,7 +283,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
 
             let pr_number = existing.number;
             let update_context = format!("updating PR '{owner}/{repo}#{pr_number}'");
-            let pr = run_github_api_call(update_fut, patch_id.as_ref(), &update_context).await?;
+            let pr = run_github_api_call(update_fut, patch_id, &update_context).await?;
 
             let mut updated = existing.clone();
             updated.head_ref = Some(pr.head.ref_field.clone());
@@ -327,7 +328,7 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 .send();
 
             let create_context = format!("creating PR for '{owner}/{repo}'");
-            let pr = run_github_api_call(create_fut, patch_id.as_ref(), &create_context).await?;
+            let pr = run_github_api_call(create_fut, patch_id, &create_context).await?;
 
             patch.github = Some(GithubPr::new(
                 owner,
