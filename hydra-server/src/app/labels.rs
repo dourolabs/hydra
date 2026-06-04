@@ -8,33 +8,9 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use super::AppState;
+use super::colors::default_color_for_name;
 
 const INBOX_LABEL_NAME: &str = "inbox";
-
-/// Default color palette for labels that don't specify a color.
-const DEFAULT_COLORS: &[&str] = &[
-    "#e74c3c", // red
-    "#e67e22", // orange
-    "#f1c40f", // yellow
-    "#2ecc71", // green
-    "#1abc9c", // teal
-    "#3498db", // blue
-    "#9b59b6", // purple
-    "#e91e63", // pink
-    "#795548", // brown
-    "#607d8b", // blue grey
-];
-
-fn default_color_for_name(name: &str) -> Rgb {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
-    let idx = (hasher.finish() as usize) % DEFAULT_COLORS.len();
-    DEFAULT_COLORS[idx]
-        .parse()
-        .expect("DEFAULT_COLORS entries are valid hex colors")
-}
 
 #[derive(Debug, Error)]
 pub enum CreateLabelError {
@@ -339,6 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_label_assigns_default_color() {
+        use crate::app::colors::DEFAULT_COLORS;
         let state = test_state();
         let label_id = state
             .create_label("bug".to_string(), None, true, false, ActorRef::test())
@@ -502,6 +479,7 @@ mod tests {
 
     #[tokio::test]
     async fn default_color_is_deterministic() {
+        use crate::app::colors::DEFAULT_COLORS;
         // Same name should always produce the same default color
         let color1 = default_color_for_name("bug");
         let color2 = default_color_for_name("bug");

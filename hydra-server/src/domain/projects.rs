@@ -1,0 +1,199 @@
+//! `DefaultProject`: the synthesized project used for issues with no
+//! `project_id`. Reproduces today's `IssueStatus` semantics so legacy
+//! issues continue to resolve without a per-row migration.
+//!
+//! See `/designs/per-project-issue-statuses.md` §4
+//! "Default-project synthesis" for the full table of flag values.
+
+use hydra_common::Rgb;
+use hydra_common::api::v1::projects::{IconKey, Project, ProjectKey, StatusDefinition, StatusKey};
+use hydra_common::api::v1::users::Username;
+use std::sync::OnceLock;
+
+/// Wire string for the default project's slug. Stable: leaked to clients
+/// once routes land (PR 3), so don't rename without a migration plan.
+pub const DEFAULT_PROJECT_KEY: &str = "default";
+
+/// Username under which the default project is "owned". Synthesized,
+/// never written to storage — used only to populate
+/// [`Project::creator`] on the in-memory const.
+const SYSTEM_USERNAME: &str = "system";
+
+/// The synthesized default project, lazily constructed once per process.
+///
+/// The five statuses (`open`, `in-progress`, `closed`, `dropped`, `failed`)
+/// reproduce today's `IssueStatus` flag semantics — see
+/// `/designs/per-project-issue-statuses.md` §4 "Default-project
+/// synthesis" for the table. The status colors are explicit hex values
+/// approximating the existing frontend badge palette
+/// (`hydra-web/packages/ui/src/theme/tokens.css:78-83` —
+/// `--s-open` blue, `--s-progress` amber, `--s-closed` green,
+/// `--s-failed` red, `--s-dropped` dim red-brown) so badge appearance
+/// is preserved when the frontend switches from the hardcoded
+/// `statusMapping.ts` to `resolved_status.color` in PR 5.
+pub fn default_project() -> &'static Project {
+    static INSTANCE: OnceLock<Project> = OnceLock::new();
+    INSTANCE.get_or_init(build_default_project)
+}
+
+fn build_default_project() -> Project {
+    let statuses = vec![
+        StatusDefinition::new(
+            status_key("open"),
+            "Open".to_string(),
+            icon_key("circle"),
+            // Matches `--s-open` (blue) at tokens.css:78.
+            rgb("#3498db"),
+            false,
+            false,
+            false,
+            None,
+        ),
+        StatusDefinition::new(
+            status_key("in-progress"),
+            "In progress".to_string(),
+            icon_key("circle-dot"),
+            // Matches `--s-progress` (amber) at tokens.css:79.
+            rgb("#f1c40f"),
+            false,
+            false,
+            false,
+            None,
+        ),
+        StatusDefinition::new(
+            status_key("closed"),
+            "Closed".to_string(),
+            icon_key("check-circle"),
+            // Matches `--s-closed` (green) at tokens.css:80.
+            rgb("#2ecc71"),
+            true,
+            true,
+            false,
+            None,
+        ),
+        StatusDefinition::new(
+            status_key("dropped"),
+            "Dropped".to_string(),
+            icon_key("x-circle"),
+            // Matches `--s-dropped` (dim red-brown) at tokens.css:82.
+            rgb("#795548"),
+            true,
+            false,
+            true,
+            None,
+        ),
+        StatusDefinition::new(
+            status_key("failed"),
+            "Failed".to_string(),
+            icon_key("alert-circle"),
+            // Matches `--s-failed` (red) at tokens.css:81.
+            rgb("#e74c3c"),
+            true,
+            false,
+            true,
+            None,
+        ),
+    ];
+
+    Project::new(
+        ProjectKey::try_new(DEFAULT_PROJECT_KEY).expect("default project key is well-formed"),
+        "Default".to_string(),
+        statuses,
+        status_key("open"),
+        Username::try_new(SYSTEM_USERNAME).expect("system username is well-formed"),
+        false,
+    )
+}
+
+fn status_key(value: &str) -> StatusKey {
+    StatusKey::try_new(value).expect("default project status keys are well-formed")
+}
+
+fn icon_key(value: &str) -> IconKey {
+    IconKey::try_new(value).expect("default project icon keys are well-formed")
+}
+
+fn rgb(value: &str) -> Rgb {
+    value.parse().expect("default project colors are valid hex")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::issues::IssueStatus;
+
+    #[test]
+    fn default_project_validates() {
+        default_project()
+            .validate()
+            .expect("default project must validate");
+    }
+
+    #[test]
+    fn default_project_has_five_statuses() {
+        assert_eq!(default_project().statuses.len(), 5);
+    }
+
+    #[test]
+    fn default_project_default_status_is_open() {
+        assert_eq!(default_project().default_status_key.as_str(), "open");
+    }
+
+    /// Every wire string produced by today's `IssueStatus` must resolve
+    /// to a status in the default project. This is the legacy-compat
+    /// contract for issues with no `project_id`.
+    #[test]
+    fn every_legacy_status_string_resolves() {
+        for status in [
+            IssueStatus::Open,
+            IssueStatus::InProgress,
+            IssueStatus::Closed,
+            IssueStatus::Dropped,
+            IssueStatus::Failed,
+        ] {
+            let key = StatusKey::try_new(status.as_str()).unwrap();
+            assert!(
+                default_project().find_status(&key).is_some(),
+                "default project is missing status '{}'",
+                status.as_str()
+            );
+        }
+    }
+
+    /// Flag values from the design §4 table. A change here is a
+    /// behavior change — update the design first, then this test.
+    #[test]
+    fn default_project_flags_match_design_table() {
+        let cases: &[(&str, bool, bool, bool)] = &[
+            // (key, unblocks_parents, unblocks_dependents, cascades_to_children)
+            ("open", false, false, false),
+            ("in-progress", false, false, false),
+            ("closed", true, true, false),
+            ("dropped", true, false, true),
+            ("failed", true, false, true),
+        ];
+        for (k, ub_p, ub_d, casc) in cases {
+            let key = StatusKey::try_new(*k).unwrap();
+            let def = default_project()
+                .find_status(&key)
+                .unwrap_or_else(|| panic!("missing status {k}"));
+            assert_eq!(def.unblocks_parents, *ub_p, "unblocks_parents for {k}");
+            assert_eq!(
+                def.unblocks_dependents, *ub_d,
+                "unblocks_dependents for {k}"
+            );
+            assert_eq!(
+                def.cascades_to_children, *casc,
+                "cascades_to_children for {k}"
+            );
+            assert!(def.on_enter.is_none(), "on_enter must be None for {k}");
+        }
+    }
+
+    #[test]
+    fn default_project_returns_same_instance() {
+        let a = default_project() as *const Project;
+        let b = default_project() as *const Project;
+        assert_eq!(a, b);
+    }
+}

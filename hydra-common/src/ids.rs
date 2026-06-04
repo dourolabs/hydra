@@ -13,6 +13,7 @@ const DOCUMENT_PREFIX: &str = "d-";
 const LABEL_PREFIX: &str = "l-";
 const CONVERSATION_PREFIX: &str = "c-";
 const TRIGGER_PREFIX: &str = "t-";
+const PROJECT_PREFIX: &str = "j-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HydraIdError {
@@ -92,6 +93,12 @@ pub struct ConversationId(String);
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
 pub struct TriggerId(String);
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, type = "string"))]
+pub struct ProjectId(String);
+
 impl HydraId {
     pub fn as_issue_id(&self) -> Option<IssueId> {
         IssueId::try_from(self.clone()).ok()
@@ -121,6 +128,10 @@ impl HydraId {
         TriggerId::try_from(self.clone()).ok()
     }
 
+    pub fn as_project_id(&self) -> Option<ProjectId> {
+        ProjectId::try_from(self.clone()).ok()
+    }
+
     pub fn validate_str(value: &str) -> Result<(), HydraIdError> {
         if value.starts_with(ISSUE_PREFIX) {
             IssueId::validate_str(value)
@@ -136,6 +147,8 @@ impl HydraId {
             ConversationId::validate_str(value)
         } else if value.starts_with(TRIGGER_PREFIX) {
             TriggerId::validate_str(value)
+        } else if value.starts_with(PROJECT_PREFIX) {
+            ProjectId::validate_str(value)
         } else {
             Err(HydraIdError::InvalidPrefix(value.to_string()))
         }
@@ -390,6 +403,40 @@ impl<'de> Deserialize<'de> for TriggerId {
     }
 }
 
+impl ProjectId {
+    pub fn generate(random_len: usize) -> Result<Self, HydraIdError> {
+        generate_with_prefix(PROJECT_PREFIX, random_len).map(Self)
+    }
+
+    pub fn new() -> Self {
+        Self::generate(DEFAULT_RANDOM_LEN).expect("default random length should always be valid")
+    }
+
+    pub const fn prefix() -> &'static str {
+        PROJECT_PREFIX
+    }
+
+    fn validate_str(value: &str) -> Result<(), HydraIdError> {
+        validate_with_prefix(value, PROJECT_PREFIX)
+    }
+}
+
+impl Default for ProjectId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'de> Deserialize<'de> for ProjectId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        ProjectId::try_from(value).map_err(de::Error::custom)
+    }
+}
+
 impl TryFrom<String> for HydraId {
     type Error = HydraIdError;
 
@@ -462,6 +509,15 @@ impl TryFrom<String> for TriggerId {
     }
 }
 
+impl TryFrom<String> for ProjectId {
+    type Error = HydraIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        ProjectId::validate_str(&value)?;
+        Ok(Self(value))
+    }
+}
+
 impl TryFrom<HydraId> for IssueId {
     type Error = HydraIdError;
 
@@ -518,6 +574,14 @@ impl TryFrom<HydraId> for TriggerId {
     }
 }
 
+impl TryFrom<HydraId> for ProjectId {
+    type Error = HydraIdError;
+
+    fn try_from(value: HydraId) -> Result<Self, Self::Error> {
+        Self::try_from(value.0)
+    }
+}
+
 impl From<IssueId> for HydraId {
     fn from(value: IssueId) -> Self {
         Self(value.0)
@@ -560,6 +624,12 @@ impl From<TriggerId> for HydraId {
     }
 }
 
+impl From<ProjectId> for HydraId {
+    fn from(value: ProjectId) -> Self {
+        Self(value.0)
+    }
+}
+
 impl From<IssueId> for String {
     fn from(value: IssueId) -> Self {
         value.0
@@ -598,6 +668,12 @@ impl From<ConversationId> for String {
 
 impl From<TriggerId> for String {
     fn from(value: TriggerId) -> Self {
+        value.0
+    }
+}
+
+impl From<ProjectId> for String {
+    fn from(value: ProjectId) -> Self {
         value.0
     }
 }
@@ -656,6 +732,12 @@ impl fmt::Display for TriggerId {
     }
 }
 
+impl fmt::Display for ProjectId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl AsRef<str> for HydraId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -699,6 +781,12 @@ impl AsRef<str> for ConversationId {
 }
 
 impl AsRef<str> for TriggerId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for ProjectId {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -761,6 +849,14 @@ impl FromStr for ConversationId {
 }
 
 impl FromStr for TriggerId {
+    type Err = HydraIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.to_string().try_into()
+    }
+}
+
+impl FromStr for ProjectId {
     type Err = HydraIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -902,5 +998,39 @@ mod tests {
     #[test]
     fn random_len_for_count_clamps_to_max() {
         assert_eq!(random_len_for_count(u64::MAX), MAX_RANDOM_LEN);
+    }
+
+    #[test]
+    fn project_id_uses_expected_prefix_and_length() {
+        let project_id = ProjectId::generate(MIN_RANDOM_LEN).expect("valid length");
+        assert!(project_id.as_ref().starts_with(ProjectId::prefix()));
+        assert_eq!(
+            project_id.as_ref().len(),
+            ProjectId::prefix().len() + MIN_RANDOM_LEN
+        );
+    }
+
+    #[test]
+    fn project_id_rejects_invalid_prefix() {
+        let err = ProjectId::try_from("x-invalid".to_string()).expect_err("expected error");
+        match err {
+            HydraIdError::InvalidPrefix(_) => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn project_id_round_trips_through_hydra_id() {
+        let project_id = ProjectId::new();
+        let hydra_id: HydraId = project_id.clone().into();
+        let back = hydra_id.as_project_id().expect("should round-trip");
+        assert_eq!(back, project_id);
+    }
+
+    #[test]
+    fn hydra_id_accepts_project_prefix() {
+        let id = format!("{PROJECT_PREFIX}abcdef");
+        let hydra: HydraId = id.parse().expect("hydra id should parse");
+        assert_eq!(hydra.as_ref(), id);
     }
 }
