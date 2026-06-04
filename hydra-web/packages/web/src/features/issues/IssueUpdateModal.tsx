@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Textarea, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
-import type { Issue, IssueStatus, IssueVersionRecord } from "@hydra/api";
+import type { Issue, IssueVersionRecord, StatusKey } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
 import largeModalStyles from "../../components/LargeModal.module.css";
@@ -26,7 +26,7 @@ interface IssueUpdateModalProps {
 export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateModalProps) {
   const queryClient = useQueryClient();
 
-  const [status, setStatus] = useState<IssueStatus>(issue.status);
+  const [status, setStatus] = useState<StatusKey>(issue.status);
   const [progress, setProgress] = useState(issue.progress);
 
   // Reset form when modal opens with fresh issue data
@@ -38,7 +38,7 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
   }, [open, issue.status, issue.progress]);
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<
-    { status: IssueStatus; progress: string },
+    { status: StatusKey; progress: string },
     unknown,
     { previous?: IssueVersionRecord }
   >({
@@ -94,7 +94,7 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
           label="Status"
           options={statusOptions}
           value={status}
-          onChange={(e) => setStatus(e.target.value as IssueStatus)}
+          onChange={(e) => setStatus(e.target.value)}
         />
         <div className={styles.progressWrapper}>
           <Textarea
