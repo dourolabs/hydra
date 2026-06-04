@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::fmt;
 
+/// A Hydra user identity.
+///
+/// Newtype around `String` that backs [`crate::principal::Principal::User`]
+/// and every other typed user reference. [`Username::try_new`] rejects
+/// empty, whitespace-containing, and slash-containing values. The bare
+/// [`From<String>`] / [`From<&str>`] conversions remain unchecked for
+/// backwards compatibility with pre-migration callers; new code should
+/// prefer [`Username::try_new`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
@@ -10,12 +18,6 @@ use std::fmt;
 pub struct Username(String);
 
 /// Validation failure for [`Username::try_new`].
-///
-/// Introduced in the actor-system overhaul (`/designs/actor-system-overhaul.md`,
-/// §3.1) as the foundation for typed actor identities. The bare
-/// `From<String>` / `From<&str>` conversions remain unchecked for
-/// backwards compatibility with pre-migration callers; new code should
-/// prefer [`Username::try_new`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsernameError {
     Empty,
@@ -45,8 +47,7 @@ impl Username {
     /// Validating constructor: rejects empty strings, whitespace, and
     /// `/`. The unchecked [`From<String>`] / [`From<&str>`] conversions
     /// remain available for legacy call sites; this is the validation
-    /// entry point preferred by new code (see
-    /// `/designs/actor-system-overhaul.md` §3.1).
+    /// entry point preferred by new code.
     pub fn try_new(value: impl Into<String>) -> Result<Self, UsernameError> {
         let value = value.into();
         if value.is_empty() {

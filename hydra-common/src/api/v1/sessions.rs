@@ -36,13 +36,11 @@ pub struct TokenUsage {
 /// resolved server-side from the agent definition; historical rows
 /// loaded through the legacy backfill path leave it `None`.
 ///
-/// Phase 2 of the actor-system overhaul
-/// (`/designs/actor-system-overhaul.md` §3.4) retypes `agent_name`
-/// from `Option<String>` to `Option<AgentName>` so the
-/// agent-vs-adhoc discriminant on a session is a validated type, not
-/// a free string. Historic rows with a malformed `agent_name` will
-/// fail to deserialize loudly — that's the design's intended Phase-2
-/// backfill story.
+/// `agent_name` is typed as `Option<AgentName>` so the agent-vs-adhoc
+/// discriminant on a session is a validated type, not a free string:
+/// `Some(name)` is agent-spawned, `None` is ad-hoc. Historic rows with a
+/// malformed `agent_name` fail to deserialize loudly rather than silently
+/// passing through.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -167,8 +165,9 @@ pub struct Session {
     // === Universal agent inputs ===
     #[serde(default)]
     pub agent_config: AgentConfig,
-    /// Server-supplied mount layout. Mandatory per design §1.2 / §1.3 — no
-    /// serde default; deserialization fails loudly if the field is missing.
+    /// Server-supplied mount layout. Mandatory: no serde default;
+    /// deserialization fails loudly if the field is missing, so client
+    /// requests can't silently fall back to an empty layout.
     pub mount_spec: MountSpec,
 
     // === Universal runtime knobs ===
@@ -184,8 +183,8 @@ pub struct Session {
     pub secrets: Option<Vec<String>>,
 
     // === Mode (first-class) ===
-    /// Mandatory per design §1.2 — no serde default; deserialization
-    /// fails loudly if the field is missing.
+    /// Mandatory: no serde default; deserialization fails loudly if the
+    /// field is missing rather than picking an arbitrary mode.
     pub mode: SessionMode,
 
     // === Universal lifecycle ===
@@ -584,8 +583,9 @@ impl<'de> Deserialize<'de> for MountItem {
 /// Carries everything the worker needs to set up its execution
 /// environment, plus enough metadata (`session_id`, `mode_kind`) to drive
 /// the websocket lifecycle. Anything the model itself sees (system
-/// prompt, transcript, resume blob) travels over the relay websocket —
-/// see `designs/sessions-worker-run-interface.md` §1.2.
+/// prompt, transcript, resume blob) is intentionally absent here and
+/// arrives over the relay websocket instead, so the worker has a single
+/// channel for all model-input data.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -946,8 +946,7 @@ pub enum ResumeSource {
 
 /// Append-only log of model-context events for a session. The transcript the
 /// model "sees" is the projection of this log onto `UserMessage` and
-/// `AssistantMessage` variants in insertion order. See
-/// `/designs/sessions-orthogonality-redesign.md` §3.2.
+/// `AssistantMessage` variants in insertion order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -1468,11 +1467,10 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // Phase 2 (`/designs/actor-system-overhaul.md` §3.4):
-    // `AgentConfig.agent_name` is now `Option<AgentName>`. The
-    // deserializer must accept the validated form (incl. `null`) and
-    // reject malformed historic values — that's the design's intended
-    // "re-validate on read" backfill strategy.
+    // `AgentConfig.agent_name` is `Option<AgentName>`. The deserializer
+    // must accept the validated form (including `null`) and reject
+    // malformed historic values, so re-validation happens on every read
+    // rather than relying on a one-time backfill.
     // ---------------------------------------------------------------------
 
     #[test]

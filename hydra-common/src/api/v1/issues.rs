@@ -261,9 +261,11 @@ pub struct Issue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<ProjectId>,
     /// Server-computed status definition (display props + dependency
-    /// flags) — never stored, always populated on responses, omitted on
-    /// create/update requests. See `/designs/per-project-issue-statuses.md`
-    /// §4 "Frontend display".
+    /// flags) for [`Self::status`], resolved against the issue's project's
+    /// status list. Never stored: always populated on responses so
+    /// frontends don't need a second round trip to render the status
+    /// chip, and omitted on create / update requests (the server
+    /// re-resolves from `status_key`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_status: Option<StatusDefinition>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -966,8 +968,9 @@ mod tests {
     #[test]
     fn search_issues_query_assignee_bare_username_is_rejected() {
         // Bare usernames (without the `users/` prefix) are the legacy v1
-        // wire shape. Phase 4b requires the canonical path form on the URL,
-        // so a bare username must fail to parse as a Principal.
+        // wire shape. The canonical path form (`users/<x>` / `agents/<x>` /
+        // `external/<sys>/<user>`) is required on the URL, so a bare
+        // username must fail to parse as a Principal.
         let err = serde_urlencoded::from_str::<SearchIssuesQuery>("assignee=alice")
             .expect_err("bare username should fail to deserialize as a Principal");
         assert!(
