@@ -74,6 +74,24 @@ impl Automation for LinkArtifactsToIssueAutomation {
     }
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
+        let (target_id, rel_type): (HydraId, RelationshipType) = match ctx.event {
+            ServerEvent::PatchCreated { patch_id, .. }
+            | ServerEvent::PatchUpdated { patch_id, .. } => {
+                (patch_id.clone().into(), RelationshipType::HasPatch)
+            }
+            ServerEvent::DocumentCreated { document_id, .. }
+            | ServerEvent::DocumentUpdated { document_id, .. } => {
+                (document_id.clone().into(), RelationshipType::HasDocument)
+            }
+            _ => return Ok(()),
+        };
+
+        tracing::info!(
+            automation = AUTOMATION_NAME,
+            artifact_id = %target_id,
+            "automation invoked",
+        );
+
         let actor = ctx.actor();
         let issue_id = match actor {
             ActorRef::Authenticated {
@@ -110,18 +128,6 @@ impl Automation for LinkArtifactsToIssueAutomation {
             ActorRef::System { .. } | ActorRef::Automation { .. } | ActorRef::Trigger { .. } => {
                 return Ok(());
             }
-        };
-
-        let (target_id, rel_type): (HydraId, RelationshipType) = match ctx.event {
-            ServerEvent::PatchCreated { patch_id, .. }
-            | ServerEvent::PatchUpdated { patch_id, .. } => {
-                (patch_id.clone().into(), RelationshipType::HasPatch)
-            }
-            ServerEvent::DocumentCreated { document_id, .. }
-            | ServerEvent::DocumentUpdated { document_id, .. } => {
-                (document_id.clone().into(), RelationshipType::HasDocument)
-            }
-            _ => return Ok(()),
         };
 
         let source_id: HydraId = issue_id.clone().into();

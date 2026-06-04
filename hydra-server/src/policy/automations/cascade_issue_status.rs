@@ -95,6 +95,12 @@ impl Automation for CascadeIssueStatusAutomation {
             return Ok(());
         };
 
+        tracing::info!(
+            automation = AUTOMATION_NAME,
+            issue_id = %issue_id,
+            "automation invoked",
+        );
+
         // Only trigger when the status changed to one of the trigger statuses
         if old.status == new.status {
             return Ok(());

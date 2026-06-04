@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::app::event_bus::EventType;
+use crate::app::event_bus::{EventType, ServerEvent};
 use crate::domain::actors::ActorRef;
 use crate::policy::automations::agent_queue::{
     AgentQueue, SharedSpawnAttempts, SpawnResult, agent_task_state,
@@ -60,6 +60,34 @@ impl Automation for SpawnSessionsAutomation {
             if automation_name == AUTOMATION_NAME {
                 return Ok(());
             }
+        }
+
+        match ctx.event {
+            ServerEvent::IssueCreated { issue_id, .. } => {
+                tracing::info!(
+                    automation = AUTOMATION_NAME,
+                    issue_id = %issue_id,
+                    event = "IssueCreated",
+                    "automation invoked",
+                );
+            }
+            ServerEvent::IssueUpdated { issue_id, .. } => {
+                tracing::info!(
+                    automation = AUTOMATION_NAME,
+                    issue_id = %issue_id,
+                    event = "IssueUpdated",
+                    "automation invoked",
+                );
+            }
+            ServerEvent::SessionUpdated { session_id, .. } => {
+                tracing::info!(
+                    automation = AUTOMATION_NAME,
+                    session_id = %session_id,
+                    event = "SessionUpdated",
+                    "automation invoked",
+                );
+            }
+            _ => {}
         }
 
         let agents =
