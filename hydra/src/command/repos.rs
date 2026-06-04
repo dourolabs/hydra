@@ -76,6 +76,19 @@ pub struct CreateRepositoryArgs {
     pub clear_default_image: bool,
 }
 
+impl CreateRepositoryArgs {
+    fn to_create_request(&self) -> Result<CreateRepositoryRequest> {
+        let repo = build_repository_config(
+            resolve_remote_url(&self.remote_url)?,
+            &self.default_branch,
+            self.clear_default_branch,
+            &self.default_image,
+            self.clear_default_image,
+        )?;
+        Ok(CreateRepositoryRequest::new(self.name.clone(), repo))
+    }
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct UpdateRepositoryArgs {
     /// Repository name in the form org/repo.
@@ -216,7 +229,7 @@ async fn create_repository(
     client: &HydraClient,
     args: CreateRepositoryArgs,
 ) -> Result<RepositoryRecord> {
-    let request = build_create_request(&args)?;
+    let request = args.to_create_request()?;
     let response = client
         .create_repository(&request)
         .await
@@ -273,17 +286,6 @@ async fn clone_repository(
         eprintln!("Cloned {} to {}", args.name, destination.display());
     }
     Ok(())
-}
-
-fn build_create_request(args: &CreateRepositoryArgs) -> Result<CreateRepositoryRequest> {
-    let repo = build_repository_config(
-        resolve_remote_url(&args.remote_url)?,
-        &args.default_branch,
-        args.clear_default_branch,
-        &args.default_image,
-        args.clear_default_image,
-    )?;
-    Ok(CreateRepositoryRequest::new(args.name.clone(), repo))
 }
 
 async fn build_update_request(
