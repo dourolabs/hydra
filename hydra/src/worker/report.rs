@@ -1,11 +1,15 @@
-//! End-of-run report types and the generic, model-agnostic I/O vocabulary used
-//! by the worker. See `designs/worker-model-commands-refactor.md` §3–4 for the
-//! design that motivates this module.
+//! End-of-run report types and the generic, model-agnostic I/O vocabulary
+//! used by the worker.
 //!
 //! `RunReport` is the value `ModelSelector::drive_headless` /
-//! `drive_interactive` return. The generic types (`SessionResume`,
+//! `drive_interactive` return — a flat struct (not an enum) so callers
+//! read `last_message`, `usage`, `model_session_id`, and `session_state`
+//! directly without matching on a per-model shape; `None` on the
+//! `Option` fields means the underlying signal was unavailable, not that
+//! the run failed. The generic types (`SessionResume`,
 //! `WorkerInputMessage`, `WorkerEvent`) live here as the model-agnostic
-//! surface.
+//! surface that [`crate::worker::ModelSelector`] translates into each
+//! wrapper's native vocabulary inside its `match` arms.
 
 use std::path::PathBuf;
 
@@ -96,10 +100,10 @@ pub enum WorkerEvent {
 /// Returned by `try_materialize` on each per-model wrapper; consumed by the
 /// same wrapper's `run` / `run_interactive` to drive a resume.
 ///
-/// See `designs/sessions-worker-run-interface.md` §3 — this is the
-/// `NativeResume` type that replaces the soon-to-be-removed [`SessionResume`]
-/// once PR-3 wires the wrappers' native vocabulary all the way through the
-/// dispatch layer.
+/// This is the eventual replacement for the still-present [`SessionResume`]
+/// — once the wrappers' native vocabulary is wired all the way through the
+/// dispatch layer, the generic shape goes away and only `NativeResume`
+/// remains.
 #[derive(Debug, Clone)]
 pub enum NativeResume {
     Claude(ClaudeResume),

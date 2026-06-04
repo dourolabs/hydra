@@ -1,7 +1,10 @@
 //! `Codex` per-worker wrapper. Owns env validation, `codex login`, MCP→TOML
 //! config-file management, and the per-worker output tempdir used to capture
-//! the `codex exec --json` JSONL stream. See
-//! `designs/worker-model-commands-refactor.md` §2 for the design.
+//! the `codex exec --json` JSONL stream. Constructed once at the top of
+//! `worker_run::run` and reused across the worker's lifetime; the wrapper
+//! speaks only Codex's native vocabulary (`codex exec --json` invocation,
+//! Codex JSONL events) — the WS protocol is translated by
+//! [`crate::worker::ModelSelector`].
 
 use std::{collections::HashMap, path::PathBuf, process::Stdio};
 
@@ -22,10 +25,10 @@ use crate::worker::report::{
     WorkerEvent,
 };
 
-/// Native resume handle for Codex. Placeholder today: Codex resume is out of
-/// scope per `designs/sessions-worker-run-interface.md` §3.5, but the variant
-/// must exist so the dispatcher's [`NativeResume`] enum is uniform across
-/// wrappers and so a future implementation has a name to slot into.
+/// Native resume handle for Codex. Placeholder today: Codex native resume
+/// is out of scope (only Claude implements `try_materialize`), but the
+/// variant must exist so the dispatcher's [`NativeResume`] enum is uniform
+/// across wrappers and so a future implementation has a name to slot into.
 #[derive(Debug, Clone)]
 pub enum CodexResume {}
 
@@ -100,10 +103,10 @@ impl Codex {
     }
 
     /// Attempt to materialize a resume blob into a native Codex resume
-    /// handle. Codex native resume is out of scope per
-    /// `designs/sessions-worker-run-interface.md` §3.5; this always returns
+    /// handle. Codex native resume is unimplemented; this always returns
     /// [`MaterializeError::NotImplemented`] and the dispatcher falls back to
-    /// transcript replay.
+    /// transcript replay (which the dispatcher treats identically to every
+    /// other `Err` variant).
     pub fn try_materialize(&self, _state_bytes: &[u8]) -> Result<NativeResume, MaterializeError> {
         Err(MaterializeError::NotImplemented)
     }
@@ -289,8 +292,9 @@ async fn write_codex_mcp_config(
 
 /// RAII guard for `<home>/.codex/config.toml` written for a Codex run.
 ///
-/// Cleanup runs synchronously on `Drop` (per design §2: async cleanup in
-/// `Drop` is a known foot-gun).
+/// Cleanup runs synchronously on `Drop` — async cleanup is not possible
+/// in `Drop`; any best-effort kill / unlink must complete in the
+/// destructor's synchronous frame.
 pub(crate) struct CodexConfigGuard {
     config_path: PathBuf,
     codex_dir: PathBuf,
