@@ -1,7 +1,10 @@
 use crate::{
     client::HydraClientInterface,
     command::{
-        output::{render, CommandContext, IssueRecords, IssueSummaryRecords, ResolvedOutputFormat},
+        output::{
+            render, CommandContext, IssueRecords, IssueSummaryRecords, ResolvedOutputFormat,
+            SubmitFormOutcome,
+        },
         projects::ProjectRef,
         utils::resolve_username,
     },
@@ -849,18 +852,9 @@ async fn submit_form(
         .await
         .with_context(|| format!("failed to submit form for issue '{id}'"))?;
 
-    match output_format {
-        ResolvedOutputFormat::Pretty => {
-            println!(
-                "Submitted form for issue '{}' (action: '{}', version: {})",
-                response.issue_id, response.form_response.action_id, response.version,
-            );
-        }
-        ResolvedOutputFormat::Jsonl => {
-            let json = serde_json::to_string(&response)?;
-            println!("{json}");
-        }
-    }
+    let mut buf = Vec::new();
+    render(SubmitFormOutcome(&response), output_format, &mut buf)?;
+    write_stdout(&buf)?;
     Ok(())
 }
 
@@ -3025,5 +3019,61 @@ mod tests {
 
         list_mock.assert();
         assert!(issues.is_empty());
+    }
+
+    fn sample_submit_form_response() -> hydra_common::issues::SubmitFormResponse {
+        use hydra_common::actor_ref::ActorId;
+        use hydra_common::api::v1::form::FormResponse;
+
+        let response = FormResponse {
+            action_id: "approve".to_string(),
+            actor: ActorId::User(hydra_common::api::v1::users::Username::try_new("alice").unwrap()),
+            values: std::collections::HashMap::new(),
+            submitted_at: Utc::now(),
+        };
+        hydra_common::issues::SubmitFormResponse::new(issue_id("i-42"), 7, response)
+    }
+
+    #[test]
+    fn submit_form_outcome_renders_pretty_line() {
+        let response = sample_submit_form_response();
+        let mut buf = Vec::new();
+        render(
+            SubmitFormOutcome(&response),
+            ResolvedOutputFormat::Pretty,
+            &mut buf,
+        )
+        .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            output,
+            format!(
+                "Submitted form for issue '{}' (action: 'approve', version: 7)\n",
+                issue_id("i-42")
+            )
+        );
+    }
+
+    #[test]
+    fn submit_form_outcome_renders_jsonl_object() {
+        let response = sample_submit_form_response();
+        let mut buf = Vec::new();
+        render(
+            SubmitFormOutcome(&response),
+            ResolvedOutputFormat::Jsonl,
+            &mut buf,
+        )
+        .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.ends_with('\n'), "jsonl output must end with newline");
+        let trimmed = output.trim_end_matches('\n');
+        assert!(
+            !trimmed.contains('\n'),
+            "jsonl output must be exactly one line"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).unwrap();
+        assert_eq!(parsed["issue_id"], issue_id("i-42").to_string());
+        assert_eq!(parsed["version"], 7);
+        assert_eq!(parsed["form_response"]["action_id"], "approve");
     }
 }

@@ -1,13 +1,17 @@
 use std::io::Write;
 
 use anyhow::Result;
-use hydra_common::issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord};
+use hydra_common::issues::{
+    Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord, SubmitFormResponse,
+};
 
 use super::Render;
 
 pub struct IssueRecords<'a>(pub &'a [IssueVersionRecord]);
 
 pub struct IssueSummaryRecords<'a>(pub &'a [IssueSummaryRecord]);
+
+pub struct SubmitFormOutcome<'a>(pub &'a SubmitFormResponse);
 
 impl Render for IssueRecords<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
@@ -86,6 +90,25 @@ impl Render for IssueRecords<'_> {
                 writeln!(writer)?;
             }
         }
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+impl Render for SubmitFormOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(&mut *writer, self.0)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(
+            writer,
+            "Submitted form for issue '{}' (action: '{}', version: {})",
+            self.0.issue_id, self.0.form_response.action_id, self.0.version,
+        )?;
         writer.flush()?;
         Ok(())
     }
