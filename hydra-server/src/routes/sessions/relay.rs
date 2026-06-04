@@ -261,7 +261,7 @@ async fn handle_fresh_path(
                             Err(err) => {
                                 error!(%session_id, error = %err, "transcript load failed");
                                 let _ = ws_sender.send(Message::Close(None)).await;
-                                cleanup(&state, conversation_id.as_ref());
+                                state.disconnect_chat_relay(conversation_id.as_ref());
                                 return;
                             }
                         };
@@ -277,7 +277,7 @@ async fn handle_fresh_path(
                             agent_prompt,
                         };
                         if !send_json(&mut ws_sender, &transcript).await {
-                            cleanup(&state, conversation_id.as_ref());
+                            state.disconnect_chat_relay(conversation_id.as_ref());
                             return;
                         }
                     }
@@ -303,7 +303,7 @@ async fn handle_fresh_path(
                                         .mark_ready(conv_id, folded_user_message.as_deref());
                                     for msg in buffered {
                                         if !send_json(&mut ws_sender, &msg).await {
-                                            cleanup(&state, conversation_id.as_ref());
+                                            state.disconnect_chat_relay(conversation_id.as_ref());
                                             return;
                                         }
                                     }
@@ -319,7 +319,7 @@ async fn handle_fresh_path(
                                 break;
                             }
                             ReadyOutcome::Failed => {
-                                cleanup(&state, conversation_id.as_ref());
+                                state.disconnect_chat_relay(conversation_id.as_ref());
                                 return;
                             }
                         }
@@ -348,7 +348,7 @@ async fn handle_fresh_path(
                     Ok(other) => {
                         error!(%session_id, ?other, "unexpected WorkerMessage in Phase 1/2");
                         let _ = ws_sender.send(Message::Close(None)).await;
-                        cleanup(&state, conversation_id.as_ref());
+                        state.disconnect_chat_relay(conversation_id.as_ref());
                         return;
                     }
                     Err(err) => {
@@ -358,7 +358,7 @@ async fn handle_fresh_path(
             }
             Some(Ok(Message::Close(_))) | None => {
                 info!(%session_id, "WebSocket closed before Phase 3");
-                cleanup(&state, conversation_id.as_ref());
+                state.disconnect_chat_relay(conversation_id.as_ref());
                 return;
             }
             Some(Ok(Message::Ping(data))) => {
@@ -367,7 +367,7 @@ async fn handle_fresh_path(
             Some(Ok(_)) => {}
             Some(Err(err)) => {
                 error!(%session_id, error = %err, "WebSocket error before Phase 3");
-                cleanup(&state, conversation_id.as_ref());
+                state.disconnect_chat_relay(conversation_id.as_ref());
                 return;
             }
         }
@@ -426,7 +426,7 @@ async fn handle_reconnecting_path(
         let buffered = state.chat_relay_map.mark_ready(conv_id, None);
         for msg in buffered {
             if !send_json(&mut ws_sender, &msg).await {
-                cleanup(&state, conversation_id.as_ref());
+                state.disconnect_chat_relay(conversation_id.as_ref());
                 return;
             }
         }
@@ -664,14 +664,7 @@ async fn pump_phase3(
         }
     }
 
-    cleanup(&state, conversation_id.as_ref());
-}
-
-fn cleanup(state: &AppState, conversation_id: Option<&ConversationId>) {
-    if let Some(conv_id) = conversation_id {
-        state.chat_relay_map.disconnect(conv_id);
-        info!(%conv_id, "relay unregistered");
-    }
+    state.disconnect_chat_relay(conversation_id.as_ref());
 }
 
 async fn send_json<S>(ws_sender: &mut S, msg: &ServerMessage) -> bool

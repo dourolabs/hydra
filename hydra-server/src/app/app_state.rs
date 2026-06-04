@@ -156,4 +156,22 @@ impl AppState {
     pub fn store(&self) -> &dyn ReadOnlyStore {
         self.store.as_ref()
     }
+
+    /// Removes expired device-flow sessions from the in-memory map.
+    pub fn cleanup_expired_sessions(&self) {
+        let now = Instant::now();
+        self.device_sessions
+            .retain(|_, session| session.expires_at > now);
+    }
+
+    /// Unregister the chat relay for `conversation_id`, if any.
+    ///
+    /// Called when a relay WebSocket terminates (clean close, error, or
+    /// timeout) so the conversation no longer maps to a forwarder.
+    pub fn disconnect_chat_relay(&self, conversation_id: Option<&hydra_common::ConversationId>) {
+        if let Some(conv_id) = conversation_id {
+            self.chat_relay_map.disconnect(conv_id);
+            tracing::info!(%conv_id, "relay unregistered");
+        }
+    }
 }

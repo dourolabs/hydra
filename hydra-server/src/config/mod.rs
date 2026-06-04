@@ -9,6 +9,8 @@ use hydra_common::{
     BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig,
     constants::DEFAULT_CONVERSATION_TIMEOUT_SECS,
 };
+use jsonwebtoken::EncodingKey;
+use octocrab::Octocrab;
 use octocrab::models::AppId;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{
@@ -195,6 +197,14 @@ impl AuthConfig {
             } => auth_token_file.as_deref(),
             Self::Github { .. } => None,
         }
+    }
+
+    /// Returns the GitHub App config or a 404 `ApiError` when running in local
+    /// auth mode (where the device flow is not available).
+    pub fn require_github(&self) -> Result<&GithubAppSection, hydra_common::api::v1::ApiError> {
+        self.github_app().ok_or_else(|| {
+            hydra_common::api::v1::ApiError::not_found("device flow login is not available")
+        })
     }
 }
 
@@ -615,6 +625,17 @@ impl GithubAppSection {
 
     pub fn oauth_base_url(&self) -> &str {
         &self.oauth_base_url
+    }
+
+    /// Build an authenticated GitHub App `Octocrab` client from this section.
+    pub fn build_client(&self) -> Result<Option<Octocrab>> {
+        let key = EncodingKey::from_rsa_pem(self.private_key().as_bytes())
+            .context("invalid GitHub App private key")?;
+        Octocrab::builder()
+            .app(self.app_id(), key)
+            .build()
+            .map(Some)
+            .context("building GitHub App client")
     }
 
     fn validate(&self) -> Result<()> {

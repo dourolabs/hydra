@@ -258,7 +258,59 @@ pub enum ServerEvent {
     },
 }
 
+/// A typed entity ID extracted from a [`ServerEvent`].
+#[derive(Debug)]
+pub enum EntityId<'a> {
+    Issue(&'a IssueId),
+    Session(&'a SessionId),
+    Patch(&'a PatchId),
+    Label(&'a LabelId),
+    Document(&'a DocumentId),
+    #[allow(dead_code)]
+    Conversation(&'a ConversationId),
+}
+
 impl ServerEvent {
+    /// Returns the entity-type category and typed entity ID for this event.
+    pub fn entity_info(&self) -> (&'static str, EntityId<'_>) {
+        match self {
+            ServerEvent::IssueCreated { issue_id, .. }
+            | ServerEvent::IssueUpdated { issue_id, .. }
+            | ServerEvent::IssueDeleted { issue_id, .. } => ("issues", EntityId::Issue(issue_id)),
+
+            ServerEvent::PatchCreated { patch_id, .. }
+            | ServerEvent::PatchUpdated { patch_id, .. }
+            | ServerEvent::PatchDeleted { patch_id, .. } => ("patches", EntityId::Patch(patch_id)),
+
+            ServerEvent::SessionCreated { session_id, .. }
+            | ServerEvent::SessionUpdated { session_id, .. } => {
+                ("sessions", EntityId::Session(session_id))
+            }
+
+            ServerEvent::LabelCreated { label_id, .. }
+            | ServerEvent::LabelUpdated { label_id, .. }
+            | ServerEvent::LabelDeleted { label_id, .. } => ("labels", EntityId::Label(label_id)),
+
+            ServerEvent::DocumentCreated { document_id, .. }
+            | ServerEvent::DocumentUpdated { document_id, .. }
+            | ServerEvent::DocumentDeleted { document_id, .. } => {
+                ("documents", EntityId::Document(document_id))
+            }
+
+            ServerEvent::ConversationCreated {
+                conversation_id, ..
+            }
+            | ServerEvent::ConversationUpdated {
+                conversation_id, ..
+            } => ("conversations", EntityId::Conversation(conversation_id)),
+
+            ServerEvent::SessionEventCreated { session_id, .. }
+            | ServerEvent::SessionStateUpdated { session_id, .. } => {
+                ("sessions", EntityId::Session(session_id))
+            }
+        }
+    }
+
     /// Returns the monotonic sequence number for this event.
     pub fn seq(&self) -> u64 {
         match self {

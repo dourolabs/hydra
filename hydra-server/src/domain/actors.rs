@@ -136,6 +136,20 @@ impl Actor {
     ) -> Result<GithubTokenResponse, ApiError> {
         get_github_token_for_user(state, &self.creator).await
     }
+
+    /// Authorize this actor to access secrets for `target`.
+    ///
+    /// Returns 403 unless the actor is a `User` whose username matches
+    /// `target`. Agent / adhoc / external actors are rejected even when their
+    /// `creator` field matches the target.
+    pub fn authorize_for_user(&self, target: &Username) -> Result<(), ApiError> {
+        if let ActorId::User(ref username) = self.actor_id {
+            if username.as_str() == target.as_str() {
+                return Ok(());
+            }
+        }
+        Err(ApiError::forbidden("you can only access your own secrets"))
+    }
 }
 
 /// Resolve a GitHub token for the given `username`, refreshing it if expired.

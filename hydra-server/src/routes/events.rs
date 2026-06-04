@@ -1,4 +1,4 @@
-use crate::app::{AppState, ServerEvent, event_bus::MutationPayload};
+use crate::app::{AppState, ServerEvent, event_bus::EntityId, event_bus::MutationPayload};
 use crate::domain::actors::Actor;
 use crate::job_engine::JobStatus;
 use axum::{
@@ -255,7 +255,7 @@ impl EventFilter {
     }
 
     fn matches(&self, event: &ServerEvent) -> bool {
-        let (entity_type, entity_id) = event_entity_info(event);
+        let (entity_type, entity_id) = event.entity_info();
 
         // Check entity type filter.
         if let Some(types) = &self.entity_types {
@@ -307,58 +307,6 @@ impl EventFilter {
         }
 
         true
-    }
-}
-
-/// A typed entity ID extracted from a ServerEvent.
-#[derive(Debug)]
-enum EntityId<'a> {
-    Issue(&'a IssueId),
-    Session(&'a SessionId),
-    Patch(&'a PatchId),
-    Label(&'a LabelId),
-    Document(&'a DocumentId),
-    #[allow(dead_code)]
-    Conversation(&'a hydra_common::ConversationId),
-}
-
-/// Extracts the entity type category and typed entity ID from a ServerEvent.
-fn event_entity_info(event: &ServerEvent) -> (&'static str, EntityId<'_>) {
-    match event {
-        ServerEvent::IssueCreated { issue_id, .. }
-        | ServerEvent::IssueUpdated { issue_id, .. }
-        | ServerEvent::IssueDeleted { issue_id, .. } => ("issues", EntityId::Issue(issue_id)),
-
-        ServerEvent::PatchCreated { patch_id, .. }
-        | ServerEvent::PatchUpdated { patch_id, .. }
-        | ServerEvent::PatchDeleted { patch_id, .. } => ("patches", EntityId::Patch(patch_id)),
-
-        ServerEvent::SessionCreated { session_id, .. }
-        | ServerEvent::SessionUpdated { session_id, .. } => {
-            ("sessions", EntityId::Session(session_id))
-        }
-
-        ServerEvent::LabelCreated { label_id, .. }
-        | ServerEvent::LabelUpdated { label_id, .. }
-        | ServerEvent::LabelDeleted { label_id, .. } => ("labels", EntityId::Label(label_id)),
-
-        ServerEvent::DocumentCreated { document_id, .. }
-        | ServerEvent::DocumentUpdated { document_id, .. }
-        | ServerEvent::DocumentDeleted { document_id, .. } => {
-            ("documents", EntityId::Document(document_id))
-        }
-
-        ServerEvent::ConversationCreated {
-            conversation_id, ..
-        }
-        | ServerEvent::ConversationUpdated {
-            conversation_id, ..
-        } => ("conversations", EntityId::Conversation(conversation_id)),
-
-        ServerEvent::SessionEventCreated { session_id, .. }
-        | ServerEvent::SessionStateUpdated { session_id, .. } => {
-            ("sessions", EntityId::Session(session_id))
-        }
     }
 }
 

@@ -10,7 +10,7 @@ use hydra_common::{
     api::v1::{
         ApiError,
         relations::{
-            CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RelationResponse,
+            CreateRelationRequest, ListRelationsRequest, ListRelationsResponse,
             RemoveRelationRequest, RemoveRelationResponse,
         },
     },
@@ -19,16 +19,6 @@ use tracing::{error, info};
 
 /// Maximum number of IDs allowed in a single batch query parameter.
 const MAX_BATCH_IDS: usize = 10_000;
-
-/// Convert a store `ObjectRelationship` to the wire `RelationResponse`.
-fn to_response(rel: &ObjectRelationship) -> RelationResponse {
-    RelationResponse {
-        source_id: rel.source_id.clone(),
-        target_id: rel.target_id.clone(),
-        rel_type: rel.rel_type.as_str().to_string(),
-        created_at: rel.created_at,
-    }
-}
 
 /// Parse a comma-separated string into a Vec of HydraId.
 fn parse_id_list(raw: &str) -> Result<Vec<HydraId>, ApiError> {
@@ -254,7 +244,10 @@ pub async fn list_relations(
     }
 
     let response = ListRelationsResponse {
-        relations: relations.iter().map(to_response).collect(),
+        relations: relations
+            .iter()
+            .map(ObjectRelationship::to_response)
+            .collect(),
     };
 
     info!(
@@ -300,7 +293,7 @@ pub async fn create_relation(
         .next()
         .ok_or_else(|| ApiError::internal("relation missing after upsert"))?;
 
-    let response_body = to_response(&stored);
+    let response_body = stored.to_response();
 
     let status = if was_created {
         StatusCode::CREATED
