@@ -52,10 +52,14 @@ use hydra_common::{
         ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
         SessionVersionRecord, WorkerContext,
     },
+    triggers::{
+        ListTriggerVersionsResponse, ListTriggersResponse, SearchTriggersQuery,
+        TriggerVersionRecord, UpsertTriggerRequest, UpsertTriggerResponse,
+    },
     users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
     ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
-    RepoName, SessionId,
+    RepoName, SessionId, TriggerId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode, Url};
 use sse::SseEventStream;
@@ -331,6 +335,30 @@ pub trait HydraClientInterface: Send + Sync {
     ) -> Result<SubmitFormResponse>;
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
+
+    async fn create_trigger(&self, request: &UpsertTriggerRequest)
+        -> Result<UpsertTriggerResponse>;
+    async fn update_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        request: &UpsertTriggerRequest,
+    ) -> Result<UpsertTriggerResponse>;
+    async fn get_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<TriggerVersionRecord>;
+    async fn get_trigger_version(
+        &self,
+        trigger_id: &TriggerId,
+        version: RelativeVersionNumber,
+    ) -> Result<TriggerVersionRecord>;
+    async fn list_triggers(&self, query: &SearchTriggersQuery) -> Result<ListTriggersResponse>;
+    async fn list_trigger_versions(
+        &self,
+        trigger_id: &TriggerId,
+    ) -> Result<ListTriggerVersionsResponse>;
+    async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord>;
 
     /// Open an SSE connection to GET /v1/events and return a stream of parsed events.
     async fn subscribe_events(
@@ -1792,6 +1820,159 @@ impl HydraClient {
             .context("failed to decode delete document response")
     }
 
+    /// Call `POST /v1/triggers` to create a new trigger.
+    pub async fn create_trigger(
+        &self,
+        request: &UpsertTriggerRequest,
+    ) -> Result<UpsertTriggerResponse> {
+        let url = self.endpoint("/v1/triggers")?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit create trigger request")?
+            .error_for_status_with_body("hydra-server rejected create trigger request")
+            .await?;
+
+        response
+            .json::<UpsertTriggerResponse>()
+            .await
+            .context("failed to decode create trigger response")
+    }
+
+    /// Call `PUT /v1/triggers/:trigger_id` to update an existing trigger.
+    pub async fn update_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        request: &UpsertTriggerRequest,
+    ) -> Result<UpsertTriggerResponse> {
+        let path = format!("/v1/triggers/{trigger_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.put(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update trigger request")?
+            .error_for_status_with_body("hydra-server returned an error while updating trigger")
+            .await?;
+
+        response
+            .json::<UpsertTriggerResponse>()
+            .await
+            .context("failed to decode update trigger response")
+    }
+
+    /// Call `GET /v1/triggers/:trigger_id` to fetch a trigger.
+    pub async fn get_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<TriggerVersionRecord> {
+        let path = format!("/v1/triggers/{trigger_id}");
+        let url = self.endpoint(&path)?;
+        let mut builder = self.authed(self.http.get(url));
+        if include_deleted {
+            builder = builder.query(&[("include_deleted", "true")]);
+        }
+        let response = builder
+            .send()
+            .await
+            .context("failed to fetch trigger")?
+            .error_for_status_with_body("hydra-server returned an error while fetching trigger")
+            .await?;
+
+        response
+            .json::<TriggerVersionRecord>()
+            .await
+            .context("failed to decode get trigger response")
+    }
+
+    /// Call `GET /v1/triggers/:trigger_id/versions/:version` to fetch a
+    /// specific trigger version.
+    pub async fn get_trigger_version(
+        &self,
+        trigger_id: &TriggerId,
+        version: RelativeVersionNumber,
+    ) -> Result<TriggerVersionRecord> {
+        let path = format!("/v1/triggers/{trigger_id}/versions/{version}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch trigger version")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while fetching trigger version",
+            )
+            .await?;
+
+        response
+            .json::<TriggerVersionRecord>()
+            .await
+            .context("failed to decode trigger version response")
+    }
+
+    /// Call `GET /v1/triggers` to list triggers.
+    pub async fn list_triggers(&self, query: &SearchTriggersQuery) -> Result<ListTriggersResponse> {
+        let url = self.endpoint("/v1/triggers")?;
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
+            .send()
+            .await
+            .context("failed to fetch triggers list")?
+            .error_for_status_with_body("hydra-server returned an error while listing triggers")
+            .await?;
+
+        response
+            .json::<ListTriggersResponse>()
+            .await
+            .context("failed to decode list triggers response")
+    }
+
+    /// Call `GET /v1/triggers/:trigger_id/versions` to list trigger history.
+    pub async fn list_trigger_versions(
+        &self,
+        trigger_id: &TriggerId,
+    ) -> Result<ListTriggerVersionsResponse> {
+        let path = format!("/v1/triggers/{trigger_id}/versions");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to fetch trigger versions")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while listing trigger versions",
+            )
+            .await?;
+
+        response
+            .json::<ListTriggerVersionsResponse>()
+            .await
+            .context("failed to decode list trigger versions response")
+    }
+
+    /// Call `DELETE /v1/triggers/:trigger_id` to soft-delete a trigger.
+    pub async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
+        let path = format!("/v1/triggers/{trigger_id}");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete trigger request")?
+            .error_for_status_with_body("hydra-server returned an error while deleting trigger")
+            .await?;
+
+        response
+            .json::<TriggerVersionRecord>()
+            .await
+            .context("failed to decode delete trigger response")
+    }
+
     /// Open an SSE connection to GET /v1/events. Uses the streaming HTTP
     /// client so the per-request timeout does not terminate the subscription.
     pub async fn subscribe_events(
@@ -2574,6 +2755,52 @@ impl HydraClientInterface for HydraClient {
 
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
         HydraClient::delete_document(self, document_id).await
+    }
+
+    async fn create_trigger(
+        &self,
+        request: &UpsertTriggerRequest,
+    ) -> Result<UpsertTriggerResponse> {
+        HydraClient::create_trigger(self, request).await
+    }
+
+    async fn update_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        request: &UpsertTriggerRequest,
+    ) -> Result<UpsertTriggerResponse> {
+        HydraClient::update_trigger(self, trigger_id, request).await
+    }
+
+    async fn get_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<TriggerVersionRecord> {
+        HydraClient::get_trigger(self, trigger_id, include_deleted).await
+    }
+
+    async fn get_trigger_version(
+        &self,
+        trigger_id: &TriggerId,
+        version: RelativeVersionNumber,
+    ) -> Result<TriggerVersionRecord> {
+        HydraClient::get_trigger_version(self, trigger_id, version).await
+    }
+
+    async fn list_triggers(&self, query: &SearchTriggersQuery) -> Result<ListTriggersResponse> {
+        HydraClient::list_triggers(self, query).await
+    }
+
+    async fn list_trigger_versions(
+        &self,
+        trigger_id: &TriggerId,
+    ) -> Result<ListTriggerVersionsResponse> {
+        HydraClient::list_trigger_versions(self, trigger_id).await
+    }
+
+    async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
+        HydraClient::delete_trigger(self, trigger_id).await
     }
 
     async fn subscribe_events(

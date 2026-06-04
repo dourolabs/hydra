@@ -4,7 +4,10 @@ use crate::actor_ref::ActorRef;
 use crate::ids::TriggerId;
 use crate::versioning::VersionNumber;
 use chrono::{DateTime, Utc};
+use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+use thiserror::Error;
 
 /// API shape for a scheduled trigger.
 ///
@@ -81,8 +84,8 @@ pub enum Action {
 /// Create an issue when the parent trigger fires.
 ///
 /// `title`, `description`, and `assignee` are template strings rendered
-/// through `hydra-server/src/domain/triggers.rs::render`. `assignee` is
-/// parsed as a `Principal` after rendering.
+/// through [`render`]. `assignee` is parsed as a `Principal` after
+/// rendering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -247,6 +250,188 @@ impl ListTriggerVersionsResponse {
 pub struct SearchTriggersQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_deleted: Option<bool>,
+}
+
+/// Variables available to template strings: `now.iso`, `now.date`,
+/// `scheduled_at`, `trigger.id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderContext {
+    pub now: DateTime<Utc>,
+    pub scheduled_at: DateTime<Utc>,
+    pub trigger_id: TriggerId,
+}
+
+impl RenderContext {
+    pub fn new(now: DateTime<Utc>, scheduled_at: DateTime<Utc>, trigger_id: TriggerId) -> Self {
+        Self {
+            now,
+            scheduled_at,
+            trigger_id,
+        }
+    }
+
+    fn lookup(&self, name: &str) -> Option<String> {
+        match name {
+            "now.iso" => Some(self.now.to_rfc3339()),
+            "now.date" => Some(self.now.format("%Y-%m-%d").to_string()),
+            "scheduled_at" => Some(self.scheduled_at.to_rfc3339()),
+            "trigger.id" => Some(self.trigger_id.to_string()),
+            _ => None,
+        }
+    }
+}
+
+/// All recognized template variables; the parse-only path consults this
+/// set so `Trigger::validate` can reject an unknown variable without
+/// requiring a fully populated `RenderContext`.
+pub const KNOWN_VARIABLES: &[&str] = &["now.iso", "now.date", "scheduled_at", "trigger.id"];
+
+/// Failure modes produced by [`render`].
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RenderError {
+    #[error("unbalanced '{{{{' at byte {position}")]
+    UnbalancedOpen { position: usize },
+    #[error("unbalanced '}}}}' at byte {position}")]
+    UnbalancedClose { position: usize },
+    #[error("unknown template variable '{name}'")]
+    UnknownVariable { name: String },
+    #[error("empty template variable")]
+    EmptyVariable,
+}
+
+/// Render `template` against `ctx`, substituting `{{ var }}` placeholders.
+///
+/// Whitespace around the variable name inside `{{ }}` is ignored.
+/// Unknown variables, unbalanced braces, and empty `{{ }}` placeholders
+/// produce [`RenderError`].
+pub fn render(template: &str, ctx: &RenderContext) -> Result<String, RenderError> {
+    parse_template(template, Some(ctx))
+}
+
+/// Parse-only variant: walk the template, validate braces and variable
+/// names, but skip substitution. Used by callers (e.g. trigger validation)
+/// that lint a stored template without having a `RenderContext`.
+pub fn validate_template(template: &str) -> Result<(), RenderError> {
+    parse_template(template, None).map(drop)
+}
+
+fn parse_template(template: &str, ctx: Option<&RenderContext>) -> Result<String, RenderError> {
+    let mut out = String::with_capacity(template.len());
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let rest = &template[i..];
+        if let Some(after_open) = rest.strip_prefix("{{") {
+            let var_start = i + 2;
+            let close_rel = after_open
+                .find("}}")
+                .ok_or(RenderError::UnbalancedOpen { position: i })?;
+            let var_end = var_start + close_rel;
+            if template[var_start..var_end].contains("{{") {
+                return Err(RenderError::UnbalancedOpen { position: i });
+            }
+            let raw = template[var_start..var_end].trim();
+            if raw.is_empty() {
+                return Err(RenderError::EmptyVariable);
+            }
+            if !KNOWN_VARIABLES.contains(&raw) {
+                return Err(RenderError::UnknownVariable {
+                    name: raw.to_string(),
+                });
+            }
+            if let Some(c) = ctx {
+                let value = c
+                    .lookup(raw)
+                    .expect("KNOWN_VARIABLES and RenderContext::lookup must agree");
+                out.push_str(&value);
+            }
+            i = var_end + 2;
+        } else if rest.starts_with("}}") {
+            return Err(RenderError::UnbalancedClose { position: i });
+        } else {
+            let ch = rest.chars().next().expect("rest is non-empty");
+            if ctx.is_some() {
+                out.push(ch);
+            }
+            i += ch.len_utf8();
+        }
+    }
+    Ok(out)
+}
+
+/// Parse a 5-field cron expression (the design's wire format) into a
+/// [`cron::Schedule`]. The `cron` crate expects 6 fields (with seconds);
+/// we prepend `0 ` so user-typed `m h dom mon dow` parses correctly.
+///
+/// Returns the cron crate's error message on failure.
+pub fn parse_cron_expression(expression: &str) -> Result<CronSchedule, String> {
+    let normalised = format!("0 {}", expression.trim());
+    CronSchedule::from_str(&normalised).map_err(|e| e.to_string())
+}
+
+/// Extension trait so a [`Schedule`] can answer "is this trigger due to
+/// fire right now, and if so, at which slot?" in one constant-time call.
+pub trait ScheduleFiring {
+    /// Returns the slot the trigger should fire at, or `None` if it is
+    /// not due.
+    ///
+    /// For [`Schedule::Cron`]: the most recent slot ≤ `now` that is strictly
+    /// after `last_fire`.
+    ///
+    /// For [`Schedule::Once`]: returns `Some(at)` iff `last_fire.is_none()`
+    /// and `at <= now`.
+    fn get_fire_candidate(
+        &self,
+        last_fire: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>>;
+
+    /// Returns the next slot strictly after `now` for which the trigger
+    /// is due to fire — independent of `last_fire`. Useful for previewing
+    /// "next fire" in client UIs without having to know whether the
+    /// trigger has just been fired.
+    fn next_fire_after(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>>;
+}
+
+impl ScheduleFiring for Schedule {
+    fn get_fire_candidate(
+        &self,
+        last_fire: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        match self {
+            Schedule::Cron { expression, .. } => {
+                let schedule = parse_cron_expression(expression).ok()?;
+                let candidate = if schedule.includes(now) {
+                    Some(now)
+                } else {
+                    schedule.after(&now).next_back()
+                };
+                let candidate = candidate?;
+                match last_fire {
+                    Some(prev) if candidate <= prev => None,
+                    _ => Some(candidate),
+                }
+            }
+            Schedule::Once { at } => {
+                if last_fire.is_some() || *at > now {
+                    None
+                } else {
+                    Some(*at)
+                }
+            }
+        }
+    }
+
+    fn next_fire_after(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        match self {
+            Schedule::Cron { expression, .. } => {
+                let schedule = parse_cron_expression(expression).ok()?;
+                schedule.after(&now).next()
+            }
+            Schedule::Once { at } => (*at > now).then_some(*at),
+        }
+    }
 }
 
 #[cfg(test)]

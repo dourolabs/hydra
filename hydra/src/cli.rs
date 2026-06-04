@@ -146,6 +146,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: command::conversations::ConversationsCommand,
     },
+    /// Manage scheduled triggers.
+    Triggers {
+        #[command(subcommand)]
+        command: command::triggers::TriggerCommands,
+    },
     /// Chat with an agent via the Hydra conversation API.
     Chat {
         /// Send a single message, print the response, and exit.
@@ -306,6 +311,9 @@ pub async fn dispatch(cli: Cli, client: Arc<HydraClient>, context: &CommandConte
         }
         Commands::Conversations { command } => {
             command::conversations::run(client.as_ref(), command, context).await?
+        }
+        Commands::Triggers { command } => {
+            command::triggers::run(client.as_ref(), command, context).await?
         }
         Commands::Chat { prompt, agent } => {
             command::chat::run(client.as_ref(), prompt, agent, context).await?
