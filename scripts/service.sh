@@ -266,7 +266,7 @@ background:
 
         Context gathering:
         - Clone any repositories that may be implicated by the task "hydra repos list" and "hydra repos clone <repo name>".
-        - Scan repo docs and relevant code paths (AGENTS.md, README, DESIGN.md, module folders).
+        - Scan repo docs and relevant code paths (AGENTS.md, README, `docs/` clusters, module folders).
         - Identify unknowns and risks; if clarification is required, create a follow-up issue or a dedicated "clarify" task.
         - Do outside research for unfamiliar domains, and summarize key findings briefly.
 
