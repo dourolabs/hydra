@@ -529,7 +529,6 @@ function validate(
     }
     if (seen.has(s.key)) return `Duplicate status key '${s.key}'`;
     seen.add(s.key);
-    if (!s.label.trim()) return `Status '${s.key}' needs a label`;
   }
   if (!seen.has(defaultStatusKey)) {
     return `Default status '${defaultStatusKey}' must reference a declared status`;
