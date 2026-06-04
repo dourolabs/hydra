@@ -742,9 +742,10 @@ mod tests {
         creator: &str,
         creation_time: DateTime<Utc>,
     ) {
-        // Phase E step 16 dropped `prompt` / `context` / `interactive`;
-        // hand-crafted rows now only populate the surviving columns
-        // (mount_spec / agent_config / mode / conversation_id).
+        // Hand-crafted rows populate the canonical session-shape
+        // columns (`mount_spec` / `agent_config` / `mode`) plus
+        // `conversation_id` for the read-path index — same surface as
+        // the production INSERT.
         sqlx::query(
             "INSERT INTO tasks_v2 \
                 (id, version_number, creator, image, env_vars, \

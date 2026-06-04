@@ -84,8 +84,12 @@ pub struct MemoryStore {
     projects: DashMap<ProjectId, Vec<Versioned<Project>>>,
     /// Maps session IDs to their versioned session events. Each entry pairs
     /// the event with the monotonic `next_session_event_seq` value assigned
-    /// at append time, which serves as the global ordering primitive used by
-    /// the conversation read path fan-out merge (see design doc §3.4.1).
+    /// at append time, which serves as the global ordering primitive used
+    /// by the conversation read path. That read merges events from the
+    /// per-conversation log and from every session attached to the
+    /// conversation into a single chronological stream, so callers see
+    /// assistant / tool-use events alongside user messages in real time
+    /// order.
     session_events: DashMap<SessionId, Vec<(u64, Versioned<SessionEvent>)>>,
     /// Maps session IDs to their opaque session-state blobs.
     session_state: DashMap<SessionId, Vec<u8>>,

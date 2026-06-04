@@ -4,7 +4,7 @@
 //! variants the post-cleanup `ActorId` accepts (`User`, `Agent`,
 //! `Adhoc`, `External`).
 //!
-//! ## Mapping rules (§11 row 7 of `/designs/actor-system-overhaul.md`)
+//! ## Mapping rules
 //!
 //! | Pre-migration shape                              | Post-migration shape                                                                                |
 //! |--------------------------------------------------|-----------------------------------------------------------------------------------------------------|
@@ -36,11 +36,13 @@
 //!
 //! ## Self-contained
 //!
-//! Per the design's call-out the migration MUST NOT depend on the
-//! post-cleanup `hydra_common::ActorId` deserialization, otherwise a
-//! future tweak to that type could silently invalidate the rewrite.
-//! This module defines a local `NewActorId` enum and uses raw
-//! `serde_json::Value` construction for the output JSON shape.
+//! The migration MUST NOT depend on the post-cleanup
+//! `hydra_common::ActorId` deserialization — a future tweak to that
+//! type (rename a variant, change a field name) would silently
+//! invalidate the rewrite of historical rows. This module instead
+//! defines a local `NewActorId` enum and uses raw `serde_json::Value`
+//! construction for the output JSON shape, so the rewrite stays
+//! frozen against the schema that existed at this migration version.
 //!
 //! ## Idempotent
 //!
