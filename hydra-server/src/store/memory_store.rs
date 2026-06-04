@@ -2727,7 +2727,11 @@ fn issue_matches(
         }
     }
 
-    if !status_filter.is_empty() && !status_filter.contains(&issue.status) {
+    if !status_filter.is_empty()
+        && !status_filter
+            .iter()
+            .any(|s| s.as_str() == issue.status.as_str())
+    {
         return false;
     }
 
@@ -2891,7 +2895,7 @@ mod tests {
             "issue details".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             dependencies,
@@ -5619,7 +5623,7 @@ mod tests {
 
         // Create a closed issue
         let mut closed_issue = sample_issue(vec![]);
-        closed_issue.status = IssueStatus::Closed;
+        closed_issue.status = IssueStatus::Closed.into();
         let (closed_issue_id, _) = store
             .add_issue(closed_issue, &ActorRef::test())
             .await
@@ -7517,7 +7521,7 @@ mod tests {
             "a bug".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -7534,7 +7538,7 @@ mod tests {
             "closed task".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Closed,
+            IssueStatus::Closed.into(),
             None,
             None,
             Vec::new(),

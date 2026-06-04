@@ -314,7 +314,7 @@ mod tests {
             "desc".to_string(),
             Username::from("alice"),
             String::new(),
-            crate::domain::issues::IssueStatus::Open,
+            crate::domain::issues::IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),

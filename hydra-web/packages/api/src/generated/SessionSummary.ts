@@ -15,9 +15,20 @@ import type { Username } from "./Username";
  * `usage` totals reported by the worker are included.
  * The `prompt` field is truncated to the first 20 characters.
  */
-export type SessionSummary = { prompt: string, spawned_from?: IssueId | null, conversation_id?: ConversationId | null, creator: Username, status: Status, error?: TaskError | null, deleted?: boolean, creation_time?: string | null, start_time?: string | null, end_time?: string | null, 
-/**
- * Aggregated token usage reported by the worker at the end of a run.
- * `None` until the worker submits a `Complete` status with usage data.
- */
-usage?: TokenUsage | null, };
+export type SessionSummary = {
+  prompt: string;
+  spawned_from?: IssueId | null;
+  conversation_id?: ConversationId | null;
+  creator: Username;
+  status: Status;
+  error?: TaskError | null;
+  deleted?: boolean;
+  creation_time?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  /**
+   * Aggregated token usage reported by the worker at the end of a run.
+   * `None` until the worker submits a `Complete` status with usage data.
+   */
+  usage?: TokenUsage | null;
+};

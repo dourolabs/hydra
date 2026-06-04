@@ -195,7 +195,7 @@ impl KubernetesJobEngine {
 
         Ok(HydraJob {
             id,
-            status,
+            status: status.into(),
             creation_time,
             start_time,
             completion_time,
@@ -291,7 +291,7 @@ impl KubernetesJobEngine {
 
         Ok(HydraJob {
             id,
-            status,
+            status: status.into(),
             creation_time,
             start_time,
             completion_time,

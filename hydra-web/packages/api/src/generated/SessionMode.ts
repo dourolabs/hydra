@@ -9,18 +9,23 @@ import type { ConversationId } from "./ConversationId";
  * Resumption is **not** a mode — it's the lineage edge
  * `Session::resumed_from`.
  */
-export type SessionMode = { "type": "headless" } | { "type": "interactive", conversation_id: ConversationId, 
-/**
- * Worker-side idle timeout override. `None` means the server
- * applies its configured default (`job.interactive_idle_timeout_secs`)
- * at handshake time — used when the caller didn't supply a value
- * and for legacy rows that don't carry one.
- */
-idle_timeout_secs?: bigint | null, 
-/**
- * Whether the agent should produce a greeting turn before any user
- * message arrives. When `true`, the server emits `FirstMessage` with
- * an empty `user_message` as soon as the worker signals `Ready`,
- * rather than waiting on the conversation's first user message.
- */
-greet_user: boolean, };
+export type SessionMode =
+  | { type: "headless" }
+  | {
+      type: "interactive";
+      conversation_id: ConversationId;
+      /**
+       * Worker-side idle timeout override. `None` means the server
+       * applies its configured default (`job.interactive_idle_timeout_secs`)
+       * at handshake time — used when the caller didn't supply a value
+       * and for legacy rows that don't carry one.
+       */
+      idle_timeout_secs?: bigint | null;
+      /**
+       * Whether the agent should produce a greeting turn before any user
+       * message arrives. When `true`, the server emits `FirstMessage` with
+       * an empty `user_message` as soon as the worker signals `Ready`,
+       * rather than waiting on the conversation's first user message.
+       */
+      greet_user: boolean;
+    };

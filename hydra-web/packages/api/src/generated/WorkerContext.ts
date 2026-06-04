@@ -10,9 +10,18 @@ import type { JsonValue } from "./serde_json/JsonValue";
  *
  * Carries everything the worker needs to set up its execution
  * environment, plus enough metadata (`session_id`, `mode_kind`) to drive
- * the websocket lifecycle. Per the WS-only redesign, anything the
- * model itself sees (system prompt, transcript, resume blob) travels
- * over the relay websocket instead — see
- * `designs/sessions-worker-run-interface.md` §1.2.
+ * the websocket lifecycle. Anything the model itself sees (system
+ * prompt, transcript, resume blob) travels over the relay websocket —
+ * see `designs/sessions-worker-run-interface.md` §1.2.
  */
-export type WorkerContext = { session_id: SessionId, mode_kind: SessionModeKind, mounts: Array<MountItem>, working_dir: RelativePath, model?: string | null, mcp_config?: JsonValue | null, idle_timeout_secs?: bigint | null, resolved_env: { [key in string]: string }, github_token?: string | null, };
+export type WorkerContext = {
+  session_id: SessionId;
+  mode_kind: SessionModeKind;
+  mounts: Array<MountItem>;
+  working_dir: RelativePath;
+  model?: string | null;
+  mcp_config?: JsonValue | null;
+  idle_timeout_secs?: bigint | null;
+  resolved_env: { [key in string]: string };
+  github_token?: string | null;
+};

@@ -57,7 +57,10 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         .find(|issue| issue.issue.description == description)
         .ok_or_else(|| anyhow!("expected issue to be created"))?;
 
-    assert_eq!(created_summary.issue.status, IssueStatus::Open);
+    assert_eq!(
+        created_summary.issue.status.as_str(),
+        IssueStatus::Open.as_str()
+    );
 
     let created = user.get_issue(&created_summary.issue_id).await?;
     assert_eq!(

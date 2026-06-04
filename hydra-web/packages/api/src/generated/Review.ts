@@ -23,8 +23,12 @@ import type { Principal } from "./Principal";
  * fallback and confirm zero stale-client traffic before deleting it
  * (design §8.2, §11 row 7).
  */
-export type Review = { contents: string, is_approved: boolean, author: Principal, 
-/**
- * Timestamp for when the review was recorded.
- */
-submitted_at: string | null, };
+export type Review = {
+  contents: string;
+  is_approved: boolean;
+  author: Principal;
+  /**
+   * Timestamp for when the review was recorded.
+   */
+  submitted_at: string | null;
+};

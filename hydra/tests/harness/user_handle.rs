@@ -140,7 +140,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -167,7 +167,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             vec![IssueDependency::new(
@@ -197,7 +197,7 @@ impl UserHandle {
             .await
             .context("UserHandle::update_issue_status: failed to get issue")?;
         let mut issue = existing.issue;
-        issue.status = status;
+        issue.status = status.into();
         let request = UpsertIssueRequest::new(issue, None);
         self.client
             .update_issue(id, &request)
@@ -341,7 +341,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            status,
+            status.into(),
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent
@@ -391,7 +391,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            status,
+            status.into(),
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent

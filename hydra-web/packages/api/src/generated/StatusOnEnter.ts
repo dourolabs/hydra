@@ -10,4 +10,4 @@ import type { Principal } from "./Principal";
  * PR 1/6 carries the wire type only; the automation that consumes it
  * lands in PR 4.
  */
-export type StatusOnEnter = { assign_to?: Principal | null, attach_form?: DocumentPath | null, };
+export type StatusOnEnter = { assign_to?: Principal | null; attach_form?: DocumentPath | null };

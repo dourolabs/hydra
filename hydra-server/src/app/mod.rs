@@ -9,7 +9,7 @@ mod issues;
 mod labels;
 mod merge_queue;
 mod patches;
-mod projects;
+pub mod projects;
 mod repositories;
 mod resolved_task;
 pub(crate) mod sessions;

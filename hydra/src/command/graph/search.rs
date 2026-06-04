@@ -206,7 +206,7 @@ mod tests {
             "long-form description body".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             Some(SessionSettings::default()),
             Vec::new(),

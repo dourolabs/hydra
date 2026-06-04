@@ -1650,7 +1650,7 @@ mod tests {
                 "test issue".to_string(),
                 Username::from("test-creator"),
                 String::new(),
-                IssueStatus::Open,
+                IssueStatus::Open.into(),
                 None,
                 None,
                 Vec::new(),
@@ -2778,7 +2778,7 @@ mod tests {
                 "test".to_string(),
                 Username::from("creator"),
                 String::new(),
-                IssueStatus::Open,
+                IssueStatus::Open.into(),
                 None,
                 Some({
                     let mut ss = SessionSettings::default();

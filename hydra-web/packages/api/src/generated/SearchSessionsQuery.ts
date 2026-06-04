@@ -2,35 +2,39 @@
 import type { ConversationId } from "./ConversationId";
 import type { IssueId } from "./IssueId";
 
-export type SearchSessionsQuery = { q: string | null, spawned_from?: IssueId | null, 
-/**
- * Filter sessions spawned from any of these issue IDs (comma-separated, max 100).
- */
-spawned_from_ids?: string, include_deleted: boolean | null, 
-/**
- * Filter sessions by creator username.
- */
-creator: string | null, 
-/**
- * Filter sessions by the interactive conversation they are attached to.
- * Only interactive sessions whose `interactive.conversation_id` matches
- * are returned.
- */
-conversation_id?: ConversationId | null, 
-/**
- * Filter sessions by status (comma-separated in query string). When multiple
- * statuses are provided, a session matches if its status is any of the given values.
- */
-status?: string, 
-/**
- * Maximum number of results to return. When omitted, all results are returned.
- */
-limit: number | null, 
-/**
- * Opaque cursor from a previous response's `next_cursor` field.
- */
-cursor: string | null, 
-/**
- * When true, include `total_count` in the response.
- */
-count: boolean | null, };
+export type SearchSessionsQuery = {
+  q: string | null;
+  spawned_from?: IssueId | null;
+  /**
+   * Filter sessions spawned from any of these issue IDs (comma-separated, max 100).
+   */
+  spawned_from_ids?: string;
+  include_deleted: boolean | null;
+  /**
+   * Filter sessions by creator username.
+   */
+  creator: string | null;
+  /**
+   * Filter sessions by the interactive conversation they are attached to.
+   * Only interactive sessions whose `interactive.conversation_id` matches
+   * are returned.
+   */
+  conversation_id?: ConversationId | null;
+  /**
+   * Filter sessions by status (comma-separated in query string). When multiple
+   * statuses are provided, a session matches if its status is any of the given values.
+   */
+  status?: string;
+  /**
+   * Maximum number of results to return. When omitted, all results are returned.
+   */
+  limit: number | null;
+  /**
+   * Opaque cursor from a previous response's `next_cursor` field.
+   */
+  cursor: string | null;
+  /**
+   * When true, include `total_count` in the response.
+   */
+  count: boolean | null;
+};

@@ -16,6 +16,7 @@ use anyhow::Context;
 #[cfg(test)]
 use hydra_common::RepoName;
 use hydra_common::api::v1 as api;
+use hydra_common::api::v1::projects::StatusKey;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::{IssueId, SessionId, VersionNumber};
 use std::collections::{HashMap, HashSet};
@@ -61,7 +62,7 @@ impl SpawnResult {
 
 #[derive(Clone, Debug)]
 pub struct SpawnAttempt {
-    status: IssueStatus,
+    status: StatusKey,
     attempts: i32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
     feedback: Option<String>,
@@ -146,14 +147,14 @@ impl AgentQueue {
     async fn register_spawn_attempt(
         &self,
         issue_id: &IssueId,
-        status: IssueStatus,
+        status: StatusKey,
         children_snapshot: HashMap<IssueId, VersionNumber>,
         feedback: Option<String>,
         max_tries: i32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
         let entry = attempts.entry(issue_id.clone()).or_insert(SpawnAttempt {
-            status,
+            status: status.clone(),
             attempts: 0,
             children_snapshot: HashMap::new(),
             feedback: None,
@@ -218,11 +219,15 @@ impl AgentQueue {
         }
 
         // Compute guard conditions.
+        // PR 3 still pattern-matches on the legacy enum via `status_as_legacy()`.
+        // Custom (non-default-project) statuses fall back to "non-terminal";
+        // PR 4 replaces these with `resolve_status` flag reads.
+        let legacy_status = issue.status_as_legacy();
         let is_terminal = matches!(
-            issue.status,
-            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
+            legacy_status,
+            Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed)
         );
-        let is_dropped = matches!(issue.status, IssueStatus::Dropped);
+        let is_dropped = matches!(legacy_status, Some(IssueStatus::Dropped));
         let is_ready = state
             .is_issue_ready(issue_id)
             .await
@@ -265,7 +270,7 @@ impl AgentQueue {
         if !self
             .register_spawn_attempt(
                 issue_id,
-                issue.status,
+                issue.status.clone(),
                 children_snapshot,
                 issue.feedback.clone(),
                 max_tries,
@@ -557,7 +562,7 @@ mod tests {
             description.to_string(),
             default_user(),
             String::new(),
-            status,
+            status.into(),
             assignee.map(test_agent_principal),
             Some(session_settings(repo_name)),
             dependencies,
@@ -592,7 +597,8 @@ mod tests {
             description: description.to_string(),
             creator: default_user(),
             progress: String::new(),
-            status,
+            status: status.into(),
+            project_id: None,
             assignee: assignee.map(test_agent_principal),
             session_settings: SessionSettings::default(),
             dependencies: Vec::new(),
@@ -799,7 +805,8 @@ mod tests {
                     description: "Review patch".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
@@ -1060,7 +1067,8 @@ mod tests {
                     description: "Missing repo".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: None,
@@ -1093,7 +1101,8 @@ mod tests {
                     description: "Missing image".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
@@ -1192,7 +1201,8 @@ mod tests {
                     description: "Override retries".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name),
@@ -1249,7 +1259,8 @@ mod tests {
                     description: "Already running".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
@@ -1310,7 +1321,8 @@ mod tests {
                     description: "First issue".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
@@ -1332,7 +1344,8 @@ mod tests {
                     description: "Second issue".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
@@ -1472,7 +1485,7 @@ mod tests {
 
         let issue_ver = handles.store.get_issue(&issue_id, false).await?;
         let mut issue_item = issue_ver.item;
-        issue_item.status = IssueStatus::InProgress;
+        issue_item.status = IssueStatus::InProgress.into();
         handles
             .store
             .update_issue(&issue_id, issue_item, &ActorRef::test())
@@ -1631,7 +1644,7 @@ mod tests {
         // Update the child issue — this counts as progress on the parent.
         let child = handles.store.get_issue(&child_id, false).await?;
         let mut child_item = child.item;
-        child_item.status = IssueStatus::InProgress;
+        child_item.status = IssueStatus::InProgress.into();
         handles
             .store
             .update_issue(&child_id, child_item, &ActorRef::test())
@@ -1819,7 +1832,8 @@ mod tests {
                     description: "Assigned".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
@@ -1895,7 +1909,8 @@ mod tests {
                     description: "Issue with secrets".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
@@ -1949,7 +1964,8 @@ mod tests {
                     description: "Issue without secrets".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
                         repo_name: Some(repo_name.clone()),
@@ -2416,7 +2432,8 @@ mod tests {
                     description: "Needs feedback".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Closed,
+                    status: IssueStatus::Closed.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![
@@ -2488,7 +2505,8 @@ mod tests {
                     description: "Dropped with feedback".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Dropped,
+                    status: IssueStatus::Dropped.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
@@ -2530,7 +2548,8 @@ mod tests {
                     description: "Feedback attempt reset".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open,
+                    status: IssueStatus::Open.into(),
+                    project_id: None,
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings::default(),
                     dependencies: vec![],

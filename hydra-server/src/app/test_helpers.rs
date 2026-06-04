@@ -102,7 +102,7 @@ pub fn issue_with_status(
         description.to_string(),
         Username::from("creator"),
         String::new(),
-        status,
+        status.into(),
         None,
         None,
         dependencies,

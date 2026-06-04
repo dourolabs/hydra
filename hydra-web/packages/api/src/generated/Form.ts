@@ -5,17 +5,18 @@ import type { Field } from "./Field";
 /**
  * A form attached to an issue for human interaction.
  */
-export type Form = { 
-/**
- * Human-readable prompt explaining what the user needs to do (markdown).
- */
-prompt: string, 
-/**
- * Ordered list of form fields rendered above the action buttons.
- * May be empty for simple action-only forms.
- */
-fields: Array<Field>, 
-/**
- * Ordered list of actions the user can take (rendered as buttons).
- */
-actions: Array<Action>, };
+export type Form = {
+  /**
+   * Human-readable prompt explaining what the user needs to do (markdown).
+   */
+  prompt: string;
+  /**
+   * Ordered list of form fields rendered above the action buttons.
+   * May be empty for simple action-only forms.
+   */
+  fields: Array<Field>;
+  /**
+   * Ordered list of actions the user can take (rendered as buttons).
+   */
+  actions: Array<Action>;
+};

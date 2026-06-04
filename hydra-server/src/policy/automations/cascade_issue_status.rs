@@ -99,7 +99,13 @@ impl Automation for CascadeIssueStatusAutomation {
         if old.status == new.status {
             return Ok(());
         }
-        if !self.trigger_statuses.contains(&new.status) {
+        // PR 3: still match on the legacy enum via `status_as_legacy`.
+        // Custom statuses outside the default project are silently ignored
+        // until PR 4 swaps in `resolve_status().cascades_to_children`.
+        let Some(new_legacy) = new.status_as_legacy() else {
+            return Ok(());
+        };
+        if !self.trigger_statuses.contains(&new_legacy) {
             return Ok(());
         }
 
@@ -166,9 +172,13 @@ async fn drop_children_recursively(
             ))
         })?;
 
-        if !child.item.status.is_terminal() {
+        if !child
+            .item
+            .status_as_legacy()
+            .is_some_and(|s| s.is_terminal())
+        {
             let mut child_issue = child.item;
-            child_issue.status = IssueStatus::Dropped;
+            child_issue.status = IssueStatus::Dropped.into();
             upsert_issue(app_state, &child_id, child_issue, actor.clone()).await?;
         }
 
@@ -202,7 +212,7 @@ mod tests {
             "test".to_string(),
             Username::from("tester"),
             String::new(),
-            status,
+            status.into(),
             None,
             None,
             deps,
@@ -236,7 +246,7 @@ mod tests {
 
         // Update parent to Dropped
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
@@ -266,7 +276,10 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Dropped);
+        assert_eq!(
+            child_result.item.status,
+            IssueStatus::Dropped.as_status_key()
+        );
     }
 
     #[tokio::test]
@@ -294,7 +307,7 @@ mod tests {
         // Fail issue A — Failed is no longer a trigger status,
         // so the automation should not fire and B should stay Open.
         let mut failed_a = issue_a;
-        failed_a.status = IssueStatus::Failed;
+        failed_a.status = IssueStatus::Failed.into();
         store
             .update_issue(&id_a, failed_a.clone(), &ActorRef::test())
             .await
@@ -325,7 +338,7 @@ mod tests {
 
         // B should remain Open (not dropped)
         let b_result = store.get_issue(&id_b, false).await.unwrap();
-        assert_eq!(b_result.item.status, IssueStatus::Open);
+        assert_eq!(b_result.item.status, IssueStatus::Open.as_status_key());
     }
 
     #[tokio::test]
@@ -351,7 +364,7 @@ mod tests {
 
         // Fail the parent — children should be dropped.
         let mut failed_parent = parent;
-        failed_parent.status = IssueStatus::Failed;
+        failed_parent.status = IssueStatus::Failed.into();
         store
             .update_issue(&parent_id, failed_parent.clone(), &ActorRef::test())
             .await
@@ -381,7 +394,10 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Dropped);
+        assert_eq!(
+            child_result.item.status,
+            IssueStatus::Dropped.as_status_key()
+        );
     }
 
     #[tokio::test]
@@ -407,7 +423,7 @@ mod tests {
 
         // Drop the parent — children should be dropped.
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
@@ -437,7 +453,10 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Dropped);
+        assert_eq!(
+            child_result.item.status,
+            IssueStatus::Dropped.as_status_key()
+        );
     }
 
     #[tokio::test]
@@ -498,7 +517,7 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
@@ -528,7 +547,10 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Closed);
+        assert_eq!(
+            child_result.item.status,
+            IssueStatus::Closed.as_status_key()
+        );
     }
 
     #[tokio::test]
@@ -552,7 +574,7 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
@@ -582,7 +604,10 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Failed);
+        assert_eq!(
+            child_result.item.status,
+            IssueStatus::Failed.as_status_key()
+        );
     }
 
     #[tokio::test]
@@ -606,7 +631,7 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
@@ -636,7 +661,10 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Dropped);
+        assert_eq!(
+            child_result.item.status,
+            IssueStatus::Dropped.as_status_key()
+        );
     }
 
     #[tokio::test]
@@ -673,7 +701,7 @@ mod tests {
             .unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped;
+        dropped_parent.status = IssueStatus::Dropped.into();
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
@@ -704,11 +732,17 @@ mod tests {
 
         // Closed child should stay closed
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Closed);
+        assert_eq!(
+            child_result.item.status,
+            IssueStatus::Closed.as_status_key()
+        );
 
         // Open grandchild should be dropped
         let grandchild_result = store.get_issue(&grandchild_id, false).await.unwrap();
-        assert_eq!(grandchild_result.item.status, IssueStatus::Dropped);
+        assert_eq!(
+            grandchild_result.item.status,
+            IssueStatus::Dropped.as_status_key()
+        );
     }
 
     #[tokio::test]

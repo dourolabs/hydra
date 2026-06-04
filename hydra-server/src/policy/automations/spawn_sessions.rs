@@ -221,7 +221,7 @@ impl Automation for SpawnSessionsAutomation {
 
                         // Update the issue to Failed with a descriptive progress message.
                         let mut failed_issue = issue.clone();
-                        failed_issue.status = crate::domain::issues::IssueStatus::Failed;
+                        failed_issue.status = crate::domain::issues::IssueStatus::Failed.into();
                         failed_issue.progress = progress.clone();
                         if let Err(err) = ctx
                             .app_state
@@ -293,7 +293,7 @@ mod tests {
             "Run agent".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             Some(hydra_common::principal::Principal::Agent {
                 name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
                     .expect("test agent name should validate"),
@@ -322,7 +322,7 @@ mod tests {
             "Run agent".to_string(),
             Username::from("worker"),
             String::new(),
-            status,
+            status.into(),
             Some(hydra_common::principal::Principal::Agent {
                 name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
                     .expect("test agent name should validate"),
@@ -677,7 +677,7 @@ mod tests {
         let updated_issue = handles.store.get_issue(&issue_id, false).await?;
         assert_eq!(
             updated_issue.item.status,
-            IssueStatus::Failed,
+            IssueStatus::Failed.into(),
             "issue should be marked as failed when retries exhausted"
         );
 
@@ -783,7 +783,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -897,7 +897,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),
@@ -953,7 +953,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open,
+            IssueStatus::Open.into(),
             None,
             None,
             Vec::new(),

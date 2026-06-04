@@ -7,4 +7,9 @@ import type { HydraId } from "./HydraId";
  * Note: intentionally omits `source_kind` and `target_kind` per the design
  * document; both are inferable from the prefixes of the source/target IDs.
  */
-export type RelationResponse = { source_id: HydraId, target_id: HydraId, rel_type: string, created_at: string, };
+export type RelationResponse = {
+  source_id: HydraId;
+  target_id: HydraId;
+  rel_type: string;
+  created_at: string;
+};

@@ -2,4 +2,4 @@
 import type { GithubCiFailure } from "./GithubCiFailure";
 import type { GithubCiState } from "./GithubCiState";
 
-export type GithubCiStatus = { state: GithubCiState, failure?: GithubCiFailure | null, };
+export type GithubCiStatus = { state: GithubCiState; failure?: GithubCiFailure | null };

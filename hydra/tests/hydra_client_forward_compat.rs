@@ -460,7 +460,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "desc".to_string(),
         Username::from("creator"),
         "progress".to_string(),
-        IssueStatus::Open,
+        IssueStatus::Open.into(),
         Some(hydra_common::principal::Principal::User {
             name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
         }),
@@ -481,7 +481,10 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(updated_issue.issue_id, issue_id);
 
     let fetched_issue = client.get_issue(&issue_id, false).await?;
-    assert!(matches!(fetched_issue.issue.status, IssueStatus::Unknown));
+    // PR 3 wire change: status is a newtyped string (`StatusKey`). The
+    // forward-compat payload's `"on-hold"` value now round-trips
+    // verbatim instead of being collapsed into the `Unknown` enum variant.
+    assert_eq!(fetched_issue.issue.status.as_str(), "on-hold");
     assert!(matches!(fetched_issue.issue.issue_type, IssueType::Unknown));
     assert!(matches!(
         fetched_issue

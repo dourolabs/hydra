@@ -4,16 +4,34 @@ import type { SelectOption } from "./SelectOption";
 /**
  * Input type determines the rendered widget and validation.
  */
-export type Input = { "type": "text", placeholder?: string | null, min_length?: number | null, max_length?: number | null, 
-/**
- * Regex pattern the value must match.
- */
-pattern?: string | null, } | { "type": "textarea", placeholder?: string | null, min_length?: number | null, max_length?: number | null, 
-/**
- * Visible rows (rendering hint). Defaults to 4.
- */
-rows: number, } | { "type": "select", options: Array<SelectOption>, 
-/**
- * Render as radio buttons instead of a dropdown.
- */
-radio: boolean, } | { "type": "checkbox" } | { "type": "number", min?: number | null, max?: number | null, step?: number | null, };
+export type Input =
+  | {
+      type: "text";
+      placeholder?: string | null;
+      min_length?: number | null;
+      max_length?: number | null;
+      /**
+       * Regex pattern the value must match.
+       */
+      pattern?: string | null;
+    }
+  | {
+      type: "textarea";
+      placeholder?: string | null;
+      min_length?: number | null;
+      max_length?: number | null;
+      /**
+       * Visible rows (rendering hint). Defaults to 4.
+       */
+      rows: number;
+    }
+  | {
+      type: "select";
+      options: Array<SelectOption>;
+      /**
+       * Render as radio buttons instead of a dropdown.
+       */
+      radio: boolean;
+    }
+  | { type: "checkbox" }
+  | { type: "number"; min?: number | null; max?: number | null; step?: number | null };

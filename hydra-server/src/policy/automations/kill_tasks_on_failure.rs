@@ -53,7 +53,10 @@ impl Automation for KillTasksOnFailureAutomation {
         if old.status == new.status {
             return Ok(());
         }
-        if !matches!(new.status, IssueStatus::Dropped | IssueStatus::Failed) {
+        if !matches!(
+            new.status_as_legacy(),
+            Some(IssueStatus::Dropped | IssueStatus::Failed)
+        ) {
             return Ok(());
         }
 
@@ -131,7 +134,7 @@ mod tests {
             "test".to_string(),
             Username::from("tester"),
             String::new(),
-            status,
+            status.into(),
             None,
             None,
             Vec::new(),

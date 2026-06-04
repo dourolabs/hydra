@@ -44,7 +44,7 @@ fn issue(
         description.to_string(),
         creator,
         progress,
-        status,
+        status.into(),
         assignee_principal,
         None,
         dependencies,
@@ -81,7 +81,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 "original details".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
-                IssueStatus::Open,
+                IssueStatus::Open.into(),
                 None,
                 None,
                 vec![],
@@ -111,7 +111,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 "updated details".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
-                IssueStatus::InProgress,
+                IssueStatus::InProgress.into(),
                 None,
                 None,
                 vec![],
@@ -146,7 +146,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
-                IssueStatus::Open,
+                IssueStatus::Open.into(),
                 None,
                 None,
                 vec![],
@@ -176,7 +176,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 "updated".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
-                IssueStatus::InProgress,
+                IssueStatus::InProgress.into(),
                 None,
                 None,
                 vec![],
@@ -256,7 +256,7 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
-                IssueStatus::Open,
+                IssueStatus::Open.into(),
                 None,
                 None,
                 vec![],
@@ -1329,8 +1329,8 @@ async fn submit_form_action_valid_submission() -> anyhow::Result<()> {
         .json()
         .await?;
     assert_eq!(
-        fetched.issue.status,
-        hydra_common::api::v1::issues::IssueStatus::Closed
+        fetched.issue.status.as_str(),
+        hydra_common::api::v1::issues::IssueStatus::Closed.as_str()
     );
     // Form should still be present
     assert!(fetched.issue.form.is_some());
@@ -1370,8 +1370,8 @@ async fn submit_form_action_record_only_does_not_change_status() -> anyhow::Resu
         .json()
         .await?;
     assert_eq!(
-        fetched.issue.status,
-        hydra_common::api::v1::issues::IssueStatus::Open
+        fetched.issue.status.as_str(),
+        hydra_common::api::v1::issues::IssueStatus::Open.as_str()
     );
 
     Ok(())
@@ -1609,8 +1609,8 @@ async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
     assert_eq!(resp.issue.feedback, Some("fix this".to_string()));
     // Status should remain InProgress (not terminal)
     assert_eq!(
-        resp.issue.status,
-        hydra_common::api::v1::issues::IssueStatus::InProgress
+        resp.issue.status.as_str(),
+        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
     );
 
     Ok(())
@@ -1660,8 +1660,8 @@ async fn submit_feedback_transitions_terminal_status_to_in_progress() -> anyhow:
 
     assert_eq!(resp.issue.feedback, Some("please reopen".to_string()));
     assert_eq!(
-        resp.issue.status,
-        hydra_common::api::v1::issues::IssueStatus::InProgress
+        resp.issue.status.as_str(),
+        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
     );
 
     Ok(())
@@ -1711,8 +1711,8 @@ async fn submit_feedback_transitions_failed_status_to_in_progress() -> anyhow::R
 
     assert_eq!(resp.issue.feedback, Some("try again".to_string()));
     assert_eq!(
-        resp.issue.status,
-        hydra_common::api::v1::issues::IssueStatus::InProgress
+        resp.issue.status.as_str(),
+        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
     );
 
     Ok(())
@@ -1820,7 +1820,8 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
                 description: "test".to_string(),
                 creator: Username::from("test-creator"),
                 progress: String::new(),
-                status: IssueStatus::InProgress,
+                status: IssueStatus::InProgress.into(),
+                project_id: None,
                 assignee: None,
                 session_settings: Default::default(),
                 dependencies: Vec::new(),

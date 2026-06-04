@@ -15,4 +15,18 @@ import type { Username } from "./Username";
  * see [`UpsertReviewRequest`] and Phase 5b of
  * `/designs/actor-system-overhaul.md` §6).
  */
-export type UpsertPatch = { title: string, description: string, diff: string, status: PatchStatus, is_automatic_backup: boolean, creator: Username, reviews: Array<UpsertReviewRequest>, service_repo_name: RepoName, github?: GithubPr | null, deleted?: boolean, branch_name?: string | null, commit_range?: CommitRange | null, base_branch?: string | null, };
+export type UpsertPatch = {
+  title: string;
+  description: string;
+  diff: string;
+  status: PatchStatus;
+  is_automatic_backup: boolean;
+  creator: Username;
+  reviews: Array<UpsertReviewRequest>;
+  service_repo_name: RepoName;
+  github?: GithubPr | null;
+  deleted?: boolean;
+  branch_name?: string | null;
+  commit_range?: CommitRange | null;
+  base_branch?: string | null;
+};

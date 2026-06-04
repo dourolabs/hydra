@@ -36,4 +36,7 @@ import type { Username } from "./Username";
  * `rename = "ActorPrincipal"` workaround is dropped here so the shared
  * type takes back ownership of `Principal.ts`.
  */
-export type Principal = { "User": { name: Username, } } | { "Agent": { name: AgentName, } } | { "External": { system: ExternalSystem, username: string, } };
+export type Principal =
+  | { User: { name: Username } }
+  | { Agent: { name: AgentName } }
+  | { External: { system: ExternalSystem; username: string } };
