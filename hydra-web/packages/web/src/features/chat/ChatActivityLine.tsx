@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Icons } from "@hydra/ui";
 import type { ActivityCategory, ActivityRun, ActivityStep } from "./deriveActivitySteps";
 import styles from "./ChatActivityLine.module.css";
 
@@ -95,24 +96,6 @@ function CategoryIcon({ category }: { category: ActivityCategory }) {
         </svg>
       );
   }
-}
-
-function Chevron() {
-  return (
-    <svg
-      width={12}
-      height={12}
-      viewBox="0 0 12 12"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M4 2.5 8 6 4 9.5" />
-    </svg>
-  );
 }
 
 /**
@@ -213,7 +196,7 @@ export function ChatActivityLine({ run, now = Date.now }: ChatActivityLineProps)
           {formatTimer(elapsedMs)}
         </span>
         <span className={styles.chev} aria-hidden>
-          <Chevron />
+          <Icons.IconChevronRight size={12} />
         </span>
         <span className={styles.sweep} aria-hidden />
       </button>
