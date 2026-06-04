@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Navigate, useParams } from "react-router-dom";
 import { Spinner } from "@hydra/ui";
 import { useTrigger } from "../features/triggers/useTriggers";
 import { TriggerDetail } from "../features/triggers/TriggerDetail";
@@ -8,14 +8,21 @@ import styles from "./TriggerDetailPage.module.css";
 
 export function TriggerDetailPage() {
   const { triggerId } = useParams<{ triggerId: string }>();
-  const { data: record, isLoading, error } = useTrigger(triggerId ?? "");
+
+  if (!triggerId) return <Navigate to="/triggers" replace />;
+
+  return <TriggerDetailPageInner triggerId={triggerId} />;
+}
+
+function TriggerDetailPageInner({ triggerId }: { triggerId: string }) {
+  const { data: record, isLoading, error } = useTrigger(triggerId);
 
   useBreadcrumbs(
     [
       { label: "Workspace", to: "/" },
       { label: "Triggers", to: "/triggers" },
     ],
-    triggerId ?? "",
+    triggerId,
     "code",
   );
 
