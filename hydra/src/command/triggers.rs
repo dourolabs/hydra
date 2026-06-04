@@ -3,7 +3,7 @@ use crate::{
     command::{
         output::{
             render as render_output, CommandContext, DeletedTriggerOutcome, ResolvedOutputFormat,
-            TriggerRecords,
+            TriggerRecords, TriggerTestRecords, TriggerUpsertOutcome,
         },
         utils::resolve_username,
     },
@@ -206,18 +206,9 @@ fn write_upsert_response(
     format: ResolvedOutputFormat,
     response: &UpsertTriggerResponse,
 ) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Pretty => {
-            println!(
-                "Trigger {} (version {})",
-                response.trigger_id, response.version
-            );
-        }
-        ResolvedOutputFormat::Jsonl => {
-            let json = serde_json::to_string(response)?;
-            println!("{json}");
-        }
-    }
+    let mut buffer = Vec::new();
+    render_output(TriggerUpsertOutcome(response), format, &mut buffer)?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
@@ -236,43 +227,30 @@ fn run_test(spec: TriggerSpec, at: DateTime<Utc>, format: ResolvedOutputFormat) 
         .map(|(idx, action)| render_action(idx, action, &ctx))
         .collect::<Result<Vec<_>>>()?;
 
-    match format {
-        ResolvedOutputFormat::Jsonl => {
-            for action in &rendered {
-                let json = serde_json::to_string(action)?;
-                println!("{json}");
-            }
-        }
-        ResolvedOutputFormat::Pretty => {
-            if rendered.is_empty() {
-                println!("(trigger has no actions)");
-            }
-            for action in &rendered {
-                print_rendered(action);
-            }
-        }
-    }
+    let mut buffer = Vec::new();
+    render_output(TriggerTestRecords(&rendered), format, &mut buffer)?;
+    write_stdout(&buffer)?;
     Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum RenderedAction {
+pub(crate) enum RenderedAction {
     CreateIssue(RenderedCreateIssue),
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct RenderedCreateIssue {
-    action_index: usize,
-    issue_type: String,
-    title: String,
-    description: String,
+pub(crate) struct RenderedCreateIssue {
+    pub(crate) action_index: usize,
+    pub(crate) issue_type: String,
+    pub(crate) title: String,
+    pub(crate) description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    assignee: Option<String>,
+    pub(crate) assignee: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<String>,
+    pub(crate) status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    repo_name: Option<String>,
+    pub(crate) repo_name: Option<String>,
 }
 
 fn render_action(idx: usize, action: &Action, ctx: &RenderContext) -> Result<RenderedAction> {
@@ -307,35 +285,6 @@ fn render_action(idx: usize, action: &Action, ctx: &RenderContext) -> Result<Ren
                 status: status.as_ref().map(ToString::to_string),
                 repo_name: session_settings.repo_name.as_ref().map(ToString::to_string),
             }))
-        }
-    }
-}
-
-fn print_rendered(action: &RenderedAction) {
-    match action {
-        RenderedAction::CreateIssue(rendered) => {
-            println!(
-                "action {} create_issue ({})",
-                rendered.action_index, rendered.issue_type
-            );
-            println!("  title: {}", rendered.title);
-            if rendered.description.trim().is_empty() {
-                println!("  description: -");
-            } else {
-                println!("  description:");
-                for line in rendered.description.lines() {
-                    println!("    {line}");
-                }
-            }
-            if let Some(assignee) = &rendered.assignee {
-                println!("  assignee: {assignee}");
-            }
-            if let Some(status) = &rendered.status {
-                println!("  status: {status}");
-            }
-            if let Some(repo) = &rendered.repo_name {
-                println!("  repo: {repo}");
-            }
         }
     }
 }
@@ -643,6 +592,165 @@ actions:
         };
         client.list_triggers(&query).await.expect("list");
         mock.assert();
+    }
+
+    #[test]
+    fn upsert_outcome_pretty_matches_legacy_line() {
+        let tid = trigger_id("t-mockmock");
+        let response = UpsertTriggerResponse::new(tid.clone(), 7);
+        let mut buffer = Vec::new();
+        render_output(
+            TriggerUpsertOutcome(&response),
+            ResolvedOutputFormat::Pretty,
+            &mut buffer,
+        )
+        .expect("pretty render");
+        let text = String::from_utf8(buffer).expect("utf8");
+        assert_eq!(text, format!("Trigger {tid} (version 7)\n"));
+    }
+
+    #[test]
+    fn upsert_outcome_jsonl_is_single_json_object() {
+        let tid = trigger_id("t-mockmock");
+        let response = UpsertTriggerResponse::new(tid.clone(), 7);
+        let mut buffer = Vec::new();
+        render_output(
+            TriggerUpsertOutcome(&response),
+            ResolvedOutputFormat::Jsonl,
+            &mut buffer,
+        )
+        .expect("jsonl render");
+        let text = String::from_utf8(buffer).expect("utf8");
+        assert!(text.ends_with('\n'), "jsonl row missing trailing newline");
+        let value: serde_json::Value =
+            serde_json::from_str(text.trim_end()).expect("jsonl row must parse");
+        assert_eq!(value["trigger_id"].as_str(), Some(tid.to_string().as_str()));
+        assert_eq!(value["version"].as_u64(), Some(7));
+    }
+
+    #[test]
+    fn test_records_pretty_empty_shows_placeholder() {
+        let rendered: Vec<RenderedAction> = Vec::new();
+        let mut buffer = Vec::new();
+        render_output(
+            TriggerTestRecords(&rendered),
+            ResolvedOutputFormat::Pretty,
+            &mut buffer,
+        )
+        .expect("pretty render");
+        let text = String::from_utf8(buffer).expect("utf8");
+        assert_eq!(text, "(trigger has no actions)\n");
+    }
+
+    #[test]
+    fn test_records_pretty_renders_all_fields() {
+        let spec: TriggerSpec = parse_spec(sample_yaml()).expect("parse");
+        let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
+        let placeholder = TriggerId::from_str("t-aaaaaa").unwrap();
+        let ctx = RenderContext::new(at, at, placeholder);
+        let rendered = spec
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(idx, action)| render_action(idx, action, &ctx))
+            .collect::<Result<Vec<_>>>()
+            .expect("render");
+
+        let mut buffer = Vec::new();
+        render_output(
+            TriggerTestRecords(&rendered),
+            ResolvedOutputFormat::Pretty,
+            &mut buffer,
+        )
+        .expect("pretty render");
+        let text = String::from_utf8(buffer).expect("utf8");
+        assert!(text.contains("action 0 create_issue (task)"), "got: {text}");
+        assert!(
+            text.contains("  title: Weekly triage — 2026-06-10"),
+            "got: {text}"
+        );
+        assert!(text.contains("  description:"), "got: {text}");
+        assert!(text.contains("  assignee: users/alice"), "got: {text}");
+        assert!(text.contains("  status: open"), "got: {text}");
+        assert!(text.contains("  repo: dourolabs/hydra"), "got: {text}");
+    }
+
+    #[test]
+    fn test_records_pretty_empty_description_shown_as_dash() {
+        let yaml = r#"
+schedule:
+  Once:
+    at: "2026-06-10T09:00:00Z"
+actions:
+  - CreateIssue:
+      type: task
+      title: "t"
+      description: ""
+"#;
+        let spec: TriggerSpec = parse_spec(yaml).expect("parse");
+        let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
+        let placeholder = TriggerId::from_str("t-aaaaaa").unwrap();
+        let ctx = RenderContext::new(at, at, placeholder);
+        let rendered = spec
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(idx, action)| render_action(idx, action, &ctx))
+            .collect::<Result<Vec<_>>>()
+            .expect("render");
+
+        let mut buffer = Vec::new();
+        render_output(
+            TriggerTestRecords(&rendered),
+            ResolvedOutputFormat::Pretty,
+            &mut buffer,
+        )
+        .expect("pretty render");
+        let text = String::from_utf8(buffer).expect("utf8");
+        assert!(text.contains("  description: -"), "got: {text}");
+    }
+
+    #[test]
+    fn test_records_jsonl_one_object_per_action() {
+        let spec: TriggerSpec = parse_spec(sample_yaml()).expect("parse");
+        let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
+        let placeholder = TriggerId::from_str("t-aaaaaa").unwrap();
+        let ctx = RenderContext::new(at, at, placeholder);
+        let rendered = spec
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(idx, action)| render_action(idx, action, &ctx))
+            .collect::<Result<Vec<_>>>()
+            .expect("render");
+
+        let mut buffer = Vec::new();
+        render_output(
+            TriggerTestRecords(&rendered),
+            ResolvedOutputFormat::Jsonl,
+            &mut buffer,
+        )
+        .expect("jsonl render");
+        let text = String::from_utf8(buffer).expect("utf8");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 1);
+        let value: serde_json::Value = serde_json::from_str(lines[0]).expect("parse");
+        assert_eq!(value["kind"].as_str(), Some("create_issue"));
+        assert_eq!(value["issue_type"].as_str(), Some("task"));
+        assert_eq!(value["action_index"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn test_records_jsonl_empty_input_writes_nothing() {
+        let rendered: Vec<RenderedAction> = Vec::new();
+        let mut buffer = Vec::new();
+        render_output(
+            TriggerTestRecords(&rendered),
+            ResolvedOutputFormat::Jsonl,
+            &mut buffer,
+        )
+        .expect("jsonl render");
+        assert!(buffer.is_empty());
     }
 
     #[test]

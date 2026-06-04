@@ -5,12 +5,14 @@ use chrono::{DateTime, Utc};
 use hydra_common::{
     triggers::{
         Action, CreateIssueAction, Schedule, ScheduleFiring, Trigger, TriggerVersionRecord,
+        UpsertTriggerResponse,
     },
     TriggerId,
 };
 use serde_json::json;
 
 use super::Render;
+use crate::command::triggers::RenderedAction;
 
 pub struct TriggerRecords<'a>(pub &'a [TriggerVersionRecord]);
 
@@ -32,6 +34,82 @@ impl Render for DeletedTriggerOutcome<'_> {
         writer.flush()?;
         Ok(())
     }
+}
+
+pub struct TriggerUpsertOutcome<'a>(pub(crate) &'a UpsertTriggerResponse);
+
+impl Render for TriggerUpsertOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(&mut *writer, self.0)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(
+            writer,
+            "Trigger {} (version {})",
+            self.0.trigger_id, self.0.version
+        )?;
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+pub struct TriggerTestRecords<'a>(pub(crate) &'a [RenderedAction]);
+
+impl Render for TriggerTestRecords<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        for action in self.0 {
+            serde_json::to_writer(&mut *writer, action)?;
+            writer.write_all(b"\n")?;
+        }
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        if self.0.is_empty() {
+            writeln!(writer, "(trigger has no actions)")?;
+        }
+        for action in self.0 {
+            render_test_action(writer, action)?;
+        }
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+fn render_test_action<W: Write>(writer: &mut W, action: &RenderedAction) -> Result<()> {
+    match action {
+        RenderedAction::CreateIssue(rendered) => {
+            writeln!(
+                writer,
+                "action {} create_issue ({})",
+                rendered.action_index, rendered.issue_type
+            )?;
+            writeln!(writer, "  title: {}", rendered.title)?;
+            if rendered.description.trim().is_empty() {
+                writeln!(writer, "  description: -")?;
+            } else {
+                writeln!(writer, "  description:")?;
+                for line in rendered.description.lines() {
+                    writeln!(writer, "    {line}")?;
+                }
+            }
+            if let Some(assignee) = &rendered.assignee {
+                writeln!(writer, "  assignee: {assignee}")?;
+            }
+            if let Some(status) = &rendered.status {
+                writeln!(writer, "  status: {status}")?;
+            }
+            if let Some(repo) = &rendered.repo_name {
+                writeln!(writer, "  repo: {repo}")?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Render for TriggerRecords<'_> {
