@@ -813,6 +813,7 @@ fn blocked_at_layer_str(layer: BlockedAtLayer) -> &'static str {
     match layer {
         BlockedAtLayer::Reviews => "reviews",
         BlockedAtLayer::Mergers => "mergers",
+        _ => "unknown",
     }
 }
 
@@ -836,6 +837,7 @@ fn render_eligible_principal(principal: &EligiblePrincipal) -> String {
                 None => format!("{raw} (resolved: <unresolved>)"),
             }
         }
+        _ => "<unknown principal>".to_string(),
     }
 }
 
@@ -945,6 +947,11 @@ fn render_merge_blocked_human(body: &MergeBlockedError) -> String {
                 }
             }
         }
+        _ => {
+            out.push_str(&format!(
+                "error: merge blocked — patch {patch_id} blocked at an unrecognised layer\n"
+            ));
+        }
     }
     out.push_str("\nRun with --output-format jsonl to get the machine-readable payload.");
     out
@@ -971,6 +978,11 @@ async fn merge_patch(
         Ok(MergeCheckResponse::Ok(_)) => {}
         Ok(MergeCheckResponse::Blocked(body)) => {
             return Err(handle_merge_blocked(body, output_format));
+        }
+        Ok(other) => {
+            return Err(anyhow::anyhow!(
+                "merge_check preflight returned an unknown response variant for patch '{patch_id}'; refusing to merge: {other:?}"
+            ));
         }
         Err(err) => {
             return Err(err.context(format!(
@@ -1629,14 +1641,13 @@ mod tests {
         patch_id: &PatchId,
     ) -> hydra_common::api::v1::merge_check::MergeBlockedError {
         use hydra_common::api::v1::merge_check::{
-            BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError,
-            MergeBlockedReason, SuggestedAction,
+            BlockedAtLayer, EligiblePrincipal, MergeBlockedError, MergeBlockedReason,
+            SuggestedAction,
         };
-        MergeBlockedError {
-            code: MergeBlockedCode::MergeBlocked,
-            patch_id: patch_id.clone(),
-            blocked_at_layer: BlockedAtLayer::Reviews,
-            reasons: vec![MergeBlockedReason::MissingApprovals {
+        MergeBlockedError::new(
+            patch_id.clone(),
+            BlockedAtLayer::Reviews,
+            vec![MergeBlockedReason::MissingApprovals {
                 group_index: 0,
                 label: Some("code-review".to_string()),
                 eligible_principals: vec![
@@ -1654,22 +1665,21 @@ mod tests {
                     title_hint: format!("Review {patch_id} (code-review)"),
                 },
             }],
-        }
+        )
     }
 
     fn sample_mergers_blocked(
         patch_id: &PatchId,
     ) -> hydra_common::api::v1::merge_check::MergeBlockedError {
         use hydra_common::api::v1::merge_check::{
-            BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError,
-            MergeBlockedReason, SuggestedAction,
+            BlockedAtLayer, EligiblePrincipal, MergeBlockedError, MergeBlockedReason,
+            SuggestedAction,
         };
         use hydra_common::api::v1::repositories::DynamicRef;
-        MergeBlockedError {
-            code: MergeBlockedCode::MergeBlocked,
-            patch_id: patch_id.clone(),
-            blocked_at_layer: BlockedAtLayer::Mergers,
-            reasons: vec![MergeBlockedReason::NotInMergers {
+        MergeBlockedError::new(
+            patch_id.clone(),
+            BlockedAtLayer::Mergers,
+            vec![MergeBlockedReason::NotInMergers {
                 actor: "swe-session-abcd".to_string(),
                 allowed_mergers: vec![EligiblePrincipal::Dynamic {
                     reference: DynamicRef::PatchCreator,
@@ -1679,7 +1689,7 @@ mod tests {
                     assign_to_one_of: vec!["jayantk".to_string()],
                 },
             }],
-        }
+        )
     }
 
     fn mock_get_issue(server: &MockServer, issue: IssueVersionRecord) -> Mock {

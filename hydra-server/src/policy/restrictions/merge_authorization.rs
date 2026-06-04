@@ -9,8 +9,7 @@
 
 use async_trait::async_trait;
 use hydra_common::api::v1::merge_check::{
-    BlockedAtLayer, EligiblePrincipal, MergeBlockedCode, MergeBlockedError, MergeBlockedReason,
-    SuggestedAction,
+    BlockedAtLayer, EligiblePrincipal, MergeBlockedError, MergeBlockedReason, SuggestedAction,
 };
 use hydra_common::api::v1::repositories::{AssigneeRef, MergePolicy, ReviewerGroup};
 use hydra_common::api::v1::users::Username as ApiUsername;
@@ -359,12 +358,7 @@ fn build_violation(
     blocked_at_layer: BlockedAtLayer,
     reasons: Vec<MergeBlockedReason>,
 ) -> PolicyViolation {
-    let body = MergeBlockedError {
-        code: MergeBlockedCode::MergeBlocked,
-        patch_id: patch_id.clone(),
-        blocked_at_layer,
-        reasons,
-    };
+    let body = MergeBlockedError::new(patch_id.clone(), blocked_at_layer, reasons);
     let message = serde_json::to_string(&body)
         .unwrap_or_else(|e| format!("merge_blocked: failed to serialize error payload: {e}"));
     PolicyViolation {

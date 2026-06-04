@@ -33,6 +33,7 @@ use crate::principal::ExternalSystem;
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum MergeCheckResponse {
     Ok(MergeCheckOk),
     Blocked(MergeBlockedError),
@@ -44,6 +45,7 @@ pub enum MergeCheckResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
 pub struct MergeCheckOk {
     pub ok: bool,
 }
@@ -81,11 +83,27 @@ impl IntoResponse for MergeCheckResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
 pub struct MergeBlockedError {
     pub code: MergeBlockedCode,
     pub patch_id: PatchId,
     pub blocked_at_layer: BlockedAtLayer,
     pub reasons: Vec<MergeBlockedReason>,
+}
+
+impl MergeBlockedError {
+    pub fn new(
+        patch_id: PatchId,
+        blocked_at_layer: BlockedAtLayer,
+        reasons: Vec<MergeBlockedReason>,
+    ) -> Self {
+        Self {
+            code: MergeBlockedCode::MergeBlocked,
+            patch_id,
+            blocked_at_layer,
+            reasons,
+        }
+    }
 }
 
 /// Discriminator for the error envelope. Currently a single variant; the enum
@@ -95,6 +113,7 @@ pub struct MergeBlockedError {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MergeBlockedCode {
     MergeBlocked,
 }
@@ -106,6 +125,7 @@ pub enum MergeBlockedCode {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum BlockedAtLayer {
     Reviews,
     Mergers,
@@ -117,6 +137,7 @@ pub enum BlockedAtLayer {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MergeBlockedReason {
     /// A reviewer group is short of the required approving principals.
     MissingApprovals {
@@ -156,6 +177,7 @@ pub enum MergeBlockedReason {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EligiblePrincipal {
     User {
         name: Username,
@@ -180,6 +202,7 @@ pub enum EligiblePrincipal {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SuggestedAction {
     FileReviewRequest {
         assign_to_one_of: Vec<String>,
