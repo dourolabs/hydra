@@ -5,8 +5,8 @@ use crate::HydraId;
 
 /// A single relation in the response.
 ///
-/// Note: intentionally omits `source_kind` and `target_kind` per the design
-/// document; both are inferable from the prefixes of the source/target IDs.
+/// Note: intentionally omits `source_kind` and `target_kind`; both are
+/// inferable from the prefixes of the source/target IDs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

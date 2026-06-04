@@ -168,8 +168,8 @@ mod tests {
         }
     }
 
-    /// Flag values from the design §4 table. A change here is a
-    /// behavior change — update the design first, then this test.
+    /// Lock the flag values for each default-project status. A change
+    /// here is a behavior change for every default project — update with intent.
     #[test]
     fn default_project_flags_match_design_table() {
         let cases: &[(&str, bool, bool, bool)] = &[

@@ -545,8 +545,7 @@ mod tests {
 
     #[test]
     fn parse_legacy_assignee_with_agents_bare_name_in_set_classifies_as_agent() {
-        // Pre-Phase-4a-fix would have lifted bare "swe" to Principal::User.
-        // With the agent-name set, we correctly classify it as an agent.
+        // `swe` is in the agent-name set, so it must classify as Principal::Agent — NOT User.
         let agents = agent_set(&["swe", "reviewer", "merger", "pm"]);
         assert_eq!(
             Principal::parse_legacy_assignee_with_agents("swe", &agents),

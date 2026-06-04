@@ -97,7 +97,7 @@ impl<'de> Deserialize<'de> for Review {
     {
         // Permissive forward-compat deserialize: ignore unknown fields
         // (e.g. a future `confidence` field), and accept either the
-        // Phase-5b typed `author: { kind, ... }` shape or the legacy
+        // typed `author: { kind, ... }` shape or the legacy
         // bare-string `author: "name"` shape.
         #[derive(Deserialize)]
         struct RawReview {

@@ -807,8 +807,8 @@ pub trait ReadOnlyStore: Send + Sync {
     ) -> Result<Vec<Versioned<SessionEvent>>, StoreError>;
 
     /// Look up every session linked to a conversation, in session-creation
-    /// order. Backs the conversation read path in the sessions-orthogonality
-    /// redesign §3.4.1 — a single query, no chain-walking.
+    /// order. Backs the conversation read path with a single query —
+    /// no chain-walking required.
     async fn list_session_ids_by_conversation_id(
         &self,
         conversation_id: &ConversationId,

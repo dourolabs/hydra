@@ -18,8 +18,9 @@
 //!   * `next_session.creation_time` comes from the next session in the
 //!     creation-time-ordered chain (or `+∞` if this is the last session).
 //!
-//! We skip `suspending`, `resumed`, and `closed` rows (design §3.5 step 5
-//! leaves them on `conversation_events*`). For each remaining `user_message`
+//! We skip `suspending`, `resumed`, and `closed` rows — those remain on
+//! `conversation_events*` and are not part of the conversation-event →
+//! session assignment we compute here. For each remaining `user_message`
 //! / `assistant_message` row, the assignment is tolerant of the two real-DB
 //! inconsistencies we have seen in practice:
 //!

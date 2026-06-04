@@ -177,9 +177,8 @@ pub fn parse_assignee_ref(raw: &str) -> Result<AssigneeRef, String> {
             .map(AssigneeRef::Static)
             .map_err(|e| e.to_string());
     }
-    // Legacy bare-string fallback — treated as a User. This is the
-    // pre-Phase-5a wire form; we keep accepting it so stored configs do
-    // not need a JSON-blob migration.
+    // Legacy bare-string fallback — treated as a User. We keep
+    // accepting it so stored configs do not need a JSON-blob migration.
     let name = Username::try_new(raw).map_err(|e| e.to_string())?;
     Ok(AssigneeRef::Static(Principal::User { name }))
 }
@@ -981,7 +980,7 @@ mergers:
 
     #[test]
     fn assignee_ref_legacy_bare_string_deserializes_as_user() {
-        // Backward-compat with pre-Phase-5a stored blobs.
+        // Backward-compat: bare-string author in stored blobs deserializes as User.
         let back: AssigneeRef = serde_json::from_value(json!("alice")).unwrap();
         assert_eq!(back, user("alice"));
     }
@@ -1158,7 +1157,7 @@ mergers:
 
     #[test]
     fn legacy_stored_merge_policy_json_blob_parses() {
-        // Snapshot of the pre-Phase-5a stored JSON shape (matches what
+        // Snapshot of the legacy stored JSON shape (matches what
         // `hydra-web/packages/mock-server/fixtures/seed.json` ships for
         // `acme/api-gateway`). The lenient deserialiser must continue to
         // read it without a SQL-side migration, then re-serialise into
