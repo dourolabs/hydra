@@ -7,11 +7,12 @@
 //! automation aligned on one resolver instead of duplicating the
 //! `project_id → statuses` walk at each call site.
 
+use crate::domain::actors::ActorRef;
 use crate::domain::issues::Issue;
 use crate::domain::projects::default_project;
 use crate::store::{ReadOnlyStore, StoreError};
-use hydra_common::ProjectId;
-use hydra_common::api::v1::projects::{KeyError, StatusDefinition, StatusKey};
+use hydra_common::api::v1::projects::{KeyError, Project, StatusDefinition, StatusKey};
+use hydra_common::{ProjectId, VersionNumber};
 use thiserror::Error;
 
 use super::AppState;
@@ -35,6 +36,31 @@ pub enum ResolveStatusError {
 }
 
 impl AppState {
+    pub async fn add_project(
+        &self,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<(ProjectId, VersionNumber), StoreError> {
+        self.store.add_project(project, actor).await
+    }
+
+    pub async fn update_project(
+        &self,
+        id: &ProjectId,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.store.update_project(id, project, actor).await
+    }
+
+    pub async fn delete_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.store.delete_project(id, actor).await
+    }
+
     /// Resolve an issue's `(project_id, status)` pair to a
     /// [`StatusDefinition`].
     ///
