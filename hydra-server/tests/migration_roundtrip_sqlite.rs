@@ -20,7 +20,7 @@
 //! postgres; SQLite has no such constraint and uses `sqlite::memory:`.
 
 use anyhow::{Context, Result, bail};
-use hydra_common::{ConversationId, IssueId, SessionId};
+use hydra_common::{ConversationId, IssueId, ProjectId, SessionId, TriggerId};
 use hydra_server::domain::actors::{ActorId, ActorRef};
 use hydra_server::store::ReadOnlyStore;
 use hydra_server::store::sqlite_store::{self, MIGRATOR, SqliteStore};
@@ -73,6 +73,8 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     assert_store_level_conversations_smoke(&pool).await?;
     assert_store_level_form_response_smoke(&pool).await?;
     assert_pagination_indexes_exist(&pool).await?;
+    assert_schema_invariants(&pool).await?;
+    assert_recent_migration_store_smoke(&pool).await?;
 
     Ok(())
 }
@@ -396,5 +398,200 @@ async fn assert_store_level_form_response_smoke(pool: &SqlitePool) -> Result<()>
             form_response.action_id
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// §3.1 schema invariants — assertions for the SQLite migrations that landed
+// after the `pre_actor_variant_cleanup` baseline:
+//   * 20260603020000_add_triggers_table.sql
+//   * 20260604000000_drop_conversation_events.sql
+//   * 20260604000001_create_projects.sql
+//
+// Mirrors `migration_roundtrip.rs::assert_schema_invariants` in shape but
+// uses `sqlite_master` / `pragma_table_info` instead of
+// `information_schema`. Duplicated rather than shared per the module
+// preamble's "do not pull shared scaffolding out" guidance.
+// ---------------------------------------------------------------------------
+
+async fn assert_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    // Tables added by 20260603020000_add_triggers_table.sql and
+    // 20260604000001_create_projects.sql.
+    for table in ["triggers", "projects"] {
+        if !table_exists(pool, table).await? {
+            bail!("expected `{table}` table to exist after rollforward");
+        }
+    }
+
+    // Tables dropped by 20260604000000_drop_conversation_events.sql.
+    if table_exists(pool, "conversation_events").await? {
+        bail!("expected `conversation_events` table to be dropped after rollforward");
+    }
+
+    // Column added by 20260604000001_create_projects.sql.
+    if !column_exists(pool, "issues_v2", "project_id").await? {
+        bail!("expected `issues_v2.project_id` column to exist after rollforward");
+    }
+
+    // Indexes added by the three migrations under test. Listed verbatim so
+    // a future rename without a baseline bump fails this assertion loud.
+    for index in [
+        "triggers_creator_idx",
+        "triggers_is_latest_idx",
+        "triggers_latest_idx",
+        "projects_key_unique_active_idx",
+        "projects_creator_idx",
+        "projects_is_latest_idx",
+        "projects_latest_idx",
+        "issues_v2_project_id_idx",
+    ] {
+        if !index_exists(pool, index).await? {
+            bail!("expected index `{index}` to exist after rollforward");
+        }
+    }
+
+    Ok(())
+}
+
+async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool> {
+    let row = sqlx::query(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+    )
+    .bind(table)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("look up sqlite_master for table `{table}`"))?;
+    let exists: i64 = row.try_get(0)?;
+    Ok(exists != 0)
+}
+
+async fn index_exists(pool: &SqlitePool, index: &str) -> Result<bool> {
+    let row = sqlx::query(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+    )
+    .bind(index)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("look up sqlite_master for index `{index}`"))?;
+    let exists: i64 = row.try_get(0)?;
+    Ok(exists != 0)
+}
+
+async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<bool> {
+    // `pragma_table_info` exposes the column list as a table-valued
+    // function so the lookup stays a single round-trip and works against
+    // the same `SqlitePool` as the rest of the test.
+    let rows = sqlx::query("SELECT name FROM pragma_table_info(?1)")
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("pragma_table_info(`{table}`)"))?;
+    for row in rows {
+        let name: String = row.try_get(0)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+// ---------------------------------------------------------------------------
+// Store-level smoke for the recent SQLite migrations: insert one trigger row
+// and one project row via raw SQL against the post-rollforward schema, then
+// read them back through the `SqliteStore` getters. Catches schema drift
+// between the migration SQL and the row-shape sqlx queries on
+// `SqliteStore::get_trigger` / `get_project`.
+// ---------------------------------------------------------------------------
+
+async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
+    let trigger_id = "t-migsmoke";
+    let trigger_schedule = serde_json::json!({
+        "Cron": {"expression": "0 9 * * MON", "timezone": "UTC"}
+    })
+    .to_string();
+    let trigger_actions = serde_json::json!([]).to_string();
+    sqlx::query(
+        "INSERT INTO triggers \
+           (id, version_number, enabled, creator, schedule, actions, \
+            last_fired_at, deleted, actor, is_latest) \
+         VALUES (?1, 1, 1, ?2, ?3, ?4, NULL, 0, NULL, 1)",
+    )
+    .bind(trigger_id)
+    .bind("alice")
+    .bind(&trigger_schedule)
+    .bind(&trigger_actions)
+    .execute(pool)
+    .await
+    .context("insert smoke trigger row")?;
+
+    let store = SqliteStore::new(pool.clone());
+    let tid = TriggerId::from_str(trigger_id).context("parse smoke trigger id")?;
+    let fetched_trigger = store
+        .get_trigger(&tid, false)
+        .await
+        .context("SqliteStore::get_trigger(t-migsmoke)")?;
+    if !fetched_trigger.item.enabled {
+        bail!("smoke trigger: expected enabled=true after read-back");
+    }
+    if fetched_trigger.item.creator.as_str() != "alice" {
+        bail!(
+            "smoke trigger: expected creator='alice'; got {:?}",
+            fetched_trigger.item.creator
+        );
+    }
+
+    let project_id = "j-migsmoke";
+    let project_statuses = serde_json::json!([
+        {
+            "key": "todo",
+            "label": "Todo",
+            "icon": "circle",
+            "color": "#abcdef",
+            "unblocks_parents": false,
+            "unblocks_dependents": false,
+            "cascades_to_children": false
+        }
+    ])
+    .to_string();
+    sqlx::query(
+        "INSERT INTO projects \
+           (id, version_number, key, name, default_status_key, statuses, \
+            creator, deleted, actor, is_latest) \
+         VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 0, NULL, 1)",
+    )
+    .bind(project_id)
+    .bind("smoke")
+    .bind("Smoke")
+    .bind("todo")
+    .bind(&project_statuses)
+    .bind("alice")
+    .execute(pool)
+    .await
+    .context("insert smoke project row")?;
+
+    let pid = ProjectId::from_str(project_id).context("parse smoke project id")?;
+    let fetched_project = store
+        .get_project(&pid, false)
+        .await
+        .context("SqliteStore::get_project(j-migsmoke)")?;
+    if fetched_project.item.name != "Smoke" {
+        bail!(
+            "smoke project: expected name='Smoke'; got {:?}",
+            fetched_project.item.name
+        );
+    }
+    if fetched_project.item.key.as_str() != "smoke" {
+        bail!(
+            "smoke project: expected key='smoke'; got {:?}",
+            fetched_project.item.key
+        );
+    }
+    if fetched_project.item.statuses.len() != 1 {
+        bail!(
+            "smoke project: expected 1 status; got {}",
+            fetched_project.item.statuses.len()
+        );
+    }
+
     Ok(())
 }
