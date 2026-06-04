@@ -122,7 +122,7 @@ impl AppState {
     /// `Store::principal_exists`. Dynamic refs (e.g. `@patch.creator`) are
     /// skipped: they're resolved at merge-attempt time against the patch,
     /// not the user/agent tables. `External` principals are accepted
-    /// without a DB lookup (format-only validation, per design §4.5).
+    /// without a DB lookup — format-only validation.
     async fn validate_merge_policy_principals(
         &self,
         policy: Option<&MergePolicy>,
@@ -305,10 +305,11 @@ mod tests {
         assert_eq!(record.repository.merge_policy, config.merge_policy);
     }
 
-    /// Per design §4.5, `External` principals are not validated against
-    /// any DB table — they live in an external identity provider by
-    /// definition. The config write must succeed even though no
-    /// `external/github/anyone` row exists locally.
+    /// `External` principals are not validated against any Hydra-side
+    /// directory — the external system owns identity for that namespace and
+    /// any well-formed identifier is accepted on the wire. The config write
+    /// must succeed even though no `external/github/anyone` row exists
+    /// locally.
     #[tokio::test]
     async fn create_repository_accepts_external_principal_without_db_lookup() {
         let state = test_state();

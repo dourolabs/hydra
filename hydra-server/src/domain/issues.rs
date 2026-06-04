@@ -454,9 +454,10 @@ impl From<SessionSettings> for api::issues::SessionSettings {
 
 impl From<api::issues::Issue> for Issue {
     fn from(value: api::issues::Issue) -> Self {
-        // `resolved_status` is a server-computed read-only response field;
-        // dropping it on the way in preserves the "never stored" invariant
-        // from /designs/per-project-issue-statuses.md §4.
+        // `resolved_status` is a server-computed read-only response field
+        // derived from `(project_id, status)` at read time; dropping it on
+        // the way in preserves the "never stored" invariant so a stale
+        // client echo can't shadow the authoritative project definition.
         Self {
             issue_type: value.issue_type.into(),
             title: value.title,

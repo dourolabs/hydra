@@ -1,10 +1,13 @@
-//! Resolves [`AssigneeRef`]s in a [`MergePolicy`] to concrete [`Principal`]s
-//! at merge-attempt time.
+//! Resolves merge-policy principal references like `@patch.author` /
+//! `@parent_issue.assignee` against the live state of the patch/issue at
+//! evaluation time.
 //!
 //! `AssigneeRef::Static(Principal)` is the identity case — the configured
 //! principal is the resolution. `AssigneeRef::Dynamic(d)` is resolved against
-//! the current state of the patch — never snapshotted. See
-//! `/designs/merge-time-constraints.md` §4.4 for why resolution is live.
+//! the current state of the patch — never snapshotted. Snapshotted resolution
+//! would let stale references stand if the patch/issue mutates between policy
+//! evaluation and merge (e.g. assignee changes after the policy is read),
+//! silently approving the wrong actor.
 //!
 //! The resolved value carries the full typed [`Principal`] so downstream
 //! matching (`mergers.any_of`, reviewer-group quorum) is kind-aware —

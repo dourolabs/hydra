@@ -1979,10 +1979,12 @@ async fn create_conversation_with_first_message_reaches_worker_via_relay() -> an
     Ok(())
 }
 
-/// Phase C step 7 dual-write regression test: a complete chat lifecycle
-/// (user → assistant → suspend → resume → close → reopen) must produce
-/// matching rows in `session_events_v2` and `session_state_v2` alongside the
-/// existing `conversation_events_v2` writes.
+/// Regression test for the session-shape dual-write path: a complete chat
+/// lifecycle (user → assistant → suspend → resume → close → reopen) must
+/// produce matching rows in `session_events_v2` and `session_state_v2`
+/// alongside the existing `conversation_events_v2` writes, so the
+/// single-source `SELECT` path stays consistent with the legacy
+/// conversation-shape writes.
 #[tokio::test]
 async fn dual_write_replicates_chat_lifecycle_to_session_logs() -> anyhow::Result<()> {
     use crate::domain::sessions::SessionEvent as DomainSessionEvent;
@@ -2286,10 +2288,10 @@ async fn get_session_events_route_returns_events() -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// FirstMessage acceptance matrix (design §5 / §1.4 of the WS-only worker
-// lifecycle redesign). Each case drives Phase 1 + Phase 2 of a fake worker
-// against the real `routes/sessions/relay.rs` handler and asserts on the
-// emitted `ServerMessage::FirstMessage`.
+// FirstMessage acceptance matrix. Each case drives Phase 1 + Phase 2 of a
+// fake worker (relay-protocol context-negotiation followed by the first
+// message) against the real `routes/sessions/relay.rs` handler and asserts
+// on the emitted `ServerMessage::FirstMessage`.
 // ---------------------------------------------------------------------------
 
 /// Spawn an interactive session attached to a freshly-created conversation,

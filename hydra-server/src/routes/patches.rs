@@ -123,10 +123,9 @@ pub async fn update_patch(
 ///
 /// Returns `200` with `{ "ok": true }` if the merge would be allowed, or
 /// `422 Unprocessable Entity` carrying a [`MergeBlockedError`] body
-/// otherwise. The 422 status is documented in
-/// `/designs/merge-time-constraints.md` §4.3 / §4.5 — it is NOT 400
-/// (request well-formed) and NOT 403 (actor authorisation is only one of
-/// two layers).
+/// otherwise. The status is 422 — NOT 400 (request is well-formed) and
+/// NOT 403 (actor authorisation is only one of two policy layers; a
+/// missing reviewer is not an auth failure on the calling actor).
 pub async fn merge_check(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -145,7 +144,8 @@ pub async fn merge_check(
     //    operation transitioning into `Merged`: old = current patch, new =
     //    same patch with status flipped to `Merged`. The restriction is the
     //    authoritative read-only evaluator — handing it the same shape the
-    //    write path would supply guarantees parity (see §4.3).
+    //    write path would supply guarantees that preflight verdicts match
+    //    what an actual merge attempt would return.
     let old_patch = current.item.clone();
     let mut new_patch = current.item;
     new_patch.status = PatchStatus::Merged;
@@ -978,8 +978,9 @@ mod merge_check_tests {
     #[tokio::test]
     async fn merge_check_priority_gates_to_reviews_only() {
         // Both layers would fail simultaneously, but the response must
-        // expose ONLY the reviews-layer reason — per design §4.5 the SWE
-        // sees one priority layer at a time.
+        // expose ONLY the reviews-layer reason so the SWE agent's response
+        // logic doesn't have to disambiguate cross-layer reasons; the
+        // highest-priority unsatisfied layer wins.
         let handles = test_state_handles();
         let policy = MergePolicy {
             reviewers: vec![ReviewerGroup {

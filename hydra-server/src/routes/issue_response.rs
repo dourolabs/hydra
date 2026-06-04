@@ -2,9 +2,11 @@
 //! `resolved_status` field populated.
 //!
 //! Centralizing the resolution here (rather than duplicating it per
-//! route) keeps the contract from `/designs/per-project-issue-statuses.md`
-//! §4 "Frontend display" honored consistently: every `Issue` returned
-//! over the wire carries its `resolved_status` inline.
+//! route) keeps the wire contract uniform: every `Issue` returned over
+//! the wire carries its `resolved_status` (label, icon, color, flags)
+//! inline, so the frontend can render badges without a second round-trip
+//! and without re-implementing `(project_id, status) → StatusDefinition`
+//! resolution on the client.
 
 use crate::app::AppState;
 use crate::app::projects::ResolveStatusError;
