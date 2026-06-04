@@ -2,13 +2,37 @@ use std::io::Write;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use hydra_common::triggers::{
-    Action, CreateIssueAction, Schedule, ScheduleFiring, Trigger, TriggerVersionRecord,
+use hydra_common::{
+    triggers::{
+        Action, CreateIssueAction, Schedule, ScheduleFiring, Trigger, TriggerVersionRecord,
+    },
+    TriggerId,
 };
+use serde_json::json;
 
 use super::Render;
 
 pub struct TriggerRecords<'a>(pub &'a [TriggerVersionRecord]);
+
+pub struct DeletedTriggerOutcome<'a>(pub &'a TriggerId);
+
+impl Render for DeletedTriggerOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(
+            &mut *writer,
+            &json!({ "trigger_id": self.0, "action": "deleted" }),
+        )?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(writer, "Deleted trigger '{}'", self.0)?;
+        writer.flush()?;
+        Ok(())
+    }
+}
 
 impl Render for TriggerRecords<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
@@ -134,4 +158,44 @@ fn render_action<W: Write>(writer: &mut W, idx: usize, action: &Action) -> Resul
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        command::output::{render, ResolvedOutputFormat},
+        test_utils::ids::trigger_id,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn deleted_trigger_pretty_matches_legacy_wording() {
+        let id = trigger_id("t-stale");
+        let mut output = Vec::new();
+        render(
+            DeletedTriggerOutcome(&id),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .expect("render");
+        let output = String::from_utf8(output).expect("utf8");
+        assert_eq!(output, format!("Deleted trigger '{id}'\n"));
+    }
+
+    #[test]
+    fn deleted_trigger_jsonl_emits_structured_record() {
+        let id = trigger_id("t-stale");
+        let mut output = Vec::new();
+        render(
+            DeletedTriggerOutcome(&id),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )
+        .expect("render");
+        let output = String::from_utf8(output).expect("utf8");
+        assert_eq!(output.lines().count(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(output.trim_end()).expect("json");
+        assert_eq!(parsed, json!({ "trigger_id": id, "action": "deleted" }));
+    }
 }

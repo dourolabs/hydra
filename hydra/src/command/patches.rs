@@ -34,7 +34,10 @@ use crate::git::{
 use crate::{
     client::HydraClient,
     command::{
-        output::{render, CommandContext, PatchRecords, PatchSummaryRecords, ResolvedOutputFormat},
+        output::{
+            render, CommandContext, DeletedPatchOutcome, PatchRecords, PatchSummaryRecords,
+            ResolvedOutputFormat,
+        },
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
 };
@@ -320,7 +323,13 @@ pub async fn run(
                 .delete_patch(&id)
                 .await
                 .with_context(|| format!("failed to delete patch '{id}'"))?;
-            println!("Deleted patch '{}'", deleted.patch_id);
+            let mut buffer = Vec::new();
+            render(
+                DeletedPatchOutcome(&deleted.patch_id),
+                context.output_format,
+                &mut buffer,
+            )?;
+            write_stdout(&buffer)?;
             Ok(())
         }
     }

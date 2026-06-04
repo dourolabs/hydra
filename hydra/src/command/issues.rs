@@ -2,8 +2,8 @@ use crate::{
     client::HydraClientInterface,
     command::{
         output::{
-            render, CommandContext, IssueRecords, IssueSummaryRecords, ResolvedOutputFormat,
-            SubmitFormOutcome,
+            render, CommandContext, DeletedIssueOutcome, IssueRecords, IssueSummaryRecords,
+            ResolvedOutputFormat, SubmitFormOutcome,
         },
         projects::ProjectRef,
         utils::resolve_username,
@@ -561,7 +561,13 @@ pub async fn run(
                 .delete_issue(&id)
                 .await
                 .with_context(|| format!("failed to delete issue '{id}'"))?;
-            println!("Deleted issue '{}'", deleted.issue_id);
+            let mut buffer = Vec::new();
+            render(
+                DeletedIssueOutcome(&deleted.issue_id),
+                context.output_format,
+                &mut buffer,
+            )?;
+            write_stdout(&buffer)?;
             Ok(())
         }
         IssueCommands::Get {

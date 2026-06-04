@@ -6,10 +6,31 @@ use hydra_common::{
     DocumentId, VersionNumber,
 };
 use serde::Serialize;
+use serde_json::json;
 
 use crate::util::truncate_lines;
 
 use super::Render;
+
+pub struct DeletedDocumentOutcome<'a>(pub &'a DocumentId);
+
+impl Render for DeletedDocumentOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(
+            &mut *writer,
+            &json!({ "document_id": self.0, "action": "deleted" }),
+        )?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(writer, "Deleted document '{}'", self.0)?;
+        writer.flush()?;
+        Ok(())
+    }
+}
 
 const MAX_DOCUMENT_BODY_LINES: usize = 20;
 const MAX_DOCUMENT_BODY_WIDTH: usize = 120;
@@ -625,5 +646,21 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).expect("json");
         assert_eq!(parsed["action"], "pushed");
         assert_eq!(parsed["dry_run"], true);
+    }
+
+    #[test]
+    fn deleted_document_pretty_matches_legacy_wording() {
+        let id = DocumentId::new();
+        let pretty = render_to_string(DeletedDocumentOutcome(&id), ResolvedOutputFormat::Pretty);
+        assert_eq!(pretty, format!("Deleted document '{id}'\n"));
+    }
+
+    #[test]
+    fn deleted_document_jsonl_emits_structured_record() {
+        let id = DocumentId::new();
+        let line = render_to_string(DeletedDocumentOutcome(&id), ResolvedOutputFormat::Jsonl);
+        assert_eq!(line.lines().count(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).expect("json");
+        assert_eq!(parsed, json!({ "document_id": id, "action": "deleted" }));
     }
 }

@@ -1,7 +1,10 @@
 use crate::{
     client::HydraClientInterface,
     command::{
-        output::{render as render_output, CommandContext, ResolvedOutputFormat, TriggerRecords},
+        output::{
+            render as render_output, CommandContext, DeletedTriggerOutcome, ResolvedOutputFormat,
+            TriggerRecords,
+        },
         utils::resolve_username,
     },
     output_writer::write_stdout,
@@ -130,7 +133,13 @@ pub async fn run(
                 .delete_trigger(&id)
                 .await
                 .with_context(|| format!("failed to delete trigger '{id}'"))?;
-            println!("Deleted trigger '{}'", deleted.trigger_id);
+            let mut buffer = Vec::new();
+            render_output(
+                DeletedTriggerOutcome(&deleted.trigger_id),
+                context.output_format,
+                &mut buffer,
+            )?;
+            write_stdout(&buffer)?;
             Ok(())
         }
         TriggerCommands::Test { file, at } => {
