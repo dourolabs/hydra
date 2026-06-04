@@ -124,16 +124,14 @@ impl From<IssueStatus> for StatusKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum IssueType {
     Bug,
     Feature,
     Task,
     Chore,
-    #[serde(rename = "merge-request")]
     MergeRequest,
-    #[serde(rename = "review-request")]
     ReviewRequest,
     #[serde(other)]
     Unknown,

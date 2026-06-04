@@ -6,7 +6,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum Status {
     Created,
