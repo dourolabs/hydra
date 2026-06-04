@@ -2555,14 +2555,11 @@ impl Store for MemoryStore {
             .get_mut(id)
             .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
         let versions = entry.value_mut();
-        // Carry the latest `last_fired_at` forward — `record_trigger_fire`
-        // mutates the latest row in place, and a concurrent update must
-        // not silently roll it back to whatever the caller's stale copy
-        // held.
+        // Always take `last_fired_at` from the current latest row —
+        // `record_trigger_fire` mutates that row in place, and a stale
+        // value round-tripped by the caller must not regress it.
         if let Some(latest) = versions.last() {
-            if trigger.last_fired_at.is_none() && latest.item.last_fired_at.is_some() {
-                trigger.last_fired_at = latest.item.last_fired_at;
-            }
+            trigger.last_fired_at = latest.item.last_fired_at;
         }
         let next_version = Self::next_version(versions);
         versions.push(Self::versioned_now_with_actor(trigger, next_version, actor));
@@ -9238,6 +9235,35 @@ mod tests {
         assert_eq!(fetched.version, 2);
         assert!(!fetched.item.enabled);
         assert_eq!(fetched.item.last_fired_at, Some(fired_at));
+    }
+
+    #[tokio::test]
+    async fn update_with_stale_last_fired_at_does_not_regress() {
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_trigger(sample_trigger(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let t_new: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
+        store.record_trigger_fire(&id, t_new).await.unwrap();
+
+        // Caller supplies a stale `Some(t_old)` (e.g. read before the
+        // fire). `update_trigger` must ignore it and overwrite with the
+        // latest row's `Some(t_new)`.
+        let t_old: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        let mut next = sample_trigger();
+        next.enabled = false;
+        next.last_fired_at = Some(t_old);
+        store
+            .update_trigger(&id, next, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 2);
+        assert!(!fetched.item.enabled);
+        assert_eq!(fetched.item.last_fired_at, Some(t_new));
     }
 
     #[tokio::test]

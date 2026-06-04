@@ -1202,9 +1202,11 @@ pub trait Store: ReadOnlyStore {
     /// Updates an existing trigger in the store.
     ///
     /// Returns the new version number, or `StoreError::TriggerNotFound` if
-    /// the trigger does not exist. The previous `last_fired_at` value is
-    /// carried forward into the new version automatically — callers do not
-    /// need to copy it onto the supplied `trigger`.
+    /// the trigger does not exist. Any caller-supplied `last_fired_at` on
+    /// `trigger` is **ignored** — the field is always taken from the current
+    /// latest row inside the same transaction, so a concurrent
+    /// `record_trigger_fire` write is preserved and a stale value
+    /// round-tripped by the caller cannot regress it.
     async fn update_trigger(
         &self,
         id: &TriggerId,
