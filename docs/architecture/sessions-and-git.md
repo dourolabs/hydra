@@ -23,7 +23,7 @@ Worker mounts implement [`Mount`](../../hydra/src/command/sessions/mounts/mod.rs
 
 **Save** (`finalize_task_run`):
 
-1. If the work directory has uncommitted changes, `stage_all_changes` + `commit_changes` with a `"Hydra worker auto-commit"` message. No-op when the tree is clean.
+1. If the work directory has uncommitted changes, `stage_all_changes` + `commit_changes` with a `"Hydra worker auto-commit for task {task_id}"` message. No-op when the tree is clean.
 2. Push semantics depend on attachment — see below.
 
 `Bundle::None` has no save phase. `Bundle::Unknown` is rejected.

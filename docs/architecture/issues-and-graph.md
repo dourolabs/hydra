@@ -18,12 +18,12 @@ Issues are the unit of work. The system decides what can be worked on from a com
 
 ## Graph edges
 
-Two edge types in [`hydra-server/src/store/mod.rs`](../../hydra-server/src/store/mod.rs):
+Two edges in [`hydra-server/src/store/mod.rs`](../../hydra-server/src/store/mod.rs) carry the readiness signal (the full `RelationshipType` enum has more variants — `HasPatch`, `HasDocument`, `RefersTo`, `Created` — but only these two participate in `Ready`):
 
 - `child-of` — sub-task relationship; a parent's readiness depends on its descendants.
 - `blocked-on` — hard prerequisite; the source can't progress until the target closes.
 
-Edges live in the relationship table and are addressed via `RelationshipType::{ChildOf, BlockedOn}`. They are decoupled from issue rows so traversal stays cheap.
+Edges live in the relationship table and are addressed at the storage layer via `RelationshipType::{ChildOf, BlockedOn}`. The domain layer (`is_issue_ready`, `Issue.dependencies`) mirrors these as `IssueDependencyType::{ChildOf, BlockedOn}`. They are decoupled from issue rows so traversal stays cheap.
 
 ## Inferred `Ready` predicate
 
@@ -54,7 +54,12 @@ Example: A is `InProgress` with children B and C, where C is `blocked-on` B. B f
 
 To avoid two agents racing on the same goal:
 
-- A parent will not spawn while any of its children have a pending or running session.
 - A child will not spawn while its parent has a pending or running session.
+- A parent will not spawn while any of its children have a pending or running session.
 
-This is enforced inside [`AgentQueue::spawn_for_issue`](../../hydra-server/src/policy/automations/agent_queue.rs) via `parent_has_running_task` and the `existing_issue_ids` set carried in `AgentTaskState`. Capacity, assignment, and per-issue retry budget checks live alongside it in the same function.
+These two halves are enforced in different places inside [`AgentQueue::spawn_for_issue`](../../hydra-server/src/policy/automations/agent_queue.rs):
+
+- The **child-side** check is direct: `parent_has_running_task` walks the issue's `ChildOf` dependencies and short-circuits if any parent has a `Pending` or `Running` session.
+- The **parent-side** guarantee is indirect, via the readiness rules above: an `InProgress` parent is only `Ready` when no child subtree issue is ready, and a child with a live session is itself `Open` and ready (or already `InProgress`), so the parent stays not-ready until the child settles.
+
+`existing_issue_ids` (carried in `AgentTaskState`) is a separate guard against the same issue being spawned twice — not part of the parent/child mutex. Capacity, assignment, and per-issue retry budget checks live alongside these in the same function.
