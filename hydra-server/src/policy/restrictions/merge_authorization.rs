@@ -180,10 +180,8 @@ fn evaluate_reviewer_group(
     }
 
     // Build the error reason describing the unsatisfied group.
-    let eligible_principals: Vec<EligiblePrincipal> = eligible
-        .iter()
-        .map(|rp| to_eligible_principal(rp))
-        .collect();
+    let eligible_principals: Vec<EligiblePrincipal> =
+        eligible.iter().map(|rp| rp.to_eligible()).collect();
     let needed = group.count;
     let title_hint = match &group.label {
         Some(label) => format!("Review {patch_id} ({label})"),
@@ -240,8 +238,10 @@ async fn evaluate_mergers_layer(
         }
     }
 
-    let allowed_mergers: Vec<EligiblePrincipal> =
-        resolved.iter().map(to_eligible_principal).collect();
+    let allowed_mergers: Vec<EligiblePrincipal> = resolved
+        .iter()
+        .map(ResolvedPrincipal::to_eligible)
+        .collect();
     let assign_to_one_of: Vec<String> = resolved
         .iter()
         .filter_map(|rp| rp.resolved_to.as_ref())
@@ -255,15 +255,17 @@ async fn evaluate_mergers_layer(
     })
 }
 
-/// Map a resolved policy entry to the typed `EligiblePrincipal` that the
-/// merge-blocked wire shape carries.
-fn to_eligible_principal(rp: &ResolvedPrincipal) -> EligiblePrincipal {
-    match &rp.source {
-        AssigneeRef::Static(p) => static_principal_to_eligible(p),
-        AssigneeRef::Dynamic(dref) => EligiblePrincipal::Dynamic {
-            reference: *dref,
-            resolved_to: rp.resolved_to.as_ref().map(principal_display_name),
-        },
+impl ResolvedPrincipal {
+    /// Map a resolved policy entry to the typed `EligiblePrincipal` that the
+    /// merge-blocked wire shape carries.
+    fn to_eligible(&self) -> EligiblePrincipal {
+        match &self.source {
+            AssigneeRef::Static(p) => static_principal_to_eligible(p),
+            AssigneeRef::Dynamic(dref) => EligiblePrincipal::Dynamic {
+                reference: *dref,
+                resolved_to: self.resolved_to.as_ref().map(principal_display_name),
+            },
+        }
     }
 }
 

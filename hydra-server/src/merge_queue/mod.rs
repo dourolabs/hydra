@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use git2::{Commit, Diff, MergeOptions, Oid, Repository, Signature, Time};
-use hydra_common::PatchId;
+use hydra_common::{PatchId, merge_queues::MergeQueue};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -92,6 +92,15 @@ impl MergeQueueImpl {
 
     pub fn patches(&self) -> &[PatchEntry] {
         &self.patches
+    }
+
+    pub fn to_response(&self) -> MergeQueue {
+        MergeQueue::new(
+            self.patches
+                .iter()
+                .map(|entry| entry.patch_id.clone())
+                .collect(),
+        )
     }
 
     pub fn try_append(

@@ -223,7 +223,7 @@ impl ServiceState {
         let queue = merge_queues
             .get(repo_name)
             .and_then(|repo_queues| repo_queues.get(branch_name))
-            .map(merge_queue_response)
+            .map(MergeQueueImpl::to_response)
             .unwrap_or_default();
 
         Ok(queue)
@@ -282,7 +282,7 @@ impl ServiceState {
                 source,
             })?;
 
-        Ok(merge_queue_response(queue))
+        Ok(queue.to_response())
     }
 
     async fn refresh_repository(
@@ -345,16 +345,6 @@ impl ServiceState {
         let mut merge_queues = self.merge_queues.write().await;
         merge_queues.entry(name.clone()).or_default();
     }
-}
-
-fn merge_queue_response(queue: &MergeQueueImpl) -> MergeQueue {
-    MergeQueue::new(
-        queue
-            .patches()
-            .iter()
-            .map(|entry| entry.patch_id.clone())
-            .collect(),
-    )
 }
 
 fn branch_ref(branch_name: &str) -> String {

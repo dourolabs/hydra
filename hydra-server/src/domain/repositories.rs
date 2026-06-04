@@ -68,7 +68,7 @@ pub struct MergerRule {
 /// Domain mirror of [`api::repositories::MergePolicy`].
 ///
 /// Construct from an API value via [`MergePolicy::try_from`], which validates
-/// the policy through [`validate_merge_policy`]. There is intentionally no
+/// the policy through [`MergePolicy::validate`]. There is intentionally no
 /// infallible API → domain conversion: the domain layer never holds an
 /// unvalidated `MergePolicy`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,7 +79,7 @@ pub struct MergePolicy {
     pub mergers: Option<MergerRule>,
 }
 
-/// Failure modes produced by [`validate_merge_policy`].
+/// Failure modes produced by [`MergePolicy::validate`].
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MergePolicyValidationError {
     #[error("reviewer group {group_index} ({label}) has an empty `any_of`")]
@@ -123,78 +123,80 @@ fn label_for_message(label: &Option<String>, group_index: usize) -> String {
     }
 }
 
-/// Validate a [`MergePolicy`] for structural and semantic correctness.
-///
-/// Returns the first failure encountered; callers are expected to surface the
-/// error to the user rather than continue with a partially valid policy.
-///
-/// Per-principal *existence* validation (i.e. that the named user / agent
-/// resolves to an actual store row) is done separately in the app layer via
-/// `Store::principal_exists`; this function only checks intra-policy shape
-/// invariants.
-pub fn validate_merge_policy(policy: &MergePolicy) -> Result<(), MergePolicyValidationError> {
-    let mut seen_labels: HashSet<&str> = HashSet::new();
-    for (group_index, group) in policy.reviewers.iter().enumerate() {
-        if let Some(label) = &group.label {
-            if !seen_labels.insert(label.as_str()) {
-                return Err(MergePolicyValidationError::DuplicateReviewerLabel {
-                    label: label.clone(),
+impl MergePolicy {
+    /// Validate a [`MergePolicy`] for structural and semantic correctness.
+    ///
+    /// Returns the first failure encountered; callers are expected to surface the
+    /// error to the user rather than continue with a partially valid policy.
+    ///
+    /// Per-principal *existence* validation (i.e. that the named user / agent
+    /// resolves to an actual store row) is done separately in the app layer via
+    /// `Store::principal_exists`; this method only checks intra-policy shape
+    /// invariants.
+    pub fn validate(&self) -> Result<(), MergePolicyValidationError> {
+        let mut seen_labels: HashSet<&str> = HashSet::new();
+        for (group_index, group) in self.reviewers.iter().enumerate() {
+            if let Some(label) = &group.label {
+                if !seen_labels.insert(label.as_str()) {
+                    return Err(MergePolicyValidationError::DuplicateReviewerLabel {
+                        label: label.clone(),
+                    });
+                }
+            }
+
+            let label_msg = label_for_message(&group.label, group_index);
+
+            if group.any_of.is_empty() {
+                return Err(MergePolicyValidationError::EmptyReviewerAnyOf {
+                    group_index,
+                    label: label_msg,
                 });
+            }
+            if group.count == 0 {
+                return Err(MergePolicyValidationError::ZeroReviewerCount {
+                    group_index,
+                    label: label_msg,
+                });
+            }
+            if (group.count as usize) > group.any_of.len() {
+                return Err(MergePolicyValidationError::ReviewerCountExceedsAnyOf {
+                    group_index,
+                    label: label_msg,
+                    count: group.count,
+                    available: group.any_of.len(),
+                });
+            }
+
+            let mut seen: HashSet<&AssigneeRef> = HashSet::new();
+            for principal in &group.any_of {
+                if !seen.insert(principal) {
+                    return Err(
+                        MergePolicyValidationError::DuplicatePrincipalInReviewerGroup {
+                            group_index,
+                            label: label_msg,
+                            principal: principal.to_string(),
+                        },
+                    );
+                }
             }
         }
 
-        let label_msg = label_for_message(&group.label, group_index);
-
-        if group.any_of.is_empty() {
-            return Err(MergePolicyValidationError::EmptyReviewerAnyOf {
-                group_index,
-                label: label_msg,
-            });
-        }
-        if group.count == 0 {
-            return Err(MergePolicyValidationError::ZeroReviewerCount {
-                group_index,
-                label: label_msg,
-            });
-        }
-        if (group.count as usize) > group.any_of.len() {
-            return Err(MergePolicyValidationError::ReviewerCountExceedsAnyOf {
-                group_index,
-                label: label_msg,
-                count: group.count,
-                available: group.any_of.len(),
-            });
-        }
-
-        let mut seen: HashSet<&AssigneeRef> = HashSet::new();
-        for principal in &group.any_of {
-            if !seen.insert(principal) {
-                return Err(
-                    MergePolicyValidationError::DuplicatePrincipalInReviewerGroup {
-                        group_index,
-                        label: label_msg,
+        if let Some(mergers) = &self.mergers {
+            if mergers.any_of.is_empty() {
+                return Err(MergePolicyValidationError::EmptyMergerAnyOf);
+            }
+            let mut seen: HashSet<&AssigneeRef> = HashSet::new();
+            for principal in &mergers.any_of {
+                if !seen.insert(principal) {
+                    return Err(MergePolicyValidationError::DuplicatePrincipalInMergers {
                         principal: principal.to_string(),
-                    },
-                );
+                    });
+                }
             }
         }
-    }
 
-    if let Some(mergers) = &policy.mergers {
-        if mergers.any_of.is_empty() {
-            return Err(MergePolicyValidationError::EmptyMergerAnyOf);
-        }
-        let mut seen: HashSet<&AssigneeRef> = HashSet::new();
-        for principal in &mergers.any_of {
-            if !seen.insert(principal) {
-                return Err(MergePolicyValidationError::DuplicatePrincipalInMergers {
-                    principal: principal.to_string(),
-                });
-            }
-        }
+        Ok(())
     }
-
-    Ok(())
 }
 
 // ---- API <-> domain conversions ------------------------------------------
@@ -291,7 +293,7 @@ impl TryFrom<api::repositories::MergePolicy> for MergePolicy {
             reviewers: value.reviewers.into_iter().map(Into::into).collect(),
             mergers: value.mergers.map(Into::into),
         };
-        validate_merge_policy(&domain)?;
+        domain.validate()?;
         Ok(domain)
     }
 }
@@ -411,7 +413,7 @@ mod tests {
     fn duplicate_labels_are_rejected() {
         let mut policy = valid_policy();
         policy.reviewers[1].label = Some("code-review".to_string());
-        let err = validate_merge_policy(&policy).unwrap_err();
+        let err = policy.validate().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -433,7 +435,7 @@ mod tests {
             }],
             mergers: None,
         };
-        let err = validate_merge_policy(&policy).unwrap_err();
+        let err = policy.validate().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -449,7 +451,7 @@ mod tests {
             reviewers: vec![],
             mergers: Some(MergerRule { any_of: vec![] }),
         };
-        let err = validate_merge_policy(&policy).unwrap_err();
+        let err = policy.validate().unwrap_err();
         assert!(
             matches!(err, MergePolicyValidationError::EmptyMergerAnyOf),
             "expected EmptyMergerAnyOf, got {err:?}",
@@ -467,7 +469,7 @@ mod tests {
             }],
             mergers: None,
         };
-        let err = validate_merge_policy(&policy).unwrap_err();
+        let err = policy.validate().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -488,7 +490,7 @@ mod tests {
             }],
             mergers: None,
         };
-        let err = validate_merge_policy(&policy).unwrap_err();
+        let err = policy.validate().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -514,7 +516,7 @@ mod tests {
             }],
             mergers: None,
         };
-        let err = validate_merge_policy(&policy).unwrap_err();
+        let err = policy.validate().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -536,7 +538,7 @@ mod tests {
                 any_of: vec![user("alice"), user("alice")],
             }),
         };
-        let err = validate_merge_policy(&policy).unwrap_err();
+        let err = policy.validate().unwrap_err();
         assert!(
             matches!(
                 err,
@@ -549,7 +551,7 @@ mod tests {
 
     #[test]
     fn valid_policy_passes_validation() {
-        validate_merge_policy(&valid_policy()).expect("valid policy");
+        valid_policy().validate().expect("valid policy");
     }
 
     #[test]
@@ -567,6 +569,8 @@ mod tests {
             }],
             mergers: None,
         };
-        validate_merge_policy(&policy).expect("mixed user/agent policy must validate");
+        policy
+            .validate()
+            .expect("mixed user/agent policy must validate");
     }
 }
