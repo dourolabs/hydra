@@ -6,13 +6,11 @@ import { LoadingState } from "../components/LoadingState/LoadingState";
 import { ErrorState } from "../components/ErrorState/ErrorState";
 import { EmptyState } from "../components/EmptyState/EmptyState";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
-import { useUsername } from "../features/auth/useUsername";
 import styles from "./TriggersListPage.module.css";
 
 export function ProjectDetailPage() {
   const { projectKey } = useParams<{ projectKey: string }>();
   const { data: projects, isLoading, error, refetch } = useProjects();
-  const username = useUsername() ?? "unknown";
 
   const record = useMemo(
     () => projects?.find((p) => p.project.key === projectKey),
@@ -51,7 +49,7 @@ export function ProjectDetailPage() {
         <ProjectEditor
           projectId={record.project_id}
           initial={record.project}
-          creator={record.project.creator ?? username}
+          creator={record.project.creator}
         />
       </div>
     </div>

@@ -5,8 +5,6 @@
  * `hydra-server/src/routes/projects.rs`. They are not ts-rs-generated
  * because the server side declares them outside `hydra-common` (only
  * the domain `Project` / `StatusDefinition` types are exported via ts-rs).
- *
- * See `/designs/per-project-issue-statuses.md` §4 "Storage" and §7 PR 3.
  */
 
 import type { Project } from "./generated/Project";

@@ -5,9 +5,11 @@ import { Button, Input, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type {
   DocumentPath,
+  ListProjectsResponse,
   Principal,
   Project,
   ProjectId,
+  ProjectRecord,
   StatusDefinition,
   UpsertProjectRequest,
 } from "@hydra/api";
@@ -20,18 +22,13 @@ import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteCo
 import styles from "./ProjectEditor.module.css";
 
 interface ProjectEditorProps {
-  /** Existing project to edit, or null/undefined to create a new one. */
   projectId?: ProjectId | null;
   initial?: Project;
   creator: string;
 }
 
-/**
- * Create / edit a project, including its status list and optional
- * `on_enter` automation per status. Reuses the shared `ColorPicker` (and
- * its `LABEL_COLOR_PALETTE`) so label and status creation share UI per
- * `/designs/per-project-issue-statuses.md` §4 "Frontend display".
- */
+const PROJECTS_QUERY_KEY = ["projects"] as const;
+
 export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProps) {
   const navigate = useNavigate();
   const { addToast } = useToast();
@@ -69,27 +66,55 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       }
       return apiClient.createProject(req);
     },
+    onMutate: async (req) => {
+      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
+      const previous = queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        const next: ListProjectsResponse = {
+          projects: applyOptimisticUpsert(previous.projects, projectId ?? null, req.project),
+        };
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
+      }
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+      }
+      addToast(err instanceof Error ? err.message : "Failed to save project", "error");
+    },
     onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
       queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
       addToast(isEdit ? "Project updated" : "Project created", "success");
       navigate(`/projects/${key.trim()}`);
     },
-    onError: (err) => {
-      addToast(err instanceof Error ? err.message : "Failed to save project", "error");
-    },
   });
 
   const deleteMutation = useMutation({
     mutationFn: () => apiClient.deleteProject(projectId!),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
+      const previous = queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous && projectId) {
+        const next: ListProjectsResponse = {
+          projects: previous.projects.filter((p) => p.project_id !== projectId),
+        };
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
+      }
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+      }
+      addToast(err instanceof Error ? err.message : "Failed to delete project", "error");
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
       addToast("Project deleted", "success");
       navigate("/projects");
-    },
-    onError: (err) => {
-      addToast(err instanceof Error ? err.message : "Failed to delete project", "error");
     },
   });
 
@@ -254,6 +279,8 @@ interface StatusEditorProps {
   users: string[];
 }
 
+type AssignKind = "none" | "user" | "agent" | "external";
+
 function StatusEditor({
   status,
   index,
@@ -265,36 +292,61 @@ function StatusEditor({
   users,
 }: StatusEditorProps) {
   const onEnter = status.on_enter ?? null;
-  const assignPath = onEnter?.assign_to ? principalToPath(onEnter.assign_to) : "";
+  const assignKind = principalKind(onEnter?.assign_to ?? null);
+  const principalPath = onEnter?.assign_to ? principalToPath(onEnter.assign_to) : "";
+  const external = onEnter?.assign_to && "External" in onEnter.assign_to
+    ? onEnter.assign_to.External
+    : null;
   const attachForm = onEnter?.attach_form ?? "";
 
-  const assigneeOptions: SelectOption[] = [
-    { value: "", label: "— none —" },
-    ...agents.map((a) => ({ value: `agents/${a}`, label: `Agent · ${a}` })),
-    ...users.map((u) => ({ value: `users/${u}`, label: `User · ${u}` })),
+  const userOptions: SelectOption[] = [
+    { value: "", label: "— select user —" },
+    ...users.map((u) => ({ value: `users/${u}`, label: u })),
+  ];
+  const agentOptions: SelectOption[] = [
+    { value: "", label: "— select agent —" },
+    ...agents.map((a) => ({ value: `agents/${a}`, label: a })),
+  ];
+  const kindOptions: SelectOption[] = [
+    { value: "none", label: "— none —" },
+    { value: "user", label: "User" },
+    { value: "agent", label: "Agent" },
+    { value: "external", label: "External" },
   ];
 
-  const updateOnEnter = (patch: { assignPath?: string; attachForm?: string }) => {
-    const nextAssign =
-      patch.assignPath !== undefined
-        ? pathToPrincipal(patch.assignPath)
-        : onEnter?.assign_to ?? null;
-    const nextForm =
-      patch.attachForm !== undefined
-        ? patch.attachForm
-          ? (patch.attachForm as DocumentPath)
-          : null
-        : onEnter?.attach_form ?? null;
+  const setAssign = (next: Principal | null) => {
+    const nextForm = onEnter?.attach_form ?? null;
+    if (!next && !nextForm) {
+      onChange({ on_enter: null });
+      return;
+    }
+    onChange({ on_enter: { assign_to: next, attach_form: nextForm } });
+  };
+
+  const setAttachForm = (raw: string) => {
+    const nextForm = raw ? (raw as DocumentPath) : null;
+    const nextAssign = onEnter?.assign_to ?? null;
     if (!nextAssign && !nextForm) {
       onChange({ on_enter: null });
       return;
     }
-    onChange({
-      on_enter: {
-        assign_to: nextAssign,
-        attach_form: nextForm,
-      },
-    });
+    onChange({ on_enter: { assign_to: nextAssign, attach_form: nextForm } });
+  };
+
+  const setKind = (kind: AssignKind) => {
+    if (kind === "none") {
+      setAssign(null);
+      return;
+    }
+    if (kind === "user") {
+      setAssign({ User: { name: users[0] ?? "" } });
+      return;
+    }
+    if (kind === "agent") {
+      setAssign({ Agent: { name: agents[0] ?? "" } });
+      return;
+    }
+    setAssign({ External: { system: external?.system ?? "", username: external?.username ?? "" } });
   };
 
   return (
@@ -395,14 +447,60 @@ function StatusEditor({
         <span className={styles.onEnterTitle}>On enter</span>
         <Select
           label="Assign to"
-          options={assigneeOptions}
-          value={assignPath}
-          onChange={(e) => updateOnEnter({ assignPath: e.target.value })}
+          options={kindOptions}
+          value={assignKind}
+          onChange={(e) => setKind(e.target.value as AssignKind)}
         />
+        {assignKind === "user" && (
+          <Select
+            label="User"
+            options={userOptions}
+            value={principalPath}
+            onChange={(e) => setAssign(pathToPrincipal(e.target.value))}
+          />
+        )}
+        {assignKind === "agent" && (
+          <Select
+            label="Agent"
+            options={agentOptions}
+            value={principalPath}
+            onChange={(e) => setAssign(pathToPrincipal(e.target.value))}
+          />
+        )}
+        {assignKind === "external" && (
+          <div className={styles.statusInputs}>
+            <Input
+              label="System"
+              value={external?.system ?? ""}
+              onChange={(e) =>
+                setAssign({
+                  External: {
+                    system: e.target.value,
+                    username: external?.username ?? "",
+                  },
+                })
+              }
+              placeholder="github"
+            />
+            <Input
+              label="Username"
+              value={external?.username ?? ""}
+              onChange={(e) =>
+                setAssign({
+                  External: {
+                    system: external?.system ?? "",
+                    username: e.target.value,
+                  },
+                })
+              }
+              placeholder="jayantk"
+            />
+          </div>
+        )}
         <Input
           label="Attach form"
           value={attachForm}
-          onChange={(e) => updateOnEnter({ attachForm: e.target.value })}
+          onChange={(e) => setAttachForm(e.target.value)}
           placeholder="/forms/review.yaml"
         />
       </div>
@@ -487,15 +585,50 @@ function defaultNewStatuses(): StatusDefinition[] {
   ];
 }
 
+function principalKind(p: Principal | null): AssignKind {
+  if (!p) return "none";
+  if ("Agent" in p) return "agent";
+  if ("User" in p) return "user";
+  return "external";
+}
+
 function principalToPath(p: Principal): string {
   if ("Agent" in p) return `agents/${p.Agent.name}`;
   if ("User" in p) return `users/${p.User.name}`;
-  return "";
+  return `external/${p.External.system}/${p.External.username}`;
 }
 
 function pathToPrincipal(path: string): Principal | null {
   if (!path) return null;
   if (path.startsWith("agents/")) return { Agent: { name: path.slice(7) } };
   if (path.startsWith("users/")) return { User: { name: path.slice(6) } };
+  if (path.startsWith("external/")) {
+    const rest = path.slice("external/".length);
+    const slash = rest.indexOf("/");
+    if (slash < 0) return null;
+    return {
+      External: { system: rest.slice(0, slash), username: rest.slice(slash + 1) },
+    };
+  }
   return null;
+}
+
+function applyOptimisticUpsert(
+  list: ProjectRecord[],
+  projectId: ProjectId | null,
+  project: Project,
+): ProjectRecord[] {
+  if (projectId) {
+    return list.map((rec) =>
+      rec.project_id === projectId
+        ? { ...rec, project, version: rec.version + 1 }
+        : rec,
+    );
+  }
+  const placeholder: ProjectRecord = {
+    project_id: `optimistic:${project.key}`,
+    version: 1,
+    project,
+  };
+  return [...list, placeholder];
 }

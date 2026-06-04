@@ -9,7 +9,9 @@ interface ProjectCreateModalProps {
 }
 
 export function ProjectCreateModal({ open, onClose }: ProjectCreateModalProps) {
-  const username = useUsername() ?? "unknown";
+  // Rendered only under `AppLayout`'s auth guard, so the user is non-null here.
+  const username = useUsername();
+  if (!username) return null;
   return (
     <Modal
       open={open}

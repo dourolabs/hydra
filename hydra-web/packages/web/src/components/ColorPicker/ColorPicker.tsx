@@ -1,24 +1,6 @@
 import { useState, useEffect } from "react";
+import { LABEL_COLOR_PALETTE } from "./palette";
 import styles from "./ColorPicker.module.css";
-
-/**
- * Default color palette matching the backend's DEFAULT_COLORS in
- * `hydra-server/src/app/colors.rs`. Re-exported through here so both
- * label and status pickers share the same set per `/designs/per-project-issue-statuses.md`
- * §4 "Frontend display".
- */
-export const LABEL_COLOR_PALETTE = [
-  "#e74c3c", // red
-  "#e67e22", // orange
-  "#f1c40f", // yellow
-  "#2ecc71", // green
-  "#1abc9c", // teal
-  "#3498db", // blue
-  "#9b59b6", // purple
-  "#e91e63", // pink
-  "#795548", // brown
-  "#607d8b", // blue grey
-];
 
 interface ColorPickerProps {
   value: string;
@@ -31,10 +13,6 @@ interface ColorPickerProps {
   "aria-label"?: string;
 }
 
-/**
- * A small color palette + optional custom-hex input. Used by the label
- * creator and by the project status editor.
- */
 export function ColorPicker({
   value,
   onChange,

@@ -5,9 +5,6 @@ import { useLabels } from "./useLabels";
 import { LabelChip } from "./LabelChip";
 import styles from "./LabelPicker.module.css";
 
-// Re-exported for callers that historically imported from this module.
-export { LABEL_COLOR_PALETTE };
-
 interface LabelPickerProps {
   selectedNames: string[];
   onChange: (names: string[]) => void;

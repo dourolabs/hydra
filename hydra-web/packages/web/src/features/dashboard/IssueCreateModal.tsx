@@ -15,7 +15,7 @@ import { useFormModal } from "../../hooks/useFormModal";
 import { useAuth } from "../auth/useAuth";
 import { actorDisplayName } from "../../api/auth";
 import { useLabels } from "../labels/useLabels";
-import { LABEL_COLOR_PALETTE } from "../labels/LabelPicker";
+import { LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
 import styles from "./IssueCreateModal.module.css";
 
 type PickerKey = "type" | "assignee" | "repo" | "labels" | null;

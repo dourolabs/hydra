@@ -1,1 +1,2 @@
-export { ColorPicker, LABEL_COLOR_PALETTE } from "./ColorPicker";
+export { ColorPicker } from "./ColorPicker";
+export { LABEL_COLOR_PALETTE } from "./palette";

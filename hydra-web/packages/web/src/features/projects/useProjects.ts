@@ -21,12 +21,6 @@ export function useProject(projectId: string | null) {
  * Fetch the status list for a project (or the synthesized default
  * project when `projectId` is null). Cached per project for the session
  * via React Query's default staleTime semantics.
- *
- * The status-update modal and any other status-picker UI is the only
- * project-aware frontend code that calls this. Issue badges read
- * `issue.resolved_status` directly and do NOT call this hook — keeping
- * resolution server-side per `/designs/per-project-issue-statuses.md`
- * §6 "Code cleanliness".
  */
 export function useProjectStatuses(projectId: string | null | undefined) {
   return useQuery({
