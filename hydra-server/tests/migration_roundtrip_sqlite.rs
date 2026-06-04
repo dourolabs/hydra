@@ -843,7 +843,7 @@ async fn assert_refers_to_rename(pool: &SqlitePool) -> Result<()> {
 // ---------------------------------------------------------------------------
 // 20260603010000_backfill_agent_config_system_prompt — assert the headless
 // session's legacy `prompt` rode through `mode.prompt` onto
-// `agent_config.system_prompt`. The §3.3 smoke also confirms the
+// `agent_config.system_prompt`. The store-level smoke also confirms the
 // session-shape backfill produced the expected `SessionMode` variants for
 // headless / interactive / resumed sessions.
 // ---------------------------------------------------------------------------

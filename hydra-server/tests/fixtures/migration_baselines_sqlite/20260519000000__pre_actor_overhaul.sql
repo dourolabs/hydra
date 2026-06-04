@@ -76,7 +76,7 @@ VALUES
 --------------------------------------------------------------------------------
 -- object_relationships — snake_case `refers_to` row that the
 -- 20260529000000_rename_refers_to_to_kebab_case migration must convert to
--- `refers-to`. The §3.3 smoke reads it back through
+-- `refers-to`. The store-level smoke reads it back through
 -- `SqliteStore::get_relationships` with `RelationshipType::RefersTo`.
 --------------------------------------------------------------------------------
 INSERT INTO object_relationships (source_id, source_kind, target_id, target_kind, rel_type)
