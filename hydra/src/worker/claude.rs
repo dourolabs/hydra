@@ -1,5 +1,9 @@
 //! `Claude` per-worker wrapper plus the Claude-native I/O vocabulary it
-//! consumes/produces. See `designs/worker-model-commands-refactor.md` §2.
+//! consumes/produces. Constructed once at the top of `worker_run::run`
+//! and reused for both batch and interactive invocations; the wrapper
+//! speaks only Claude's native CLI shape (`claude` invocation, stream-json
+//! lines, `--resume <UUID>`) — the WS protocol is translated by
+//! [`crate::worker::ModelSelector`].
 //!
 //! Per-worker setup (env validation, MCP-config tempfile) happens in
 //! [`Claude::new`]; per-call I/O happens in [`Claude::run`] (batch) and
@@ -158,7 +162,10 @@ impl Claude {
     }
 
     /// Attempt to materialize a resume blob into a native Claude resume
-    /// handle. Per design `sessions-worker-run-interface.md` §3.4–3.5:
+    /// handle. Claude's CLI exposes exactly one resume affordance —
+    /// `claude --resume <UUID>` — so resume is id-based and the
+    /// transcript must already live on disk where the CLI reads it. The
+    /// steps:
     ///
     /// * deserialize the bytes as [`SessionStatePayload::V1`],
     /// * validate the embedded transcript is shaped like Claude JSONL,

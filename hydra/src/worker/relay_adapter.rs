@@ -1,23 +1,25 @@
 //! Phase-3 bidirectional pump for the interactive worker lifecycle.
 //!
-//! Per `designs/sessions-worker-run-interface.md` §3.2, after
-//! `ModelSelector::drive_interactive` runs Phase 1 (context negotiation) and
-//! Phase 2 (first message) on the `WorkerSocket`, it hands the socket to this
-//! pump and the per-wrapper input/output channels do the rest:
+//! After `ModelSelector::drive_interactive` runs Phase 1 (context
+//! negotiation) and Phase 2 (first message) on the `WorkerSocket`, it
+//! hands the socket to this pump and the per-wrapper input/output
+//! channels do the rest:
 //!
 //! * Inbound `ServerMessage::Event { SessionEvent::UserMessage }` is
 //!   translated into a `WorkerInputMessage` and pushed onto `input_tx`.
 //! * Outbound `WorkerEvent`s from the wrapper become
 //!   `WorkerMessage::Event { SessionEvent::* }` on the WS.
 //!
-//! Mid-session reconnect (design §1.6, §2.2): when `ws.recv()` returns a
-//! clean close or transport error while the per-wrapper `output_tx` is
-//! still open (i.e. the model is still running), the pump reopens the WS
-//! via the supplied [`ReconnectFn`], sends
+//! Mid-session reconnect: when `ws.recv()` returns a clean close or
+//! transport error while the per-wrapper `output_tx` is still open (i.e.
+//! the model is still running), the pump reopens the WS via the supplied
+//! [`ReconnectFn`], sends
 //! `WorkerMessage::Reconnecting { last_received_session_event_index }`,
 //! drains the `ServerMessage::CatchUp { events }` reply, re-injects
 //! post-index `UserMessage`s onto `input_tx`, and resumes Phase 3 on the
-//! new socket. The model never restarts.
+//! new socket. Phase 2 is skipped on reconnect because the model is
+//! mid-run and `FirstMessage` has already been delivered. The model
+//! never restarts.
 
 use futures::{Sink, Stream};
 use std::future::Future;
@@ -170,10 +172,10 @@ where
                         input_tx = None;
                     }
                     Ok(Some(ServerMessage::FirstMessage { .. })) => {
-                        // Per design §1.5, `FirstMessage` is single-shot:
-                        // Phase 2 delivers it exactly once and Phase 3
-                        // should never see it again. Per §1.6, Phase 2 is
-                        // skipped on `Reconnecting`, so a duplicate here
+                        // `FirstMessage` is single-shot: Phase 2 delivers
+                        // it exactly once and Phase 3 should never see it
+                        // again. Phase 2 is also skipped on reconnect (the
+                        // model is mid-run), so a duplicate arriving here
                         // is always a server-side ordering bug.
                         warn!(
                             "relay pump dropping stray FirstMessage in Phase 3 \
@@ -191,13 +193,14 @@ where
                         if output_rx.is_closed() {
                             return PumpExit { ws: None, end_session_requested };
                         }
-                        // Per design: reconnect tries to reopen whenever
-                        // the model is still running. If we already saw
-                        // EndSession and the WS dropped, returning here
-                        // skips the cleanup messages — there is no WS to
-                        // send them on, and the existing server fallback
-                        // (kill_job today, close_conversation in PR-2)
-                        // catches the disconnect.
+                        // Reconnect tries to reopen the WS whenever the
+                        // model is still running (we still hold an
+                        // `input_tx`). If we already saw EndSession and
+                        // the WS dropped, returning here skips the
+                        // cleanup messages — there is no WS to send them
+                        // on, and the existing server fallback (kill_job
+                        // today, close_conversation in PR-2) catches the
+                        // disconnect.
                         let reconnect_result = match input_tx.as_ref() {
                             Some(tx) => attempt_reconnect(
                                 &session_id,

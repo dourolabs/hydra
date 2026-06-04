@@ -1,9 +1,11 @@
 //! Typed wrapper around the worker-side WebSocket stream.
 //!
-//! Per `designs/sessions-worker-run-interface.md` §3.2 — `WorkerSocket` is a
-//! narrow newtype that exposes typed `send` / `recv` for [`WorkerMessage`] /
-//! [`ServerMessage`] only, so the dispatch layer ([`crate::worker::ModelSelector`])
-//! sees the message vocabulary and not the HTTP / tungstenite stack.
+//! `WorkerSocket` is a narrow newtype that exposes typed `send` / `recv` for
+//! [`WorkerMessage`] / [`ServerMessage`] only, so the dispatch layer
+//! ([`crate::worker::ModelSelector`]) sees the message vocabulary and not
+//! the HTTP / tungstenite stack. The wrapper handles JSON serialization,
+//! auto-Pongs pings, ends the stream cleanly on Close, and silently
+//! discards non-text frames.
 
 use anyhow::{anyhow, Context, Result};
 use futures::{Sink, SinkExt, Stream, StreamExt};

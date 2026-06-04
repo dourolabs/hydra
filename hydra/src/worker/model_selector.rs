@@ -3,10 +3,14 @@
 //! the generic `WorkerInputMessage` / `WorkerEvent` vocabulary into each
 //! model's native I/O types inside the `match` arms.
 //!
-//! See `designs/worker-model-commands-refactor.md` §3 and §6, and
-//! `designs/sessions-worker-run-interface.md` §3.1 / §3.2 for the
-//! `drive_headless` / `drive_interactive` dispatch surface that owns the
-//! three WS phases.
+//! The `drive_headless` / `drive_interactive` entry points own the relay
+//! protocol's three WS phases (Phase 1 context negotiation, Phase 2 first
+//! message, Phase 3 session events) on a [`WorkerSocket`]. The per-model
+//! wrappers ([`Claude`], [`Codex`]) only ever see native vocabulary —
+//! `ModelSelector` is the translation boundary between the WS message
+//! vocabulary and each wrapper's CLI invocation. Name-based routing
+//! (`Self::from_context` → `decide_kind`) is the only place model-name
+//! matching happens.
 
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
@@ -339,9 +343,10 @@ impl ModelSelector {
         matches!(Self::decide_kind(name), Kind::Claude)
     }
 
-    /// Decide which kind of model wrapper this name maps to. Name-based
-    /// (per design §6); matches either an exact bare family name or one of
-    /// the `<family>-...` prefix forms:
+    /// Decide which kind of model wrapper this name maps to from the model
+    /// name alone (no other dimension of the worker context participates).
+    /// Matches either an exact bare family name or one of the `<family>-...`
+    /// prefix forms:
     ///
     /// * `claude` / `haiku` / `sonnet` / `opus` (bare) or `claude-` /
     ///   `haiku-` / `sonnet-` / `opus-` (prefix) → [`Kind::Claude`]
@@ -370,11 +375,12 @@ impl ModelSelector {
     }
 }
 
-/// Phase 1 — resume-side effects. Per design §1.4 / §6 the worker emits
-/// `SessionEvent::Resumed` exactly once on its session log whenever it
-/// actually restored from a prior session. Both the native-materialization
-/// path and the transcript-replay fallback are observable; the `source`
-/// field on the event distinguishes them. The emit is gated on
+/// Phase 1 — resume-side effects. The worker emits `SessionEvent::Resumed`
+/// exactly once on its session log whenever it actually restored from a
+/// prior session, so downstream consumers can observe the resume regardless
+/// of which restore mechanism fired. Both the native-materialization path
+/// and the transcript-replay fallback are observable; the `source` field on
+/// the event distinguishes them. The emit is gated on
 /// `prior_session_id.is_some()` so a truly fresh session (no predecessor)
 /// stays silent. When the new worker must replay the prior transcript as
 /// primer text, this also performs the `RequestTranscript`/`Transcript`
@@ -586,9 +592,10 @@ where
 }
 
 /// Best-effort headless drain of an inbound `ServerMessage::EndSession`.
-/// Returns `true` iff `EndSession` was observed. Per the design's "simple
-/// shape" for headless: no concurrent watcher during the model run; just
-/// peek after it returns.
+/// Returns `true` iff `EndSession` was observed. Headless intentionally
+/// keeps the simple shape — no concurrent WS watcher during the model
+/// run; once `run` returns we peek the socket once with a short timeout
+/// to see whether the server asked for shutdown.
 async fn drain_end_session_headless<S>(ws: &mut WorkerSocket<S>) -> bool
 where
     S: Sink<tungstenite::Message, Error = tungstenite::Error>
@@ -1040,10 +1047,11 @@ mod tests {
 
     // ---------------------------------------------------------------------
     // emit_resumed_and_collect_primer — covers the dual-path Resumed emit
-    // (per design §1.4 / §6) end-to-end against a real `WorkerSocket`
-    // wired to an in-memory duplex. Replaces the "fake-worker" shape that
-    // existed before [[i-eaawhkqo]]: that earlier harness silently dropped
-    // the transcript-replay Resumed emit, which was the bug surfaced in
+    // (native-materialization path and transcript-replay fallback)
+    // end-to-end against a real `WorkerSocket` wired to an in-memory
+    // duplex. Replaces the "fake-worker" shape that existed before
+    // [[i-eaawhkqo]]: that earlier harness silently dropped the
+    // transcript-replay Resumed emit, which was the bug surfaced in
     // [[i-mnjxuojq]] / [[i-hnrdnsfb]].
     // ---------------------------------------------------------------------
 
