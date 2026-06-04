@@ -39,5 +39,8 @@ blocks before adding new code under `ee/`.
   panics are acceptable, and the `info!` policy for routes and background jobs.
 - [testing.md](testing.md) — the `fmt` / `clippy` / `test` gate, `#[tokio::test]`
   conventions, regression tests, and what *not* to test.
+- [migrations.md](migrations.md) — SQLite + Postgres parity, where migrations
+  and baselines live, and the rule that every new migration ships with a
+  migration test.
 - [cli.md](cli.md) — the global `--output-format` rule and other CLI
   conventions.
