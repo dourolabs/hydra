@@ -1,5 +1,4 @@
 import { ApiError } from "./errors";
-import type { HydraId } from "./generated/HydraId";
 import type { CreateSessionRequest } from "./generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "./generated/CreateSessionResponse";
 import type { SearchSessionsQuery } from "./generated/SearchSessionsQuery";
@@ -63,6 +62,14 @@ import type { CreateConversationRequest } from "./generated/CreateConversationRe
 import type { SendMessageRequest } from "./generated/SendMessageRequest";
 import type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
 import type { SessionEvent } from "./generated/SessionEvent";
+import type { ListRelationsRequest } from "./generated/ListRelationsRequest";
+import type { ListRelationsResponse } from "./generated/ListRelationsResponse";
+import type { UpsertTriggerRequest } from "./generated/UpsertTriggerRequest";
+import type { UpsertTriggerResponse } from "./generated/UpsertTriggerResponse";
+import type { TriggerVersionRecord } from "./generated/TriggerVersionRecord";
+import type { SearchTriggersQuery } from "./generated/SearchTriggersQuery";
+import type { ListTriggersResponse } from "./generated/ListTriggersResponse";
+import type { ListTriggerVersionsResponse } from "./generated/ListTriggerVersionsResponse";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -70,31 +77,6 @@ import {
   type HydraEventHandler,
   type HydraEventErrorHandler,
 } from "./sse";
-
-// ---------------------------------------------------------------------------
-// Relations types (not yet in generated/ — defined inline)
-// ---------------------------------------------------------------------------
-
-export interface RelationResponse {
-  source_id: HydraId;
-  target_id: HydraId;
-  rel_type: string;
-}
-
-export interface ListRelationsRequest {
-  source_id?: HydraId;
-  source_ids?: string;
-  target_id?: HydraId;
-  target_ids?: string;
-  object_id?: HydraId;
-  object_ids?: string;
-  rel_type?: string;
-  transitive?: boolean;
-}
-
-export interface ListRelationsResponse {
-  relations: RelationResponse[];
-}
 
 export interface HydraApiClientOptions {
   /** Base URL prefix for API requests. Defaults to "/api". */
@@ -610,6 +592,43 @@ export class HydraApiClient {
   /** GET /v1/relations */
   listRelations(query: ListRelationsRequest): Promise<ListRelationsResponse> {
     return this.get("/v1/relations", query as Record<string, unknown>);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Triggers
+  // ---------------------------------------------------------------------------
+
+  /** POST /v1/triggers */
+  createTrigger(request: UpsertTriggerRequest): Promise<UpsertTriggerResponse> {
+    return this.post("/v1/triggers", request);
+  }
+
+  /** PUT /v1/triggers/:triggerId */
+  updateTrigger(
+    triggerId: string,
+    request: UpsertTriggerRequest,
+  ): Promise<UpsertTriggerResponse> {
+    return this.put(`/v1/triggers/${encodeURIComponent(triggerId)}`, request);
+  }
+
+  /** GET /v1/triggers/:triggerId */
+  getTrigger(triggerId: string): Promise<TriggerVersionRecord> {
+    return this.get(`/v1/triggers/${encodeURIComponent(triggerId)}`);
+  }
+
+  /** GET /v1/triggers */
+  listTriggers(query?: Partial<SearchTriggersQuery>): Promise<ListTriggersResponse> {
+    return this.get("/v1/triggers", query as Record<string, unknown>);
+  }
+
+  /** GET /v1/triggers/:triggerId/versions */
+  listTriggerVersions(triggerId: string): Promise<ListTriggerVersionsResponse> {
+    return this.get(`/v1/triggers/${encodeURIComponent(triggerId)}/versions`);
+  }
+
+  /** DELETE /v1/triggers/:triggerId */
+  deleteTrigger(triggerId: string): Promise<TriggerVersionRecord> {
+    return this.del(`/v1/triggers/${encodeURIComponent(triggerId)}`);
   }
 
   // ---------------------------------------------------------------------------

@@ -1,0 +1,25 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  flex: 1;
+}
+
+.errorContainer {
+  padding: 24px 32px;
+}
+
+.error {
+  color: var(--s-failed);
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  margin: 0;
+}

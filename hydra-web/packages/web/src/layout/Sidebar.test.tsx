@@ -169,6 +169,7 @@ describe("Sidebar", () => {
     const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
     expect(allLink).toBeTruthy();
     expect(allLink.getAttribute("href")).toBe("/");
+    expect(screen.getByTestId("sidebar-triggers")).toBeTruthy();
     expect(screen.getByTestId("sidebar-patches")).toBeTruthy();
     expect(screen.getByTestId("sidebar-sessions")).toBeTruthy();
     expect(screen.getByTestId("sidebar-chats")).toBeTruthy();
@@ -212,6 +213,9 @@ describe("Sidebar", () => {
 
   it("workspace items navigate to the expected routes", () => {
     renderSidebar();
+    expect((screen.getByTestId("sidebar-triggers") as HTMLAnchorElement).getAttribute("href")).toBe(
+      "/triggers",
+    );
     expect((screen.getByTestId("sidebar-patches") as HTMLAnchorElement).getAttribute("href")).toBe(
       "/patches",
     );

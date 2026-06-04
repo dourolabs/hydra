@@ -76,6 +76,28 @@ export const router = createBrowserRouter([
           })),
       },
       {
+        path: "triggers",
+        lazy: () =>
+          import("./pages/TriggersListPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.TriggersListPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
+        path: "triggers/:triggerId",
+        lazy: () =>
+          import("./pages/TriggerDetailPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.TriggerDetailPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
         path: "chat",
         lazy: () =>
           import("./pages/ChatListPage").then((m) => ({

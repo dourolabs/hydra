@@ -1,0 +1,7 @@
+.page { composes: page from "./adminPage.module.css"; }
+.pageHead { composes: pageHead from "./adminPage.module.css"; }
+.headLeft { composes: headLeft from "./adminPage.module.css"; }
+.eyebrow { composes: eyebrow from "./adminPage.module.css"; }
+.pageTitle { composes: pageTitle from "./adminPage.module.css"; }
+.headSpacer { composes: headSpacer from "./adminPage.module.css"; }
+.body { composes: body from "./adminPage.module.css"; }
