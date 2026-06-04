@@ -3463,7 +3463,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?
             .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
-        let label = row_to_label(&row)?;
+        let label = row.to_label()?;
         if label.deleted {
             return Err(StoreError::LabelNotFound(id.clone()));
         }
@@ -3510,7 +3510,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             let label_id = row.id.parse::<LabelId>().map_err(|err| {
                 StoreError::Internal(format!("invalid label id stored in database: {err}"))
             })?;
-            let label = row_to_label(row)?;
+            let label = row.to_label()?;
             labels.push((label_id, label));
         }
 
@@ -3552,7 +3552,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 let label_id = row.id.parse::<LabelId>().map_err(|err| {
                     StoreError::Internal(format!("invalid label id stored in database: {err}"))
                 })?;
-                Ok(Some((label_id, row_to_label(&row)?)))
+                Ok(Some((label_id, row.to_label()?)))
             }
             None => Ok(None),
         }
@@ -5752,20 +5752,21 @@ impl Store for PostgresStoreV2 {
     }
 }
 
-fn row_to_label(row: &LabelRow) -> Result<Label, StoreError> {
-    let color = row
-        .color
-        .parse()
-        .map_err(|err| StoreError::Internal(format!("invalid label color in database: {err}")))?;
-    Ok(Label {
-        name: row.name.clone(),
-        color,
-        deleted: row.deleted,
-        recurse: row.recurse,
-        hidden: row.hidden,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
+impl LabelRow {
+    fn to_label(&self) -> Result<Label, StoreError> {
+        let color = self.color.parse().map_err(|err| {
+            StoreError::Internal(format!("invalid label color in database: {err}"))
+        })?;
+        Ok(Label {
+            name: self.name.clone(),
+            color,
+            deleted: self.deleted,
+            recurse: self.recurse,
+            hidden: self.hidden,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
 }
 
 fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {

@@ -42,7 +42,7 @@ pub fn resolve_principal(
 ) -> Option<Principal> {
     match principal {
         AssigneeRef::Static(p) => Some(resolve_static_principal(p)),
-        AssigneeRef::Dynamic(dref) => resolve_dynamic_ref(*dref, ctx),
+        AssigneeRef::Dynamic(dref) => ctx.resolve_dynamic_ref(*dref),
     }
 }
 
@@ -65,14 +65,16 @@ fn resolve_static_principal(p: &Principal) -> Principal {
     p.clone()
 }
 
-fn resolve_dynamic_ref(dref: DynamicRef, ctx: &ResolutionContext<'_>) -> Option<Principal> {
-    match dref {
-        // `Patch.creator: Username` so the patch-creator dynamic ref always
-        // resolves to `Principal::User` — patches today are not created
-        // by `Agent` or `External` identities.
-        DynamicRef::PatchCreator => Some(Principal::User {
-            name: Username::from(ctx.patch.creator.as_str()),
-        }),
+impl ResolutionContext<'_> {
+    fn resolve_dynamic_ref(&self, dref: DynamicRef) -> Option<Principal> {
+        match dref {
+            // `Patch.creator: Username` so the patch-creator dynamic ref always
+            // resolves to `Principal::User` — patches today are not created
+            // by `Agent` or `External` identities.
+            DynamicRef::PatchCreator => Some(Principal::User {
+                name: Username::from(self.patch.creator.as_str()),
+            }),
+        }
     }
 }
 
