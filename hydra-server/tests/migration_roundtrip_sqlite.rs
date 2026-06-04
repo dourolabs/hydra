@@ -402,7 +402,7 @@ async fn assert_store_level_form_response_smoke(pool: &SqlitePool) -> Result<()>
 }
 
 // ---------------------------------------------------------------------------
-// §3.1 schema invariants — assertions for the SQLite migrations that landed
+// schema invariants — assertions for the SQLite migrations that landed
 // after the `pre_actor_variant_cleanup` baseline:
 //   * 20260603020000_add_triggers_table.sql
 //   * 20260604000000_drop_conversation_events.sql
