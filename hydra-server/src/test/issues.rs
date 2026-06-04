@@ -1255,7 +1255,8 @@ fn test_form() -> Form {
                 style: ActionStyle::Primary,
                 requires: vec!["name".to_string(), "env".to_string()],
                 effect: Effect::UpdateIssue {
-                    status: hydra_common::api::v1::issues::IssueStatus::Closed,
+                    status: hydra_common::api::v1::projects::StatusKey::try_new("closed").unwrap(),
+                    set_feedback_from: None,
                 },
             },
             Action {
@@ -1345,6 +1346,86 @@ async fn submit_form_action_valid_submission() -> anyhow::Result<()> {
     // FormResponse should be stored
     assert!(fetched.issue.form_response.is_some());
     assert_eq!(fetched.issue.form_response.unwrap().action_id, "submit");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::Result<()> {
+    // PR 4: `Effect::UpdateIssue { set_feedback_from: Some(field) }`
+    // writes the named form-field value into `issue.feedback` in the
+    // same write that sets `status`. This powers the same-issue review
+    // hand-off — the reviewer's `request_changes` action both moves the
+    // issue back to in-development and stamps the review comment as
+    // feedback so the SWE respawn picks it up.
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let form = Form {
+        prompt: "Reviewer".to_string(),
+        fields: vec![Field {
+            key: "review_comment".to_string(),
+            label: "Comment".to_string(),
+            description: None,
+            input: Input::Textarea {
+                placeholder: None,
+                min_length: None,
+                max_length: None,
+                rows: 4,
+            },
+            default: None,
+        }],
+        actions: vec![Action {
+            id: "request_changes".to_string(),
+            label: "Request changes".to_string(),
+            style: ActionStyle::Danger,
+            requires: vec!["review_comment".to_string()],
+            effect: Effect::UpdateIssue {
+                status: hydra_common::api::v1::projects::StatusKey::try_new("in-progress")
+                    .unwrap(),
+                set_feedback_from: Some("review_comment".to_string()),
+            },
+        }],
+    };
+    let issue_id = create_issue_with_form(&client, &server.base_url(), form).await?;
+
+    let mut values = HashMap::new();
+    values.insert(
+        "review_comment".to_string(),
+        json!("please address X and Y"),
+    );
+
+    let _: SubmitFormResponse = client
+        .post(format!(
+            "{}/v1/issues/{}/actions",
+            server.base_url(),
+            issue_id
+        ))
+        .json(&SubmitFormRequest::new(
+            "request_changes".to_string(),
+            values,
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let fetched: IssueVersionRecord = client
+        .get(format!("{}/v1/issues/{}", server.base_url(), issue_id))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(
+        fetched.issue.status.as_str(),
+        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
+    );
+    assert_eq!(
+        fetched.issue.feedback,
+        Some("please address X and Y".to_string()),
+        "set_feedback_from must copy the named field's value into issue.feedback"
+    );
 
     Ok(())
 }
@@ -1625,11 +1706,14 @@ async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn submit_feedback_transitions_terminal_status_to_in_progress() -> anyhow::Result<()> {
+async fn submit_feedback_leaves_closed_status_unchanged() -> anyhow::Result<()> {
+    // Behavior shift in PR 4: `submit_feedback` no longer mutates status.
+    // Callers that want to re-route the issue submit an explicit status
+    // transition (typically via a form action), which gives the project's
+    // `on_enter` automation a chance to reassign deterministically.
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    // Create a closed issue
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
         .json(&UpsertIssueRequest::new(
@@ -1652,7 +1736,6 @@ async fn submit_feedback_transitions_terminal_status_to_in_progress() -> anyhow:
         .json()
         .await?;
 
-    // Submit feedback on the closed issue
     let resp: IssueVersionRecord = client
         .post(format!(
             "{}/v1/issues/{}/feedback",
@@ -1669,18 +1752,19 @@ async fn submit_feedback_transitions_terminal_status_to_in_progress() -> anyhow:
     assert_eq!(resp.issue.feedback, Some("please reopen".to_string()));
     assert_eq!(
         resp.issue.status.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
+        hydra_common::api::v1::issues::IssueStatus::Closed.as_str(),
+        "closed issues stay closed when feedback is submitted (PR 4 behavior shift)"
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn submit_feedback_transitions_failed_status_to_in_progress() -> anyhow::Result<()> {
+async fn submit_feedback_leaves_failed_status_unchanged() -> anyhow::Result<()> {
+    // See `submit_feedback_leaves_closed_status_unchanged`.
     let server = spawn_test_server().await?;
     let client = test_client();
 
-    // Create a failed issue
     let created: UpsertIssueResponse = client
         .post(format!("{}/v1/issues", server.base_url()))
         .json(&UpsertIssueRequest::new(
@@ -1703,7 +1787,6 @@ async fn submit_feedback_transitions_failed_status_to_in_progress() -> anyhow::R
         .json()
         .await?;
 
-    // Submit feedback on the failed issue
     let resp: IssueVersionRecord = client
         .post(format!(
             "{}/v1/issues/{}/feedback",
@@ -1720,7 +1803,8 @@ async fn submit_feedback_transitions_failed_status_to_in_progress() -> anyhow::R
     assert_eq!(resp.issue.feedback, Some("try again".to_string()));
     assert_eq!(
         resp.issue.status.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
+        hydra_common::api::v1::issues::IssueStatus::Failed.as_str(),
+        "failed issues stay failed when feedback is submitted (PR 4 behavior shift)"
     );
 
     Ok(())

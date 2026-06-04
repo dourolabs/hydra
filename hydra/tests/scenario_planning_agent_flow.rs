@@ -14,17 +14,17 @@ use std::str::FromStr;
 /// 1. User creates parent issue
 /// 2. PM creates two children: child 1 assigned to SWE, child 2 blocked-on child 1
 /// 3. SWE agent explicitly fails child 1 via CLI
-/// 4. Child 2 is automatically dropped (blocked on failed task)
-/// 5. Parent becomes ready for re-spawning (in-progress, no ready descendants)
+/// 4. User drops child 2 to clear the blocked sibling
+/// 5. Parent becomes ready for re-spawning (all direct children terminal)
 /// 6. PM creates replacement child with updated instructions
 /// 7. SWE succeeds on replacement child and closes it
 /// 8. PM closes parent
 ///
 /// Verifies:
 /// - Agent explicitly sets issue status to failed via CLI
-/// - Failed child does not block parent re-planning
-/// - Blocked sibling does not prevent PM from re-spawning
-/// - Parent in-progress with no ready descendants becomes ready
+/// - Failed child does not block parent re-planning once siblings terminal
+/// - Parent ready under PR 4's unified rule once every direct child has
+///   `unblocks_parents = true`
 /// - Replacement child issues work correctly
 /// - Original failed child remains in terminal state
 #[tokio::test]
@@ -121,15 +121,19 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     let child1_failed = user.get_issue(&child1_id).await?;
     child1_failed.assert_status(IssueStatus::Failed);
 
-    // ── Step 4: Verify child 2 state ─────────────────────────────────
-    // Child 2 is blocked-on the failed child 1. It should remain open (not dropped).
-    let child2_check = user.get_issue(&child2_id).await?;
-    child2_check.assert_status(IssueStatus::Open);
+    // ── Step 4: User drops the blocked sibling ───────────────────────
+    // Child 2 is blocked-on the failed child 1. Cascade only walks
+    // child-of edges, so it stays Open until the user drops it. Under
+    // PR 4's unified readiness rule, the parent is not ready while any
+    // direct child is non-terminal — so dropping child 2 is the gate
+    // that lets PM re-spawn.
+    user.update_issue_status(&child2_id, IssueStatus::Dropped).await?;
+    let child2_dropped = user.get_issue(&child2_id).await?;
+    child2_dropped.assert_status(IssueStatus::Dropped);
 
     // ── Step 5: Parent becomes ready for re-spawning ─────────────────
-    // Parent is in-progress with no ready descendants (child 1 is failed,
-    // child 2 is blocked/dropped). The spawner should create a new task
-    // for the parent.
+    // All direct children are now terminal (child 1 failed, child 2
+    // dropped), so the spawner creates a fresh PM session for the parent.
     let pm_tasks_round2 = harness.await_sessions(&parent_id, 2).await?;
     assert_eq!(
         pm_tasks_round2.len(),
@@ -141,14 +145,11 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
         .find(|id| !pm_tasks.contains(id))
         .expect("should find a new session for parent re-spawn");
 
-    // ── Step 6: PM drops blocked child 2 and creates replacement ──────
-    // The PM drops child 2 (blocked on the failed task) and creates a
-    // replacement child with updated instructions.
+    // ── Step 6: PM creates replacement child ──────────────────────────
     harness
         .run_worker(
             pm_task_round2,
             vec![
-                &format!("hydra issues update {child2_id} --status dropped"),
                 &format!(
                     "hydra issues create 'Add Memcached cache integration (retry)' \
                      --type task --assignee agents/swe \
@@ -158,10 +159,6 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
             ],
         )
         .await?;
-
-    // Verify child 2 is dropped.
-    let child2_dropped = user.get_issue(&child2_id).await?;
-    child2_dropped.assert_status(IssueStatus::Dropped);
 
     // Find the new child issue.
     let all_issues = user.list_issues().await?;
@@ -255,17 +252,18 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 /// 2. PM creates two children: child 1 assigned to SWE, child 2 blocked-on child 1
 /// 3. SWE picks up child 1 (job starts running)
 /// 4. User drops child 1 (sets status to dropped)
-/// 5. Child 2 remains open but blocked (not ready)
-/// 6. Parent becomes ready for re-spawning (no ready descendants)
-/// 7. PM drops child 2 and creates replacement child
+/// 5. User drops child 2 (cascade only walks child-of, not blocked-on)
+/// 6. Parent becomes ready for re-spawning (every direct child terminal)
+/// 7. PM creates replacement child
 /// 8. SWE succeeds on replacement child and closes it
 /// 9. PM closes parent
 ///
 /// Verifies:
 /// - User can drop an issue to trigger re-planning
 /// - Dropped issue is terminal and does not block parent
-/// - Blocked sibling (not explicitly dropped) does not prevent PM from re-spawning
-/// - PM re-spawns after rejection
+/// - Under PR 4's unified rule, blocked siblings still gate re-spawn
+///   until explicitly dropped
+/// - PM re-spawns after rejection once all children are terminal
 /// - Replacement child completes the work
 #[tokio::test]
 async fn user_rejects_plan_triggers_replanning() -> Result<()> {
@@ -364,14 +362,17 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     // Running. step_monitor_jobs reconciles the store with the engine.
     harness.step_monitor_jobs().await?;
 
-    // ── Step 5: Verify child 2 state ────────────────────────────────
-    // Child 2 is blocked-on the dropped child 1. It should remain open.
-    let child2_check = user.get_issue(&child2_id).await?;
-    child2_check.assert_status(IssueStatus::Open);
+    // ── Step 5: User drops blocked sibling ───────────────────────────
+    // Child 2 is blocked-on the dropped child 1 — cascade only walks
+    // child-of edges, so the user drops child 2 explicitly. This makes
+    // every direct child of the parent terminal, satisfying PR 4's
+    // unified readiness rule for parent re-spawn.
+    user.update_issue_status(&child2_id, IssueStatus::Dropped)
+        .await?;
+    let child2_dropped = user.get_issue(&child2_id).await?;
+    child2_dropped.assert_status(IssueStatus::Dropped);
 
     // ── Step 6: Parent becomes ready for re-spawning ─────────────────
-    // Parent is in-progress with no ready descendants (child 1 is dropped,
-    // child 2 is blocked). The spawner should create a new task for the parent.
     let pm_tasks_round2 = harness.await_sessions(&parent_id, 2).await?;
     assert_eq!(
         pm_tasks_round2.len(),
@@ -383,12 +384,11 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .find(|id| !pm_tasks.contains(id))
         .expect("should find a new session for parent re-spawn");
 
-    // ── Step 7: PM drops child 2 and creates replacement ─────────────
+    // ── Step 7: PM creates replacement ───────────────────────────────
     harness
         .run_worker(
             pm_task_round2,
             vec![
-                &format!("hydra issues update {child2_id} --status dropped"),
                 &format!(
                     "hydra issues create 'Build search with SQLite FTS5' \
                      --type task --assignee agents/swe \
@@ -398,10 +398,6 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
             ],
         )
         .await?;
-
-    // Verify child 2 is dropped.
-    let child2_dropped = user.get_issue(&child2_id).await?;
-    child2_dropped.assert_status(IssueStatus::Dropped);
 
     // Find the replacement child issue.
     let all_issues = user.list_issues().await?;

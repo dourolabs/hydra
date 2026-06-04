@@ -8,10 +8,12 @@ use crate::{
     app::AppState,
     domain::{
         actors::ActorRef,
-        issues::{Issue, IssueDependencyType, IssueStatus},
+        issues::{Issue, IssueDependencyType},
     },
     store::{Status, StoreError},
 };
+#[cfg(test)]
+use crate::domain::issues::IssueStatus;
 use anyhow::Context;
 #[cfg(test)]
 use hydra_common::RepoName;
@@ -218,16 +220,19 @@ impl AgentQueue {
             return Ok(SpawnResult::Skipped);
         }
 
-        // Compute guard conditions.
-        // PR 3 still pattern-matches on the legacy enum via `status_as_legacy()`.
-        // Custom (non-default-project) statuses fall back to "non-terminal";
-        // PR 4 replaces these with `resolve_status` flag reads.
-        let legacy_status = issue.status_as_legacy();
-        let is_terminal = matches!(
-            legacy_status,
-            Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed)
-        );
-        let is_dropped = matches!(legacy_status, Some(IssueStatus::Dropped));
+        // Compute guard conditions via project-aware status resolution.
+        // The terminal predicate is `unblocks_parents` — every status that
+        // halted spawn in the legacy enum world declared
+        // `unblocks_parents = true` on `DefaultProject`. The "hard skip"
+        // for `dropped` (work explicitly abandoned, never re-spawned even
+        // on feedback) is derived from `cascades_to_children && !unblocks_dependents`:
+        // those are the same flags `dropped` carries on `DefaultProject`
+        // and the same flags any custom drop-like status will carry.
+        let resolved = state.resolve_status(issue).await.with_context(|| {
+            format!("failed to resolve status for issue {issue_id} during spawn check")
+        })?;
+        let is_terminal = resolved.unblocks_parents;
+        let is_dropped = resolved.cascades_to_children && !resolved.unblocks_dependents;
         let is_ready = state
             .is_issue_ready(issue_id)
             .await
@@ -1538,14 +1543,16 @@ mod tests {
             .await?;
         assert!(!blocked.is_spawned());
 
-        // Create a child issue — this counts as progress on the parent.
+        // Create a terminal (Closed) child issue — counts as progress on
+        // the parent, and a `unblocks_parents=true` child keeps the
+        // parent ready under PR 4's unified readiness rule.
         // Assign to a different agent so it doesn't spawn here.
         handles
             .store
             .add_issue(
                 issue(
                     "Child issue",
-                    IssueStatus::Open,
+                    IssueStatus::Closed,
                     Some("agent-b"),
                     vec![IssueDependency::new(
                         IssueDependencyType::ChildOf,
@@ -1581,6 +1588,11 @@ mod tests {
 
     #[tokio::test]
     async fn resets_attempt_counter_when_child_updated() -> anyhow::Result<()> {
+        // Per PR 4's unified readiness rule, a parent is only ready when
+        // every direct child has `unblocks_parents = true`. We use a
+        // Closed child throughout so the parent stays ready; the
+        // children_snapshot still changes when the child's version bumps,
+        // which is what resets the parent's spawn counter.
         let mut queue = queue("agent-a");
         queue.agent.max_tries = 1;
 
@@ -1599,13 +1611,13 @@ mod tests {
             )
             .await?;
 
-        // Create a child before the first spawn.
+        // Create a terminal (Closed) child before the first spawn.
         let (child_id, _) = handles
             .store
             .add_issue(
                 issue(
                     "Child issue",
-                    IssueStatus::Open,
+                    IssueStatus::Closed,
                     Some("agent-a"),
                     vec![IssueDependency::new(
                         IssueDependencyType::ChildOf,
@@ -1617,7 +1629,8 @@ mod tests {
             )
             .await?;
 
-        // First spawn attempt succeeds for both parent and child.
+        // First spawn attempt succeeds for the parent. Child is Closed
+        // so the queue skips it (terminal).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let parent_result = queue
@@ -1626,14 +1639,7 @@ mod tests {
         assert!(parent_result.is_spawned());
         record_completed_task(&handles, parent_result.into_session_id().unwrap()).await?;
 
-        let child_issue = handles.store.get_issue(&child_id, false).await?.item;
-        let child_result = queue
-            .spawn_for_issue(&handles.state, &child_id, &child_issue, &task_state)
-            .await?;
-        assert!(child_result.is_spawned());
-        record_completed_task(&handles, child_result.into_session_id().unwrap()).await?;
-
-        // Further attempts should be blocked for both.
+        // Further attempts should be blocked.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let blocked = queue
@@ -1641,29 +1647,23 @@ mod tests {
             .await?;
         assert!(!blocked.is_spawned());
 
-        // Update the child issue — this counts as progress on the parent.
+        // Update the child's progress field — status stays Closed but
+        // the version bumps, which counts as parent progress.
         let child = handles.store.get_issue(&child_id, false).await?;
         let mut child_item = child.item;
-        child_item.status = IssueStatus::InProgress.into();
+        child_item.progress = "made further notes".to_string();
         handles
             .store
             .update_issue(&child_id, child_item, &ActorRef::test())
             .await?;
 
         // Parent's counter should have reset (child version changed).
-        // Child's counter should also reset (its status changed).
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let parent_result = queue
             .spawn_for_issue(&handles.state, &parent_id, &parent_issue, &task_state)
             .await?;
         assert!(parent_result.is_spawned());
-
-        let child_issue = handles.store.get_issue(&child_id, false).await?.item;
-        let child_result = queue
-            .spawn_for_issue(&handles.state, &child_id, &child_issue, &task_state)
-            .await?;
-        assert!(child_result.is_spawned());
 
         Ok(())
     }
@@ -1688,14 +1688,15 @@ mod tests {
             )
             .await?;
 
-        // Create a child before the first spawn.
-        let (child_id, _) = handles
+        // Create a terminal (Closed) child so the parent stays ready
+        // under PR 4's unified readiness rule.
+        let (_child_id, _) = handles
             .store
             .add_issue(
                 issue(
                     "Child issue",
-                    IssueStatus::Open,
-                    Some("agent-a"),
+                    IssueStatus::Closed,
+                    Some("agent-b"),
                     vec![IssueDependency::new(
                         IssueDependencyType::ChildOf,
                         parent_id.clone(),
@@ -1706,7 +1707,7 @@ mod tests {
             )
             .await?;
 
-        // First spawn consumes both parent and child.
+        // First spawn consumes the parent.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;
         let parent_issue = handles.store.get_issue(&parent_id, false).await?.item;
         let parent_result = queue
@@ -1714,13 +1715,6 @@ mod tests {
             .await?;
         assert!(parent_result.is_spawned());
         record_completed_task(&handles, parent_result.into_session_id().unwrap()).await?;
-
-        let child_issue = handles.store.get_issue(&child_id, false).await?.item;
-        let child_result = queue
-            .spawn_for_issue(&handles.state, &child_id, &child_issue, &task_state)
-            .await?;
-        assert!(child_result.is_spawned());
-        record_completed_task(&handles, child_result.into_session_id().unwrap()).await?;
 
         // No changes to children — counter should NOT reset, so no tasks spawn.
         let task_state = agent_task_state(&handles.state, "agent-a").await?;

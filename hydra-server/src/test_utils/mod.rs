@@ -175,6 +175,39 @@ pub async fn add_repository(
     Ok(())
 }
 
+/// Register a named agent in the test store with a minimal prompt
+/// document. Useful when a test needs an assignee that passes
+/// `principal_exists` validation.
+pub async fn add_agent_with_name(handles: &TestStateHandles, name: &str) {
+    use crate::domain::{agents::Agent, documents::Document};
+    let agent = Agent::new(
+        name.to_string(),
+        format!("/agents/{name}/prompt.md"),
+        None,
+        1,
+        1,
+        false,
+        false,
+        vec![],
+    );
+    if let Err(err) = handles.store.add_agent(agent).await {
+        match err {
+            crate::store::StoreError::AgentAlreadyExists(_) => {}
+            other => panic!("failed to seed agent '{name}': {other}"),
+        }
+    }
+    let doc = Document {
+        title: format!("{name} prompt"),
+        body_markdown: format!("prompt for {name}"),
+        path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
+        deleted: false,
+    };
+    let _ = handles
+        .store
+        .add_document(doc, &crate::domain::actors::ActorRef::test())
+        .await;
+}
+
 pub async fn test_state_with_repo(name: RepoName, config: Repository) -> anyhow::Result<AppState> {
     let handles = test_state_with_repo_handles(name, config).await?;
     Ok(handles.state)

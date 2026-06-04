@@ -54,6 +54,7 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
                 PolicyEntry::Name("agent_role_uniqueness".to_string()),
             ],
             automations: vec![
+                PolicyEntry::Name("apply_status_on_enter".to_string()),
                 PolicyEntry::Name("cascade_issue_status".to_string()),
                 PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
