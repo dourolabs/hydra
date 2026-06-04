@@ -1,0 +1,108 @@
+.treeRoot {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.folderRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding-right: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-1);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.folderRow:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.folderRowActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-3);
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    transform var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.chevron:hover {
+  color: var(--fg-1);
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.chevronPlaceholder {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.folderIcon {
+  color: var(--fg-2);
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.folderRowActive .folderIcon,
+.folderRow:hover .folderIcon {
+  color: var(--fg-1);
+}
+
+.folderName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileCount {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  flex-shrink: 0;
+}
+
+.loadingRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+}
+
+.docLeafLink {
+  text-decoration: none;
+  color: inherit;
+}
+
+.docLeafLink:hover {
+  color: var(--fg-0);
+}
