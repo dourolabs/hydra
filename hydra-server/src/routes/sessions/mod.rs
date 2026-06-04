@@ -64,6 +64,7 @@ pub async fn create_session(
         "task stored, will be started by background thread"
     );
 
+    info!(session_id = %session_id, "create_session completed");
     Ok(Json(v1::sessions::CreateSessionResponse::new(
         session_id,
         session.into(),

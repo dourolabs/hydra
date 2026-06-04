@@ -62,8 +62,9 @@ pub async fn get_session_logs(
         let response = stream_logs_sse(state.job_engine.as_ref(), &session_id, follow).await?;
         info!(
             session_id = %session_id,
+            watch = watch_requested,
             follow = follow,
-            "get_session_logs streaming response ready"
+            "get_session_logs completed"
         );
         Ok(response)
     } else {
@@ -74,8 +75,9 @@ pub async fn get_session_logs(
         let response = fetch_logs(state.job_engine.as_ref(), &session_id, tail_lines).await?;
         info!(
             session_id = %session_id,
+            watch = watch_requested,
             tail_lines = ?tail_lines,
-            "get_session_logs returning log snapshot"
+            "get_session_logs completed"
         );
         Ok(response)
     }
