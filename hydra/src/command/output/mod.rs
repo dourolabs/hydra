@@ -30,7 +30,9 @@ pub use patches::{
 pub use projects::{ProjectRecords, ProjectStatuses};
 pub use repositories::RepositoryRecords;
 pub use sessions::{SessionRecords, SessionSummaryRecords};
-pub use triggers::{DeletedTriggerOutcome, TriggerRecords, TriggerTestRecords, TriggerUpsertOutcome};
+pub use triggers::{
+    DeletedTriggerOutcome, TriggerRecords, TriggerTestRecords, TriggerUpsertOutcome,
+};
 pub use users::{DeleteSecretOutcome, SetSecretOutcome, UserRecords, UserSecretsList};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
