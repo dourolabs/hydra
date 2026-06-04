@@ -1,7 +1,7 @@
-import { Avatar, Badge, TypeChip, type PreviewCardTone, type BadgeStatus } from "@hydra/ui";
+import { Avatar, TypeChip, type PreviewCardTone } from "@hydra/ui";
 import { useIssue } from "../../issues/useIssue";
 import { principalAvatarKind, principalDisplayName } from "../../principal/formatPrincipal";
-import { normalizeIssueStatus } from "../../../utils/statusMapping";
+import { StatusChip } from "../../projects/StatusChip";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import {
   FallbackPreviewCard,
@@ -11,19 +11,16 @@ import {
 } from "./cardHelpers";
 import { KIND_LABEL, firstNonEmptyLine } from "./cardConstants";
 
-const TONE_BY_STATUS: Partial<Record<BadgeStatus, PreviewCardTone>> = {
+const TONE_BY_STATUS_KEY: Record<string, PreviewCardTone> = {
   open: "open",
   "in-progress": "in-progress",
-  "issue-closed": "closed",
   closed: "closed",
   failed: "failed",
   dropped: "dropped",
-  blocked: "blocked",
 };
 
 function toneForIssueStatus(status: string): PreviewCardTone {
-  const normalized = normalizeIssueStatus(status);
-  return TONE_BY_STATUS[normalized] ?? "neutral";
+  return TONE_BY_STATUS_KEY[status] ?? "neutral";
 }
 
 interface IssuePreviewCardProps {
@@ -43,7 +40,6 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
 
   const issue = data.issue;
   const tone = toneForIssueStatus(issue.status);
-  const status = normalizeIssueStatus(issue.status);
   const excerpt = firstNonEmptyLine(issue.description);
   const assignee = issue.assignee ?? null;
   const assigneeName = assignee ? principalDisplayName(assignee) : null;
@@ -56,7 +52,7 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
       ariaLabel={`Issue ${id}: ${title}`}
       topRow={
         <>
-          <Badge status={status} />
+          <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
           <MonoId id={id} />
         </>
       }

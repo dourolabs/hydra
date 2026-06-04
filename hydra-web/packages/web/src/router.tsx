@@ -196,6 +196,28 @@ export const router = createBrowserRouter([
             ),
           })),
       },
+      {
+        path: "projects",
+        lazy: () =>
+          import("./pages/ProjectsListPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.ProjectsListPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
+        path: "projects/:projectKey",
+        lazy: () =>
+          import("./pages/ProjectDetailPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.ProjectDetailPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
     ],
   },
 ]);

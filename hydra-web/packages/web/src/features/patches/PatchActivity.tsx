@@ -1,6 +1,6 @@
 import { Badge } from "@hydra/ui";
 import type { PatchVersionRecord } from "@hydra/api";
-import { normalizePatchStatus } from "../../utils/statusMapping";
+import { normalizePatchStatus } from "../../utils/badgeStatus";
 import { usePatchVersions } from "./usePatchVersions";
 import { ActivityTimeline } from "../activity/ActivityTimeline";
 import { principalDisplayName } from "../principal/formatPrincipal";

@@ -1,24 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { LabelRecord } from "@hydra/api";
+import { ColorPicker, LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
 import { useLabels } from "./useLabels";
 import { LabelChip } from "./LabelChip";
 import styles from "./LabelPicker.module.css";
-
-/**
- * Default color palette matching the backend's DEFAULT_COLORS in labels.rs.
- */
-export const LABEL_COLOR_PALETTE = [
-  "#e74c3c", // red
-  "#e67e22", // orange
-  "#f1c40f", // yellow
-  "#2ecc71", // green
-  "#1abc9c", // teal
-  "#3498db", // blue
-  "#9b59b6", // purple
-  "#e91e63", // pink
-  "#795548", // brown
-  "#607d8b", // blue grey
-];
 
 interface LabelPickerProps {
   selectedNames: string[];
@@ -190,19 +175,7 @@ export function LabelPicker({
                 </span>
               </div>
               <div className={styles.colorPalette}>
-                {LABEL_COLOR_PALETTE.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    className={`${styles.colorSwatch} ${color === selectedColor ? styles.colorSwatchSelected : ""}`}
-                    style={{ backgroundColor: color }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedColor(color);
-                    }}
-                    aria-label={`Select color ${color}`}
-                  />
-                ))}
+                <ColorPicker value={selectedColor} onChange={setSelectedColor} />
               </div>
             </li>
           )}

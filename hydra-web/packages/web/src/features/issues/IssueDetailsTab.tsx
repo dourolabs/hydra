@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, TypeChip } from "@hydra/ui";
+import { Avatar, TypeChip } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
 import {
   principalAvatarKind,
   principalDisplayName,
 } from "../principal/formatPrincipal";
-import { normalizeIssueStatus } from "../../utils/statusMapping";
+import { StatusChip } from "../projects/StatusChip";
 import { formatTimestamp } from "../../utils/time";
 import { useIssue } from "./useIssue";
 import { IssueLabelEditor } from "./IssueLabelEditor";
@@ -17,7 +17,12 @@ function DepRow({ issueId }: { issueId: string }) {
   const title = record?.issue.title || issueId;
   return (
     <Link to={`/issues/${issueId}`} className={styles.depRow} title={title}>
-      {record && <Badge status={normalizeIssueStatus(record.issue.status)} />}
+      {record && (
+        <StatusChip
+          definition={record.issue.resolved_status}
+          fallbackKey={record.issue.status}
+        />
+      )}
       <span className={styles.depRowTitle}>{title}</span>
     </Link>
   );
@@ -31,7 +36,6 @@ interface IssueDetailsTabProps {
 export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabProps) {
   const { issue } = record;
   const issueId = record.issue_id;
-  const status = normalizeIssueStatus(issue.status);
   const settings = issue.session_settings;
 
   const blockedOnIds = useMemo(
@@ -50,7 +54,7 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
           onClick={onOpenStatusModal}
           data-testid="status-chip"
         >
-          <Badge status={status} />
+          <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
           <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
             <path
               fillRule="evenodd"

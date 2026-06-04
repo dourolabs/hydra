@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Avatar, Badge, DiffViewer, Spinner } from "@hydra/ui";
-import { normalizePatchStatus } from "../../utils/statusMapping";
+import { normalizePatchStatus } from "../../utils/badgeStatus";
 import { usePatch } from "../patches/usePatch";
 import {
   principalAvatarKind,

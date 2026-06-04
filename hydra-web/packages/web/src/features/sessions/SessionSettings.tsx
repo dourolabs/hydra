@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import type { MountSpec, Session } from "@hydra/api";
 import { Badge } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
-import { normalizeSessionStatus } from "../../utils/statusMapping";
+import { normalizeSessionStatus } from "../../utils/badgeStatus";
 import { formatTimestamp } from "../../utils/time";
 import styles from "./SessionSettings.module.css";
 

@@ -1,20 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Modal, Button, Textarea, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type { Issue, IssueVersionRecord, StatusKey } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
+import { useProjectStatuses } from "../projects/useProjects";
 import largeModalStyles from "../../components/LargeModal.module.css";
 import styles from "./IssueUpdateModal.module.css";
-
-const statusOptions: SelectOption[] = [
-  { value: "open", label: "Open" },
-  { value: "in-progress", label: "In Progress" },
-  { value: "closed", label: "Closed" },
-  { value: "dropped", label: "Dropped" },
-  { value: "failed", label: "Failed" },
-];
 
 interface IssueUpdateModalProps {
   open: boolean;
@@ -28,6 +21,19 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
 
   const [status, setStatus] = useState<StatusKey>(issue.status);
   const [progress, setProgress] = useState(issue.progress);
+
+  // Pull status options from the project, or DefaultProject when project_id is null.
+  // The hook caches per project for the session via React Query.
+  const { data: projectStatuses } = useProjectStatuses(issue.project_id ?? null);
+  const statusOptions: SelectOption[] = useMemo(() => {
+    const list = projectStatuses?.statuses ?? [];
+    if (list.length === 0) {
+      // Until the fetch resolves, keep the current status as the sole option so
+      // the Select doesn't flip to an unrelated default and clobber state.
+      return [{ value: issue.status, label: issue.status }];
+    }
+    return list.map((s) => ({ value: s.key, label: s.label }));
+  }, [projectStatuses, issue.status]);
 
   // Reset form when modal opens with fresh issue data
   useEffect(() => {

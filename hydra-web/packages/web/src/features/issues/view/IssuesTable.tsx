@@ -1,11 +1,11 @@
 import { useNavigate } from "react-router-dom";
-import { Avatar, Badge, TypeChip } from "@hydra/ui";
+import { Avatar, TypeChip } from "@hydra/ui";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import {
   principalAvatarKind,
   principalDisplayName,
 } from "../../principal/formatPrincipal";
-import { normalizeIssueStatus } from "../../../utils/statusMapping";
+import { StatusChip } from "../../projects/StatusChip";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
@@ -91,7 +91,6 @@ export function IssuesTable({
           {issues.map((rec) => {
             const issue = rec.issue;
             const id = rec.issue_id;
-            const status = normalizeIssueStatus(issue.status);
             const children = childStatusMap.get(id);
             const pct = progressFraction(children);
             const hasActiveChild = !!children?.some((c) => c.hasActiveTask);
@@ -110,7 +109,10 @@ export function IssuesTable({
                   </div>
                 </td>
                 <td className={styles.colStatus}>
-                  <Badge status={status} />
+                  <StatusChip
+                    definition={issue.resolved_status}
+                    fallbackKey={issue.status}
+                  />
                 </td>
                 <td className={styles.colType}>
                   {issue.type && issue.type !== "unknown" ? (

@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Avatar, Badge, Icons, Kbd } from "@hydra/ui";
 import type { PatchSummaryRecord } from "@hydra/api";
-import { normalizePatchStatus } from "../../../utils/statusMapping";
+import { normalizePatchStatus } from "../../../utils/badgeStatus";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import { PatchRailRow } from "../../related/RailRow";

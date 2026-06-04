@@ -24,3 +24,11 @@ export type {
 } from "./sse";
 
 export * from "./types";
+
+export type {
+  UpsertProjectRequest,
+  UpsertProjectResponse,
+  ProjectRecord,
+  ListProjectsResponse,
+  ProjectStatusesResponse,
+} from "./projects";

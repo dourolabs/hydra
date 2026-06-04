@@ -120,7 +120,7 @@ vi.mock("../../features/toast/useToast", () => ({
   useToast: () => ({ addToast: vi.fn() }),
 }));
 
-vi.mock("../../utils/statusMapping", () => ({
+vi.mock("../../utils/badgeStatus", () => ({
   normalizeSessionStatus: (s: string) => s,
 }));
 

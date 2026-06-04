@@ -1,11 +1,5 @@
 import type { BadgeStatus } from "@hydra/ui";
 
-export const TERMINAL_STATUSES: Set<string> = new Set([
-  "closed",
-  "failed",
-  "dropped",
-]);
-
 /** Normalize a PascalCase patch status (e.g. "ChangesRequested") to a BadgeStatus ("changes-requested"). */
 export function normalizePatchStatus(status: string): BadgeStatus {
   const map: Record<string, BadgeStatus> = {
@@ -38,17 +32,4 @@ export function normalizeSessionStatus(status: string): BadgeStatus {
   ]);
   if (valid.has(status)) return status as BadgeStatus;
   return "unknown";
-}
-
-/** Normalize an issue status to a BadgeStatus. Maps "closed" to "issue-closed" (green). */
-export function normalizeIssueStatus(status: string): BadgeStatus {
-  const map: Record<string, BadgeStatus> = {
-    open: "open",
-    "in-progress": "in-progress",
-    closed: "issue-closed",
-    failed: "failed",
-    dropped: "dropped",
-    blocked: "blocked",
-  };
-  return map[status] ?? "unknown";
 }

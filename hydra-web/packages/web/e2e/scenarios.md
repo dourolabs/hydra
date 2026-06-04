@@ -38,6 +38,12 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@labels:create-with` — User can create an issue with existing and new labels
 - `@labels:edit` — User can add and remove labels on an existing issue
 
+## Projects
+
+- `@projects:create` — User can create a project with custom statuses from `/projects`; the new project lands in the list and is reachable at `/projects/<key>`.
+- `@projects:badge` — Status badge on the issue list reflects the project's `StatusDefinition` (label, icon, color) by reading `issue.resolved_status` straight from the API; the frontend performs no per-status resolution.
+- `@projects:status-modal-options` — Status-update modal shows project-defined options for a project-scoped issue (fetched from `/v1/projects/:id/statuses`) and falls back to `DefaultProject` options for project-less issues (fetched from `/v1/projects/default/statuses`).
+
 ## Patches
 
 - `@patches:view-detail` — User can view a patch's details and metadata
