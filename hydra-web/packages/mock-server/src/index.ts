@@ -22,6 +22,7 @@ import { createLabelRoutes } from "./routes/labels.js";
 import { createRelationRoutes } from "./routes/relations.js";
 import { createSecretRoutes, resetSecrets } from "./routes/secrets.js";
 import { createConversationRoutes } from "./routes/conversations.js";
+import { createTriggerRoutes } from "./routes/triggers.js";
 import { loadSeedData } from "./seed.js";
 import {
   startSyntheticEvents,
@@ -158,6 +159,7 @@ app.route("", createRelationRoutes(store));
 app.route("", createEventRoutes(store));
 app.route("", createSecretRoutes());
 app.route("", createConversationRoutes(store));
+app.route("", createTriggerRoutes(store));
 
 export interface MockServerHandle {
   port: number;

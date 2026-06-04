@@ -11,6 +11,7 @@ import type {
   AgentRecord,
   Conversation,
   SessionEvent,
+  Trigger,
   UserSummary,
 } from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
@@ -51,7 +52,12 @@ interface RelationSeed {
   source_id: string;
   target_id: string;
   rel_type: string;
+  // Optional in the fixture; defaults to the seed-load wall clock so older
+  // entries that predate `RelationResponse.created_at` keep working.
+  created_at?: string;
 }
+
+type TriggerFixture = Trigger & { last_updated_at?: string };
 
 interface SeedData {
   issues: Record<string, IssueFixture>;
@@ -65,6 +71,7 @@ interface SeedData {
   label_associations?: LabelAssociationSeed[];
   conversations?: Record<string, Conversation>;
   session_events?: Record<string, SessionEvent[]>;
+  triggers?: Record<string, TriggerFixture>;
   relations?: RelationSeed[];
 }
 
@@ -211,14 +218,29 @@ export function loadSeedData(store: Store): void {
     }
   }
 
+  if (seed.triggers) {
+    for (const [id, fixture] of Object.entries(seed.triggers)) {
+      const { last_updated_at, ...trigger } = fixture;
+      const timestamp = last_updated_at ?? new Date().toISOString();
+      store.seedVersion<Trigger>("triggers", id, trigger, timestamp);
+    }
+  }
+
   if (seed.relations) {
+    const seedLoadedAt = new Date().toISOString();
     for (const rel of seed.relations) {
-      addSeededRelation(rel);
+      addSeededRelation({
+        source_id: rel.source_id,
+        target_id: rel.target_id,
+        rel_type: rel.rel_type,
+        created_at: rel.created_at ?? seedLoadedAt,
+      });
     }
   }
 
   const labelCount = seed.labels ? Object.keys(seed.labels).length : 0;
   const conversationCount = seed.conversations ? Object.keys(seed.conversations).length : 0;
+  const triggerCount = seed.triggers ? Object.keys(seed.triggers).length : 0;
   const relationCount = seed.relations ? seed.relations.length : 0;
   console.log(
     `Seed data loaded: ${Object.keys(seed.issues).length} issues, ` +
@@ -230,6 +252,7 @@ export function loadSeedData(store: Store): void {
     `${labelCount} labels, ` +
     `${conversationCount} conversations, ` +
     `${sessionEventCount} session events, ` +
+    `${triggerCount} triggers, ` +
     `${relationCount} relations`,
   );
 }

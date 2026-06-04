@@ -6,6 +6,7 @@ interface RelationResponse {
   source_id: string;
   target_id: string;
   rel_type: string;
+  created_at: string;
 }
 
 interface ListRelationsResponse {
@@ -35,11 +36,17 @@ function buildRelationsFromIssues(store: Store): RelationResponse[] {
   const items = store.list<Issue>("issues", false);
   const relations: RelationResponse[] = [];
   for (const { id, entry } of items) {
+    // Best-effort `created_at`: prod stamps each relation row with its insert
+    // time, which we don't track for dependencies — fall back to the issue's
+    // creation time so consumers (e.g. firing-history sort) see a stable value.
+    const createdAt =
+      store.getCreationTime("issues", id) ?? entry.timestamp;
     for (const dep of entry.data.dependencies ?? []) {
       relations.push({
         source_id: id,
         target_id: dep.issue_id,
         rel_type: dep.type,
+        created_at: createdAt,
       });
     }
     // Patch relations: issue owns patches
@@ -48,6 +55,7 @@ function buildRelationsFromIssues(store: Store): RelationResponse[] {
         source_id: id,
         target_id: patchId,
         rel_type: "has-patch",
+        created_at: createdAt,
       });
     }
   }
