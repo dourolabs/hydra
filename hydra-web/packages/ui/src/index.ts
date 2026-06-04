@@ -59,6 +59,9 @@ export type { ToastProps, ToastVariant } from "./components/Toast";
 export { SessionStatusIndicator } from "./components/SessionStatusIndicator";
 export type { SessionStatusIndicatorProps, SessionSummary, SessionStatus } from "./components/SessionStatusIndicator";
 
+export { StatusDot } from "./components/StatusDot/StatusDot";
+export type { StatusDotProps } from "./components/StatusDot/StatusDot";
+
 export { DiffViewer } from "./components/DiffViewer";
 export type { DiffViewerProps } from "./components/DiffViewer";
 

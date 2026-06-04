@@ -1,0 +1,46 @@
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.toneOpen {
+  background: var(--s-open);
+}
+
+.toneInProgress {
+  background: var(--s-progress);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-progress) 18%, transparent);
+  animation: statusDotPulse 1.8s ease-in-out infinite;
+}
+
+.toneClosed {
+  background: var(--s-closed);
+}
+
+.toneFailed {
+  background: var(--s-failed);
+}
+
+.toneDropped {
+  background: var(--s-dropped);
+}
+
+.toneBlocked {
+  background: var(--s-blocked);
+}
+
+.toneRejected {
+  background: var(--s-rejected);
+}
+
+.toneNeutral {
+  background: var(--s-neutral);
+}
+
+@keyframes statusDotPulse {
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
