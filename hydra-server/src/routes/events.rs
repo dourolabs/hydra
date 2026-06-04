@@ -168,6 +168,7 @@ pub async fn get_events(
         }
     });
 
+    info!(actor = %actor.name(), "get_events stream established");
     let sse = Sse::new(rx).keep_alive(KeepAlive::default());
     Ok(sse.into_response())
 }

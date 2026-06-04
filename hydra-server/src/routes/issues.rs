@@ -523,22 +523,31 @@ pub async fn submit_form_action(
             )))
         }
         Err(SubmitFormActionError::IssueNotFound { issue_id, source }) => {
+            info!(issue_id = %issue_id, outcome = "issue_not_found", "submit_form_action completed");
             Err(map_issue_error(source, Some(&issue_id)).into_response())
         }
-        Err(SubmitFormActionError::ActionNotFound { issue_id }) => Err(ApiError::not_found(
-            format!("issue '{issue_id}' has no form or no matching action"),
-        )
-        .into_response()),
+        Err(SubmitFormActionError::ActionNotFound { issue_id }) => {
+            info!(issue_id = %issue_id, outcome = "action_not_found", "submit_form_action completed");
+            Err(ApiError::not_found(format!(
+                "issue '{issue_id}' has no form or no matching action"
+            ))
+            .into_response())
+        }
         Err(SubmitFormActionError::ValidationFailed { field_errors }) => {
+            info!(issue_id = %issue_id, outcome = "validation_failed", "submit_form_action completed");
             let body = api_issues::FormValidationError::new(field_errors);
             Err((StatusCode::BAD_REQUEST, Json(body)).into_response())
         }
         Err(SubmitFormActionError::Store { issue_id, source }) => {
+            info!(issue_id = %issue_id, outcome = "store_error", "submit_form_action completed");
             Err(map_issue_error(source, Some(&issue_id)).into_response())
         }
-        Err(SubmitFormActionError::UnsupportedActor { actor_name }) => Err(ApiError::forbidden(
-            format!("actor '{actor_name}' cannot submit form actions"),
-        )
-        .into_response()),
+        Err(SubmitFormActionError::UnsupportedActor { actor_name }) => {
+            info!(issue_id = %issue_id, actor_name = %actor_name, outcome = "unsupported_actor", "submit_form_action completed");
+            Err(
+                ApiError::forbidden(format!("actor '{actor_name}' cannot submit form actions"))
+                    .into_response(),
+            )
+        }
     }
 }
