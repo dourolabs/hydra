@@ -60,15 +60,28 @@ pub async fn get_issue(
 
 ## `info!` on background jobs
 
-Every background-job invocation logs at `info!` when it starts (job name +
-key parameters) and again when it finishes (success/failure + a high-level
-outcome). Operators read these logs to reconstruct what a worker did during
-a run, so the start/finish pair is non-negotiable.
+Both periodic `ScheduledWorker` impls under `hydra-server/src/background/`
+and event-driven `Automation` impls under
+`hydra-server/src/policy/automations/` count as background jobs here. Every
+invocation logs at `info!` when it starts (job/automation name + key
+parameters — for an automation, the triggering event's primary id), at any
+fork in the control flow that selects an action (the *decision*), and again
+when it finishes (success/failure + a high-level outcome). Automations
+additionally log on the skip-self-event branch (bailing when `ctx.actor()`
+is the automation itself, to avoid infinite loops). Operators read these
+logs to reconstruct what a worker or automation did during a run, so the
+start/finish pair is non-negotiable.
 
 ```rust
+// ScheduledWorker
 info!(job = "reconcile_assignments", repo = %repo, "starting");
 let outcome = reconcile(&repo).await?;
 info!(job = "reconcile_assignments", repo = %repo, ?outcome, "finished");
+```
+
+```rust
+// policy/automations/* — entry log on dispatch, named alongside the event id
+info!(automation = "cascade_issue_status", issue_id = %issue_id, "automation invoked");
 ```
 
 ## Log levels at a glance
