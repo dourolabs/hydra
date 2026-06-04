@@ -26,7 +26,7 @@ pub use projects::{ProjectRecords, ProjectStatuses};
 pub use repositories::RepositoryRecords;
 pub use sessions::{SessionRecords, SessionSummaryRecords};
 pub use triggers::TriggerRecords;
-pub use users::UserRecords;
+pub use users::{DeleteSecretOutcome, SetSecretOutcome, UserRecords, UserSecretsList};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum OutputFormat {
