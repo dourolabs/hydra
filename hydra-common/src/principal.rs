@@ -176,6 +176,21 @@ impl Principal {
         }
     }
 
+    /// Canonical, case-folded key for this principal — used to dedupe
+    /// per-author when scanning a review list. Mirrors the matching done
+    /// by [`principal_eq`].
+    pub(crate) fn canonical_key(&self) -> String {
+        match self {
+            Principal::User { name } => format!("users/{}", name.as_str().to_ascii_lowercase()),
+            Principal::Agent { name } => format!("agents/{}", name.as_str().to_ascii_lowercase()),
+            Principal::External { system, username } => format!(
+                "external/{}/{}",
+                system.as_str(),
+                username.to_ascii_lowercase()
+            ),
+        }
+    }
+
     /// Apply the Phase 4a/4b backfill heuristic to a raw legacy
     /// `Issue.assignee` string, producing a [`Principal`]:
     ///

@@ -14,7 +14,6 @@ use hydra_common::api::v1::merge_check::{
 };
 use hydra_common::api::v1::repositories::{AssigneeRef, MergePolicy, ReviewerGroup};
 use hydra_common::api::v1::users::Username as ApiUsername;
-use hydra_common::review_utils::is_review_non_stale;
 use hydra_common::{ActorId, Principal, principal_eq};
 
 use crate::domain::actors::ActorRef;
@@ -300,7 +299,7 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<Principal> {
         patch.reviews.iter().cloned().map(Into::into).collect();
 
     // Patch version history is not available to the restriction (the
-    // ReadOnlyStore is by-design hidden from `is_review_non_stale`'s
+    // ReadOnlyStore is by-design hidden from `Review::is_non_stale`'s
     // signature in this code path), so we evaluate staleness with an
     // empty version history. The shared predicate treats an empty
     // history as "no commit-range changes have occurred", which matches
@@ -317,7 +316,7 @@ fn approving_non_stale_authors(patch: &Patch) -> Vec<Principal> {
             &review.author,
             None,
         ) {
-            if latest.is_approved && is_review_non_stale(latest, &versions) {
+            if latest.is_approved && latest.is_non_stale(&versions) {
                 authors.push(latest.author.clone());
             }
         }

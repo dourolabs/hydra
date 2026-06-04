@@ -50,14 +50,16 @@ pub enum ActorId {
     },
 }
 
-/// Display name for an [`ActorId`] used by [`ActorRef::display_name`].
-fn actor_id_display_name(actor_id: &ActorId) -> String {
-    match actor_id {
-        ActorId::User(u) => u.as_str().to_string(),
-        ActorId::Agent(a) => a.as_str().to_string(),
-        ActorId::Adhoc(s) => s.to_string(),
-        ActorId::External { system, username } => {
-            format!("external/{}/{}", system.as_str(), username)
+impl ActorId {
+    /// Human-readable display name used by [`ActorRef::display_name`].
+    pub fn display_name(&self) -> String {
+        match self {
+            ActorId::User(u) => u.as_str().to_string(),
+            ActorId::Agent(a) => a.as_str().to_string(),
+            ActorId::Adhoc(s) => s.to_string(),
+            ActorId::External { system, username } => {
+                format!("external/{}/{}", system.as_str(), username)
+            }
         }
     }
 }
@@ -115,13 +117,13 @@ impl ActorRef {
     /// Human-readable display name for this actor reference.
     pub fn display_name(&self) -> String {
         match self {
-            ActorRef::Authenticated { actor_id, .. } => actor_id_display_name(actor_id),
+            ActorRef::Authenticated { actor_id, .. } => actor_id.display_name(),
             ActorRef::System {
                 worker_name,
                 on_behalf_of,
             } => {
                 if let Some(behalf) = on_behalf_of {
-                    let behalf_name = actor_id_display_name(behalf);
+                    let behalf_name = behalf.display_name();
                     format!("{worker_name} (on behalf of {behalf_name})")
                 } else {
                     worker_name.clone()
@@ -145,7 +147,7 @@ impl ActorRef {
                 on_behalf_of,
             } => {
                 if let Some(behalf) = on_behalf_of {
-                    let behalf_name = actor_id_display_name(behalf);
+                    let behalf_name = behalf.display_name();
                     format!("{trigger_id} (on behalf of {behalf_name})")
                 } else {
                     trigger_id.to_string()
