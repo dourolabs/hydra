@@ -37,7 +37,6 @@ export function eventCategory(eventType: SseEventType): string | null {
       return "labels";
     case "conversation_created":
     case "conversation_updated":
-    case "conversation_event_created":
       return "conversations";
     case "connected":
     case "resync":
