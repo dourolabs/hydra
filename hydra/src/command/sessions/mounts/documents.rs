@@ -16,6 +16,7 @@ use async_trait::async_trait;
 
 use crate::client::HydraClientInterface;
 use crate::command::documents::{push_documents, sync_documents, PushArgs, SyncArgs};
+use crate::command::output::ResolvedOutputFormat;
 
 use super::{Mount, MountError, MountResult, Phase};
 
@@ -74,7 +75,7 @@ impl Mount for DocumentsMount {
             path_prefix: None,
             clean: false,
         };
-        match sync_documents(self.client.as_ref(), args).await {
+        match sync_documents(self.client.as_ref(), args, ResolvedOutputFormat::Pretty).await {
             Ok(()) => {
                 self.synced = true;
                 Ok(())
@@ -95,7 +96,7 @@ impl Mount for DocumentsMount {
             dry_run: false,
             path_prefix: None,
         };
-        push_documents(self.client.as_ref(), args)
+        push_documents(self.client.as_ref(), args, ResolvedOutputFormat::Pretty)
             .await
             .map_err(MountError::tracked)
     }

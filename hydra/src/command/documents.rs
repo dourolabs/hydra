@@ -3,7 +3,7 @@ use crate::{
     command::{
         output::{
             render, CommandContext, DocumentRecordsView, DocumentSummaryRecords,
-            ResolvedOutputFormat,
+            ResolvedOutputFormat, SyncEvent, SyncSummary,
         },
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
@@ -214,10 +214,10 @@ pub async fn run(
             changelog_document(client, &id_or_path, context.output_format, limit).await?;
         }
         DocumentsCommand::Sync(args) => {
-            sync_documents(client, args).await?;
+            sync_documents(client, args, context.output_format).await?;
         }
         DocumentsCommand::Push(args) => {
-            push_documents(client, args).await?;
+            push_documents(client, args, context.output_format).await?;
         }
     }
 
@@ -539,7 +539,25 @@ fn save_manifest(directory: &Path, manifest: &SyncManifest) -> Result<()> {
     Ok(())
 }
 
-pub async fn sync_documents(client: &dyn HydraClientInterface, args: SyncArgs) -> Result<()> {
+fn emit_sync_event(event: SyncEvent<'_>, format: ResolvedOutputFormat) -> Result<()> {
+    let mut buffer = Vec::new();
+    render(event, format, &mut buffer)?;
+    write_stdout(&buffer)?;
+    Ok(())
+}
+
+fn emit_sync_summary(summary: SyncSummary, format: ResolvedOutputFormat) -> Result<()> {
+    let mut buffer = Vec::new();
+    render(summary, format, &mut buffer)?;
+    write_stdout(&buffer)?;
+    Ok(())
+}
+
+pub async fn sync_documents(
+    client: &dyn HydraClientInterface,
+    args: SyncArgs,
+    format: ResolvedOutputFormat,
+) -> Result<()> {
     let directory = args.directory.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
             "No directory specified. Provide a DIRECTORY argument or set the {ENV_HYDRA_DOCUMENTS_DIR} environment variable."
@@ -659,14 +677,16 @@ pub async fn sync_documents(client: &dyn HydraClientInterface, args: SyncArgs) -
     };
     save_manifest(directory, &manifest)?;
 
-    println!(
-        "Synced {} document(s) to '{}' ({} written, {} unchanged, {} removed)",
-        pathed_documents.len(),
-        directory.display(),
-        synced_count,
-        skipped_count,
-        removed_count,
-    );
+    emit_sync_summary(
+        SyncSummary::Synced {
+            directory: directory.display().to_string(),
+            total: pathed_documents.len() as u64,
+            written: synced_count,
+            unchanged: skipped_count,
+            removed: removed_count,
+        },
+        format,
+    )?;
 
     Ok(())
 }
@@ -749,7 +769,11 @@ fn collect_local_files_recursive(
     Ok(())
 }
 
-pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -> Result<()> {
+pub async fn push_documents(
+    client: &dyn HydraClientInterface,
+    args: PushArgs,
+    format: ResolvedOutputFormat,
+) -> Result<()> {
     let directory = args.directory.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
             "No directory specified. Provide a DIRECTORY argument or set the {ENV_HYDRA_DOCUMENTS_DIR} environment variable."
@@ -808,11 +832,15 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
             if !local_changed && server_changed {
                 // Local file is unchanged but server has a newer version — skip push
                 // to avoid overwriting remote changes.
-                let doc_id = &entry.document_id;
-                eprintln!(
-                    "Skipping: '{relative_path}' ({doc_id}) — server has newer version (v{} > v{}), local unchanged",
-                    server_version, entry.version
-                );
+                emit_sync_event(
+                    SyncEvent::Skipping {
+                        path: relative_path,
+                        document_id: &entry.document_id,
+                        server_version,
+                        manifest_version: entry.version,
+                    },
+                    format,
+                )?;
                 // Update manifest entry with the server's current version so that
                 // subsequent pushes recognize the server state.
                 new_entries.insert(
@@ -846,17 +874,26 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
 
             if server_changed {
                 // Both local and server changed — warn but proceed (local wins)
-                let doc_id = &entry.document_id;
-                eprintln!(
-                    "Warning: server document '{relative_path}' ({doc_id}) has changed since last sync (v{} > v{}); pushing local version anyway",
-                    server_version, entry.version
-                );
+                emit_sync_event(
+                    SyncEvent::Warning {
+                        path: relative_path,
+                        document_id: &entry.document_id,
+                        server_version,
+                        manifest_version: entry.version,
+                    },
+                    format,
+                )?;
                 conflict_count += 1;
             }
 
             if args.dry_run {
-                let doc_id = &entry.document_id;
-                println!("Would update: {relative_path} ({doc_id})");
+                emit_sync_event(
+                    SyncEvent::WouldUpdate {
+                        path: relative_path,
+                        document_id: &entry.document_id,
+                    },
+                    format,
+                )?;
             } else {
                 let mut document = server_record.document.clone();
                 document.body_markdown = content.clone();
@@ -875,8 +912,13 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                         version: update_response.version,
                     },
                 );
-                let doc_id = &entry.document_id;
-                println!("Updated: {relative_path} ({doc_id})");
+                emit_sync_event(
+                    SyncEvent::Updated {
+                        path: relative_path,
+                        document_id: &entry.document_id,
+                    },
+                    format,
+                )?;
             }
             updated_count += 1;
         } else {
@@ -889,7 +931,13 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
             let title = title_from_filename(&filename);
 
             if args.dry_run {
-                println!("Would create: {relative_path} (title: \"{title}\")");
+                emit_sync_event(
+                    SyncEvent::WouldCreate {
+                        path: relative_path,
+                        title: &title,
+                    },
+                    format,
+                )?;
             } else {
                 let document = DocumentPayload::new(
                     title.clone(),
@@ -908,8 +956,14 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                                 version: response.version,
                             },
                         );
-                        let doc_id = &response.document_id;
-                        println!("Created: {relative_path} ({doc_id}, title: \"{title}\")");
+                        emit_sync_event(
+                            SyncEvent::Created {
+                                path: relative_path,
+                                document_id: &response.document_id,
+                                title: &title,
+                            },
+                            format,
+                        )?;
                     }
                     Err(e) if e.downcast_ref::<ConflictError>().is_some() => {
                         // A document already exists at this path — look it up and update instead.
@@ -953,9 +1007,14 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                                 version: update_response.version,
                             },
                         );
-                        println!(
-                            "Updated (conflict): {relative_path} ({existing_document_id}, title: \"{title}\")"
-                        );
+                        emit_sync_event(
+                            SyncEvent::UpdatedConflict {
+                                path: relative_path,
+                                document_id: existing_document_id,
+                                title: &title,
+                            },
+                            format,
+                        )?;
                     }
                     Err(e) => {
                         return Err(
@@ -979,9 +1038,14 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
         }
 
         if !local_files_set.contains(manifest_path) {
-            let doc_id = &entry.document_id;
             if args.dry_run {
-                println!("Would delete: {manifest_path} ({doc_id})");
+                emit_sync_event(
+                    SyncEvent::WouldDelete {
+                        path: manifest_path,
+                        document_id: &entry.document_id,
+                    },
+                    format,
+                )?;
             } else {
                 client
                     .delete_document(&entry.document_id)
@@ -990,7 +1054,13 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
                         format!("failed to delete document '{}'", entry.document_id)
                     })?;
                 new_entries.remove(manifest_path);
-                println!("Deleted: {manifest_path} ({doc_id})");
+                emit_sync_event(
+                    SyncEvent::Deleted {
+                        path: manifest_path,
+                        document_id: &entry.document_id,
+                    },
+                    format,
+                )?;
             }
             deleted_count += 1;
         }
@@ -1006,12 +1076,21 @@ pub async fn push_documents(client: &dyn HydraClientInterface, args: PushArgs) -
         save_manifest(directory, &updated_manifest)?;
     }
 
-    let prefix = if args.dry_run { "Dry run: " } else { "" };
     let total = updated_count + created_count + deleted_count;
-    let dir_display = directory.display();
-    println!(
-        "{prefix}Pushed {total} document(s) from '{dir_display}' ({updated_count} updated, {created_count} created, {deleted_count} deleted, {unchanged_count} unchanged, {skipped_count} skipped, {conflict_count} conflicts)"
-    );
+    emit_sync_summary(
+        SyncSummary::Pushed {
+            directory: directory.display().to_string(),
+            total,
+            updated: updated_count,
+            created: created_count,
+            deleted: deleted_count,
+            unchanged: unchanged_count,
+            skipped: skipped_count,
+            conflicts: conflict_count,
+            dry_run: args.dry_run,
+        },
+        format,
+    )?;
 
     Ok(())
 }
@@ -1548,6 +1627,7 @@ mod tests {
                 path_prefix: None,
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1620,6 +1700,7 @@ mod tests {
                 path_prefix: None,
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1671,6 +1752,7 @@ mod tests {
                 path_prefix: None,
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1687,6 +1769,7 @@ mod tests {
                 path_prefix: None,
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1762,6 +1845,7 @@ mod tests {
                 path_prefix: None,
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1785,6 +1869,7 @@ mod tests {
                 path_prefix: None,
                 clean: true,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1837,6 +1922,7 @@ mod tests {
                 path_prefix: Some("/playbooks".to_string()),
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1888,6 +1974,7 @@ mod tests {
                 path_prefix: None,
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -1925,6 +2012,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap_err();
@@ -2005,6 +2093,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2079,6 +2168,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2131,6 +2221,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2219,6 +2310,7 @@ mod tests {
                 dry_run: true,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2304,6 +2396,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2378,6 +2471,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2452,6 +2546,7 @@ mod tests {
                 path_prefix: None,
                 clean: false,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2502,6 +2597,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2621,6 +2717,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2672,6 +2769,7 @@ mod tests {
                 dry_run: true,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2750,6 +2848,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: Some("/playbooks".to_string()),
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
@@ -2841,6 +2940,7 @@ mod tests {
                 dry_run: false,
                 path_prefix: None,
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await
         .unwrap();
