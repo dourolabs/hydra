@@ -23,11 +23,16 @@ pub use documents::{
     DeletedDocumentOutcome, DocumentRecordsView, DocumentSummaryRecords, SyncEvent, SyncSummary,
 };
 pub use issues::{DeletedIssueOutcome, IssueRecords, IssueSummaryRecords, SubmitFormOutcome};
-pub use patches::{DeletedPatchOutcome, PatchRecords, PatchSummaryRecords};
+pub use patches::{
+    ApplyOutcome, DeletedPatchOutcome, MergeOutcome, PatchRecords, PatchSummaryRecords,
+    ReviewSubmittedOutcome,
+};
 pub use projects::{ProjectRecords, ProjectStatuses};
 pub use repositories::RepositoryRecords;
 pub use sessions::{SessionRecords, SessionSummaryRecords};
-pub use triggers::{DeletedTriggerOutcome, TriggerRecords, TriggerTestRecords, TriggerUpsertOutcome};
+pub use triggers::{
+    DeletedTriggerOutcome, TriggerRecords, TriggerTestRecords, TriggerUpsertOutcome,
+};
 pub use users::{DeleteSecretOutcome, SetSecretOutcome, UserRecords, UserSecretsList};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

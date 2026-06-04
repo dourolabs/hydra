@@ -35,8 +35,8 @@ use crate::{
     client::HydraClient,
     command::{
         output::{
-            render, CommandContext, DeletedPatchOutcome, PatchRecords, PatchSummaryRecords,
-            ResolvedOutputFormat,
+            render, ApplyOutcome, CommandContext, DeletedPatchOutcome, MergeOutcome, PatchRecords,
+            PatchSummaryRecords, ResolvedOutputFormat, ReviewSubmittedOutcome,
         },
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
@@ -287,13 +287,23 @@ pub async fn run(
             write_patch_output(context.output_format, &patch)?;
             Ok(())
         }
-        PatchesCommand::Apply { id } => apply_patch_record(client, id).await,
+        PatchesCommand::Apply { id } => apply_patch_record(client, id, context.output_format).await,
         PatchesCommand::Review {
             id,
             contents,
             approve,
             request_changes,
-        } => review_patch(client, id, contents, approve, request_changes).await,
+        } => {
+            review_patch(
+                client,
+                id,
+                contents,
+                approve,
+                request_changes,
+                context.output_format,
+            )
+            .await
+        }
         PatchesCommand::Update {
             id,
             title,
@@ -1000,7 +1010,12 @@ async fn merge_patch(
                         .with_context(|| {
                             format!("failed to update patch '{patch_id}' status to Merged")
                         })?;
-                    println!("Patch '{patch_id}' merged successfully via GitHub API.");
+                    let outcome = MergeOutcome::Github {
+                        patch_id: patch_id.clone(),
+                    };
+                    let mut buf = Vec::new();
+                    render(outcome, output_format, &mut buf)?;
+                    write_stdout(&buf)?;
                     return Ok(());
                 }
                 Err(e) => {
@@ -1189,7 +1204,13 @@ async fn merge_patch(
         .await
         .with_context(|| format!("failed to update patch '{patch_id}' status to Merged"))?;
 
-    println!("Patch '{patch_id}' merged successfully onto '{base_branch}'.");
+    let outcome = MergeOutcome::Local {
+        patch_id: patch_id.clone(),
+        base_branch: base_branch.clone(),
+    };
+    let mut buf = Vec::new();
+    render(outcome, output_format, &mut buf)?;
+    write_stdout(&buf)?;
     Ok(())
 }
 
@@ -1334,26 +1355,41 @@ fn git_repository_root() -> Result<PathBuf> {
     git::repository_root(None)
 }
 
-async fn apply_patch_record(client: &HydraClient, id: PatchId) -> Result<()> {
+async fn apply_patch_record(
+    client: &HydraClient,
+    id: PatchId,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
     let patch_record = client
         .get_patch(&id)
         .await
         .with_context(|| format!("failed to fetch patch '{id}'"))?;
     let repo_root = git_repository_root()?;
 
-    apply_patch_to_repo(&patch_record.patch, &repo_root)?;
+    apply_patch_to_repo(
+        &patch_record.patch_id,
+        &patch_record.patch,
+        &repo_root,
+        output_format,
+    )?;
     Ok(())
 }
 
-fn apply_patch_to_repo(patch: &Patch, git_root: &Path) -> Result<()> {
-    println!(
-        "Applying patch '{}' to current git repository...\n",
-        patch.title
-    );
-
+fn apply_patch_to_repo(
+    patch_id: &PatchId,
+    patch: &Patch,
+    git_root: &Path,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
     apply_patch(git_root, &patch.diff).context("failed to apply patch to repository")?;
 
-    println!("Patch applied successfully.");
+    let outcome = ApplyOutcome {
+        patch_id,
+        title: patch.title.as_str(),
+    };
+    let mut buf = Vec::new();
+    render(outcome, output_format, &mut buf)?;
+    write_stdout(&buf)?;
     Ok(())
 }
 
@@ -1363,6 +1399,7 @@ async fn review_patch(
     contents: String,
     approve: bool,
     request_changes: bool,
+    output_format: ResolvedOutputFormat,
 ) -> Result<()> {
     let contents = contents.trim().to_string();
     if contents.is_empty() {
@@ -1397,7 +1434,12 @@ async fn review_patch(
         .await
         .with_context(|| format!("failed to update patch '{id}' with review"))?;
 
-    println!("{}", response.patch_id);
+    let outcome = ReviewSubmittedOutcome {
+        patch_id: &response.patch_id,
+    };
+    let mut buf = Vec::new();
+    render(outcome, output_format, &mut buf)?;
+    write_stdout(&buf)?;
     Ok(())
 }
 
@@ -2264,6 +2306,7 @@ mod tests {
             "looks good now".to_string(),
             true,
             false,
+            ResolvedOutputFormat::Jsonl,
         )
         .await?;
 
@@ -2326,6 +2369,7 @@ mod tests {
             "needs work".to_string(),
             false,
             true,
+            ResolvedOutputFormat::Jsonl,
         )
         .await?;
 
@@ -2388,6 +2432,7 @@ mod tests {
             "lgtm".to_string(),
             true,
             false,
+            ResolvedOutputFormat::Jsonl,
         )
         .await?;
 

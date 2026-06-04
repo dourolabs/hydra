@@ -5,6 +5,7 @@ use hydra_common::{
     patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
     PatchId,
 };
+use serde::Serialize;
 use serde_json::json;
 
 use super::Render;
@@ -154,6 +155,96 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MergeOutcome {
+    Github {
+        patch_id: PatchId,
+    },
+    Local {
+        patch_id: PatchId,
+        base_branch: String,
+    },
+}
+
+impl Render for MergeOutcome {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(&mut *writer, self)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        match self {
+            MergeOutcome::Github { patch_id } => {
+                writeln!(
+                    writer,
+                    "Patch '{patch_id}' merged successfully via GitHub API."
+                )?;
+            }
+            MergeOutcome::Local {
+                patch_id,
+                base_branch,
+            } => {
+                writeln!(
+                    writer,
+                    "Patch '{patch_id}' merged successfully onto '{base_branch}'."
+                )?;
+            }
+        }
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApplyOutcome<'a> {
+    pub patch_id: &'a PatchId,
+    pub title: &'a str,
+}
+
+impl Render for ApplyOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(&mut *writer, self)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(
+            writer,
+            "Applying patch '{}' to current git repository...",
+            self.title
+        )?;
+        writeln!(writer)?;
+        writeln!(writer, "Patch applied successfully.")?;
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewSubmittedOutcome<'a> {
+    pub patch_id: &'a PatchId,
+}
+
+impl Render for ReviewSubmittedOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(&mut *writer, self)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(writer, "{}", self.patch_id)?;
+        writer.flush()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,6 +253,10 @@ mod tests {
         test_utils::ids::patch_id,
     };
     use serde_json::json;
+
+    fn sample_patch_id() -> PatchId {
+        patch_id("p-abcd")
+    }
 
     #[test]
     fn deleted_patch_pretty_matches_legacy_wording() {
@@ -191,5 +286,136 @@ mod tests {
         assert_eq!(output.lines().count(), 1);
         let parsed: serde_json::Value = serde_json::from_str(output.trim_end()).expect("json");
         assert_eq!(parsed, json!({ "patch_id": id, "action": "deleted" }));
+    }
+
+    #[test]
+    fn merge_outcome_github_renders_pretty_line() {
+        let outcome = MergeOutcome::Github {
+            patch_id: sample_patch_id(),
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Pretty, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            output,
+            format!(
+                "Patch '{}' merged successfully via GitHub API.\n",
+                sample_patch_id()
+            )
+        );
+    }
+
+    #[test]
+    fn merge_outcome_local_renders_pretty_line() {
+        let outcome = MergeOutcome::Local {
+            patch_id: sample_patch_id(),
+            base_branch: "main".to_string(),
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Pretty, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            output,
+            format!(
+                "Patch '{}' merged successfully onto 'main'.\n",
+                sample_patch_id()
+            )
+        );
+    }
+
+    #[test]
+    fn merge_outcome_github_renders_jsonl_object() {
+        let outcome = MergeOutcome::Github {
+            patch_id: sample_patch_id(),
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Jsonl, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.ends_with('\n'), "jsonl output must end with newline");
+        let trimmed = output.trim_end_matches('\n');
+        assert!(
+            !trimmed.contains('\n'),
+            "jsonl output must be exactly one line"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).unwrap();
+        assert_eq!(parsed["kind"], "github");
+        assert_eq!(parsed["patch_id"], sample_patch_id().to_string());
+    }
+
+    #[test]
+    fn merge_outcome_local_renders_jsonl_object() {
+        let outcome = MergeOutcome::Local {
+            patch_id: sample_patch_id(),
+            base_branch: "main".to_string(),
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Jsonl, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let trimmed = output.trim_end_matches('\n');
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).unwrap();
+        assert_eq!(parsed["kind"], "local");
+        assert_eq!(parsed["patch_id"], sample_patch_id().to_string());
+        assert_eq!(parsed["base_branch"], "main");
+    }
+
+    #[test]
+    fn apply_outcome_renders_pretty_two_lines() {
+        let patch_id = sample_patch_id();
+        let outcome = ApplyOutcome {
+            patch_id: &patch_id,
+            title: "fix bug",
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Pretty, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            output,
+            "Applying patch 'fix bug' to current git repository...\n\nPatch applied successfully.\n"
+        );
+    }
+
+    #[test]
+    fn apply_outcome_renders_jsonl_object() {
+        let patch_id = sample_patch_id();
+        let outcome = ApplyOutcome {
+            patch_id: &patch_id,
+            title: "fix bug",
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Jsonl, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.ends_with('\n'));
+        let trimmed = output.trim_end_matches('\n');
+        assert!(!trimmed.contains('\n'));
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).unwrap();
+        assert_eq!(parsed["patch_id"], patch_id.to_string());
+        assert_eq!(parsed["title"], "fix bug");
+    }
+
+    #[test]
+    fn review_submitted_outcome_renders_pretty_patch_id() {
+        let patch_id = sample_patch_id();
+        let outcome = ReviewSubmittedOutcome {
+            patch_id: &patch_id,
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Pretty, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(output, format!("{patch_id}\n"));
+    }
+
+    #[test]
+    fn review_submitted_outcome_renders_jsonl_object() {
+        let patch_id = sample_patch_id();
+        let outcome = ReviewSubmittedOutcome {
+            patch_id: &patch_id,
+        };
+        let mut buf = Vec::new();
+        render(outcome, ResolvedOutputFormat::Jsonl, &mut buf).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.ends_with('\n'));
+        let trimmed = output.trim_end_matches('\n');
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).unwrap();
+        assert_eq!(parsed["patch_id"], patch_id.to_string());
     }
 }
