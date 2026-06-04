@@ -1,6 +1,6 @@
 import { Avatar, Badge, type BadgeStatus, type PreviewCardTone } from "@hydra/ui";
 import { usePatch } from "../../patches/usePatch";
-import { normalizePatchStatus } from "../../../utils/statusMapping";
+import { normalizePatchStatus } from "../../../utils/badgeStatus";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import {
   FallbackPreviewCard,

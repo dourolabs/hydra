@@ -70,6 +70,13 @@ import type { TriggerVersionRecord } from "./generated/TriggerVersionRecord";
 import type { SearchTriggersQuery } from "./generated/SearchTriggersQuery";
 import type { ListTriggersResponse } from "./generated/ListTriggersResponse";
 import type { ListTriggerVersionsResponse } from "./generated/ListTriggerVersionsResponse";
+import type {
+  UpsertProjectRequest,
+  UpsertProjectResponse,
+  ProjectRecord,
+  ListProjectsResponse,
+  ProjectStatusesResponse,
+} from "./projects";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -663,6 +670,51 @@ export class HydraApiClient {
   /** POST /v1/conversations/:conversationId/resume */
   resumeConversation(conversationId: string): Promise<Conversation> {
     return this.post(`/v1/conversations/${encodeURIComponent(conversationId)}/resume`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Projects
+  // ---------------------------------------------------------------------------
+
+  /** POST /v1/projects */
+  createProject(request: UpsertProjectRequest): Promise<UpsertProjectResponse> {
+    return this.post("/v1/projects", request);
+  }
+
+  /** GET /v1/projects */
+  listProjects(): Promise<ListProjectsResponse> {
+    return this.get("/v1/projects");
+  }
+
+  /** GET /v1/projects/:projectId */
+  getProject(projectId: string): Promise<ProjectRecord> {
+    return this.get(`/v1/projects/${encodeURIComponent(projectId)}`);
+  }
+
+  /** PUT /v1/projects/:projectId */
+  updateProject(projectId: string, request: UpsertProjectRequest): Promise<UpsertProjectResponse> {
+    return this.put(`/v1/projects/${encodeURIComponent(projectId)}`, request);
+  }
+
+  /** DELETE /v1/projects/:projectId */
+  deleteProject(projectId: string): Promise<UpsertProjectResponse> {
+    return this.del(`/v1/projects/${encodeURIComponent(projectId)}`);
+  }
+
+  /**
+   * GET /v1/projects/:projectId/statuses
+   *
+   * Pass `"default"` (or use [`getDefaultProjectStatuses`]) for the
+   * synthesized default project that issues with no `project_id` resolve
+   * against.
+   */
+  getProjectStatuses(projectId: string): Promise<ProjectStatusesResponse> {
+    return this.get(`/v1/projects/${encodeURIComponent(projectId)}/statuses`);
+  }
+
+  /** GET /v1/projects/default/statuses */
+  getDefaultProjectStatuses(): Promise<ProjectStatusesResponse> {
+    return this.get("/v1/projects/default/statuses");
   }
 
   // ---------------------------------------------------------------------------

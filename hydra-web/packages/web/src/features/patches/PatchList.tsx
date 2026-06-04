@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Badge, Spinner } from "@hydra/ui";
-import { normalizePatchStatus } from "../../utils/statusMapping";
+import { normalizePatchStatus } from "../../utils/badgeStatus";
 import { useIssuePatches } from "./useIssuePatches";
 import styles from "./PatchList.module.css";
 

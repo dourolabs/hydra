@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Avatar, Badge, TypeChip } from "@hydra/ui";
-import type { IssueStatus } from "@hydra/api";
+import { Avatar, TypeChip } from "@hydra/ui";
 import {
   principalAvatarKind,
   principalDisplayName,
 } from "../../principal/formatPrincipal";
-import { normalizeIssueStatus } from "../../../utils/statusMapping";
+import { StatusChip } from "../../projects/StatusChip";
+import { useProjectStatuses } from "../../projects/useProjects";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import {
   BOARD_STATUSES,
@@ -35,6 +35,12 @@ function progressFraction(children: ChildStatus[] | undefined): number {
 export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoardProps) {
   const navigate = useNavigate();
   const columns = usePaginatedIssuesByStatus(baseFilters);
+  const { data: defaultStatuses } = useProjectStatuses(null);
+  const statusByKey = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof defaultStatuses>["statuses"][number]>();
+    for (const s of defaultStatuses?.statuses ?? []) map.set(s.key, s);
+    return map;
+  }, [defaultStatuses]);
 
   const boardIssuesUnion = useMemo(() => {
     const seen = new Set<string>();
@@ -68,7 +74,7 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
         return (
           <div key={status} className={styles.col}>
             <div className={styles.colHead}>
-              <Badge status={normalizeIssueStatus(status as IssueStatus)} />
+              <StatusChip definition={statusByKey.get(status)} fallbackKey={status} />
               <span className={styles.colCount}>{colIssues.length}</span>
             </div>
             <div className={styles.colBody}>

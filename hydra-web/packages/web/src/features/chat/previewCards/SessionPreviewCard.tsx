@@ -1,6 +1,6 @@
 import { Badge, type BadgeStatus, type PreviewCardTone } from "@hydra/ui";
 import { useSession } from "../../sessions/useSession";
-import { normalizeSessionStatus } from "../../../utils/statusMapping";
+import { normalizeSessionStatus } from "../../../utils/badgeStatus";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import {
   FallbackPreviewCard,

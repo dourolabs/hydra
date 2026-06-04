@@ -1,9 +1,9 @@
 import { useCallback } from "react";
-import { Avatar, Badge, SessionStatusIndicator, issueTypeDisplayLabel } from "@hydra/ui";
+import { Avatar, SessionStatusIndicator, issueTypeDisplayLabel } from "@hydra/ui";
 import type { IssueSummaryRecord, IssueType, SessionSummaryRecord } from "@hydra/api";
 import { principalDisplayName } from "../principal/formatPrincipal";
 import { toSessionSummary } from "../../utils/sessionMapping";
-import { normalizeIssueStatus } from "../../utils/statusMapping";
+import { StatusChip } from "../projects/StatusChip";
 import { descriptionSnippet } from "../../utils/text";
 import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./IssueRow.module.css";
@@ -57,7 +57,7 @@ export function IssueRow({
   return (
     <span className={classNames.join(" ")}>
       <span className={styles.topRow}>
-        <Badge status={normalizeIssueStatus(issue.status)} />
+        <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
         <span className={`${styles.typeChip} ${chipClass}`}>{issueTypeDisplayLabel(issue.type)}</span>
         {blocked && <span className={styles.blockedLabel}>BLOCKED</span>}
         <span className={styles.desc}>

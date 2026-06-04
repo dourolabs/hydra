@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Badge } from "@hydra/ui";
-import { normalizeSessionStatus } from "../../utils/statusMapping";
+import { normalizeSessionStatus } from "../../utils/badgeStatus";
 import { getRuntime } from "../../utils/time";
 import { LoadingState } from "../../components/LoadingState/LoadingState";
 import { ErrorState } from "../../components/ErrorState/ErrorState";

@@ -1,9 +1,9 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, issueTypeDisplayLabel } from "@hydra/ui";
+import { issueTypeDisplayLabel } from "@hydra/ui";
 import type { Principal, IssueVersionRecord } from "@hydra/api";
 import { formatPrincipalPath } from "../principal/formatPrincipal";
-import { normalizeIssueStatus } from "../../utils/statusMapping";
+import { StatusChip } from "../projects/StatusChip";
 import { apiClient } from "../../api/client";
 import { ActivityTimeline } from "../activity/ActivityTimeline";
 import type { Change } from "../activity/types";
@@ -160,9 +160,9 @@ function IssueChangeEntry({ change }: { change: Change }) {
       <div className={styles.change}>
         <span className={styles.changeLabel}>Status</span>
         <span className={styles.statusTransition}>
-          <Badge status={normalizeIssueStatus(change.before)} />
+          <StatusChip fallbackKey={change.before} />
           <span className={styles.arrow}>{"\u2192"}</span>
-          <Badge status={normalizeIssueStatus(change.after)} />
+          <StatusChip fallbackKey={change.after} />
         </span>
       </div>
     );

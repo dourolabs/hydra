@@ -1,0 +1,51 @@
+.container {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.palette {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  outline: none;
+}
+
+.swatch:hover {
+  opacity: 0.8;
+}
+
+.swatchSelected {
+  border-color: var(--color-text-primary);
+}
+
+.customWrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.customInput {
+  width: 72px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  padding: 2px 4px;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+}
+
+.customInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}

@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, Button, TypeChip } from "@hydra/ui";
+import { Avatar, Button, TypeChip } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { IssueVersionRecord } from "@hydra/api";
 import { principalAvatarKind, principalDisplayName } from "../principal/formatPrincipal";
-import { normalizeIssueStatus } from "../../utils/statusMapping";
+import { StatusChip } from "../projects/StatusChip";
 import { useIssue } from "./useIssue";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
@@ -31,7 +31,12 @@ function BlockedItemLink({ issueId }: { issueId: string }) {
   const title = record?.issue.title || issueId;
   return (
     <span className={styles.blockedItem}>
-      {record && <Badge status={normalizeIssueStatus(record.issue.status)} />}
+      {record && (
+        <StatusChip
+          definition={record.issue.resolved_status}
+          fallbackKey={record.issue.status}
+        />
+      )}
       <Link to={`/issues/${issueId}`} className={styles.blockedLink}>
         {title}
       </Link>
@@ -78,7 +83,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
     setRightPanelTab(key);
   }, []);
 
-  const status = normalizeIssueStatus(issue.status);
   const settings = issue.session_settings;
   const overviewActive = mobileTab === "overview";
 
@@ -100,7 +104,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <div className={styles.mainInner}>
           <div className={styles.titleRow}>
             <span className={styles.titleId}>{issueId}</span>
-            <Badge status={status} />
+            <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
             {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
             <div className={styles.headActions}>
               {isRunning && <span className={styles.sessionTimer}>{durationText}</span>}

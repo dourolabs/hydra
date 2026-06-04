@@ -139,9 +139,10 @@ vi.mock("../../features/dashboard/usePageIssueTrees", () => ({
   }),
 }));
 
-vi.mock("../../utils/statusMapping", () => ({
-  TERMINAL_STATUSES: new Set(["closed", "failed"]),
-  normalizeIssueStatus: (s: string) => s,
+vi.mock("../../features/projects/useProjects", () => ({
+  useProjects: () => ({ data: [] }),
+  useProject: () => ({ data: null }),
+  useProjectStatuses: () => ({ data: null }),
 }));
 
 const useBreadcrumbsMock = vi.fn();

@@ -10,10 +10,9 @@ import type {
   SessionSummaryRecord,
 } from "@hydra/api";
 import {
-  normalizeIssueStatus,
   normalizePatchStatus,
   normalizeSessionStatus,
-} from "../../utils/statusMapping";
+} from "../../utils/badgeStatus";
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
 import { conversationTitle } from "../chat/conversationTitle";
@@ -76,9 +75,13 @@ function isActive(s: SessionSummaryRecord): boolean {
 export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: IssueRailRowProps) {
   const navigate = useNavigate();
   const issue = record.issue;
-  const normalized = normalizeIssueStatus(issue.status);
+  const resolved = issue.resolved_status;
   const hasActive = sessions?.some(isActive) ?? false;
-  const status: BadgeStatus = hasActive ? "in-progress" : normalized;
+  // Resolved status drives the dot color directly. Active sessions
+  // override to the "in-progress" tone class even on terminal statuses
+  // (a closed issue with a running session reads as still in flight).
+  const dotColor = hasActive ? undefined : resolved?.color;
+  const dotTone: BadgeStatus = hasActive ? "in-progress" : "open";
   const pct = progressFraction(childStatuses);
   const hasActiveChild = !!childStatuses?.some((c) => c.hasActiveTask);
   const { durationText, status: runtimeStatus } = useSessionDuration(sessions);
@@ -99,7 +102,15 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
       }}
       data-testid={`related-rail-row-issue-${record.issue_id}`}
     >
-      <StatusDot status={status} />
+      {dotColor ? (
+        <span
+          className={styles.dot}
+          style={{ backgroundColor: dotColor }}
+          aria-hidden="true"
+        />
+      ) : (
+        <StatusDot status={dotTone} />
+      )}
       <div className={styles.body}>
         <div className={styles.title}>{issue.title || "(untitled)"}</div>
         <div className={styles.meta}>

@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Avatar, Badge, Icons } from "@hydra/ui";
 import type { SessionSummaryRecord } from "@hydra/api";
-import { normalizeSessionStatus } from "../../../utils/statusMapping";
+import { normalizeSessionStatus } from "../../../utils/badgeStatus";
 import { TokensCell } from "../TokensCell";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";

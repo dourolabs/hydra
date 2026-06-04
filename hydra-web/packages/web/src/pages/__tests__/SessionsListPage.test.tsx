@@ -149,7 +149,7 @@ vi.mock("@hydra/ui", () => ({
   },
 }));
 
-vi.mock("../../utils/statusMapping", () => ({
+vi.mock("../../utils/badgeStatus", () => ({
   normalizeSessionStatus: (s: string) => s,
 }));
 

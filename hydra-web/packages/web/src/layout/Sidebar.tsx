@@ -206,6 +206,12 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
       icon: <Icons.IconAgent />,
     },
     {
+      to: "/projects",
+      label: "Projects",
+      testId: "sidebar-projects",
+      icon: <Icons.IconFolder />,
+    },
+    {
       to: "/repositories",
       label: "Repositories",
       testId: "sidebar-context-repositories",

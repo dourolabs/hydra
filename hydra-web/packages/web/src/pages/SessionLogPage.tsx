@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Avatar, Badge, Button, Spinner } from "@hydra/ui";
 import type { SessionVersionRecord } from "@hydra/api";
-import { normalizeSessionStatus } from "../utils/statusMapping";
+import { normalizeSessionStatus } from "../utils/badgeStatus";
 import { getRuntime } from "../utils/time";
 import { useSession } from "../features/sessions/useSession";
 import { SessionLogViewer } from "../features/sessions/SessionLogViewer";

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Avatar, Badge, DiffViewer } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { PatchVersionRecord } from "@hydra/api";
-import { normalizePatchStatus, normalizeCiState } from "../../utils/statusMapping";
+import { normalizePatchStatus, normalizeCiState } from "../../utils/badgeStatus";
 import { formatTimestamp } from "../../utils/time";
 import { PatchActivity } from "./PatchActivity";
 import {

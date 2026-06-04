@@ -40,7 +40,7 @@ vi.mock("@hydra/ui", () => ({
   Spinner: () => <span data-testid="spinner" />,
 }));
 
-vi.mock("../../../utils/statusMapping", () => ({
+vi.mock("../../../utils/badgeStatus", () => ({
   normalizeSessionStatus: (s: string) => s,
 }));
 
