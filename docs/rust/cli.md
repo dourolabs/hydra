@@ -54,7 +54,7 @@ implement `Render` for the response type and dispatch through the context.
   explicitly unset, and add `conflicts_with` so the two can't be combined.
 - **Env-var-backed args** use `#[arg(env = ENV_...)]` from
   `hydra-common::constants` — see [style.md](style.md#environment-variables-declare-on-the-arg-struct).
-- **`---help` lines start with a capital letter and end with a period.** The
+- **`--help` lines start with a capital letter and end with a period.** The
   rendered help is user-facing copy; treat it like prose.
 
 ## When prose names a command

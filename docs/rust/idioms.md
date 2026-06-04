@@ -53,13 +53,13 @@ a plain constructor is shorter and impossible to misuse.
 
 ```rust
 // wrong
-let req = CreateIssueRequest::builder()
+let req = UpsertIssueRequest::builder()
     .with_title("...")
     .with_description("...")
     .build();
 
 // correct
-let req = CreateIssueRequest::new(title, description);
+let req = UpsertIssueRequest::new(title, description);
 ```
 
 ## Secrets travel through env vars, not API types

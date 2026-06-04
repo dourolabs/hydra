@@ -8,7 +8,7 @@ required-reading list.
 | Crate | Purpose |
 |---|---|
 | `hydra` | CLI; one file per subcommand under `hydra/src/command/`. |
-| `hydra-server` | Axum HTTP API, background workers, in-memory store, and `domain` ↔ `hydra-common::api::v1` conversions. Enterprise modules live under `hydra-server/src/ee/`. |
+| `hydra-server` | Axum HTTP API, background workers, in-memory store by default (Postgres-backed via the `postgres` feature), and `domain` ↔ `hydra-common::api::v1` conversions. Enterprise modules live under `hydra-server/src/ee/`. |
 | `hydra-common` | Shared API v1 wire types, domain ids (`HydraId`), and other models reused by server and CLI. |
 | `hydra-build-cache` | Build artifact cache used by the CLI / workers. |
 | `hydra-bff` | Backend-for-frontend service. |
