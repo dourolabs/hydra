@@ -1,4 +1,5 @@
-//! `BundleMount` — pre-agent repo checkout and post-agent git finalize.
+//! `BundleMount` — per-bundle [`Mount`] impl for the worker's primary
+//! source-tree mount.
 //!
 //! Always constructed exactly once per worker run. For [`Bundle::None`]
 //! the mount simply creates an empty destination directory and has no
@@ -7,10 +8,16 @@
 //! `initialize_tracking_branches` sequence at setup time, and
 //! `finalize_task_run` at save time.
 //!
-//! The git helpers (`initialize_tracking_branches`, `finalize_task_run`,
-//! and their private companions) used to live in `worker_run.rs`; PR4
-//! moves them here as a pure code move with no behavior change. See
-//! `/designs/worker-mount-trait.md` for the full design.
+//! Invariants:
+//!
+//! - Exactly one bundle mount per run — the destination directory is the
+//!   worker's repo root, and other mounts (build cache, documents) assume
+//!   it has been created.
+//! - `save` is only meaningful for the git variant; for [`Bundle::None`]
+//!   it is a no-op.
+//! - The git helpers (`initialize_tracking_branches`, `finalize_task_run`,
+//!   and their private companions) live here rather than in `worker_run.rs`
+//!   so that the mount owns the full lifecycle of its bundle.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

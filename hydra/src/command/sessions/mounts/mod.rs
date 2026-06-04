@@ -2,11 +2,13 @@
 //!
 //! Each [`Mount`] captures one "set up filesystem state before the agent
 //! runs, then optionally persist it after" flow (repo checkout, build
-//! cache, documents sync, ...). The [`orchestrator::run_phase`] helper
-//! drives a single phase with timeout + error routing + phase-bracketed
-//! status logging.
-//!
-//! See `/designs/worker-mount-trait.md` for the full design.
+//! cache, documents sync, ...). The trait has two phases — `setup` runs
+//! before the agent and `save` runs after — and each [`Mount`] implementation
+//! materializes a single bundle kind into the worker FS. The
+//! [`orchestrator::run_phase`] helper drives a single phase end-to-end,
+//! applying a timeout, routing errors as fatal or non-fatal, and emitting
+//! phase-bracketed status logs, so the per-kind impls only have to express
+//! what to do, not how to survive failure.
 
 use std::time::Duration;
 

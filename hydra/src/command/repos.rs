@@ -1004,7 +1004,11 @@ mod tests {
 
     // ---- merge_policy CLI surface --------------------------------------
 
-    /// The YAML example from `/designs/merge-time-constraints.md` §4.2.
+    /// Demonstrates the canonical `MergePolicy` shape: two `ReviewerGroup`s
+    /// (one `code-review` group with `exclude_author: true` and a
+    /// `human-signoff` group without it), each requiring quorum of `count`
+    /// approvers from its `any_of` list, plus a `mergers.any_of` that
+    /// includes the patch creator via the `@patch.creator` placeholder.
     const SAMPLE_MERGE_POLICY_YAML: &str = r#"
 reviewers:
   - label: code-review

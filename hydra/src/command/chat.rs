@@ -67,8 +67,8 @@ async fn run_noninteractive(
 
     // Subscribe to SSE events and wait for the assistant response. We use
     // the session_event_created stream because chat content (UserMessage /
-    // AssistantMessage) now lives on SessionEvent — see
-    // `designs/sessions-orthogonality-redesign.md` Phase E step 18.
+    // AssistantMessage) is emitted as SessionEvent records on the session
+    // log, not as events on the conversation itself.
     let query = EventsQuery {
         types: Some("session_event_created".to_string()),
         ..Default::default()

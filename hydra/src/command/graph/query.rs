@@ -1,8 +1,16 @@
 //! Pipe-form query language for `hydra graph search`/`diff`/`log`.
 //!
 //! This module is the shared parsing + lowering library that the three
-//! `hydra graph` subcommands link against. The grammar, semantics, and
-//! lowering rules are specified in `/designs/hydra-graph-query-language.md`.
+//! `hydra graph` subcommands link against. A query is a source vertex set
+//! (one or more comma-separated ids) followed by zero or more pipe-separated
+//! stages; each stage is a vertex-set → vertex-set transformer
+//! (`parents`/`children`/`neighbors` with optional `rel=` / `transitive` /
+//! `exclusive`, the `scope` macro, or `kind=` filters). [`Query::lower`]
+//! normalizes the AST into a flat [`LoweredQuery`]: `ancestors`/`descendants`
+//! sugar collapses into transitive `parents`/`children`; the `scope` macro
+//! expands into its three-edge fan-out; `kind=` becomes a post-hydration
+//! filter on the final vertex set. Each lowered traversal stage maps to one
+//! `/v1/relations` call at resolution time.
 //!
 //! # Example
 //!

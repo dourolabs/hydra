@@ -4,9 +4,11 @@
 //! The resolver is the runtime counterpart to the parser/lowering library in
 //! [`crate::command::graph::query`]. The parser yields a flat sequence of
 //! [`LoweredStage`]s; the resolver issues one HTTP call per stage (three for
-//! `scope`; zero for `Kind`), evolving the vertex set per the
-//! inclusive-by-default contract documented in
-//! `/designs/hydra-graph-query-language.md`.
+//! `scope`; zero for `Kind`), evolving the vertex set under the
+//! inclusive-by-default contract: each traversal stage replaces the working
+//! vertex set with `V ∪ traversal(V, rel)`, so the input vertices are always
+//! carried forward into the output unless an explicit `exclusive` flag drops
+//! them.
 //!
 //! Shared between `hydra graph diff` (this PR) and — once PRs 3 and 5 land —
 //! `hydra graph search` / `hydra graph log`. Callers feed `result.node_ids`

@@ -1,10 +1,18 @@
-//! `BuildCacheMount` — wraps the build-cache apply / upload flow that
-//! `worker_run.rs` previously inlined.
+//! `BuildCacheMount` — per-bundle [`Mount`] impl for the shared build cache.
+//!
+//! On `setup` the mount pulls the cache for the run's `BuildCacheContext`
+//! key from the build-cache service and applies it into the repo directory
+//! the bundle mount has already populated. On `save` it reads HEAD from
+//! disk via [`resolve_head_oid`] and uploads a fresh cache snapshot keyed
+//! to that commit, retrying up to [`BUILD_CACHE_UPLOAD_MAX_ATTEMPTS`] times
+//! on transient failure.
 //!
 //! The mount operates on a repo directory the bundle mount owns (it does
-//! not `mkdir` `repo_path` itself) and reads HEAD from disk in `save` via
-//! [`resolve_head_oid`], so there is no shared state with the bundle
-//! flow. See `/designs/worker-mount-trait.md` for the full design.
+//! not `mkdir` `repo_path` itself); re-mount of the same context onto a
+//! directory that already has the cache applied is a no-op overwrite, so
+//! the apply phase is idempotent on retry. Reading HEAD in `save` rather
+//! than caching it from `setup` means the upload always reflects the
+//! agent's final commit, not the pre-agent one.
 
 use std::future::Future;
 use std::path::PathBuf;
