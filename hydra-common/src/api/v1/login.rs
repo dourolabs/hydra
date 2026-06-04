@@ -127,8 +127,37 @@ impl DevicePollResponse {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum DevicePollStatus {
     Pending,
     Complete,
     Error,
+    #[serde(other)]
+    Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_poll_status_known_variants_round_trip() {
+        let cases = [
+            (DevicePollStatus::Pending, "\"pending\""),
+            (DevicePollStatus::Complete, "\"complete\""),
+            (DevicePollStatus::Error, "\"error\""),
+        ];
+        for (variant, wire) in cases {
+            let serialized = serde_json::to_string(&variant).unwrap();
+            assert_eq!(serialized, wire);
+            let deserialized: DevicePollStatus = serde_json::from_str(wire).unwrap();
+            assert_eq!(deserialized, variant);
+        }
+    }
+
+    #[test]
+    fn device_poll_status_unknown_string_deserializes_to_unknown() {
+        let status: DevicePollStatus = serde_json::from_str("\"throttled\"").unwrap();
+        assert_eq!(status, DevicePollStatus::Unknown);
+    }
 }

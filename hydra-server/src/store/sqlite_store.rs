@@ -1964,6 +1964,7 @@ fn build_conversations_predicates_sqlite(
             hydra_common::api::v1::conversations::ConversationStatus::Active => "active",
             hydra_common::api::v1::conversations::ConversationStatus::Idle => "idle",
             hydra_common::api::v1::conversations::ConversationStatus::Closed => "closed",
+            _ => "unknown",
         };
         bindings.push(status_str.to_string());
         predicates.push(format!("status = ?{}", bindings.len()));

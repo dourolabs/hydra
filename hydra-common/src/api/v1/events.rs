@@ -65,6 +65,7 @@ impl EventsQuery {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SseEventType {
     IssueCreated,
     IssueUpdated,
@@ -88,6 +89,8 @@ pub enum SseEventType {
     Connected,
     Resync,
     Heartbeat,
+    #[serde(other)]
+    Unknown,
 }
 
 impl SseEventType {
@@ -115,6 +118,7 @@ impl SseEventType {
             Self::Connected => "connected",
             Self::Resync => "resync",
             Self::Heartbeat => "heartbeat",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -204,4 +208,32 @@ pub struct HeartbeatEventData {
 pub struct SessionLogEventData {
     pub session_id: String,
     pub chunk: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sse_event_type_unknown_string_deserializes_to_unknown() {
+        let event: SseEventType = serde_json::from_str("\"some_future_event\"").unwrap();
+        assert_eq!(event, SseEventType::Unknown);
+    }
+
+    #[test]
+    fn sse_event_type_known_variants_round_trip() {
+        let cases = [
+            (SseEventType::IssueCreated, "\"issue_created\""),
+            (SseEventType::PatchUpdated, "\"patch_updated\""),
+            (SseEventType::SessionLog, "\"session_log\""),
+            (SseEventType::Connected, "\"connected\""),
+            (SseEventType::Heartbeat, "\"heartbeat\""),
+        ];
+        for (variant, wire) in cases {
+            let serialized = serde_json::to_string(&variant).unwrap();
+            assert_eq!(serialized, wire);
+            let deserialized: SseEventType = serde_json::from_str(wire).unwrap();
+            assert_eq!(deserialized, variant);
+        }
+    }
 }
