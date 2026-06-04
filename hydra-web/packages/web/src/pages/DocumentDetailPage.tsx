@@ -1,14 +1,8 @@
-import { useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Spinner, Button, Textarea, CopyButton } from "@hydra/ui";
-import { Markdown } from "../components/Markdown";
-import type { DocumentVersionRecord } from "@hydra/api";
-import { apiClient, ApiError } from "../api/client";
+import { Spinner } from "@hydra/ui";
+import { ApiError } from "../api/client";
 import { useDocument } from "../features/documents/useDocument";
-import { useToast } from "../features/toast/useToast";
-import { useIsMobile } from "../hooks/useIsMobile";
-import { AgoTime } from "../components/Runtime/Runtime";
+import { DocumentDetail } from "../features/documents/DocumentDetail";
 import type { BreadcrumbItem } from "../layout/Breadcrumbs";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import styles from "./DocumentDetailPage.module.css";
@@ -51,140 +45,6 @@ export function DocumentDetailPage() {
       )}
 
       {record && <DocumentDetail record={record} />}
-    </div>
-  );
-}
-
-interface DocumentDetailProps {
-  record: DocumentVersionRecord;
-}
-
-function DocumentDetail({ record }: DocumentDetailProps) {
-  const { addToast } = useToast();
-  const queryClient = useQueryClient();
-  const isMobile = useIsMobile();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-
-  const displayTitle =
-    record.document.title || record.document.path || record.document_id;
-
-  const handleEdit = useCallback(() => {
-    setDraft(record.document.body_markdown);
-    setEditing(true);
-  }, [record.document.body_markdown]);
-
-  const handleCancel = useCallback(() => {
-    setEditing(false);
-    setDraft("");
-  }, []);
-
-  const mutation = useMutation({
-    mutationFn: (body: string) =>
-      apiClient.updateDocument(record.document_id, {
-        document: { ...record.document, body_markdown: body },
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["document", record.document_id],
-      });
-      queryClient.invalidateQueries({ queryKey: ["paginatedDocuments"] });
-      addToast("Document saved", "success");
-      setEditing(false);
-    },
-    onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to save document",
-        "error",
-      );
-    },
-  });
-
-  const handleSave = useCallback(() => {
-    mutation.mutate(draft);
-  }, [mutation, draft]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (isMobile) return;
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        handleSave();
-      }
-    },
-    [handleSave, isMobile],
-  );
-
-  return (
-    <div className={styles.inner}>
-      <div className={styles.titleRow}>
-        <h1 className={styles.title}>{displayTitle}</h1>
-        <div className={styles.actions}>
-          {!editing && (
-            <Button variant="secondary" size="sm" onClick={handleEdit}>
-              Edit
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div className={styles.metaRow}>
-        {record.document.path && (
-          <span className={styles.metaItem}>
-            <span className={styles.metaLabel}>Path</span>
-            <span className={styles.metaValue}>
-              {record.document.path}
-              <CopyButton
-                value={record.document.path}
-                onCopied={() => addToast("Copied!", "success")}
-              />
-            </span>
-          </span>
-        )}
-        <span className={styles.metaItem}>
-          <span className={styles.metaLabel}>Updated</span>
-          <span className={styles.metaValue}>
-            <AgoTime iso={record.timestamp} />
-          </span>
-        </span>
-      </div>
-
-      {editing ? (
-        <div className={styles.editContainer} onKeyDown={handleKeyDown}>
-          <Textarea
-            label="Markdown"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            className={styles.editTextarea}
-            rows={20}
-          />
-          <div className={styles.editActions}>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleSave}
-              disabled={mutation.isPending}
-            >
-              {mutation.isPending ? "Saving…" : "Save"}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleCancel}
-              disabled={mutation.isPending}
-            >
-              Cancel
-            </Button>
-            <span className={styles.hint}>
-              {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to save
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className={styles.prose}>
-          <Markdown content={record.document.body_markdown} />
-        </div>
-      )}
     </div>
   );
 }
