@@ -29,7 +29,10 @@ use chrono::Utc;
 use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::principal::{ExternalSystem, Principal};
-use hydra_common::{ConversationId, DocumentId, HydraId, IssueId, PatchId, RepoName, SessionId};
+use hydra_common::{
+    ConversationId, DocumentId, HydraId, IssueId, PatchId, ProjectId, RepoName, SessionId,
+    TriggerId,
+};
 use hydra_server::domain::actors::ActorRef;
 use hydra_server::domain::issues::{Issue, IssueStatus, IssueType};
 use hydra_server::domain::patches::{Patch, PatchStatus, Review};
@@ -97,6 +100,9 @@ async fn migration_roundtrip() -> Result<()> {
     assert_store_level_smoke(&pool)
         .await
         .context("§3.3 store / domain-level smoke")?;
+    assert_recent_migration_data_shape(&pool)
+        .await
+        .context("triggers / projects post-rollforward data-shape round-trip")?;
 
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
@@ -199,6 +205,7 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         ("tasks_v2", "mode"),
         ("tasks_v2", "resumed_from"),
         ("repositories_v2", "merge_policy"),
+        ("issues_v2", "project_id"),
     ] {
         if !column_exists(pool, table, col).await? {
             bail!("expected metis.{table}.{col} to exist after rollforward");
@@ -224,14 +231,23 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
     }
 
     // Tables dropped by this release's migrations.
-    for table in ["notifications", "conversation_session_state"] {
+    for table in [
+        "notifications",
+        "conversation_session_state",
+        "conversation_events_v2",
+    ] {
         if table_exists(pool, table).await? {
             bail!("expected metis.{table} to be dropped after rollforward");
         }
     }
 
     // Tables added by this release's migrations.
-    for table in ["session_events_v2", "session_state_v2"] {
+    for table in [
+        "session_events_v2",
+        "session_state_v2",
+        "triggers",
+        "projects",
+    ] {
         if !table_exists(pool, table).await? {
             bail!("expected metis.{table} to exist after rollforward");
         }
@@ -1517,8 +1533,176 @@ async fn smoke_create_relationship(store: &PostgresStoreV2) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Recent-migration data-shape round-trip
+//
+// The three most recent feature migrations (`20260603020000_add_triggers_table`,
+// `20260604000000_drop_conversation_events_v2`, `20260604000001_create_projects`)
+// land schema after the last baseline pin, so no fixture rows exist for them.
+// Seed one row in each of `metis.triggers` and `metis.projects` via raw SQL
+// post-rollforward, then read back through `PostgresStoreV2::get_trigger` /
+// `get_project` to confirm:
+//
+//   * the `BEFORE INSERT` `maintain_latest_version` triggers flipped
+//     `is_latest = true` (`get_*` relies on the `id`-keyed lookups, which
+//     would surface a NULL row if the trigger never fired);
+//   * the JSONB columns (`schedule` / `actions` for triggers,
+//     `statuses` for projects) deserialize cleanly into the typed domain
+//     objects;
+//   * the primary key (`id`, `version_number`) round-trips through the store.
+// ---------------------------------------------------------------------------
+
+async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
+    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey, StatusKey};
+    use hydra_common::triggers::{Schedule, Trigger as ApiTrigger};
+
+    // ---- triggers -----------------------------------------------------
+    let trigger_id = parse_trigger_id("t-rtrip")?;
+    let schedule_json = serde_json::json!({
+        "Cron": {"expression": "0 9 * * MON", "timezone": "UTC"}
+    });
+    let actions_json = serde_json::json!([]);
+    sqlx::query(
+        "INSERT INTO metis.triggers \
+         (id, version_number, enabled, creator, schedule, actions) \
+         VALUES ($1, 1, TRUE, 'jayantk', $2, $3)",
+    )
+    .bind(trigger_id.as_ref())
+    .bind(&schedule_json)
+    .bind(&actions_json)
+    .execute(pool)
+    .await
+    .context("seed metis.triggers row for round-trip assertion")?;
+
+    let store = PostgresStoreV2::new(pool.clone());
+    let fetched = store
+        .get_trigger(&trigger_id, false)
+        .await
+        .context("Store::get_trigger post-migration")?;
+    if fetched.version != 1 {
+        bail!(
+            "trigger {trigger_id}: expected version 1; got {}",
+            fetched.version
+        );
+    }
+    let ApiTrigger {
+        enabled,
+        schedule,
+        actions,
+        creator,
+        ..
+    } = &fetched.item;
+    if !enabled {
+        bail!("trigger {trigger_id}: expected enabled=true");
+    }
+    if creator.as_str() != "jayantk" {
+        bail!(
+            "trigger {trigger_id}: expected creator='jayantk'; got {:?}",
+            creator.as_str()
+        );
+    }
+    match schedule {
+        Schedule::Cron {
+            expression,
+            timezone,
+        } if expression == "0 9 * * MON" && timezone.as_deref() == Some("UTC") => {}
+        other => bail!("trigger {trigger_id}: expected Cron(0 9 * * MON / UTC); got {other:?}"),
+    }
+    if !actions.is_empty() {
+        bail!(
+            "trigger {trigger_id}: expected empty actions; got {} entries",
+            actions.len()
+        );
+    }
+
+    // ---- projects -----------------------------------------------------
+    let project_id = parse_project_id("j-rtrip")?;
+    let statuses_json = serde_json::json!([
+        {
+            "key": "open",
+            "label": "Open",
+            "icon": "circle",
+            "color": "#3498db",
+            "unblocks_parents": false,
+            "unblocks_dependents": false,
+            "cascades_to_children": false
+        }
+    ]);
+    sqlx::query(
+        "INSERT INTO metis.projects \
+         (id, version_number, key, name, default_status_key, statuses, creator) \
+         VALUES ($1, 1, 'roundtrip', 'Roundtrip', 'open', $2, 'jayantk')",
+    )
+    .bind(project_id.as_ref())
+    .bind(&statuses_json)
+    .execute(pool)
+    .await
+    .context("seed metis.projects row for round-trip assertion")?;
+
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("Store::get_project post-migration")?;
+    if fetched.version != 1 {
+        bail!(
+            "project {project_id}: expected version 1; got {}",
+            fetched.version
+        );
+    }
+    let ApiProject {
+        key,
+        name,
+        default_status_key,
+        statuses,
+        creator,
+        ..
+    } = &fetched.item;
+    if key != &ProjectKey::try_new("roundtrip").unwrap() {
+        bail!("project {project_id}: expected key='roundtrip'; got {key:?}");
+    }
+    if name != "Roundtrip" {
+        bail!("project {project_id}: expected name='Roundtrip'; got {name:?}");
+    }
+    if default_status_key != &StatusKey::try_new("open").unwrap() {
+        bail!(
+            "project {project_id}: expected default_status_key='open'; got {default_status_key:?}"
+        );
+    }
+    if creator.as_str() != "jayantk" {
+        bail!(
+            "project {project_id}: expected creator='jayantk'; got {:?}",
+            creator.as_str()
+        );
+    }
+    let Some(status) = statuses.first() else {
+        bail!("project {project_id}: expected one status; got none");
+    };
+    if status.key.as_str() != "open"
+        || status.label != "Open"
+        || status.icon.as_str() != "circle"
+        || status.color.as_ref() != "#3498db"
+        || status.unblocks_parents
+        || status.unblocks_dependents
+        || status.cascades_to_children
+    {
+        bail!(
+            "project {project_id}: status[0] did not round-trip the seeded JSONB shape; got {status:?}"
+        );
+    }
+
+    Ok(())
+}
+
 fn parse_issue_id(s: &str) -> Result<IssueId> {
     IssueId::from_str(s).with_context(|| format!("parse issue id '{s}'"))
+}
+
+fn parse_trigger_id(s: &str) -> Result<TriggerId> {
+    TriggerId::from_str(s).with_context(|| format!("parse trigger id '{s}'"))
+}
+
+fn parse_project_id(s: &str) -> Result<ProjectId> {
+    ProjectId::from_str(s).with_context(|| format!("parse project id '{s}'"))
 }
 
 fn parse_patch_id(s: &str) -> Result<PatchId> {
