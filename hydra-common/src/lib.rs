@@ -90,11 +90,6 @@ mod ts_export {
         crate::ActorId::export_all(&cfg).expect("ActorId");
         crate::ActorRef::export_all(&cfg).expect("ActorRef");
         crate::ExternalSystem::export_all(&cfg).expect("ExternalSystem");
-        // Phase 5a of `/designs/actor-system-overhaul.md` finished the
-        // unification: the merge-policy `Principal` is now a wrapper
-        // (`AssigneeRef`) that uses the shared `Principal` for its
-        // static case, so the Phase-1 `rename = "ActorPrincipal"`
-        // workaround is dropped and this type owns `Principal.ts`.
         crate::principal::Principal::export_all(&cfg).expect("Principal");
         crate::Versioned::<()>::export_all(&cfg).expect("Versioned");
 

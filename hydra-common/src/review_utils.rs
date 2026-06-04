@@ -31,12 +31,10 @@ impl Review {
     /// `patch_versions`, every review is non-stale; otherwise the review
     /// must have a `submitted_at` timestamp at or after that change.
     ///
-    /// Per `/designs/merge-time-constraints.md` §6.3 this is the shared
-    /// predicate used by the server-side `merge_authorization` restriction
-    /// (Phase 2 PR-2) and the CLI (Phase 2 PR-4 / Phase 3 cleanup). The
-    /// exact semantics match what [`has_approved_non_dismissed_review`]
-    /// does today so migrating the CLI to call the server preflight does
-    /// not regress behaviour.
+    /// Shared between the server-side `merge_authorization` restriction
+    /// and the CLI preflight so a user sees the same staleness verdict
+    /// from either side. The semantics match
+    /// [`has_approved_non_dismissed_review`].
     pub fn is_non_stale(&self, patch_versions: &[PatchVersionRecord]) -> bool {
         let cutoff = find_last_commit_range_change_timestamp(patch_versions);
         self.is_non_stale_with_cutoff(cutoff)
@@ -54,10 +52,8 @@ impl Review {
 /// without a `submitted_at` are also considered stale when a cutoff
 /// is present.
 ///
-/// Phase 5b of `/designs/actor-system-overhaul.md` (§4.3) re-types
-/// `Review.author` from a bare string to [`Principal`]; this
-/// function follows suit and matches by Principal. See
-/// [`principal_eq`] for the matching semantics.
+/// Matches `Review.author` against `author` using [`principal_eq`]
+/// (kind-aware, case-insensitive on the name segments).
 pub fn find_latest_review_by_author<'a>(
     reviews: &'a [Review],
     author: &Principal,

@@ -15,8 +15,9 @@ use std::str::FromStr;
 /// - **`User(Username)`** — a human user.
 /// - **`Agent(AgentName)`** — first-class named agent (e.g. `pm`, `swe`).
 /// - **`Adhoc(SessionId)`** — a session created outside the agent
-///   system. Canonical path is `adhoc/<session-id>` (clarification C2
-///   in `/designs/actor-system-overhaul.md` — *not* `sessions/`).
+///   system. Canonical path is `adhoc/<session-id>`; `sessions/<id>`
+///   was considered and rejected so the path namespace matches the
+///   variant name.
 /// - **`External { system, username }`** — an identity that lives in an
 ///   external system (e.g. GitHub) and has no corresponding Hydra user.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,14 +89,13 @@ pub enum ActorRef {
         actor_id: ActorId,
         /// Session that minted the authenticating token, if any.
         ///
-        /// Phase 3a of `/designs/actor-system-overhaul.md` (§5.2) carries
-        /// the originating session id end-to-end on session-spawned
-        /// actors (`ActorId::Agent` / `ActorId::Adhoc`). User logins are
-        /// not session-scoped, so `None` is valid for those.
+        /// Carries the originating session id end-to-end on
+        /// session-spawned actors (`ActorId::Agent` / `ActorId::Adhoc`).
+        /// User logins are not session-scoped, so `None` is valid for
+        /// those.
         ///
-        /// `#[serde(default)]` keeps existing version-history rows (which
-        /// predate this field) deserializing as `session_id: None`
-        /// (§5.4).
+        /// `#[serde(default)]` keeps existing version-history rows that
+        /// predate this field deserializing as `session_id: None`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session_id: Option<SessionId>,
     },
@@ -772,9 +772,10 @@ mod tests {
 
     #[test]
     fn actor_ref_authenticated_without_field_deserializes_to_none() {
-        // Pre-Phase-3a Versioned<T>.actor blobs predate session_id.
-        // Per design §5.4, deserializing such a blob must yield
-        // `session_id: None`.
+        // Older Versioned<T>.actor blobs in the wild predate the
+        // session_id field on `Authenticated`. Because session_id is
+        // `#[serde(default)]`, those blobs must deserialize as
+        // `session_id: None` rather than fail.
         let legacy = json!({
             "Authenticated": { "actor_id": { "User": {"name": "alice"} } }
         });
