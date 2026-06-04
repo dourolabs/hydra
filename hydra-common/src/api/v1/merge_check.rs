@@ -25,10 +25,10 @@ use crate::principal::ExternalSystem;
 ///
 /// HTTP status: `200` for [`MergeCheckResponse::Ok`], `422` for
 /// [`MergeCheckResponse::Blocked`]. The 422 (Unprocessable Entity) choice
-/// is locked in by the `IntoResponse` impl and is documented in
-/// `/designs/merge-time-constraints.md` §4.3 / §4.5 — it is NOT 400
-/// (request well-formed) and NOT 403 (actor authorisation is only one of
-/// two layers).
+/// is locked in by the `IntoResponse` impl: the request itself is
+/// syntactically well-formed (so not 400) and actor authorisation is only
+/// one of two layers the policy evaluates (so not 403) — the merge is
+/// blocked because the policy is unsatisfied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -65,17 +65,19 @@ impl IntoResponse for MergeCheckResponse {
 
 /// Structured body of a `merge_blocked` response.
 ///
-/// This wire shape is carried verbatim across three surfaces (see
-/// `/designs/merge-time-constraints.md` §4.5):
+/// This wire shape is carried verbatim across three surfaces:
 ///
-/// - the HTTP body of `POST /v1/patches/:id/merge_check` (Phase 2 PR-3),
+/// - the HTTP body of `POST /v1/patches/:id/merge_check`,
 /// - serialised into the `message` field of the `PolicyViolation` emitted by
-///   the `merge_authorization` restriction (Phase 2 PR-2),
-/// - parsed by `hydra patches merge --json` (Phase 2 PR-4).
+///   the `merge_authorization` restriction,
+/// - parsed by `hydra patches merge --json`.
 ///
 /// `reasons` always contains failures from EXACTLY ONE layer — the
-/// highest-priority unsatisfied layer named by `blocked_at_layer`. See §4.5
-/// for the priority ordering and the rationale.
+/// highest-priority unsatisfied layer named by `blocked_at_layer`. Layers
+/// are evaluated in priority order and the response carries failures from
+/// the first layer with any, so the SWE handles one layer per attempt
+/// (get reviews → retry → get a merger → retry → merged) instead of
+/// branching speculatively on later layers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

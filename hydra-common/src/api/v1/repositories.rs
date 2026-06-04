@@ -92,13 +92,10 @@ impl<'de> Deserialize<'de> for DynamicRef {
 
 /// A reference to a merge-policy principal — either a static
 /// [`Principal`](crate::Principal) (user / agent / external) or a
-/// [`DynamicRef`] resolved at merge-attempt time.
-///
-/// Phase 5a of `/designs/actor-system-overhaul.md` replaces this file's old
-/// `Principal { User(Username), Dynamic(DynamicRef) }` enum with this
-/// wrapper so the static side reuses the shared [`Principal`] (gaining
-/// `Agent` / `External` variants, closing the "User-can-hide-agent"
-/// footgun documented in §4.2).
+/// [`DynamicRef`] resolved at merge-attempt time. The static side is
+/// the shared typed [`Principal`], so `Agent` and `External` are
+/// first-class variants and cannot be collapsed to a same-named user
+/// (the "User-can-hide-agent" footgun a bare-string enum would have).
 ///
 /// **Wire form** is a single string, kept YAML-friendly:
 ///
@@ -876,11 +873,14 @@ mod tests {
 
     #[test]
     fn merge_policy_round_trips_through_yaml_legacy_bare_strings() {
-        // Mirrors the example in /designs/merge-time-constraints.md §4.2.
-        // Uses the pre-Phase-5a bare-string wire form, which the lenient
-        // deserialiser still accepts (treats every bare token as a `User`)
-        // so existing stored merge_policy JSON blobs round-trip without a
-        // JSON-shape migration.
+        // Exercises every shape MergePolicy supports — AND across two
+        // labelled reviewer groups, `any_of` disjunction inside each,
+        // `count` quorum, `exclude_author`, and a dynamic-ref merger
+        // (`@patch.creator`) alongside a static one. Uses the legacy
+        // bare-string wire form, which the lenient deserialiser still
+        // accepts (treats every bare token as a `User`) so existing
+        // stored merge_policy JSON blobs round-trip without a JSON-shape
+        // migration.
         let yaml = r#"
 reviewers:
   - label: code-review
@@ -931,9 +931,10 @@ mergers:
 
     #[test]
     fn merge_policy_round_trips_through_yaml_path_form() {
-        // Phase 5a canonical wire form: explicit path prefixes for every
-        // static principal kind plus the existing `@patch.creator` shorthand
-        // for dynamic refs.
+        // Canonical wire form: explicit path prefixes for every static
+        // principal kind (`users/<x>`, `agents/<x>`, `external/<sys>/<x>`)
+        // plus the `@<shorthand>` form for dynamic refs. This is what every
+        // new payload and every re-serialisation emits.
         let yaml = r#"
 reviewers:
   - any_of:

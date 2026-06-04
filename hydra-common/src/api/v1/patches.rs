@@ -66,12 +66,11 @@ impl FromStr for PatchStatus {
 
 /// A review recorded against a patch.
 ///
-/// Phase 5b of `/designs/actor-system-overhaul.md` (§4.3) re-types
-/// `author` from a bare string to the shared [`Principal`], so
-/// reviews are attributed to the same typed party form the rest of
-/// the system uses. On the inbound wire, clients use
-/// [`UpsertReviewRequest`] (no author) and the server stamps the
-/// author from the authenticated actor (§6); the [`Review`] type
+/// `author` is the shared typed [`Principal`] (user / agent /
+/// external), so reviews are attributed to the same typed party
+/// form the rest of the system uses. On the inbound wire, clients
+/// use [`UpsertReviewRequest`] (no author) and the server stamps
+/// the author from the authenticated actor; the [`Review`] type
 /// here is the canonical/response shape.
 ///
 /// The deserializer is back-compat with the pre-Phase-5b wire shape:
@@ -164,12 +163,12 @@ impl Review {
 
 /// Request-side review payload (`POST` / `PUT /v1/patches`).
 ///
-/// Per Phase 5b of `/designs/actor-system-overhaul.md` (§6), the
-/// author of a review is server-derived from the authenticated actor
-/// for newly-submitted reviews; existing reviews keep their stored
-/// author across patch upserts (matched by `(contents, is_approved,
-/// submitted_at)`). Clients therefore never specify a review author
-/// on the inbound side — this struct intentionally omits the field.
+/// The author of a review is server-derived from the authenticated
+/// actor for newly-submitted reviews; existing reviews keep their
+/// stored author across patch upserts (matched by `(contents,
+/// is_approved, submitted_at)`). Clients therefore never specify a
+/// review author on the inbound side — this struct intentionally
+/// omits the field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -468,8 +467,7 @@ impl PatchVersionRecord {
 /// Mirrors [`Patch`] field-for-field, except `reviews` is
 /// `Vec<UpsertReviewRequest>` — clients never specify review authors
 /// on the inbound side (server-stamped from the authenticated actor;
-/// see [`UpsertReviewRequest`] and Phase 5b of
-/// `/designs/actor-system-overhaul.md` §6).
+/// see [`UpsertReviewRequest`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

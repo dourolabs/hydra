@@ -1,8 +1,12 @@
 //! Per-project status configuration types.
 //!
-//! See `/designs/per-project-issue-statuses.md` §4 "Core shapes" for the full
-//! design. PR 1/6 (this PR) introduces the wire types and a `DefaultProject`
-//! fallback const; no store, routes, or consumers are wired up yet.
+//! Defines the wire shapes for projects: a [`Project`] owns an ordered list
+//! of [`StatusDefinition`]s plus an explicit `default_status_key` applied to
+//! new issues. Each [`StatusDefinition`] declares display props (label,
+//! icon, color), dependency-graph semantics (`unblocks_parents`,
+//! `unblocks_dependents`, `cascades_to_children`), and an optional
+//! [`StatusOnEnter`] automation that fires when an issue transitions into
+//! the status.
 
 use crate::document_path::DocumentPath;
 use crate::principal::Principal;
@@ -127,12 +131,13 @@ define_key_newtype!(
     "Frontend icon identifier (resolved against the theme's icon set)."
 );
 
-/// Automation rule fired when an issue's status transitions into a status
-/// declaring `on_enter`. See `/designs/per-project-issue-statuses.md` §4
-/// "Spawn dispatch and on_enter automation".
-///
-/// PR 1/6 carries the wire type only; the automation that consumes it
-/// lands in PR 4.
+/// Automation fired the moment an issue transitions INTO a status whose
+/// [`StatusDefinition::on_enter`] is `Some`: when `assign_to` is set,
+/// `issue.assignee` is replaced with that [`Principal`] (agent assignees
+/// then flow through the existing assignee-driven spawn dispatcher); when
+/// `attach_form` is set, `issue.form` is replaced wholesale with that
+/// form (an issue holds at most one form at a time). `None` on either
+/// field leaves the corresponding field untouched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -197,8 +202,7 @@ impl StatusDefinition {
 }
 
 /// A project owns an ordered list of [`StatusDefinition`]s plus an explicit
-/// [`Self::default_status_key`] for new issues. See
-/// `/designs/per-project-issue-statuses.md` §4.
+/// [`Self::default_status_key`] for new issues.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
