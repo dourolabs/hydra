@@ -72,7 +72,33 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     assert_form_response_actor_rewrite(&pool).await?;
     assert_store_level_conversations_smoke(&pool).await?;
     assert_store_level_form_response_smoke(&pool).await?;
+    assert_pagination_indexes_exist(&pool).await?;
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Schema-invariants: `(created_at DESC, id DESC)` pagination indexes on the
+// four list-* tables. Mirrors postgres migrations 20260315000000 and
+// 20260317000000, ported to SQLite by 20260604010000.
+// ---------------------------------------------------------------------------
+
+async fn assert_pagination_indexes_exist(pool: &SqlitePool) -> Result<()> {
+    for name in [
+        "issues_v2_created_at_id_idx",
+        "patches_v2_created_at_id_idx",
+        "tasks_v2_created_at_id_idx",
+        "documents_v2_created_at_id_idx",
+    ] {
+        let row = sqlx::query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?1")
+            .bind(name)
+            .fetch_optional(pool)
+            .await
+            .with_context(|| format!("query sqlite_master for index {name}"))?;
+        if row.is_none() {
+            bail!("expected pagination index {name} to exist post-rollforward");
+        }
+    }
     Ok(())
 }
 
