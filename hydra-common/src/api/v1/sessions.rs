@@ -1496,8 +1496,9 @@ mod tests {
     #[test]
     fn agent_config_rejects_invalid_agent_name_on_deserialize() {
         // `bad/name` contains `/`, which `AgentName::try_new` rejects.
-        // Pre-Phase-2 this slipped through as a free `String`; now it
-        // fails fast at the deserialization boundary.
+        // `AgentConfig.agent_name` is typed as `Option<AgentName>`, so
+        // malformed strings fail fast at the deserialization boundary
+        // instead of slipping through as free `String`s.
         let json = serde_json::json!({"agent_name": "bad/name"});
         let result: Result<AgentConfig, _> = serde_json::from_value(json);
         assert!(
