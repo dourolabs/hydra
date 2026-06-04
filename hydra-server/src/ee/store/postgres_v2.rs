@@ -5364,9 +5364,10 @@ impl Store for PostgresStoreV2 {
 
         let latest_row = latest_row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
 
-        if trigger.last_fired_at.is_none() && latest_row.last_fired_at.is_some() {
-            trigger.last_fired_at = latest_row.last_fired_at;
-        }
+        // Always take `last_fired_at` from the latest row inside this tx —
+        // ignore whatever the caller supplied so a stale value cannot
+        // regress a concurrent `record_trigger_fire` write.
+        trigger.last_fired_at = latest_row.last_fired_at;
 
         let latest_version = VersionNumber::try_from(latest_row.version_number).map_err(|_| {
             StoreError::Internal(format!("invalid version number stored for trigger '{id}'"))
@@ -9885,6 +9886,36 @@ mod tests {
         assert_eq!(fetched.version, 2);
         assert!(!fetched.item.enabled);
         assert_eq!(fetched.item.last_fired_at, Some(fired_at));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn update_with_stale_last_fired_at_does_not_regress_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (id, _) = store
+            .add_trigger(sample_trigger_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let t_new: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
+        store.record_trigger_fire(&id, t_new).await.unwrap();
+
+        // Caller supplies a stale `Some(t_old)` on the update payload.
+        // `update_trigger` must ignore it and overwrite with the latest
+        // row's `Some(t_new)`.
+        let t_old: DateTime<Utc> = "2026-01-01T00:00:00Z".parse().unwrap();
+        let mut next = sample_trigger_pg();
+        next.enabled = false;
+        next.last_fired_at = Some(t_old);
+        store
+            .update_trigger(&id, next, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_trigger(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 2);
+        assert!(!fetched.item.enabled);
+        assert_eq!(fetched.item.last_fired_at, Some(t_new));
     }
 
     #[sqlx::test(migrations = "./migrations")]
