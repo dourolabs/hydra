@@ -1,4 +1,7 @@
-use crate::{domain::agents::Agent, store::ReadOnlyStore};
+use crate::{
+    domain::{actors::ActorRef, agents::Agent},
+    store::ReadOnlyStore,
+};
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::sessions::McpConfig;
 use std::collections::HashMap;
@@ -13,10 +16,8 @@ pub enum AgentError {
     AlreadyExists { name: String },
     #[error("agent '{name}' not found")]
     NotFound { name: String },
-    #[error("only one assignment agent is allowed")]
-    AssignmentAgentConflict,
-    #[error("only one default conversation agent is allowed")]
-    ConversationAgentConflict,
+    #[error("{0}")]
+    PolicyViolation(#[from] crate::policy::PolicyViolation),
     #[error("store error: {0}")]
     Store(#[from] crate::store::StoreError),
 }
@@ -54,19 +55,18 @@ impl AppState {
             .find(|agent| agent.is_default_conversation_agent && !agent.deleted))
     }
 
-    pub async fn create_agent(&self, agent: Agent) -> Result<Agent, AgentError> {
+    pub async fn create_agent(&self, agent: Agent, actor: ActorRef) -> Result<Agent, AgentError> {
+        let store = self.store.as_ref();
+        self.policy_engine
+            .check_create_agent(&agent, store, &actor)
+            .await?;
+
         self.store
             .add_agent(agent.clone())
             .await
             .map_err(|e| match e {
                 crate::store::StoreError::AgentAlreadyExists(name) => {
                     AgentError::AlreadyExists { name }
-                }
-                crate::store::StoreError::AssignmentAgentAlreadyExists => {
-                    AgentError::AssignmentAgentConflict
-                }
-                crate::store::StoreError::ConversationAgentAlreadyExists => {
-                    AgentError::ConversationAgentConflict
                 }
                 other => AgentError::Store(other),
             })?;
@@ -79,6 +79,7 @@ impl AppState {
         &self,
         agent_name: &str,
         updated: Agent,
+        actor: ActorRef,
     ) -> Result<Agent, AgentError> {
         if updated.name != agent_name {
             return Err(AgentError::NotFound {
@@ -86,17 +87,17 @@ impl AppState {
             });
         }
 
+        let store = self.store.as_ref();
+        let old = self.store.get_agent(agent_name).await.ok();
+        self.policy_engine
+            .check_update_agent(agent_name, &updated, old.as_ref(), store, &actor)
+            .await?;
+
         self.store
             .update_agent(updated.clone())
             .await
             .map_err(|e| match e {
                 crate::store::StoreError::AgentNotFound(name) => AgentError::NotFound { name },
-                crate::store::StoreError::AssignmentAgentAlreadyExists => {
-                    AgentError::AssignmentAgentConflict
-                }
-                crate::store::StoreError::ConversationAgentAlreadyExists => {
-                    AgentError::ConversationAgentConflict
-                }
                 other => AgentError::Store(other),
             })?;
 
@@ -230,5 +231,127 @@ impl AppState {
 
         info!(agent = %agent_name, "agent deleted");
         Ok(agent)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::actors::ActorRef;
+    use crate::test_utils::test_state;
+
+    fn sample_agent(name: &str) -> Agent {
+        Agent::new(
+            name.to_string(),
+            format!("/agents/{name}/prompt.md"),
+            None,
+            3,
+            i32::MAX,
+            false,
+            false,
+            Vec::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn create_agent_assignment_uniqueness_blocked_by_restriction() {
+        let state = test_state();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        state.create_agent(pm, ActorRef::test()).await.unwrap();
+
+        let mut pm2 = sample_agent("pm2");
+        pm2.is_assignment_agent = true;
+        let err = state.create_agent(pm2, ActorRef::test()).await.unwrap_err();
+        assert!(matches!(err, AgentError::PolicyViolation(_)));
+    }
+
+    #[tokio::test]
+    async fn update_agent_assignment_uniqueness_blocked_by_restriction() {
+        let state = test_state();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        state.create_agent(pm, ActorRef::test()).await.unwrap();
+        state
+            .create_agent(sample_agent("swe"), ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut swe_updated = sample_agent("swe");
+        swe_updated.is_assignment_agent = true;
+        let err = state
+            .update_agent("swe", swe_updated, ActorRef::test())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::PolicyViolation(_)));
+    }
+
+    #[tokio::test]
+    async fn create_agent_default_conversation_uniqueness_blocked_by_restriction() {
+        let state = test_state();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        state.create_agent(chat, ActorRef::test()).await.unwrap();
+
+        let mut chat2 = sample_agent("chat2");
+        chat2.is_default_conversation_agent = true;
+        let err = state
+            .create_agent(chat2, ActorRef::test())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::PolicyViolation(_)));
+    }
+
+    #[tokio::test]
+    async fn update_agent_default_conversation_uniqueness_blocked_by_restriction() {
+        let state = test_state();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        state.create_agent(chat, ActorRef::test()).await.unwrap();
+        state
+            .create_agent(sample_agent("swe"), ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut swe_updated = sample_agent("swe");
+        swe_updated.is_default_conversation_agent = true;
+        let err = state
+            .update_agent("swe", swe_updated, ActorRef::test())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::PolicyViolation(_)));
+    }
+
+    #[tokio::test]
+    async fn deleted_assignment_agent_allows_new_one() {
+        let state = test_state();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        state.create_agent(pm, ActorRef::test()).await.unwrap();
+        state.delete_agent("pm").await.unwrap();
+
+        let mut pm2 = sample_agent("pm2");
+        pm2.is_assignment_agent = true;
+        state.create_agent(pm2, ActorRef::test()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn assignment_agent_can_update_itself() {
+        let state = test_state();
+        let mut pm = sample_agent("pm");
+        pm.is_assignment_agent = true;
+        state.create_agent(pm, ActorRef::test()).await.unwrap();
+
+        let mut pm_updated = sample_agent("pm");
+        pm_updated.is_assignment_agent = true;
+        pm_updated.max_tries = 10;
+        state
+            .update_agent("pm", pm_updated, ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = state.get_agent("pm").await.unwrap();
+        assert_eq!(fetched.max_tries, 10);
+        assert!(fetched.is_assignment_agent);
     }
 }

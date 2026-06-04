@@ -5194,31 +5194,6 @@ impl Store for SqliteStore {
                 return Err(StoreError::AgentAlreadyExists(agent.name));
             }
             Some(true) => {
-                if agent.is_assignment_agent {
-                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_assignment_agent = 1 AND deleted = 0)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_assignment {
-                        return Err(StoreError::AssignmentAgentAlreadyExists);
-                    }
-                }
-                if agent.is_default_conversation_agent {
-                    let has_default = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_default_conversation_agent = 1 AND deleted = 0)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_default {
-                        return Err(StoreError::ConversationAgentAlreadyExists);
-                    }
-                }
-
                 let now = Utc::now().to_rfc3339();
                 let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
@@ -5248,31 +5223,6 @@ impl Store for SqliteStore {
                 Ok(())
             }
             None => {
-                if agent.is_assignment_agent {
-                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_assignment_agent = 1 AND deleted = 0)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_assignment {
-                        return Err(StoreError::AssignmentAgentAlreadyExists);
-                    }
-                }
-                if agent.is_default_conversation_agent {
-                    let has_default = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_default_conversation_agent = 1 AND deleted = 0)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_default {
-                        return Err(StoreError::ConversationAgentAlreadyExists);
-                    }
-                }
-
                 let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
@@ -5305,33 +5255,6 @@ impl Store for SqliteStore {
 
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
         let _ = self.get_agent(&agent.name).await?;
-
-        if agent.is_assignment_agent {
-            let conflict = sqlx::query_scalar::<_, bool>(&format!(
-                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                 WHERE is_assignment_agent = 1 AND deleted = 0 AND name != ?1)"
-            ))
-            .bind(&agent.name)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-            if conflict {
-                return Err(StoreError::AssignmentAgentAlreadyExists);
-            }
-        }
-        if agent.is_default_conversation_agent {
-            let conflict = sqlx::query_scalar::<_, bool>(&format!(
-                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                 WHERE is_default_conversation_agent = 1 AND deleted = 0 AND name != ?1)"
-            ))
-            .bind(&agent.name)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-            if conflict {
-                return Err(StoreError::ConversationAgentAlreadyExists);
-            }
-        }
 
         let secrets_json = serde_json::to_string(&agent.secrets)
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
@@ -8628,31 +8551,26 @@ mod tests {
         assert!(matches!(err, StoreError::AgentNotFound(_)));
     }
 
+    // Role-flag uniqueness (`is_assignment_agent`,
+    // `is_default_conversation_agent`) is workflow state and is enforced by
+    // the `agent_role_uniqueness` `Restriction` in `AppState`, not at the
+    // store layer. This test exists to keep that boundary explicit: a direct
+    // store insert of a second role-flagged agent must succeed.
     #[tokio::test]
-    async fn assignment_agent_uniqueness_on_add() {
+    async fn store_does_not_enforce_role_uniqueness() {
         let store = create_test_store().await;
         let mut pm = sample_agent("pm");
         pm.is_assignment_agent = true;
+        pm.is_default_conversation_agent = true;
         store.add_agent(pm).await.unwrap();
 
         let mut pm2 = sample_agent("pm2");
         pm2.is_assignment_agent = true;
-        let err = store.add_agent(pm2).await.unwrap_err();
-        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
-    }
-
-    #[tokio::test]
-    async fn assignment_agent_uniqueness_on_update() {
-        let store = create_test_store().await;
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        store.add_agent(pm).await.unwrap();
-        store.add_agent(sample_agent("swe")).await.unwrap();
-
-        let mut swe_updated = sample_agent("swe");
-        swe_updated.is_assignment_agent = true;
-        let err = store.update_agent(swe_updated).await.unwrap_err();
-        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
+        pm2.is_default_conversation_agent = true;
+        store
+            .add_agent(pm2)
+            .await
+            .expect("store layer should not enforce role-flag uniqueness");
     }
 
     #[tokio::test]
@@ -8702,33 +8620,6 @@ mod tests {
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
         assert!(!fetched.deleted);
-    }
-
-    #[tokio::test]
-    async fn default_conversation_agent_uniqueness_on_add() {
-        let store = create_test_store().await;
-        let mut chat = sample_agent("chat");
-        chat.is_default_conversation_agent = true;
-        store.add_agent(chat).await.unwrap();
-
-        let mut chat2 = sample_agent("chat2");
-        chat2.is_default_conversation_agent = true;
-        let err = store.add_agent(chat2).await.unwrap_err();
-        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
-    }
-
-    #[tokio::test]
-    async fn default_conversation_agent_uniqueness_on_update() {
-        let store = create_test_store().await;
-        let mut chat = sample_agent("chat");
-        chat.is_default_conversation_agent = true;
-        store.add_agent(chat).await.unwrap();
-        store.add_agent(sample_agent("swe")).await.unwrap();
-
-        let mut swe_updated = sample_agent("swe");
-        swe_updated.is_default_conversation_agent = true;
-        let err = store.update_agent(swe_updated).await.unwrap_err();
-        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
     }
 
     #[tokio::test]

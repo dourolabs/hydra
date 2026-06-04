@@ -775,7 +775,7 @@ fn default_config_enables_all_builtin_policies() {
     // Build engine with no PolicyConfig (simulates absent [policies] section)
     let engine = crate::app::AppState::build_policy_engine(None);
 
-    assert_eq!(engine.restriction_count(), 5);
+    assert_eq!(engine.restriction_count(), 6);
     assert_eq!(engine.automation_count(), 8);
 
     // Also verify that an explicit config listing all policies gives the same counts
@@ -787,6 +787,7 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
                 PolicyEntry::Name("require_creator".to_string()),
                 PolicyEntry::Name("merge_authorization".to_string()),
+                PolicyEntry::Name("agent_role_uniqueness".to_string()),
             ],
             automations: vec![
                 PolicyEntry::Name("cascade_issue_status".to_string()),
@@ -801,7 +802,7 @@ fn default_config_enables_all_builtin_policies() {
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
-    assert_eq!(explicit_engine.restriction_count(), 5);
+    assert_eq!(explicit_engine.restriction_count(), 6);
     assert_eq!(explicit_engine.automation_count(), 8);
 }
 

@@ -168,6 +168,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_restriction("merge_authorization", |_params| {
         Ok(Box::new(MergeAuthorizationRestriction::new()))
     });
+    registry.register_restriction("agent_role_uniqueness", |_params| {
+        Ok(Box::new(AgentRoleUniquenessRestriction::new()))
+    });
 
     // Automations (order matters: cascade must run before kill_tasks)
     registry.register_automation("cascade_issue_status", |params| {

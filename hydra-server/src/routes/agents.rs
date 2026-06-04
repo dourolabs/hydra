@@ -80,7 +80,10 @@ pub async fn create_agent(
     info!(agent = %payload.name, "create_agent invoked");
     let (agent, prompt_text, mcp_config_text) = normalize_and_build_agent(payload)?;
 
-    let created = state.create_agent(agent).await.map_err(map_agent_error)?;
+    let created = state
+        .create_agent(agent, ActorRef::from(&actor))
+        .await
+        .map_err(map_agent_error)?;
 
     if let Some(prompt) = &prompt_text {
         write_prompt(&state, &created.prompt_path, prompt, &actor).await?;
@@ -114,7 +117,7 @@ pub async fn update_agent(
     }
 
     let updated = state
-        .update_agent(&agent_name, agent)
+        .update_agent(&agent_name, agent, ActorRef::from(&actor))
         .await
         .map_err(map_agent_error)?;
 
@@ -304,13 +307,9 @@ fn map_agent_error(err: AgentError) -> ApiError {
             error!(agent = %name, "agent not found");
             ApiError::not_found(format!("agent '{name}' not found"))
         }
-        AgentError::AssignmentAgentConflict => {
-            error!("assignment agent conflict");
-            ApiError::conflict("only one assignment agent is allowed".to_string())
-        }
-        AgentError::ConversationAgentConflict => {
-            error!("default conversation agent conflict");
-            ApiError::conflict("only one default conversation agent is allowed".to_string())
+        AgentError::PolicyViolation(violation) => {
+            error!(policy = %violation.policy_name, "agent policy violation");
+            ApiError::conflict(violation.message)
         }
         AgentError::Store(err) => {
             error!(error = %err, "agent store error");
