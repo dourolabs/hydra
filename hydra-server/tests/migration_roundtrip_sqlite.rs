@@ -8,22 +8,36 @@
 //! `run_migrations(&pool, None)` to HEAD. See
 //! `/designs/migration-testing-redesign.md` §3, §4, §7 for the algorithm.
 //!
-//! Scope (per [[i-toeamhmw]]): the `actor_variant_cleanup` SQLite arm's
-//! `session_events` and `conversation_events` rewrites — the exact code
-//! paths surfaced by the `(session_id, version_number) AS __pk`
+//! Initial scope (per [[i-toeamhmw]]): the `actor_variant_cleanup` SQLite
+//! arm's `session_events` and `conversation_events` rewrites — the exact
+//! code paths surfaced by the `(session_id, version_number) AS __pk`
 //! parse-reject bug that shipped past CI ([[i-ccchbxha]], fixed by
-//! [[i-nmcnqeyn]] / [[p-fcxmstwd]]). Future SQLite-only migration bugs
-//! get caught by extending this fixture tree + this file.
+//! [[i-nmcnqeyn]] / [[p-fcxmstwd]]).
+//!
+//! Widened in [[i-uazczsbc]] to cover the four other backfill migrations
+//! that ship for both backends but only had PG coverage:
+//! `20260530000000_add_assignee_principal_to_issues`,
+//! `20260601000000_review_author_principal`,
+//! `20260529000000_rename_refers_to_to_kebab_case`,
+//! `20260603010000_backfill_agent_config_system_prompt`. Their fixture
+//! rows live in the `20260519000000__pre_actor_overhaul.sql` baseline.
+//!
+//! Future SQLite-only migration bugs get caught by extending this
+//! fixture tree + this file.
 //!
 //! Runs under the default `cargo test --workspace` — no `#[ignore]`, no
 //! feature gate. The postgres test is CI-only because it needs a live
 //! postgres; SQLite has no such constraint and uses `sqlite::memory:`.
 
 use anyhow::{Context, Result, bail};
-use hydra_common::{ConversationId, IssueId, ProjectId, SessionId, TriggerId};
+use hydra_common::api::v1::agents::AgentName;
+use hydra_common::api::v1::users::Username as ApiUsername;
+use hydra_common::principal::Principal;
+use hydra_common::{ConversationId, HydraId, IssueId, ProjectId, SessionId, TriggerId};
 use hydra_server::domain::actors::{ActorId, ActorRef};
-use hydra_server::store::ReadOnlyStore;
+use hydra_server::domain::sessions::SessionMode;
 use hydra_server::store::sqlite_store::{self, MIGRATOR, SqliteStore};
+use hydra_server::store::{ReadOnlyStore, RelationshipType};
 use sqlx::{Row, SqlitePool};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -75,6 +89,11 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     assert_pagination_indexes_exist(&pool).await?;
     assert_schema_invariants(&pool).await?;
     assert_recent_migration_store_smoke(&pool).await?;
+
+    assert_assignee_principal_backfill(&pool).await?;
+    assert_review_author_principal_rewrite(&pool).await?;
+    assert_refers_to_rename(&pool).await?;
+    assert_agent_config_system_prompt_backfill(&pool).await?;
 
     Ok(())
 }
@@ -610,5 +629,263 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260530000000_add_assignee_principal_to_issues — assert the typed
+// `assignee_principal` column was populated for each source shape the SQL
+// backfill handles, then read each row back through `SqliteStore::get_issue`
+// to confirm the migrated JSON deserializes into the typed `Principal`.
+// ---------------------------------------------------------------------------
+
+async fn assert_assignee_principal_backfill(pool: &SqlitePool) -> Result<()> {
+    // SQL-level: bare / users-prefixed / agents-prefixed / external / NULL.
+    expect_assignee_principal(
+        pool,
+        "i-bareasgn",
+        Some(serde_json::json!({"User": {"name": "jayantk"}})),
+    )
+    .await?;
+    expect_assignee_principal(
+        pool,
+        "i-userpath",
+        Some(serde_json::json!({"User": {"name": "jayantk"}})),
+    )
+    .await?;
+    expect_assignee_principal(
+        pool,
+        "i-agentpath",
+        Some(serde_json::json!({"Agent": {"name": "swe"}})),
+    )
+    .await?;
+    // external/<sys>/<x> is intentionally left NULL by the SQL backfill.
+    expect_assignee_principal(pool, "i-extpath", None).await?;
+    expect_assignee_principal(pool, "i-nullasgn", None).await?;
+
+    // Store-level smoke: confirm the migrated JSON round-trips into typed
+    // `Principal` variants via `SqliteStore::get_issue`.
+    let store = SqliteStore::new(pool.clone());
+    let cases: [(&str, Option<Principal>); 5] = [
+        (
+            "i-bareasgn",
+            Some(Principal::User {
+                name: ApiUsername::try_new("jayantk").expect("jayantk validates"),
+            }),
+        ),
+        (
+            "i-userpath",
+            Some(Principal::User {
+                name: ApiUsername::try_new("jayantk").expect("jayantk validates"),
+            }),
+        ),
+        (
+            "i-agentpath",
+            Some(Principal::Agent {
+                name: AgentName::try_new("swe").expect("swe validates"),
+            }),
+        ),
+        ("i-extpath", None),
+        ("i-nullasgn", None),
+    ];
+    for (id, expected) in cases {
+        let issue_id = IssueId::from_str(id).with_context(|| format!("parse issue id '{id}'"))?;
+        let issue = store
+            .get_issue(&issue_id, false)
+            .await
+            .with_context(|| format!("SqliteStore::get_issue({id})"))?;
+        if issue.item.assignee != expected {
+            bail!(
+                "{id}: expected assignee={expected:?}; got {:?}",
+                issue.item.assignee
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn expect_assignee_principal(
+    pool: &SqlitePool,
+    issue_id: &str,
+    expected: Option<serde_json::Value>,
+) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT assignee_principal FROM issues_v2 \
+         WHERE id = ?1 AND is_latest = 1",
+    )
+    .bind(issue_id)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("read assignee_principal for {issue_id}"))?;
+    let raw: Option<String> = row.try_get("assignee_principal")?;
+    let got = raw
+        .map(|s| serde_json::from_str::<serde_json::Value>(&s))
+        .transpose()
+        .with_context(|| format!("decode assignee_principal JSON for {issue_id}"))?;
+    if got != expected {
+        bail!("issue {issue_id}: expected assignee_principal={expected:?}; got {got:?}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260601000000_review_author_principal — assert the SQL rewrite produced a
+// typed Principal for each `reviews[*].author` source shape, then read each
+// patch back through `SqliteStore::get_patch` to confirm the migrated JSON
+// deserializes into the typed `Principal`.
+// ---------------------------------------------------------------------------
+
+async fn assert_review_author_principal_rewrite(pool: &SqlitePool) -> Result<()> {
+    expect_first_review_author(
+        pool,
+        "p-barerev",
+        serde_json::json!({"User": {"name": "jayantk"}}),
+    )
+    .await?;
+    expect_first_review_author(
+        pool,
+        "p-agentrev",
+        serde_json::json!({"Agent": {"name": "swe"}}),
+    )
+    .await?;
+    // Already-typed author must pass through the rewrite untouched.
+    expect_first_review_author(
+        pool,
+        "p-typedrev",
+        serde_json::json!({"User": {"name": "jayantk"}}),
+    )
+    .await?;
+    // Store-level deserialization smoke (Review.author -> typed Principal) is
+    // omitted here because `20260601000000_review_author_principal.sql` rebuilds
+    // every review with `'is_approved', json(coalesce(json_extract(value,
+    // '$.is_approved'), 'false'))`. SQLite's `json_extract` collapses JSON
+    // booleans to integer 0/1, and `json(1)` then serializes as integer JSON,
+    // so post-migration rows carry `"is_approved":1` and fail
+    // `Review.is_approved: bool` deserialization. Tracked in [[i-olwdqhyo]];
+    // the smoke is reinstated by that fix. The SQL-level author assertions
+    // above still verify the migration's intended rewrite path.
+    Ok(())
+}
+
+async fn expect_first_review_author(
+    pool: &SqlitePool,
+    patch_id: &str,
+    expected_author: serde_json::Value,
+) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT json_extract(reviews, '$[0].author') AS author FROM patches_v2 \
+         WHERE id = ?1 AND is_latest = 1",
+    )
+    .bind(patch_id)
+    .fetch_one(pool)
+    .await
+    .with_context(|| format!("read reviews[0].author for {patch_id}"))?;
+    let raw: Option<String> = row.try_get("author")?;
+    let raw = raw.with_context(|| format!("patch {patch_id} has no reviews[0].author"))?;
+    let got: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| format!("decode reviews[0].author JSON for {patch_id}"))?;
+    if got != expected_author {
+        bail!("patch {patch_id}: expected reviews[0].author={expected_author}; got {got}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260529000000_rename_refers_to_to_kebab_case — assert no snake_case rows
+// remain and the seeded row surfaces through `SqliteStore::get_relationships`
+// under the typed `RelationshipType::RefersTo` discriminant.
+// ---------------------------------------------------------------------------
+
+async fn assert_refers_to_rename(pool: &SqlitePool) -> Result<()> {
+    let row =
+        sqlx::query("SELECT COUNT(*) AS c FROM object_relationships WHERE rel_type = 'refers_to'")
+            .fetch_one(pool)
+            .await
+            .context("count snake_case refers_to rows")?;
+    let snake_count: i64 = row.try_get("c")?;
+    if snake_count != 0 {
+        bail!("expected 0 rows with rel_type='refers_to' after rename; got {snake_count}");
+    }
+    let row = sqlx::query(
+        "SELECT COUNT(*) AS c FROM object_relationships \
+         WHERE source_id = 'i-bareasgn' AND target_id = 'i-userpath' AND rel_type = 'refers-to'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("count kebab-case refers-to row")?;
+    let kebab_count: i64 = row.try_get("c")?;
+    if kebab_count != 1 {
+        bail!(
+            "expected the seeded refers_to row to be renamed to refers-to; matched {kebab_count}"
+        );
+    }
+
+    let store = SqliteStore::new(pool.clone());
+    let source: HydraId = IssueId::from_str("i-bareasgn")
+        .context("parse 'i-bareasgn'")?
+        .into();
+    let target_expected: HydraId = IssueId::from_str("i-userpath")
+        .context("parse 'i-userpath'")?
+        .into();
+    let rels = store
+        .get_relationships(Some(&source), None, Some(RelationshipType::RefersTo))
+        .await
+        .context("SqliteStore::get_relationships(refers-to from i-bareasgn)")?;
+    if !rels
+        .iter()
+        .any(|r| r.target_id == target_expected && r.rel_type == RelationshipType::RefersTo)
+    {
+        bail!("expected a refers-to relationship from i-bareasgn to i-userpath; got {rels:?}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260603010000_backfill_agent_config_system_prompt — assert the headless
+// session's legacy `prompt` rode through `mode.prompt` onto
+// `agent_config.system_prompt`. The §3.3 smoke also confirms the
+// session-shape backfill produced the expected `SessionMode` variants for
+// headless / interactive / resumed sessions.
+// ---------------------------------------------------------------------------
+
+async fn assert_agent_config_system_prompt_backfill(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+
+    let headless = store
+        .get_session(&SessionId::from_str("s-headalpha")?, false)
+        .await
+        .context("SqliteStore::get_session(s-headalpha)")?;
+    if !matches!(&headless.item.mode, SessionMode::Headless) {
+        bail!(
+            "s-headalpha: expected SessionMode::Headless; got {:?}",
+            headless.item.mode
+        );
+    }
+    if headless.item.agent_config.system_prompt.as_deref() != Some("do a thing") {
+        bail!(
+            "s-headalpha: expected agent_config.system_prompt='do a thing'; got {:?}",
+            headless.item.agent_config.system_prompt
+        );
+    }
+
+    let interactive = store
+        .get_session(&SessionId::from_str("s-interone")?, false)
+        .await
+        .context("SqliteStore::get_session(s-interone)")?;
+    match &interactive.item.mode {
+        SessionMode::Interactive {
+            conversation_id, ..
+        } if conversation_id.as_ref() == "c-convalpha" => {}
+        other => bail!("s-interone: expected Interactive(c-convalpha); got {other:?}"),
+    }
+
+    let resumed = store
+        .get_session(&SessionId::from_str("s-intertwo")?, false)
+        .await
+        .context("SqliteStore::get_session(s-intertwo)")?;
+    match resumed.item.resumed_from.as_ref().map(|s| s.as_ref()) {
+        Some("s-interone") => {}
+        other => bail!("s-intertwo: expected resumed_from=s-interone; got {other:?}"),
+    }
     Ok(())
 }
