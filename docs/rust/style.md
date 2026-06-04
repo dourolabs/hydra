@@ -86,3 +86,42 @@ pub fn get_issue(id: &IssueId) -> Option<Issue> { ... }
 /// rows should use `get_issue_including_deleted`.
 pub fn get_issue(id: &IssueId) -> Option<Issue> { ... }
 ```
+
+## Comments are self-contained
+
+A comment must carry its meaning at the point where it sits. Don't defer to
+an external doc ("see §3 of the migration design", "see the cutover plan for
+why") — external references rot when the target moves, gets renamed, or gets
+deleted, and the comment goes stale silently. If a fact matters at the
+comment, write it at the comment.
+
+```rust
+// wrong: the load-bearing reason lives somewhere else
+// See §3 of the migration-testing design for why we skip the cutover branch.
+if state.is_cutover() { return Ok(()); }
+
+// correct: the reason is here
+// Cutover already applied the migration on the writer; replaying it on the
+// reader would double-apply the schema change.
+if state.is_cutover() { return Ok(()); }
+```
+
+## Prefer methods over free functions
+
+When a function has a natural receiver — an obvious value it operates on —
+hang it off that type as a method. `issue.is_blocked()` reads better than
+`is_blocked(&issue)`, is IDE-discoverable, doesn't pollute the module
+namespace, and lets the impl evolve with the type. Free functions are fine
+when there's no natural receiver.
+
+```rust
+// wrong
+fn issue_is_blocked(issue: &Issue) -> bool { ... }
+if issue_is_blocked(&issue) { ... }
+
+// correct
+impl Issue {
+    fn is_blocked(&self) -> bool { ... }
+}
+if issue.is_blocked() { ... }
+```
