@@ -19,13 +19,15 @@ mod users;
 
 pub use agents::AgentRecords;
 pub use conversations::{ConversationSummaryRecords, ConversationView};
-pub use documents::{DocumentRecordsView, DocumentSummaryRecords, SyncEvent, SyncSummary};
-pub use issues::{IssueRecords, IssueSummaryRecords, SubmitFormOutcome};
-pub use patches::{PatchRecords, PatchSummaryRecords};
+pub use documents::{
+    DeletedDocumentOutcome, DocumentRecordsView, DocumentSummaryRecords, SyncEvent, SyncSummary,
+};
+pub use issues::{DeletedIssueOutcome, IssueRecords, IssueSummaryRecords, SubmitFormOutcome};
+pub use patches::{DeletedPatchOutcome, PatchRecords, PatchSummaryRecords};
 pub use projects::{ProjectRecords, ProjectStatuses};
 pub use repositories::RepositoryRecords;
 pub use sessions::{SessionRecords, SessionSummaryRecords};
-pub use triggers::TriggerRecords;
+pub use triggers::{DeletedTriggerOutcome, TriggerRecords};
 pub use users::{DeleteSecretOutcome, SetSecretOutcome, UserRecords, UserSecretsList};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

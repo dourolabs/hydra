@@ -1,9 +1,11 @@
 use std::io::Write;
 
 use anyhow::Result;
-use hydra_common::issues::{
-    Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord, SubmitFormResponse,
+use hydra_common::{
+    issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord, SubmitFormResponse},
+    IssueId,
 };
+use serde_json::json;
 
 use super::Render;
 
@@ -12,6 +14,26 @@ pub struct IssueRecords<'a>(pub &'a [IssueVersionRecord]);
 pub struct IssueSummaryRecords<'a>(pub &'a [IssueSummaryRecord]);
 
 pub struct SubmitFormOutcome<'a>(pub &'a SubmitFormResponse);
+
+pub struct DeletedIssueOutcome<'a>(pub &'a IssueId);
+
+impl Render for DeletedIssueOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(
+            &mut *writer,
+            &json!({ "issue_id": self.0, "action": "deleted" }),
+        )?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(writer, "Deleted issue '{}'", self.0)?;
+        writer.flush()?;
+        Ok(())
+    }
+}
 
 impl Render for IssueRecords<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
@@ -183,5 +205,45 @@ impl Render for IssueSummaryRecords<'_> {
         }
         writer.flush()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        command::output::{render, ResolvedOutputFormat},
+        test_utils::ids::issue_id,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn deleted_issue_pretty_matches_legacy_wording() {
+        let id = issue_id("i-doomed");
+        let mut output = Vec::new();
+        render(
+            DeletedIssueOutcome(&id),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .expect("render");
+        let output = String::from_utf8(output).expect("utf8");
+        assert_eq!(output, format!("Deleted issue '{id}'\n"));
+    }
+
+    #[test]
+    fn deleted_issue_jsonl_emits_structured_record() {
+        let id = issue_id("i-doomed");
+        let mut output = Vec::new();
+        render(
+            DeletedIssueOutcome(&id),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )
+        .expect("render");
+        let output = String::from_utf8(output).expect("utf8");
+        assert_eq!(output.lines().count(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(output.trim_end()).expect("json");
+        assert_eq!(parsed, json!({ "issue_id": id, "action": "deleted" }));
     }
 }

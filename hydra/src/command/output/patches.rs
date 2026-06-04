@@ -1,9 +1,33 @@
 use std::io::Write;
 
 use anyhow::Result;
-use hydra_common::patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord};
+use hydra_common::{
+    patches::{PatchStatus, PatchSummaryRecord, PatchVersionRecord},
+    PatchId,
+};
+use serde_json::json;
 
 use super::Render;
+
+pub struct DeletedPatchOutcome<'a>(pub &'a PatchId);
+
+impl Render for DeletedPatchOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(
+            &mut *writer,
+            &json!({ "patch_id": self.0, "action": "deleted" }),
+        )?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        writeln!(writer, "Deleted patch '{}'", self.0)?;
+        writer.flush()?;
+        Ok(())
+    }
+}
 
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
@@ -127,5 +151,45 @@ fn format_patch_status(status: PatchStatus) -> &'static str {
         PatchStatus::Merged => "merged",
         PatchStatus::ChangesRequested => "changes requested",
         _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        command::output::{render, ResolvedOutputFormat},
+        test_utils::ids::patch_id,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn deleted_patch_pretty_matches_legacy_wording() {
+        let id = patch_id("p-doomed");
+        let mut output = Vec::new();
+        render(
+            DeletedPatchOutcome(&id),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )
+        .expect("render");
+        let output = String::from_utf8(output).expect("utf8");
+        assert_eq!(output, format!("Deleted patch '{id}'\n"));
+    }
+
+    #[test]
+    fn deleted_patch_jsonl_emits_structured_record() {
+        let id = patch_id("p-doomed");
+        let mut output = Vec::new();
+        render(
+            DeletedPatchOutcome(&id),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )
+        .expect("render");
+        let output = String::from_utf8(output).expect("utf8");
+        assert_eq!(output.lines().count(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(output.trim_end()).expect("json");
+        assert_eq!(parsed, json!({ "patch_id": id, "action": "deleted" }));
     }
 }

@@ -2,8 +2,8 @@ use crate::{
     client::{ConflictError, HydraClientInterface},
     command::{
         output::{
-            render, CommandContext, DocumentRecordsView, DocumentSummaryRecords,
-            ResolvedOutputFormat, SyncEvent, SyncSummary,
+            render, CommandContext, DeletedDocumentOutcome, DocumentRecordsView,
+            DocumentSummaryRecords, ResolvedOutputFormat, SyncEvent, SyncSummary,
         },
         utils::changelog::{summarize_activity_log, write_changelog_pretty},
     },
@@ -208,7 +208,13 @@ pub async fn run(
                 .delete_document(&document.document_id)
                 .await
                 .with_context(|| format!("failed to delete document '{}'", document.document_id))?;
-            println!("Deleted document '{}'", deleted.document_id);
+            let mut buffer = Vec::new();
+            render(
+                DeletedDocumentOutcome(&deleted.document_id),
+                context.output_format,
+                &mut buffer,
+            )?;
+            write_stdout(&buffer)?;
         }
         DocumentsCommand::Changelog { id_or_path, limit } => {
             changelog_document(client, &id_or_path, context.output_format, limit).await?;
