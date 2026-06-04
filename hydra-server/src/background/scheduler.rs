@@ -5,6 +5,7 @@ use crate::{
     background::{
         cleanup_branches::CleanupBranchesWorker,
         monitor_running_sessions::MonitorRunningSessionsWorker,
+        scheduled_triggers::ScheduledTriggerWorker,
     },
     config::WorkerSchedulerConfig,
     policy::integrations::github_pr_poller::GithubPollerWorker,
@@ -104,6 +105,7 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         .max(state.config.background.github_poller.interval_secs)
         .max(1);
     let cleanup_branches_interval_secs = scheduler_config.cleanup_branches.interval_secs.max(1);
+    let scheduled_triggers_interval_secs = scheduler_config.scheduled_triggers.interval_secs.max(1);
     log_worker_config(
         "monitor_running_sessions",
         monitor_interval_secs,
@@ -118,6 +120,11 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         "cleanup_branches",
         cleanup_branches_interval_secs,
         &scheduler_config.cleanup_branches,
+    );
+    log_worker_config(
+        crate::background::scheduled_triggers::WORKER_NAME,
+        scheduled_triggers_interval_secs,
+        &scheduler_config.scheduled_triggers,
     );
 
     let workers = vec![
@@ -143,7 +150,15 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
                 cleanup_branches_interval_secs,
                 &scheduler_config.cleanup_branches,
             ),
-            Arc::new(CleanupBranchesWorker::new(state)),
+            Arc::new(CleanupBranchesWorker::new(state.clone())),
+        ),
+        WorkerHandle::new(
+            worker_settings_from_config(
+                crate::background::scheduled_triggers::WORKER_NAME,
+                scheduled_triggers_interval_secs,
+                &scheduler_config.scheduled_triggers,
+            ),
+            Arc::new(ScheduledTriggerWorker::new(state)),
         ),
     ];
 

@@ -1191,6 +1191,47 @@ impl StoreWithEvents {
         Ok(changed)
     }
 
+    // ---- Trigger mutations ----
+    //
+    // Triggers do not currently have a `MutationPayload` variant — the
+    // event bus is not used by trigger subscribers in v1 — so the
+    // methods are plain passthroughs that take the same shape as the
+    // underlying `Store` calls. When a future PR wires up trigger
+    // events, the emission goes here.
+
+    pub async fn add_trigger(
+        &self,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<(TriggerId, VersionNumber), StoreError> {
+        self.inner.add_trigger(trigger, actor).await
+    }
+
+    pub async fn update_trigger(
+        &self,
+        id: &TriggerId,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.update_trigger(id, trigger, actor).await
+    }
+
+    pub async fn delete_trigger(
+        &self,
+        id: &TriggerId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.delete_trigger(id, actor).await
+    }
+
+    pub async fn record_trigger_fire(
+        &self,
+        id: &TriggerId,
+        fired_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), StoreError> {
+        self.inner.record_trigger_fire(id, fired_at).await
+    }
+
     // ---- Object relationship mutations ----
 
     pub async fn add_relationship_with_actor(
@@ -1591,8 +1632,15 @@ impl ReadOnlyStore for StoreWithEvents {
     async fn list_triggers(
         &self,
         include_deleted: bool,
-    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         self.inner.list_triggers(include_deleted).await
+    }
+
+    async fn get_trigger_versions(
+        &self,
+        id: &TriggerId,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        self.inner.get_trigger_versions(id).await
     }
 
     // ---- Project (read-only) ----

@@ -15,6 +15,7 @@ mod resolved_task;
 pub(crate) mod sessions;
 #[cfg(test)]
 pub mod test_helpers;
+mod triggers;
 mod users;
 
 use crate::{domain::patches::Patch, merge_queue::MergeQueueImpl, store::StoreError};
@@ -41,6 +42,7 @@ pub use sessions::{CreateSessionError, SetSessionStatusError};
 pub(crate) use sessions::{
     WORKER_NAME_CLEANUP_ORPHANED_SESSIONS, WORKER_NAME_SESSION_LIFECYCLE, rewrite_local_bundle_urls,
 };
+pub use triggers::UpsertTriggerError;
 pub use users::LoginError;
 pub(crate) use users::WORKER_NAME_LOGIN;
 

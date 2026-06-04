@@ -3686,10 +3686,62 @@ impl ReadOnlyStore for PostgresStoreV2 {
         ))
     }
 
+    async fn get_trigger_versions(
+        &self,
+        id: &TriggerId,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        let rows = sqlx::query_as::<_, TriggerRow>(&format!(
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at, \
+             NULL::timestamptz AS creation_time \
+             FROM {TABLE_TRIGGERS} \
+             WHERE id = $1 \
+             ORDER BY version_number"
+        ))
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if rows.is_empty() {
+            return Err(StoreError::TriggerNotFound(id.clone()));
+        }
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for trigger '{}'",
+                    row.id
+                ))
+            })?;
+            let actor_ref = row
+                .actor
+                .clone()
+                .map(serde_json::from_value::<ActorRef>)
+                .transpose()
+                .map_err(|e| StoreError::Internal(format!("failed to parse actor JSON: {e}")))?;
+            let trigger = Self::row_to_trigger(&row)?;
+            results.push(Versioned::with_optional_actor(
+                trigger,
+                version,
+                row.created_at,
+                actor_ref,
+                row.created_at,
+            ));
+        }
+
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
+        }
+
+        Ok(results)
+    }
+
     async fn list_triggers(
         &self,
         include_deleted: bool,
-    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.deleted, t.actor, t.created_at, t.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = t.id) AS creation_time \
@@ -3721,13 +3773,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 .map(serde_json::from_value::<ActorRef>)
                 .transpose()
                 .map_err(|e| StoreError::Internal(format!("failed to parse actor JSON: {e}")))?;
+            let trigger_id = TriggerId::from_str(&row.id).map_err(|err| {
+                StoreError::Internal(format!("invalid trigger id stored '{}': {err}", row.id))
+            })?;
             let trigger = Self::row_to_trigger(&row)?;
-            triggers.push(Versioned::with_optional_actor(
-                trigger,
-                version,
-                row.created_at,
-                actor_ref,
-                creation_time,
+            triggers.push((
+                trigger_id,
+                Versioned::with_optional_actor(
+                    trigger,
+                    version,
+                    row.created_at,
+                    actor_ref,
+                    creation_time,
+                ),
             ));
         }
         Ok(triggers)
@@ -5575,9 +5633,10 @@ impl Store for PostgresStoreV2 {
 
         let latest_row = latest_row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
 
-        // Always take `last_fired_at` from the latest row inside this tx —
-        // ignore whatever the caller supplied so a stale value cannot
-        // regress a concurrent `record_trigger_fire` write.
+        // Always overwrite the supplied `last_fired_at` with the latest
+        // row's value (Some or None). `record_trigger_fire` mutates the
+        // latest row in place; a stale snapshot round-tripped by the
+        // caller must not regress it.
         trigger.last_fired_at = latest_row.last_fired_at;
 
         let latest_version = VersionNumber::try_from(latest_row.version_number).map_err(|_| {

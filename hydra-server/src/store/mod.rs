@@ -811,12 +811,18 @@ pub trait ReadOnlyStore: Send + Sync {
         include_deleted: bool,
     ) -> Result<Versioned<Trigger>, StoreError>;
 
-    /// Lists all triggers.
+    /// Lists all triggers paired with their `TriggerId`.
     ///
     /// By default, deleted triggers are filtered out unless `include_deleted: true`.
     async fn list_triggers(
         &self,
         include_deleted: bool,
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError>;
+
+    /// Retrieves all versions of a trigger in ascending version order.
+    async fn get_trigger_versions(
+        &self,
+        id: &TriggerId,
     ) -> Result<Vec<Versioned<Trigger>>, StoreError>;
 
     // ---- Project (read-only) ----
@@ -1230,11 +1236,12 @@ pub trait Store: ReadOnlyStore {
     /// Updates an existing trigger in the store.
     ///
     /// Returns the new version number, or `StoreError::TriggerNotFound` if
-    /// the trigger does not exist. Any caller-supplied `last_fired_at` on
-    /// `trigger` is **ignored** — the field is always taken from the current
-    /// latest row inside the same transaction, so a concurrent
-    /// `record_trigger_fire` write is preserved and a stale value
-    /// round-tripped by the caller cannot regress it.
+    /// the trigger does not exist.
+    ///
+    /// Any `last_fired_at` value supplied on `trigger` is **ignored**: the
+    /// field is always taken from the current latest row inside the same
+    /// transaction so a concurrent `record_trigger_fire` write is never
+    /// regressed by a caller round-tripping a stale snapshot.
     async fn update_trigger(
         &self,
         id: &TriggerId,

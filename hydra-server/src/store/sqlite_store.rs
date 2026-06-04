@@ -3912,10 +3912,56 @@ impl ReadOnlyStore for SqliteStore {
         ))
     }
 
+    async fn get_trigger_versions(
+        &self,
+        id: &TriggerId,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        let rows = sqlx::query_as::<_, TriggerRow>(&format!(
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at, NULL AS creation_time
+             FROM {TABLE_TRIGGERS}
+             WHERE id = ?1
+             ORDER BY version_number"
+        ))
+        .bind(id.as_ref())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        if rows.is_empty() {
+            return Err(StoreError::TriggerNotFound(id.clone()));
+        }
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for trigger '{}'",
+                    row.id
+                ))
+            })?;
+            let trigger = Self::row_to_trigger(row)?;
+            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
+            results.push(Versioned::with_optional_actor(
+                trigger,
+                version,
+                timestamp,
+                parse_actor_json_string(row.actor.as_deref())?,
+                timestamp,
+            ));
+        }
+
+        let creation_time = results.first().map(|r| r.timestamp);
+        for r in &mut results {
+            r.creation_time = creation_time.unwrap_or(r.timestamp);
+        }
+
+        Ok(results)
+    }
+
     async fn list_triggers(
         &self,
         include_deleted: bool,
-    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+    ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.deleted, t.actor, t.created_at, t.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = t.id) AS creation_time
@@ -3948,12 +3994,18 @@ impl ReadOnlyStore for SqliteStore {
                 .map(parse_sqlite_timestamp)
                 .transpose()?
                 .unwrap_or(timestamp);
-            triggers.push(Versioned::with_optional_actor(
-                trigger,
-                version,
-                timestamp,
-                parse_actor_json_string(row.actor.as_deref())?,
-                creation_time,
+            let trigger_id = TriggerId::from_str(&row.id).map_err(|err| {
+                StoreError::Internal(format!("invalid trigger id stored '{}': {err}", row.id))
+            })?;
+            triggers.push((
+                trigger_id,
+                Versioned::with_optional_actor(
+                    trigger,
+                    version,
+                    timestamp,
+                    parse_actor_json_string(row.actor.as_deref())?,
+                    creation_time,
+                ),
             ));
         }
         Ok(triggers)
@@ -5749,9 +5801,10 @@ impl Store for SqliteStore {
 
         let latest_row = latest_row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
 
-        // Always take `last_fired_at` from the latest row inside this tx —
-        // ignore whatever the caller supplied so a stale value cannot
-        // regress a concurrent `record_trigger_fire` write.
+        // Always overwrite the supplied `last_fired_at` with the latest
+        // row's value (Some or None) — `record_trigger_fire` mutates the
+        // latest row in place, so a stale snapshot round-tripped by the
+        // caller must not regress it.
         trigger.last_fired_at = latest_row
             .last_fired_at
             .as_deref()
