@@ -2,8 +2,8 @@
 //!
 //! - [`Selection`] captures the common selection-flag surface
 //!   (`--source`/`--target`/`--object`/`--rel-type`/`--transitive`/`--scope`
-//!   plus `--kind` post-filters, verbosity, and the node-budget cap).
-//! - [`validate`] checks mutually-exclusive flag combinations.
+//!   plus `--kind` post-filters, verbosity, and the node-budget cap), with
+//!   [`Selection::validate`] for mutually-exclusive flag combinations.
 //! - [`resolve_node_ids`] runs step 1 of the algorithm: resolve the set of
 //!   node ids that the subcommand operates on.
 
@@ -37,23 +37,27 @@ pub struct Selection {
     pub max_nodes: usize,
 }
 
-/// Validate the CLI flag combinations. Returns an error message on misuse.
-pub fn validate(selection: &Selection) -> Result<(), String> {
-    if selection.scope.is_some()
-        && (selection.source.is_some() || selection.target.is_some() || selection.object.is_some())
-    {
-        return Err("--scope is mutually exclusive with --source/--target/--object".to_string());
+impl Selection {
+    /// Validate the CLI flag combinations. Returns an error message on misuse.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.scope.is_some()
+            && (self.source.is_some() || self.target.is_some() || self.object.is_some())
+        {
+            return Err(
+                "--scope is mutually exclusive with --source/--target/--object".to_string(),
+            );
+        }
+        if self.scope.is_none()
+            && self.source.is_none()
+            && self.target.is_none()
+            && self.object.is_none()
+        {
+            return Err(
+                "at least one of --source, --target, --object, or --scope is required".to_string(),
+            );
+        }
+        Ok(())
     }
-    if selection.scope.is_none()
-        && selection.source.is_none()
-        && selection.target.is_none()
-        && selection.object.is_none()
-    {
-        return Err(
-            "at least one of --source, --target, --object, or --scope is required".to_string(),
-        );
-    }
-    Ok(())
 }
 
 /// Step 1 of the algorithm: resolve the set of node ids to operate on.
@@ -182,7 +186,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_selection() {
-        let err = validate(&empty_selection()).unwrap_err();
+        let err = empty_selection().validate().unwrap_err();
         assert!(err.contains("at least one of"), "got: {err}");
     }
 
@@ -193,7 +197,7 @@ mod tests {
             source: Some("i-bbbbbb".parse().unwrap()),
             ..empty_selection()
         };
-        let err = validate(&selection).unwrap_err();
+        let err = selection.validate().unwrap_err();
         assert!(err.contains("mutually exclusive"), "got: {err}");
     }
 
@@ -204,7 +208,7 @@ mod tests {
             target: Some("i-bbbbbb".parse().unwrap()),
             ..empty_selection()
         };
-        let err = validate(&selection).unwrap_err();
+        let err = selection.validate().unwrap_err();
         assert!(err.contains("mutually exclusive"), "got: {err}");
     }
 
@@ -215,7 +219,7 @@ mod tests {
             object: Some("i-bbbbbb".parse().unwrap()),
             ..empty_selection()
         };
-        let err = validate(&selection).unwrap_err();
+        let err = selection.validate().unwrap_err();
         assert!(err.contains("mutually exclusive"), "got: {err}");
     }
 
@@ -225,7 +229,7 @@ mod tests {
             object: Some("i-aaaaaa".parse().unwrap()),
             ..empty_selection()
         };
-        assert!(validate(&selection).is_ok());
+        assert!(selection.validate().is_ok());
     }
 
     #[test]
@@ -234,7 +238,7 @@ mod tests {
             scope: Some("i-aaaaaa".parse().unwrap()),
             ..empty_selection()
         };
-        assert!(validate(&selection).is_ok());
+        assert!(selection.validate().is_ok());
     }
 
     #[test]

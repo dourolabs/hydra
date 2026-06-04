@@ -194,7 +194,7 @@ async fn diff_all(
         }
     }
 
-    records.sort_by(|a, b| record_id(a).as_ref().cmp(record_id(b).as_ref()));
+    records.sort_by(|a, b| a.id().as_ref().cmp(b.id().as_ref()));
     Ok(records)
 }
 
@@ -335,11 +335,71 @@ fn join_path(prefix: &str, suffix: &str) -> String {
     }
 }
 
-fn record_id(record: &DiffRecord) -> &HydraId {
-    match record {
-        DiffRecord::Added { id, .. }
-        | DiffRecord::Removed { id, .. }
-        | DiffRecord::Modified { id, .. } => id,
+impl DiffRecord {
+    fn id(&self) -> &HydraId {
+        match self {
+            DiffRecord::Added { id, .. }
+            | DiffRecord::Removed { id, .. }
+            | DiffRecord::Modified { id, .. } => id,
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        match self {
+            DiffRecord::Added {
+                kind,
+                id,
+                to_version,
+                end_view,
+            } => serde_json::json!({
+                "change": "added",
+                "kind": kind.as_str(),
+                "id": id.as_ref(),
+                "version": { "from": Value::Null, "to": to_version },
+                "object": end_view,
+            }),
+            DiffRecord::Removed {
+                kind,
+                id,
+                from_version,
+                start_view,
+            } => serde_json::json!({
+                "change": "removed",
+                "kind": kind.as_str(),
+                "id": id.as_ref(),
+                "version": { "from": from_version, "to": Value::Null },
+                "object": start_view,
+            }),
+            DiffRecord::Modified {
+                kind,
+                id,
+                from_version,
+                to_version,
+                fields,
+            } => {
+                let fields_value = Value::Object(
+                    fields
+                        .iter()
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                serde_json::json!({
+                                    "before": v.before,
+                                    "after": v.after,
+                                }),
+                            )
+                        })
+                        .collect(),
+                );
+                serde_json::json!({
+                    "change": "modified",
+                    "kind": kind.as_str(),
+                    "id": id.as_ref(),
+                    "version": { "from": from_version, "to": to_version },
+                    "fields": fields_value,
+                })
+            }
+        }
     }
 }
 
@@ -356,70 +416,12 @@ fn render(
 
 fn render_jsonl(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> {
     for record in records {
-        let value = record_to_json(record);
+        let value = record.to_json();
         serde_json::to_writer(&mut *writer, &value)?;
         writer.write_all(b"\n")?;
     }
     writer.flush()?;
     Ok(())
-}
-
-fn record_to_json(record: &DiffRecord) -> Value {
-    match record {
-        DiffRecord::Added {
-            kind,
-            id,
-            to_version,
-            end_view,
-        } => serde_json::json!({
-            "change": "added",
-            "kind": kind.as_str(),
-            "id": id.as_ref(),
-            "version": { "from": Value::Null, "to": to_version },
-            "object": end_view,
-        }),
-        DiffRecord::Removed {
-            kind,
-            id,
-            from_version,
-            start_view,
-        } => serde_json::json!({
-            "change": "removed",
-            "kind": kind.as_str(),
-            "id": id.as_ref(),
-            "version": { "from": from_version, "to": Value::Null },
-            "object": start_view,
-        }),
-        DiffRecord::Modified {
-            kind,
-            id,
-            from_version,
-            to_version,
-            fields,
-        } => {
-            let fields_value = Value::Object(
-                fields
-                    .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.clone(),
-                            serde_json::json!({
-                                "before": v.before,
-                                "after": v.after,
-                            }),
-                        )
-                    })
-                    .collect(),
-            );
-            serde_json::json!({
-                "change": "modified",
-                "kind": kind.as_str(),
-                "id": id.as_ref(),
-                "version": { "from": from_version, "to": to_version },
-                "fields": fields_value,
-            })
-        }
-    }
 }
 
 fn render_pretty(records: &[DiffRecord], writer: &mut impl Write) -> Result<()> {
