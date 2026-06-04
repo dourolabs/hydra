@@ -36,6 +36,14 @@ pub async fn session_events_or_relay(
     SessionIdPath(session_id): SessionIdPath,
     ws: Option<WebSocketUpgrade>,
 ) -> Result<Response, ApiError> {
+    info!(
+        session_id = %session_id,
+        upgrade = ws.is_some(),
+        "session_events_or_relay invoked"
+    );
+    // Completion logs live on the inner handlers (`session_relay` /
+    // `session_events_json`); this dispatcher's only decision is the
+    // upgrade branch logged above.
     match ws {
         Some(ws) => {
             session_relay(
@@ -57,6 +65,7 @@ async fn session_events_json(
     State(state): State<AppState>,
     SessionIdPath(session_id): SessionIdPath,
 ) -> Result<axum::Json<Vec<SessionEvent>>, ApiError> {
+    info!(session_id = %session_id, "session_events_json invoked");
     use crate::store::ReadOnlyStore as _;
     let events = state
         .store
@@ -69,6 +78,11 @@ async fn session_events_json(
             other => ApiError::internal(format!("failed to load session events: {other}")),
         })?;
     let api_events: Vec<SessionEvent> = events.into_iter().map(|v| v.item.into()).collect();
+    info!(
+        session_id = %session_id,
+        returned = api_events.len(),
+        "session_events_json completed"
+    );
     Ok(axum::Json(api_events))
 }
 
@@ -96,6 +110,10 @@ async fn session_relay(
         "WebSocket events upgrade requested"
     );
 
+    info!(
+        session_id = %session_id,
+        "session_relay completed: upgrading to websocket"
+    );
     Ok(ws.on_upgrade(move |socket| handle_events_socket(socket, state, session_id, actor)))
 }
 
