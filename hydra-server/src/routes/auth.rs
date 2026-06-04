@@ -30,7 +30,7 @@ pub async fn require_auth(
         Ok(auth_token) => auth_token,
         Err(error) => {
             let store_error = auth_token_error(&error);
-            let message = auth_failure_message(&store_error);
+            let message = store_error.auth_failure_message();
             info!(error = %store_error, "authorization rejected");
             return Err(ApiError::unauthorized(message));
         }
@@ -39,7 +39,7 @@ pub async fn require_auth(
     let stored_actor = match state.get_actor(auth_token.actor_name()).await {
         Ok(actor) => actor,
         Err(error) => {
-            let message = auth_failure_message(&error);
+            let message = error.auth_failure_message();
             info!(error = %error, "authorization rejected");
             return Err(ApiError::unauthorized(message));
         }
@@ -56,7 +56,7 @@ pub async fn require_auth(
 
     let Some(matched_row) = matched_row else {
         let error = StoreError::InvalidAuthToken;
-        let message = auth_failure_message(&error);
+        let message = error.auth_failure_message();
         info!(error = %error, "authorization rejected");
         return Err(ApiError::unauthorized(message));
     };
@@ -67,7 +67,7 @@ pub async fn require_auth(
         // with the same `authorization invalid` message we use for any
         // unknown token so callers see a uniform 401.
         let error = StoreError::InvalidAuthToken;
-        let message = auth_failure_message(&error);
+        let message = error.auth_failure_message();
         info!(
             actor = %auth_token.actor_name(),
             session_id = ?matched_row.session_id,
@@ -101,15 +101,6 @@ fn extract_bearer_token(headers: &header::HeaderMap) -> Result<&str, &'static st
         return Err("authorization token must not be empty");
     }
     Ok(token)
-}
-
-fn auth_failure_message(error: &StoreError) -> &'static str {
-    match error {
-        StoreError::ActorNotFound(_)
-        | StoreError::InvalidActorName(_)
-        | StoreError::InvalidAuthToken => "authorization invalid",
-        _ => "authorization unavailable",
-    }
 }
 
 fn auth_token_error(error: &AuthTokenError) -> StoreError {

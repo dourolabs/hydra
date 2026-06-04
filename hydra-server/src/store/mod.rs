@@ -161,6 +161,18 @@ pub struct ObjectRelationship {
     pub created_at: DateTime<Utc>,
 }
 
+impl ObjectRelationship {
+    /// Convert this store relationship into the wire `RelationResponse`.
+    pub fn to_response(&self) -> hydra_common::api::v1::relations::RelationResponse {
+        hydra_common::api::v1::relations::RelationResponse {
+            source_id: self.source_id.clone(),
+            target_id: self.target_id.clone(),
+            rel_type: self.rel_type.as_str().to_string(),
+            created_at: self.created_at,
+        }
+    }
+}
+
 /// An `auth_tokens` row resolved by token hash.
 ///
 /// `session_id` records the session that minted the token (if any).
@@ -337,6 +349,22 @@ pub enum StoreError {
     /// behind separate PRs.
     #[error("Unsupported store operation: {0}")]
     Unsupported(&'static str),
+}
+
+impl StoreError {
+    /// Returns a user-facing message for auth-middleware failures.
+    ///
+    /// Distinguishes invalid-credential errors (mapped to "authorization
+    /// invalid") from other store failures (mapped to "authorization
+    /// unavailable") so callers don't leak internal error detail.
+    pub fn auth_failure_message(&self) -> &'static str {
+        match self {
+            StoreError::ActorNotFound(_)
+            | StoreError::InvalidActorName(_)
+            | StoreError::InvalidAuthToken => "authorization invalid",
+            _ => "authorization unavailable",
+        }
+    }
 }
 
 /// Trait for read-only store operations: queries and lookups.

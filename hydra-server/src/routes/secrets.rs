@@ -11,27 +11,11 @@ use axum::{
     Extension, Json,
     extract::{Path, State},
 };
-use hydra_common::{
-    ActorId,
-    api::v1::{
-        ApiError,
-        secrets::{ListSecretsResponse, SetSecretRequest},
-    },
+use hydra_common::api::v1::{
+    ApiError,
+    secrets::{ListSecretsResponse, SetSecretRequest},
 };
 use tracing::info;
-
-/// Return 403 if the authenticated actor is not the requested user.
-///
-/// Only `ActorId::User` actors are permitted; agent / adhoc / external
-/// actors are rejected even when their `creator` field matches the target.
-fn authorize(actor: &Actor, target: &Username) -> Result<(), ApiError> {
-    if let ActorId::User(ref username) = actor.actor_id {
-        if username.as_str() == target.as_str() {
-            return Ok(());
-        }
-    }
-    Err(ApiError::forbidden("you can only access your own secrets"))
-}
 
 /// GET /v1/users/:username/secrets
 pub async fn list_secrets(
@@ -40,7 +24,7 @@ pub async fn list_secrets(
     Path(username): Path<String>,
 ) -> Result<Json<ListSecretsResponse>, ApiError> {
     let username = Username::from(username);
-    authorize(&actor, &username)?;
+    actor.authorize_for_user(&username)?;
 
     info!(username = %username, "list_secrets invoked");
 
@@ -78,7 +62,7 @@ pub async fn set_secret(
     Json(payload): Json<SetSecretRequest>,
 ) -> Result<Json<()>, ApiError> {
     let username = Username::from(username);
-    authorize(&actor, &username)?;
+    actor.authorize_for_user(&username)?;
 
     if let Err(msg) = validate_secret_name(&name) {
         return Err(ApiError::bad_request(format!(
@@ -116,7 +100,7 @@ pub async fn delete_secret(
     Path((username, name)): Path<(String, String)>,
 ) -> Result<Json<()>, ApiError> {
     let username = Username::from(username);
-    authorize(&actor, &username)?;
+    actor.authorize_for_user(&username)?;
 
     if let Err(msg) = validate_secret_name(&name) {
         return Err(ApiError::bad_request(format!(

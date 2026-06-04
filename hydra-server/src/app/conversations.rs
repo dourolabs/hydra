@@ -301,8 +301,8 @@ impl AppState {
 
         // Drive the active worker (if any) through graceful shutdown.
         // Send `ServerMessage::EndSession` over the relay and await the
-        // worker's clean WS close (which `relay.rs::cleanup` mirrors as
-        // the relay entry being dropped). If the worker doesn't disconnect
+        // worker's clean WS close (which `AppState::disconnect_chat_relay`
+        // mirrors as the relay entry being dropped). If the worker doesn't disconnect
         // within `GRACEFUL_CLOSE_TIMEOUT`, fall back to `kill_job` — the
         // pre-graceful behavior — so stuck workers can't block End Chat.
         if let Some(session_id) = self.chat_relay_map.active_session_id(conversation_id) {

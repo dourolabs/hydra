@@ -21,7 +21,7 @@ use crate::app::{AppState, ServiceState};
 use crate::background::start_background_scheduler;
 #[cfg(feature = "kubernetes")]
 use crate::config::build_kube_client;
-use crate::config::{AppConfig, GithubAppSection, JobEngineConfig, StorageConfig};
+use crate::config::{AppConfig, JobEngineConfig, StorageConfig};
 use crate::domain::actors::{Actor, ActorRef};
 use crate::domain::secrets::SecretManager;
 use crate::domain::users::{User, Username};
@@ -37,8 +37,6 @@ use axum::{
     routing::{get, post, put},
 };
 use hydra_common::constants::ENV_HYDRA_CONFIG;
-use jsonwebtoken::EncodingKey;
-use octocrab::Octocrab;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
 use tracing::{info, warn};
@@ -59,7 +57,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
     );
 
     let github_app = match app_config.auth.github_app() {
-        Some(gh) => build_github_app_client(gh)?,
+        Some(gh) => gh.build_client()?,
         None => None,
     };
 
@@ -668,16 +666,6 @@ fn rewrite_localhost_for_docker(hostname: &str) -> String {
         return "host.docker.internal".to_string();
     }
     hostname.to_string()
-}
-
-fn build_github_app_client(config: &GithubAppSection) -> anyhow::Result<Option<Octocrab>> {
-    let key = EncodingKey::from_rsa_pem(config.private_key().as_bytes())
-        .context("invalid GitHub App private key")?;
-    Octocrab::builder()
-        .app(config.app_id(), key)
-        .build()
-        .map(Some)
-        .context("building GitHub App client")
 }
 
 #[cfg(test)]

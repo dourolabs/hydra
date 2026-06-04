@@ -1,5 +1,4 @@
 use crate::app::{AppState, DeviceSession, LoginError, WORKER_NAME_LOGIN};
-use crate::config::AuthConfig;
 use crate::domain::actors::ActorRef;
 use crate::routes::sessions::ApiError;
 use axum::{Json, extract::State};
@@ -57,10 +56,10 @@ struct GithubTokenPollResponse {
 pub async fn device_start(
     State(state): State<AppState>,
 ) -> Result<Json<v1::login::DeviceStartResponse>, ApiError> {
-    let github_app = require_github_auth(&state.config.auth)?;
+    let github_app = state.config.auth.require_github()?;
 
     // Lazy cleanup of expired sessions before creating a new one.
-    cleanup_expired_sessions(&state);
+    state.cleanup_expired_sessions();
 
     let client_id = github_app.client_id().to_string();
     let oauth_base_url = github_app.oauth_base_url().to_string();
@@ -122,7 +121,7 @@ pub async fn device_poll(
     State(state): State<AppState>,
     Json(payload): Json<v1::login::DevicePollRequest>,
 ) -> Result<Json<v1::login::DevicePollResponse>, ApiError> {
-    require_github_auth(&state.config.auth)?;
+    state.config.auth.require_github()?;
 
     let device_session_id = &payload.device_session_id;
 
@@ -249,20 +248,6 @@ pub async fn device_poll(
             )))
         }
     }
-}
-
-/// Returns the GitHub app config or 404 if auth mode is Local.
-fn require_github_auth(auth: &AuthConfig) -> Result<&crate::config::GithubAppSection, ApiError> {
-    auth.github_app()
-        .ok_or_else(|| ApiError::not_found("device flow login is not available"))
-}
-
-/// Remove expired device sessions from the in-memory map.
-fn cleanup_expired_sessions(state: &AppState) {
-    let now = Instant::now();
-    state
-        .device_sessions
-        .retain(|_, session| session.expires_at > now);
 }
 
 fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
