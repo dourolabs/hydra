@@ -29,8 +29,7 @@ impl IssueStatus {
         }
     }
 
-    /// Returns true if this status represents a terminal state
-    /// (Closed, Dropped, or Failed).
+    /// Terminal states: Closed, Dropped, Failed.
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -38,8 +37,7 @@ impl IssueStatus {
         )
     }
 
-    /// Returns true if this status represents an active state
-    /// (Open or InProgress).
+    /// Active states: Open, InProgress.
     pub fn is_active(&self) -> bool {
         matches!(self, IssueStatus::Open | IssueStatus::InProgress)
     }

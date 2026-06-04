@@ -156,12 +156,10 @@ impl fmt::Display for AuthConfig {
 }
 
 impl AuthConfig {
-    /// Returns `true` if the server is running in local single-player mode.
     pub fn is_local(&self) -> bool {
         matches!(self, Self::Local { .. })
     }
 
-    /// Returns the GitHub App configuration, if this is GitHub auth mode.
     pub fn github_app(&self) -> Option<&GithubAppSection> {
         match self {
             Self::Github { github_app } => Some(github_app),
@@ -169,7 +167,6 @@ impl AuthConfig {
         }
     }
 
-    /// Returns the GitHub personal access token for local mode.
     pub fn github_token(&self) -> Option<&str> {
         match self {
             Self::Local { github_token, .. } => Some(github_token.as_str()),

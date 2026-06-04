@@ -300,7 +300,6 @@ impl Repository {
         None
     }
 
-    /// Returns `true` if this repository is hosted on GitHub.
     pub fn is_github(&self) -> bool {
         self.github_owner_repo().is_some()
     }

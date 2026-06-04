@@ -82,7 +82,6 @@ pub enum MutationPayload {
 }
 
 impl MutationPayload {
-    /// Returns the actor reference associated with this mutation.
     pub fn actor(&self) -> &ActorRef {
         match self {
             MutationPayload::Issue { actor, .. }
@@ -271,7 +270,6 @@ pub enum EntityId<'a> {
 }
 
 impl ServerEvent {
-    /// Returns the entity-type category and typed entity ID for this event.
     pub fn entity_info(&self) -> (&'static str, EntityId<'_>) {
         match self {
             ServerEvent::IssueCreated { issue_id, .. }
