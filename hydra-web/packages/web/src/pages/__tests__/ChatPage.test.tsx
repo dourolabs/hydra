@@ -160,7 +160,7 @@ vi.mock("@hydra/ui", () => ({
 
 // CSS Module proxies
 const cssProxy = new Proxy({}, { get: (_t, prop) => String(prop) });
-vi.mock("../ChatPage.module.css", () => ({ default: cssProxy }));
+vi.mock("../../features/chat/ExistingChatPage.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/chat/ChatHeader.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/chat/ChatInput.module.css", () => ({ default: cssProxy }));
 vi.mock("../../features/chat/ChatMessageList.module.css", () => ({ default: cssProxy }));
