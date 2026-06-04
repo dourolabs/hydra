@@ -104,9 +104,9 @@ impl<'de> Deserialize<'de> for DynamicRef {
 /// - `"external/github/x"`  → `Static(Principal::External { .. })`
 /// - `"@patch.creator"`     → `Dynamic(DynamicRef::PatchCreator)`
 ///
-/// For backwards compatibility with pre-Phase-5a configs (and existing
-/// stored merge_policy JSON blobs), a bare username with no `/` or `@`
-/// also deserialises as `Static(Principal::User { name })` — the
+/// For backwards compatibility with stored `merge_policy` JSON blobs
+/// and legacy configs, a bare username with no `/` or `@` also
+/// deserialises as `Static(Principal::User { name })` — the
 /// deserialiser is intentionally lenient so we do not need a JSON-blob
 /// migration over the `repositories` table.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

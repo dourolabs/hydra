@@ -73,16 +73,10 @@ impl FromStr for PatchStatus {
 /// the author from the authenticated actor; the [`Review`] type
 /// here is the canonical/response shape.
 ///
-/// The deserializer is back-compat with the pre-Phase-5b wire shape:
-/// a bare-string `author` is rewritten in flight via
-/// [`Principal::parse_legacy_assignee`]. This keeps clients running
-/// through the soft-cutover window — including when reading rows the
-/// server's row migration has not yet touched.
-///
-/// Each bare-string hit emits a `tracing::warn!` on the
-/// `review_author_legacy_decode` target so we can release-soak the
-/// fallback and confirm zero stale-client traffic before deleting it
-/// (design §8.2, §11 row 7).
+/// Bare-string `author` is accepted and rewritten via
+/// [`Principal::parse_legacy_assignee`]; each hit emits a
+/// `tracing::warn!` on the `review_author_legacy_decode` target so the
+/// fallback can be release-soaked before deletion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -1170,12 +1164,13 @@ mod tests {
         assert_eq!(summary_record.actor, None);
     }
 
-    // The legacy bare-string `author` fallback is gated on a
-    // release-soak with zero `review_author_legacy_decode` warn-logs
-    // (design §8.2, §11 row 7). The workspace has no `tracing-test`
-    // dep, so this is a smoke test that the path runs through the
-    // `warn!` without panicking and yields the expected typed
-    // Principal. Drop alongside the fallback removal.
+    // Smoke test for the legacy bare-string `author` fallback: the
+    // workspace has no `tracing-test` dep, so this just confirms the
+    // deserialize path runs through the `warn!` without panicking and
+    // yields the expected typed Principal. The fallback is held until
+    // a release with zero `review_author_legacy_decode` warn-logs
+    // confirms no stale-client traffic; drop this test alongside the
+    // fallback removal.
     #[test]
     fn review_legacy_string_author_emits_warn_without_panic() {
         let json = r#"{
