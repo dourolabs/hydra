@@ -78,14 +78,16 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Schema-invariants: `(created_at DESC, id DESC)` pagination indexes on the
-// four list-* tables. Mirrors postgres migrations 20260315000000 and
-// 20260317000000, ported to SQLite by 20260604010000.
+// Schema-invariants: pagination indexes on the four list-* tables. `issues_v2`
+// paginates by `updated_at` (so it gets `(updated_at DESC, id DESC)`); the
+// other three paginate by `created_at` (so they get `(created_at DESC, id
+// DESC)`). Mirrors postgres migrations 20260315000000, 20260317000000, and
+// 20260605000000; ported to SQLite by 20260604010000 and 20260605000000.
 // ---------------------------------------------------------------------------
 
 async fn assert_pagination_indexes_exist(pool: &SqlitePool) -> Result<()> {
     for name in [
-        "issues_v2_created_at_id_idx",
+        "issues_v2_updated_at_id_idx",
         "patches_v2_created_at_id_idx",
         "tasks_v2_created_at_id_idx",
         "documents_v2_created_at_id_idx",
@@ -98,6 +100,21 @@ async fn assert_pagination_indexes_exist(pool: &SqlitePool) -> Result<()> {
         if row.is_none() {
             bail!("expected pagination index {name} to exist post-rollforward");
         }
+    }
+    // The original `issues_v2_created_at_id_idx` was dropped by 20260605000000
+    // because `list_issues` orders by `updated_at`. Catch any future migration
+    // that re-creates it without thinking.
+    let stale = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'issues_v2_created_at_id_idx'",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("query sqlite_master for dropped index issues_v2_created_at_id_idx")?;
+    if stale.is_some() {
+        bail!(
+            "issues_v2_created_at_id_idx should have been dropped by 20260605000000; \
+             a later migration re-created it"
+        );
     }
     Ok(())
 }
