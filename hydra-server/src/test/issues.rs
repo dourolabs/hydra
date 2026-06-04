@@ -591,12 +591,24 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .json()
         .await?;
 
+    // List responses populate `resolved_status` from the default project;
+    // mirror that on the expected summary so structural equality holds.
+    let expected_summary = |issue: Issue| {
+        let api_issue = hydra_common::api::v1::issues::Issue::from(issue);
+        let mut summary = hydra_common::api::v1::issues::IssueSummary::from(&api_issue);
+        summary.resolved_status = Some(
+            crate::domain::projects::default_project()
+                .find_status(&api_issue.status)
+                .expect("default project covers all legacy IssueStatus values")
+                .clone(),
+        );
+        summary
+    };
+
     assert_eq!(filtered_issues.issues.len(), 1);
     assert_eq!(
         filtered_issues.issues[0].issue,
-        hydra_common::api::v1::issues::IssueSummary::from(
-            &hydra_common::api::v1::issues::Issue::from(base_issue)
-        )
+        expected_summary(base_issue)
     );
 
     use hydra_common::principal::{ExternalSystem, Principal as ActorPrincipal};
@@ -621,9 +633,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     assert_eq!(filtered_by_assignee.issues.len(), 1);
     assert_eq!(
         filtered_by_assignee.issues[0].issue,
-        hydra_common::api::v1::issues::IssueSummary::from(
-            &hydra_common::api::v1::issues::Issue::from(assigned_issue)
-        )
+        expected_summary(assigned_issue)
     );
 
     let filtered_by_status: ListIssuesResponse = client
@@ -643,9 +653,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
     assert_eq!(filtered_by_status.issues.len(), 1);
     assert_eq!(
         filtered_by_status.issues[0].issue,
-        hydra_common::api::v1::issues::IssueSummary::from(
-            &hydra_common::api::v1::issues::Issue::from(closed_issue)
-        )
+        expected_summary(closed_issue)
     );
     Ok(())
 }
