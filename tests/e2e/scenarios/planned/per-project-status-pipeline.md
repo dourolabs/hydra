@@ -2,22 +2,24 @@
 
 **ID:** per-project-status-pipeline
 **Category:** agent-coordination
-**Priority:** P2
-**Status:** queued — do not run until per-project status feature ([[i-ctfcvyru]]) has shipped. **Queue criterion:** all six implementation PRs of [[i-ctfcvyru]] ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) merged AND the tester agent prompt (`/agents/tester/prompt.md` in the doc store, `prompts/agents/tester.md` in the repo) updated to promote this scenario from P2 → P1.
+**Priority:** P1
 **Prerequisites:**
 - Server running (server-init scenario passed).
 - Test-fixture repository `dourolabs/hydra-test-fixture` registered (add-github-repo scenario passed).
+- P0 scenarios (`basic-issue-lifecycle`, `dashboard-navigation`) and `pm-agent-breakdown` completed.
 - Per-project-statuses feature ([[i-ctfcvyru]] / [[d-druoexk]]) has shipped on the server under test.
 - One Project named `engineering-v2` created with the six statuses defined in the **Setup** section below.
 - Three cloned agents `pm-v2`, `swe-v2`, `reviewer-v2` configured as active on `dourolabs/hydra-test-fixture` with the behavioral deltas defined in the **Setup** section below.
 
 **Estimated duration:** ~30 minutes
 
+**Queued under `scenarios/planned/` (see `tests/e2e/scenarios/planned/README.md`).** The tester's `ls tests/e2e/scenarios/*.md` enumeration skips this directory by design — that is the entire skip mechanism. Activate with a single `git mv tests/e2e/scenarios/planned/per-project-status-pipeline.md tests/e2e/scenarios/per-project-status-pipeline.md` once **all six implementation PRs of [[i-ctfcvyru]]** ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) have merged AND the runner-side seeding (Project `engineering-v2` plus the three cloned agents — see **Setup** below) is wired up in `tests/e2e/run.sh` and `$DOC_STORE`. The activation PR should reference those gate-PRs. The Step 1 skip-if pre-check below is kept as belt-and-suspenders for the period immediately after activation, when the seeding may not yet be on every test instance.
+
 ## Description
 
 Exercises the per-project status workflow designed in [[d-druoexk]] end-to-end through the dashboard. Covers both the **custom inbox/backlog/release pipeline** (design §4 "End-to-end use cases" — custom inbox/backlog/release pipeline) and the **same-issue review hand-off** (design §4 "End-to-end use cases" — same-issue review hand-off), exercising `apply_status_on_enter` automation (design §4 "Spawn dispatch and on_enter automation") and the unified readiness rule (design §4 "Dependencies, readiness, cascade") in one pass.
 
-This is a **paper spec** authored ahead of implementation. It cannot be executed until the per-project-statuses feature has shipped; the first step is a skip-if pre-check that exits cleanly when the feature is absent so this scenario is safe to enable in the suite before all six implementation PRs land.
+This is a **paper spec** authored ahead of implementation. It lives under `scenarios/planned/` so the tester's `ls tests/e2e/scenarios/*.md` enumeration skips it; once the six implementation PRs of [[i-ctfcvyru]] merge and the runner-side seeding lands, the activation PR `git mv`s the file up one directory and the tester picks it up. The Step 1 skip-if pre-check below remains as belt-and-suspenders during that transition.
 
 ## Setup
 

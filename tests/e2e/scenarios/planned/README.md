@@ -21,3 +21,6 @@ The PR doing the move should reference the gate-PRs that unlocked it.
 - **`triggers-one-shot-via-chat.md`** — queued on:
   1. **PR 6 [[i-fhmpscam]]** — the `hydra triggers {create,get,list,update,delete,test}` CLI (currently in flight).
   2. **Chat agent prompt update** — `$DOC_STORE/agents/chat/prompt.md` must add `hydra triggers` to its allowlist so the chat agent can translate "set up a trigger" into a real create call. No issue filed yet; tracked as a follow-up under parent [[i-fqrjpnhi]].
+- **`per-project-status-pipeline.md`** — queued on the per-project-statuses feature ([[i-ctfcvyru]] / [[d-druoexk]]):
+  1. **All six implementation PRs of [[i-ctfcvyru]]** ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) merged.
+  2. **Runner-side seeding** — `tests/e2e/run.sh` (plus a new `tests/e2e/config/projects.yaml`) must seed the `engineering-v2` Project with the six statuses described in the scenario's Setup section, and `$DOC_STORE/agents/{pm-v2,swe-v2,reviewer-v2}/prompt.md` must be authored with the behavioral deltas listed there. No issue filed yet; will be filed once the six implementation PRs land.
