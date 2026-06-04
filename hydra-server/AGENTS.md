@@ -1,5 +1,7 @@
 # hydra-server Guidelines
 
+See also: [`docs/rust/`](../docs/rust/AGENTS.md) for workspace-wide Rust standards, [`docs/architecture/`](../docs/architecture/AGENTS.md) for the routes/domain/store split and other load-bearing rules, and [`docs/open-core.md`](../docs/open-core.md) for the `ee/` carve-out and cargo features.
+
 ## Route & Module Layout
 - Keep every HTTP handler under `hydra-server/src/routes`. Split files by resource (e.g. `jobs.rs`, `repos.rs`) so each module exposes the Axum router plus helper types that stay scoped to that resource.
 - Background job logic lives under `hydra-server/src/job_engine` and `hydra-server/src/background`; keep per-job entrypoints in their own modules so they are easy to wire into schedulers.

@@ -41,7 +41,7 @@ After gathering context (via `hydra graph log` or `hydra issues get`), check the
 
 ## Context gathering
 - Clone implicated repos (`hydra repos clone <name>`).
-- Scan repo docs and relevant code paths (AGENTS.md, README, DESIGN.md, module folders).
+- Scan repo docs and relevant code paths (AGENTS.md, README, `docs/` clusters, module folders).
 - Identify unknowns and risks. If clarification is required, create a follow-up issue or a dedicated "clarify" task.
 - For unfamiliar domains, do outside research and briefly summarize key findings.
 

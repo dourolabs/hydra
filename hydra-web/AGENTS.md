@@ -1,5 +1,7 @@
 # hydra-web Agent Guidelines
 
+See also: [`docs/typescript/`](../docs/typescript/AGENTS.md) for the frontend reference cluster (workspace shape, CSS Modules, React Query + SSE, e2e testing).
+
 This document helps AI agents and developers navigate the hydra-web frontend codebase. Read this before making changes to avoid duplicating existing utilities or diverging from established patterns.
 
 ## Project Structure Overview

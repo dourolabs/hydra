@@ -1,3 +1,5 @@
+See also: [`docs/rust/`](../docs/rust/AGENTS.md) for workspace-wide Rust standards (style, idioms, errors, testing, CLI conventions).
+
 - Every CLI command should be implemented in its own file under the command/ module.
 - Define all CLI constants in `constants.rs` to keep them centralized.
 - When adding new methods to `HydraClient`, include forward-compatibility coverage in `tests/hydra_client_forward_compat.rs` to ensure responses tolerate new enum variants and extra fields.
