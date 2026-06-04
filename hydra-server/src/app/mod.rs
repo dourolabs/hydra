@@ -10,6 +10,7 @@ mod labels;
 mod merge_queue;
 mod patches;
 pub mod projects;
+mod relationships;
 mod repositories;
 mod resolved_task;
 pub(crate) mod sessions;
