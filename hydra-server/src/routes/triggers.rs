@@ -130,6 +130,7 @@ pub async fn get_trigger(
         .get_trigger(&trigger_id, include_deleted)
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
+    info!(trigger_id = %trigger_id, "get_trigger completed");
     Ok(Json(to_record(&trigger_id, versioned)))
 }
 
@@ -201,6 +202,7 @@ pub async fn get_trigger_version(
                 "trigger '{trigger_id}' version {resolved} not found"
             ))
         })?;
+    info!(trigger_id = %trigger_id, version = resolved, "get_trigger_version completed");
     Ok(Json(to_record(&trigger_id, versioned)))
 }
 
@@ -219,6 +221,7 @@ pub async fn delete_trigger(
         .get_trigger(&trigger_id, true)
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
+    info!(trigger_id = %trigger_id, "delete_trigger completed");
     Ok(Json(to_record(&trigger_id, versioned)))
 }
 
