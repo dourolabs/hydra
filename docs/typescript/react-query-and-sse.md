@@ -45,7 +45,7 @@ useQuery({ queryKey: ["issue", id], queryFn: …, refetchInterval: 2000 });
 useQuery({ queryKey: ["issue", id], queryFn: () => apiClient.getIssue(id), enabled: !!id });
 ```
 
-`useSSE` is mounted once in `App.tsx`; component code should not open its own EventSource. Session log chunks are multiplexed through the same connection via `sessionLogRegistry`.
+`useSSE` is mounted once in `packages/web/src/layout/AppLayout.tsx`; component code should not open its own EventSource. Session log chunks are multiplexed through the same connection via `sessionLogRegistry`.
 
 ## Feature module shape
 

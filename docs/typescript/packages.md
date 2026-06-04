@@ -29,7 +29,7 @@ import { apiClient } from "../../api/client";
 const resp = await apiClient.searchIssues({ ... });
 ```
 
-If the route you need doesn't exist on `HydraApiClient`, add a method there. The one BFF-only escape hatch is `apiFetch<T>()` in the same file, used for non-hydra-server routes like `/auth/*`.
+If the route you need doesn't exist on `HydraApiClient`, add a method there. The one BFF-only escape hatch is `apiFetch<T>()` in `packages/web/src/api/client.ts` (alongside the `apiClient` singleton), used for non-hydra-server routes like `/auth/*`.
 
 ## Check `packages/web/src/utils/` before adding a helper
 
