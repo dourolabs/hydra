@@ -460,6 +460,7 @@ mod tests {
             String::new(),
             status.into(),
             None,
+            None,
             Some(SessionSettings::default()),
             Vec::new(),
             Vec::new(),

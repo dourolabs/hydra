@@ -33,8 +33,8 @@ use hydra_common::{
     },
     api::v1::merge_check::MergeCheckResponse,
     api::v1::projects::{
-        ListProjectsResponse, ProjectRecord, ProjectStatusesResponse, UpsertProjectRequest,
-        UpsertProjectResponse,
+        ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
+        UpsertProjectRequest, UpsertProjectResponse,
     },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
@@ -340,9 +340,9 @@ impl HydraClientInterface for RelayCallCountingClient {
 
     async fn get_project_statuses(
         &self,
-        project_id_or_key: &str,
+        project: &ProjectIdOrDefault,
     ) -> Result<ProjectStatusesResponse> {
-        self.inner.get_project_statuses(project_id_or_key).await
+        self.inner.get_project_statuses(project).await
     }
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {

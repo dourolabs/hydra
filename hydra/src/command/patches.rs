@@ -1653,6 +1653,7 @@ mod tests {
                 IssueStatus::Open.into(),
                 None,
                 None,
+                None,
                 Vec::new(),
                 patches,
                 false,
@@ -2779,6 +2780,7 @@ mod tests {
                 Username::from("creator"),
                 String::new(),
                 IssueStatus::Open.into(),
+                None,
                 None,
                 Some({
                     let mut ss = SessionSettings::default();

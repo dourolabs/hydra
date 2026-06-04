@@ -217,9 +217,7 @@ async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
         ])
         .await?;
     assert!(
-        failure.stderr.contains("not-a-real-status")
-            || failure.stderr.contains("status")
-            || failure.stderr.contains("400"),
+        failure.stderr.contains("not-a-real-status") || failure.stderr.contains("400"),
         "expected error to mention the bad status, got: {}",
         failure.stderr
     );

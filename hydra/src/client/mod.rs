@@ -21,8 +21,8 @@ use hydra_common::{
     },
     api::v1::merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
     api::v1::projects::{
-        ListProjectsResponse, ProjectRecord, ProjectStatusesResponse, UpsertProjectRequest,
-        UpsertProjectResponse,
+        ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
+        UpsertProjectRequest, UpsertProjectResponse,
     },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
@@ -324,7 +324,7 @@ pub trait HydraClientInterface: Send + Sync {
     async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse>;
     async fn get_project_statuses(
         &self,
-        project_id_or_key: &str,
+        project: &ProjectIdOrDefault,
     ) -> Result<ProjectStatusesResponse>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn list_users(&self, query: &SearchUsersQuery) -> Result<ListUsersResponse>;
@@ -1588,14 +1588,14 @@ impl HydraClient {
             .context("failed to decode delete project response")
     }
 
-    /// Call `GET /v1/projects/:project_id_or_key/statuses` to list the
-    /// project's status definitions. Pass `"default"` to get the synthesized
-    /// default project's statuses.
+    /// Call `GET /v1/projects/:project/statuses` to list the project's status
+    /// definitions. Pass [`ProjectIdOrDefault::Default`] to get the
+    /// synthesized default project's statuses.
     pub async fn get_project_statuses(
         &self,
-        project_id_or_key: &str,
+        project: &ProjectIdOrDefault,
     ) -> Result<ProjectStatusesResponse> {
-        let url = self.endpoint(&format!("/v1/projects/{project_id_or_key}/statuses"))?;
+        let url = self.endpoint(&format!("/v1/projects/{project}/statuses"))?;
         let response = self
             .authed(self.http.get(url))
             .send()
@@ -2841,9 +2841,9 @@ impl HydraClientInterface for HydraClient {
 
     async fn get_project_statuses(
         &self,
-        project_id_or_key: &str,
+        project: &ProjectIdOrDefault,
     ) -> Result<ProjectStatusesResponse> {
-        HydraClient::get_project_statuses(self, project_id_or_key).await
+        HydraClient::get_project_statuses(self, project).await
     }
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {

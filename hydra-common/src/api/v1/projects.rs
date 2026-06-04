@@ -393,6 +393,44 @@ impl ProjectStatusesResponse {
     }
 }
 
+/// Path segment for `GET /v1/projects/:project_id_or_default/statuses`. Either
+/// a real [`ProjectId`] or the literal `"default"` token addressing the
+/// synthesized default project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectIdOrDefault {
+    Default,
+    Id(ProjectId),
+}
+
+/// The wire token for the default project in `GET /v1/projects/:x/statuses`.
+pub const DEFAULT_PROJECT_TOKEN: &str = "default";
+
+impl fmt::Display for ProjectIdOrDefault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Default => f.write_str(DEFAULT_PROJECT_TOKEN),
+            Self::Id(id) => fmt::Display::fmt(id, f),
+        }
+    }
+}
+
+impl FromStr for ProjectIdOrDefault {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == DEFAULT_PROJECT_TOKEN {
+            return Ok(Self::Default);
+        }
+        ProjectId::try_from(s.to_string())
+            .map(Self::Id)
+            .map_err(|err| {
+                format!(
+                    "'{s}' is neither a valid project id nor the literal `{DEFAULT_PROJECT_TOKEN}`: {err}"
+                )
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

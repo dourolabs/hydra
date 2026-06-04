@@ -9,10 +9,11 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::api::v1::projects::{
-    Project, ProjectKey, ProjectRecord, StatusKey, UpsertProjectRequest, UpsertProjectResponse,
+    Project, ProjectIdOrDefault, ProjectKey, ProjectRecord, StatusKey, UpsertProjectRequest,
+    UpsertProjectResponse,
 };
 use hydra_common::ProjectId;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// Body file payload for `projects create` / `projects update`. Describes a
@@ -97,8 +98,8 @@ pub struct DeleteProjectArgs {
 pub struct StatusesProjectArgs {
     /// Project id or the literal `default` for the synthesized default
     /// project.
-    #[arg(value_name = "PROJECT_ID_OR_KEY")]
-    pub project_id_or_key: String,
+    #[arg(value_name = "PROJECT_ID_OR_DEFAULT")]
+    pub project: ProjectIdOrDefault,
 }
 
 pub async fn run(
@@ -156,13 +157,10 @@ pub async fn run(
         }
         ProjectsCommand::Statuses(args) => {
             let response = client
-                .get_project_statuses(&args.project_id_or_key)
+                .get_project_statuses(&args.project)
                 .await
                 .with_context(|| {
-                    format!(
-                        "failed to fetch statuses for project '{}'",
-                        args.project_id_or_key
-                    )
+                    format!("failed to fetch statuses for project '{}'", args.project)
                 })?;
             render(
                 ProjectStatuses(&response),
@@ -241,7 +239,7 @@ async fn update_project(
     ))
 }
 
-fn load_body_file(path: &PathBuf) -> Result<ProjectBodyFile> {
+fn load_body_file(path: &Path) -> Result<ProjectBodyFile> {
     let contents = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read project body file '{}'", path.display()))?;
     let trimmed = contents.trim();
@@ -354,7 +352,7 @@ mod tests {
                 "default_status_key": "open"
             }"##,
         );
-        let body = load_body_file(&file.path().to_path_buf()).unwrap();
+        let body = load_body_file(file.path()).unwrap();
         assert_eq!(body.statuses.len(), 1);
         assert_eq!(body.statuses[0].key, StatusKey::try_new("open").unwrap());
         assert_eq!(body.default_status_key, StatusKey::try_new("open").unwrap());
@@ -375,7 +373,7 @@ statuses:
 default_status_key: open
 "##,
         );
-        let body = load_body_file(&file.path().to_path_buf()).unwrap();
+        let body = load_body_file(file.path()).unwrap();
         assert_eq!(body.statuses.len(), 1);
         assert_eq!(body.default_status_key, StatusKey::try_new("open").unwrap());
     }
@@ -383,14 +381,14 @@ default_status_key: open
     #[test]
     fn load_body_file_rejects_empty() {
         let file = write_body("");
-        let err = load_body_file(&file.path().to_path_buf()).unwrap_err();
+        let err = load_body_file(file.path()).unwrap_err();
         assert!(err.to_string().contains("is empty"));
     }
 
     #[test]
     fn load_body_file_rejects_malformed() {
         let file = write_body("{not valid");
-        let err = load_body_file(&file.path().to_path_buf()).unwrap_err();
+        let err = load_body_file(file.path()).unwrap_err();
         assert!(err.to_string().contains("failed to parse"), "got: {err:?}");
     }
 
@@ -435,7 +433,7 @@ default_status_key: open
             serde_json::to_string(&def).unwrap()
         );
         let file = write_body(&json);
-        let body = load_body_file(&file.path().to_path_buf()).unwrap();
+        let body = load_body_file(file.path()).unwrap();
         assert_eq!(body.statuses, vec![def]);
     }
 }

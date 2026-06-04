@@ -479,13 +479,14 @@ impl From<api::issues::Issue> for Issue {
 
 impl From<Issue> for api::issues::Issue {
     fn from(value: Issue) -> Self {
-        let mut out = api::issues::Issue::new(
+        api::issues::Issue::new(
             value.issue_type.into(),
             value.title,
             value.description,
             value.creator.into(),
             value.progress,
             value.status,
+            value.project_id,
             value.assignee,
             Some(value.session_settings.into()),
             value.dependencies.into_iter().map(Into::into).collect(),
@@ -494,9 +495,7 @@ impl From<Issue> for api::issues::Issue {
             value.form,
             value.form_response,
             value.feedback,
-        );
-        out.project_id = value.project_id;
-        out
+        )
     }
 }
 

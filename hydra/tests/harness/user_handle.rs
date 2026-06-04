@@ -143,6 +143,7 @@ impl UserHandle {
             IssueStatus::Open.into(),
             None,
             None,
+            None,
             Vec::new(),
             Vec::new(),
             false,
@@ -168,6 +169,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             IssueStatus::Open.into(),
+            None,
             None,
             None,
             vec![IssueDependency::new(
@@ -342,6 +344,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status.into(),
+            None,
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent
@@ -392,6 +395,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status.into(),
+            None,
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent
