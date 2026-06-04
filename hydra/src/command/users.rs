@@ -1,6 +1,9 @@
 use super::utils::resolve_username;
 use crate::client::HydraClientInterface;
-use crate::command::output::{render, CommandContext, UserRecords};
+use crate::command::output::{
+    render, CommandContext, DeleteSecretOutcome, ResolvedOutputFormat, SetSecretOutcome,
+    UserRecords, UserSecretsList,
+};
 use crate::output_writer::write_stdout;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
@@ -78,7 +81,7 @@ pub async fn run(
             render(UserRecords(&[user]), context.output_format, &mut buffer)?;
         }
         UsersCommand::Secrets { command } => {
-            run_secrets(client, command).await?;
+            run_secrets(client, command, context.output_format).await?;
         }
     }
     if !buffer.is_empty() {
@@ -129,21 +132,24 @@ async fn get_user(
         .with_context(|| format!("failed to fetch user info for '{target_username}'"))
 }
 
-async fn run_secrets(client: &dyn HydraClientInterface, command: SecretsCommand) -> Result<()> {
+async fn run_secrets(
+    client: &dyn HydraClientInterface,
+    command: SecretsCommand,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
     let username = resolve_username(client).await?;
+    let mut buffer = Vec::new();
     match command {
         SecretsCommand::List => {
             let response = client
                 .list_user_secrets(username.as_ref())
                 .await
                 .context("failed to list secrets")?;
-            if response.secrets.is_empty() {
-                println!("No secrets configured.");
-            } else {
-                for name in &response.secrets {
-                    println!("{name}");
-                }
-            }
+            render(
+                UserSecretsList(&response.secrets),
+                output_format,
+                &mut buffer,
+            )?;
         }
         SecretsCommand::Set { name, value } => {
             let value = match value {
@@ -155,15 +161,18 @@ async fn run_secrets(client: &dyn HydraClientInterface, command: SecretsCommand)
                 .set_user_secret(username.as_ref(), &name, &value)
                 .await
                 .with_context(|| format!("failed to set secret '{name}'"))?;
-            println!("Secret '{name}' set successfully.");
+            render(SetSecretOutcome(&name), output_format, &mut buffer)?;
         }
         SecretsCommand::Delete { name } => {
             client
                 .delete_user_secret(username.as_ref(), &name)
                 .await
                 .with_context(|| format!("failed to delete secret '{name}'"))?;
-            println!("Secret '{name}' deleted.");
+            render(DeleteSecretOutcome(&name), output_format, &mut buffer)?;
         }
+    }
+    if !buffer.is_empty() {
+        write_stdout(&buffer)?;
     }
     Ok(())
 }
@@ -172,7 +181,10 @@ async fn run_secrets(client: &dyn HydraClientInterface, command: SecretsCommand)
 mod tests {
     use super::*;
     use crate::client::HydraClient;
-    use crate::command::output::{render, ResolvedOutputFormat, UserRecords};
+    use crate::command::output::{
+        render, DeleteSecretOutcome, ResolvedOutputFormat, SetSecretOutcome, UserRecords,
+        UserSecretsList,
+    };
     use httpmock::prelude::*;
     use hydra_common::{
         api::v1::{
@@ -448,7 +460,7 @@ mod tests {
         });
 
         let client = mock_client(&server);
-        run_secrets(&client, SecretsCommand::List).await?;
+        run_secrets(&client, SecretsCommand::List, ResolvedOutputFormat::Pretty).await?;
 
         mock.assert();
         Ok(())
@@ -473,6 +485,7 @@ mod tests {
                 name: "OPENAI_API_KEY".to_string(),
                 value: Some("sk-test123".to_string()),
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await?;
 
@@ -497,10 +510,136 @@ mod tests {
             SecretsCommand::Delete {
                 name: "OPENAI_API_KEY".to_string(),
             },
+            ResolvedOutputFormat::Pretty,
         )
         .await?;
 
         mock.assert();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_list_pretty_lists_names() -> Result<()> {
+        let names = vec![
+            "OPENAI_API_KEY".to_string(),
+            "ANTHROPIC_API_KEY".to_string(),
+        ];
+        let mut output = Vec::new();
+        render(
+            UserSecretsList(&names),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert_eq!(output, "OPENAI_API_KEY\nANTHROPIC_API_KEY\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_list_pretty_empty_shows_message() -> Result<()> {
+        let names: Vec<String> = Vec::new();
+        let mut output = Vec::new();
+        render(
+            UserSecretsList(&names),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert_eq!(output, "No secrets configured.\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_list_jsonl_emits_one_object_per_name() -> Result<()> {
+        let names = vec![
+            "OPENAI_API_KEY".to_string(),
+            "ANTHROPIC_API_KEY".to_string(),
+        ];
+        let mut output = Vec::new();
+        render(
+            UserSecretsList(&names),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let first: serde_json::Value = serde_json::from_str(lines[0])?;
+        let second: serde_json::Value = serde_json::from_str(lines[1])?;
+        assert_eq!(first, json!({ "name": "OPENAI_API_KEY" }));
+        assert_eq!(second, json!({ "name": "ANTHROPIC_API_KEY" }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_list_jsonl_empty_emits_nothing() -> Result<()> {
+        let names: Vec<String> = Vec::new();
+        let mut output = Vec::new();
+        render(
+            UserSecretsList(&names),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )?;
+        assert!(output.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_set_pretty_outcome() -> Result<()> {
+        let mut output = Vec::new();
+        render(
+            SetSecretOutcome("OPENAI_API_KEY"),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert_eq!(output, "Secret 'OPENAI_API_KEY' set successfully.\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_set_jsonl_outcome() -> Result<()> {
+        let mut output = Vec::new();
+        render(
+            SetSecretOutcome("OPENAI_API_KEY"),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert_eq!(output.lines().count(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(output.trim_end())?;
+        assert_eq!(parsed, json!({ "name": "OPENAI_API_KEY", "action": "set" }));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_delete_pretty_outcome() -> Result<()> {
+        let mut output = Vec::new();
+        render(
+            DeleteSecretOutcome("OPENAI_API_KEY"),
+            ResolvedOutputFormat::Pretty,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert_eq!(output, "Secret 'OPENAI_API_KEY' deleted.\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn secrets_delete_jsonl_outcome() -> Result<()> {
+        let mut output = Vec::new();
+        render(
+            DeleteSecretOutcome("OPENAI_API_KEY"),
+            ResolvedOutputFormat::Jsonl,
+            &mut output,
+        )?;
+        let output = String::from_utf8(output)?;
+        assert_eq!(output.lines().count(), 1);
+        let parsed: serde_json::Value = serde_json::from_str(output.trim_end())?;
+        assert_eq!(
+            parsed,
+            json!({ "name": "OPENAI_API_KEY", "action": "deleted" })
+        );
         Ok(())
     }
 }
