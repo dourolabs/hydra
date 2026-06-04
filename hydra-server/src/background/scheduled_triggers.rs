@@ -2,26 +2,25 @@
 //! `ActorRef::Trigger` writes and `Trigger -created-> Issue` edges.
 //!
 //! On each tick (10s default, see `WorkerSchedulerConfig`) the worker
-//! reloads the trigger cache via `list_triggers(false)`, computes
-//! `next_fire(last_fired_at, schedule)` for each enabled trigger, fires
-//! any whose due-slot has elapsed, and records `last_fired_at =
+//! reloads the trigger cache via `list_triggers(false)`, asks each
+//! `Schedule::get_fire_candidate(last_fired_at, now)` whether the
+//! trigger is due, fires any that are, and records `last_fired_at =
 //! scheduled_at` via `Store::record_trigger_fire` regardless of action
-//! outcome (the §4.6 scheduling-correctness invariant).
-//!
-//! See `/designs/triggered-actions.md` §4 / §4.1 / §4.6, and §7 PR 5.
+//! outcome — the scheduling-correctness invariant that makes the worker
+//! self-correcting across restarts.
 
 use crate::{
-    app::AppState,
+    app::{AppState, StoreWithEvents},
     background::scheduler::{ScheduledWorker, WorkerOutcome},
     domain::actors::ActorRef,
-    domain::triggers::{ActionRun, RenderContext, parse_cron_expression},
-    store::Store,
+    domain::triggers::{ActionRun, RenderContext, ScheduleFiring},
+    store::ReadOnlyStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hydra_common::ActorId;
 use hydra_common::TriggerId;
-use hydra_common::triggers::{Schedule, Trigger};
+use hydra_common::triggers::Trigger;
 use tracing::{error, info, warn};
 
 pub const WORKER_NAME: &str = "scheduled_triggers";
@@ -42,7 +41,7 @@ impl ScheduledWorker for ScheduledTriggerWorker {
     async fn run_iteration(&self) -> WorkerOutcome {
         info!(worker = WORKER_NAME, "worker iteration started");
 
-        let store = self.state.store.inner().clone();
+        let store = &*self.state.store;
 
         let triggers = match store.list_triggers(false).await {
             Ok(t) => t,
@@ -62,11 +61,14 @@ impl ScheduledWorker for ScheduledTriggerWorker {
             if !trigger.enabled || trigger.deleted {
                 continue;
             }
-            let Some(scheduled_at) = due_fire(&trigger, now) else {
+            let Some(scheduled_at) = trigger
+                .schedule
+                .get_fire_candidate(trigger.last_fired_at, now)
+            else {
                 continue;
             };
 
-            match fire_trigger(store.as_ref(), &trigger_id, &trigger, scheduled_at).await {
+            match fire_trigger(store, &trigger_id, &trigger, scheduled_at).await {
                 Ok(succeeded) => {
                     processed += succeeded;
                     info!(
@@ -82,7 +84,9 @@ impl ScheduledWorker for ScheduledTriggerWorker {
                 }
             }
 
-            // Record the fire regardless of action outcome (§4.6).
+            // Always record the fire; this is what makes the worker
+            // self-correcting across restarts (once `last_fired_at >=
+            // s`, slot `s` is skipped on rehydrate).
             if let Err(err) = store.record_trigger_fire(&trigger_id, scheduled_at).await {
                 warn!(
                     worker = WORKER_NAME,
@@ -106,12 +110,11 @@ impl ScheduledWorker for ScheduledTriggerWorker {
 }
 
 /// Run every action in the trigger's `actions` list. Per-action
-/// failures are logged and counted, but the loop continues —
-/// `record_trigger_fire` runs regardless (§4.6). Returns the count of
-/// successful actions on `Ok`, or the count of failures on `Err` when
-/// no action succeeded.
+/// failures are logged and counted, but the loop continues — the worker
+/// records the fire regardless. Returns the count of successful actions
+/// on `Ok`, or the count of failures on `Err` when no action succeeded.
 async fn fire_trigger(
-    store: &dyn Store,
+    store: &StoreWithEvents,
     trigger_id: &TriggerId,
     trigger: &Trigger,
     scheduled_at: DateTime<Utc>,
@@ -125,7 +128,10 @@ async fn fire_trigger(
     let mut succeeded = 0usize;
     let mut failed = 0usize;
     for action in &trigger.actions {
-        match action.run(&ctx, store, &actor, trigger_id).await {
+        match action
+            .run(&ctx, store, &actor, &trigger.creator, trigger_id)
+            .await
+        {
             Ok(_) => succeeded += 1,
             Err(err) => {
                 failed += 1;
@@ -142,140 +148,5 @@ async fn fire_trigger(
         Err(failed)
     } else {
         Ok(succeeded)
-    }
-}
-
-/// Per §4: return `Some(scheduled_at)` iff the trigger is due-fire at
-/// `now`. `Cron` fires the **most recent** slot ≤ `now` and never
-/// replays older missed slots; `Once { at }` fires once if `at <= now`.
-fn due_fire(trigger: &Trigger, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    match &trigger.schedule {
-        Schedule::Cron { expression, .. } => {
-            let schedule = parse_cron_expression(expression).ok()?;
-            // `after()` enumerates slots strictly after the cursor; we
-            // want the most recent slot ≤ `now`. Walk forward from
-            // `cursor = max(last_fired_at, now - 1d)` (bounded so a
-            // never-fired trigger doesn't scan from the epoch) and keep
-            // the last slot that is ≤ now.
-            let lookback = chrono::Duration::days(1);
-            let cursor = match trigger.last_fired_at {
-                Some(t) => t,
-                None => now - lookback,
-            };
-            let mut due: Option<DateTime<Utc>> = None;
-            // 64 slots cap the work per tick on dense schedules. Per
-            // §4 we explicitly do not replay older missed slots, so the
-            // most recent is the only one we'd fire anyway.
-            for candidate in schedule.after(&cursor).take(8192) {
-                if candidate > now {
-                    break;
-                }
-                due = Some(candidate);
-            }
-            due
-        }
-        Schedule::Once { at } => {
-            if trigger.last_fired_at.is_some() {
-                return None;
-            }
-            if *at <= now { Some(*at) } else { None }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hydra_common::api::v1::users::Username as ApiUsername;
-    use hydra_common::triggers::{Action, CreateIssueAction, Schedule};
-
-    fn sample_trigger(schedule: Schedule, last_fired_at: Option<DateTime<Utc>>) -> Trigger {
-        use hydra_common::api::v1::issues::{IssueStatus, IssueType, SessionSettings};
-        Trigger::new(
-            true,
-            schedule,
-            vec![Action::CreateIssue(CreateIssueAction::new(
-                IssueType::Task,
-                "t".to_string(),
-                "d".to_string(),
-                None,
-                Some(IssueStatus::Open),
-                SessionSettings::default(),
-            ))],
-            ApiUsername::from("alice"),
-            last_fired_at,
-            false,
-        )
-    }
-
-    #[test]
-    fn due_fire_cron_returns_most_recent_slot_within_window() {
-        let now: DateTime<Utc> = "2026-06-03T15:04:05Z".parse().unwrap();
-        let trigger = sample_trigger(
-            Schedule::Cron {
-                expression: "* * * * *".to_string(),
-                timezone: None,
-            },
-            None,
-        );
-        let slot = due_fire(&trigger, now).expect("should be due");
-        // The most recent slot at or before now for "every minute" at
-        // 15:04:05 is 15:04:00.
-        assert_eq!(slot.to_rfc3339(), "2026-06-03T15:04:00+00:00");
-    }
-
-    #[test]
-    fn due_fire_cron_skips_when_last_fired_at_at_or_after_slot() {
-        let now: DateTime<Utc> = "2026-06-03T15:04:05Z".parse().unwrap();
-        let trigger = sample_trigger(
-            Schedule::Cron {
-                expression: "* * * * *".to_string(),
-                timezone: None,
-            },
-            Some("2026-06-03T15:04:00Z".parse().unwrap()),
-        );
-        assert!(due_fire(&trigger, now).is_none());
-    }
-
-    #[test]
-    fn due_fire_cron_does_not_replay_after_long_downtime() {
-        // Trigger last fired 30 seconds before shutdown; server was down
-        // for ~12 minutes; cron is "every minute". Per §4 we fire only
-        // the most recent slot, not the missed slots.
-        let now: DateTime<Utc> = "2026-06-03T15:12:00Z".parse().unwrap();
-        let trigger = sample_trigger(
-            Schedule::Cron {
-                expression: "* * * * *".to_string(),
-                timezone: None,
-            },
-            Some("2026-06-03T15:00:00Z".parse().unwrap()),
-        );
-        let slot = due_fire(&trigger, now).expect("should be due");
-        assert_eq!(slot.to_rfc3339(), "2026-06-03T15:12:00+00:00");
-    }
-
-    #[test]
-    fn due_fire_once_at_time_returns_at_when_unfired() {
-        let now: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
-        let at: DateTime<Utc> = "2026-06-03T14:59:50Z".parse().unwrap();
-        let trigger = sample_trigger(Schedule::Once { at }, None);
-        let slot = due_fire(&trigger, now).unwrap();
-        assert_eq!(slot, at);
-    }
-
-    #[test]
-    fn due_fire_once_skipped_when_already_fired() {
-        let now: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
-        let at: DateTime<Utc> = "2026-06-03T14:59:50Z".parse().unwrap();
-        let trigger = sample_trigger(Schedule::Once { at }, Some(at));
-        assert!(due_fire(&trigger, now).is_none());
-    }
-
-    #[test]
-    fn due_fire_once_skipped_when_in_future() {
-        let now: DateTime<Utc> = "2026-06-03T15:00:00Z".parse().unwrap();
-        let at: DateTime<Utc> = "2026-06-03T15:00:30Z".parse().unwrap();
-        let trigger = sample_trigger(Schedule::Once { at }, None);
-        assert!(due_fire(&trigger, now).is_none());
     }
 }

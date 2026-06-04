@@ -1428,6 +1428,22 @@ impl ReadOnlyStore for MemoryStore {
         Ok(items)
     }
 
+    async fn get_trigger_versions(
+        &self,
+        id: &TriggerId,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        let entry = self
+            .triggers
+            .get(id)
+            .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
+        let creation_time = entry.value()[0].timestamp;
+        let mut versions = entry.value().clone();
+        for v in &mut versions {
+            v.creation_time = creation_time;
+        }
+        Ok(versions)
+    }
+
     // ---- Project (read-only) ----
 
     async fn get_project(

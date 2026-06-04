@@ -819,6 +819,12 @@ pub trait ReadOnlyStore: Send + Sync {
         include_deleted: bool,
     ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError>;
 
+    /// Retrieves all versions of a trigger in ascending version order.
+    async fn get_trigger_versions(
+        &self,
+        id: &TriggerId,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError>;
+
     // ---- Project (read-only) ----
 
     /// Retrieves a project by its [`ProjectId`].

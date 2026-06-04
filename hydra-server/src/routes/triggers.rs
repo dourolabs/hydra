@@ -1,15 +1,14 @@
 //! HTTP routes for `/v1/triggers`.
 //!
-//! Standard CRUD plus version history, mirroring `routes/issues.rs`. The
-//! routes call `Trigger::validate()` from the domain layer before write
-//! and return `400` with a structured body on validation failure.
-//!
-//! See `/designs/triggered-actions.md` §4.3 / §4.5 / §7 PR 5.
+//! Standard CRUD plus version history, mirroring `routes/issues.rs`.
+//! Validation and writes are delegated to `AppState`; this module is
+//! responsible only for request extraction, response shaping, and error
+//! mapping.
 
 use crate::{
-    app::AppState,
+    app::{AppState, UpsertTriggerError},
     domain::actors::{Actor, ActorRef},
-    domain::triggers::{TriggerValidation, ValidationError, ValidationWarning},
+    domain::triggers::{ValidationError, ValidationWarning},
     store::{ReadOnlyStore, StoreError},
 };
 use anyhow::anyhow;
@@ -19,10 +18,9 @@ use axum::{
     http::request::Parts,
 };
 use hydra_common::{
-    RepoName, TriggerId, Versioned,
+    TriggerId, Versioned,
     api::v1::{
         ApiError,
-        repositories::SearchRepositoriesQuery,
         triggers::{
             ListTriggerVersionsResponse, ListTriggersResponse, SearchTriggersQuery, Trigger,
             TriggerVersionRecord, UpsertTriggerRequest, UpsertTriggerResponse,
@@ -83,41 +81,39 @@ pub struct GetTriggerQuery {
 
 pub async fn create_trigger(
     State(state): State<AppState>,
-    Extension(_actor): Extension<Actor>,
+    Extension(actor): Extension<Actor>,
     Json(payload): Json<UpsertTriggerRequest>,
 ) -> Result<Json<UpsertTriggerResponse>, ApiError> {
     info!("create_trigger invoked");
-    let trigger = trigger_from_request(payload, None);
-    let known = load_known_repos(&state).await?;
-    let warnings = trigger.validate(&known).map_err(validation_error)?;
-    log_warnings(None, &warnings);
-
-    let store = state.store.inner().clone();
-    let (trigger_id, version) = store
-        .add_trigger(trigger, &ActorRef::from(&_actor))
+    let (trigger_id, version, warnings) = state
+        .create_trigger(payload, &ActorRef::from(&actor))
         .await
-        .map_err(|err| map_trigger_error(err, None))?;
+        .map_err(map_upsert_error)?;
+    log_warnings(None, &warnings);
     info!(trigger_id = %trigger_id, version, "create_trigger completed");
     Ok(Json(UpsertTriggerResponse::new(trigger_id, version)))
 }
 
 pub async fn update_trigger(
     State(state): State<AppState>,
-    Extension(_actor): Extension<Actor>,
+    Extension(actor): Extension<Actor>,
     TriggerIdPath(trigger_id): TriggerIdPath,
     Json(payload): Json<UpsertTriggerRequest>,
 ) -> Result<Json<UpsertTriggerResponse>, ApiError> {
     info!(trigger_id = %trigger_id, "update_trigger invoked");
-    let trigger = trigger_from_request(payload, None);
-    let known = load_known_repos(&state).await?;
-    let warnings = trigger.validate(&known).map_err(validation_error)?;
-    log_warnings(Some(&trigger_id), &warnings);
-
-    let store = state.store.inner().clone();
-    let version = store
-        .update_trigger(&trigger_id, trigger, &ActorRef::from(&_actor))
+    let (version, warnings) = state
+        .update_trigger(&trigger_id, payload, &ActorRef::from(&actor))
         .await
-        .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
+        .map_err(|err| match err {
+            UpsertTriggerError::Store {
+                source: StoreError::TriggerNotFound(_),
+            } => map_trigger_error(
+                StoreError::TriggerNotFound(trigger_id.clone()),
+                Some(&trigger_id),
+            ),
+            other => map_upsert_error(other),
+        })?;
+    log_warnings(Some(&trigger_id), &warnings);
     info!(trigger_id = %trigger_id, version, "update_trigger completed");
     Ok(Json(UpsertTriggerResponse::new(trigger_id, version)))
 }
@@ -130,7 +126,7 @@ pub async fn get_trigger(
     let include_deleted = query.include_deleted.unwrap_or(false);
     info!(trigger_id = %trigger_id, include_deleted, "get_trigger invoked");
     let versioned = state
-        .store
+        .store_with_events()
         .get_trigger(&trigger_id, include_deleted)
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
@@ -144,7 +140,7 @@ pub async fn list_triggers(
     let include_deleted = query.include_deleted.unwrap_or(false);
     info!(include_deleted, "list_triggers invoked");
     let rows = state
-        .store
+        .store_with_events()
         .list_triggers(include_deleted)
         .await
         .map_err(|err| map_trigger_error(err, None))?;
@@ -161,17 +157,21 @@ pub async fn list_trigger_versions(
     TriggerIdPath(trigger_id): TriggerIdPath,
 ) -> Result<Json<ListTriggerVersionsResponse>, ApiError> {
     info!(trigger_id = %trigger_id, "list_trigger_versions invoked");
-    // We do not have a dedicated `get_trigger_versions` method (PR 4
-    // exposed only the latest-row read). For v1 we return the latest
-    // version as a single-entry list; full version history can be added
-    // as a follow-up when the store method lands. See §7 PR 5.
-    let versioned = state
-        .store
-        .get_trigger(&trigger_id, true)
+    let versions = state
+        .store_with_events()
+        .get_trigger_versions(&trigger_id)
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
-    let record = to_record(&trigger_id, versioned);
-    Ok(Json(ListTriggerVersionsResponse::new(vec![record])))
+    let records: Vec<TriggerVersionRecord> = versions
+        .into_iter()
+        .map(|versioned| to_record(&trigger_id, versioned))
+        .collect();
+    info!(
+        trigger_id = %trigger_id,
+        returned = records.len(),
+        "list_trigger_versions completed"
+    );
+    Ok(Json(ListTriggerVersionsResponse::new(records)))
 }
 
 pub async fn get_trigger_version(
@@ -182,22 +182,25 @@ pub async fn get_trigger_version(
     }: TriggerVersionPath,
 ) -> Result<Json<TriggerVersionRecord>, ApiError> {
     info!(trigger_id = %trigger_id, raw_version = raw_version.as_i64(), "get_trigger_version invoked");
-    let versioned = state
-        .store
-        .get_trigger(&trigger_id, true)
+    let versions = state
+        .store_with_events()
+        .get_trigger_versions(&trigger_id)
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
-    let resolved = super::resolve_version(
-        raw_version,
-        versioned.version,
-        "trigger",
-        trigger_id.as_ref(),
-    )?;
-    if resolved != versioned.version {
-        return Err(ApiError::not_found(format!(
-            "trigger '{trigger_id}' version {resolved} not found"
-        )));
-    }
+    let latest_version = versions
+        .last()
+        .map(|v| v.version)
+        .ok_or_else(|| ApiError::not_found(format!("trigger '{trigger_id}' not found")))?;
+    let resolved =
+        super::resolve_version(raw_version, latest_version, "trigger", trigger_id.as_ref())?;
+    let versioned = versions
+        .into_iter()
+        .find(|v| v.version == resolved)
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "trigger '{trigger_id}' version {resolved} not found"
+            ))
+        })?;
     Ok(Json(to_record(&trigger_id, versioned)))
 }
 
@@ -207,13 +210,12 @@ pub async fn delete_trigger(
     TriggerIdPath(trigger_id): TriggerIdPath,
 ) -> Result<Json<TriggerVersionRecord>, ApiError> {
     info!(trigger_id = %trigger_id, "delete_trigger invoked");
-    let store = state.store.inner().clone();
+    let store = state.store_with_events();
     store
         .delete_trigger(&trigger_id, &ActorRef::from(&actor))
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
-    let versioned = state
-        .store
+    let versioned = store
         .get_trigger(&trigger_id, true)
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
@@ -221,20 +223,6 @@ pub async fn delete_trigger(
 }
 
 // ---- Helpers --------------------------------------------------------
-
-fn trigger_from_request(
-    request: UpsertTriggerRequest,
-    last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> Trigger {
-    Trigger::new(
-        request.enabled,
-        request.schedule,
-        request.actions,
-        request.creator,
-        last_fired_at,
-        false,
-    )
-}
 
 fn to_record(trigger_id: &TriggerId, versioned: Versioned<Trigger>) -> TriggerVersionRecord {
     TriggerVersionRecord::new(
@@ -245,15 +233,6 @@ fn to_record(trigger_id: &TriggerId, versioned: Versioned<Trigger>) -> TriggerVe
         versioned.actor,
         versioned.creation_time,
     )
-}
-
-async fn load_known_repos(state: &AppState) -> Result<Vec<RepoName>, ApiError> {
-    let query = SearchRepositoriesQuery::default();
-    let rows = state.store.list_repositories(&query).await.map_err(|err| {
-        error!(error = %err, "failed to list repositories for trigger validation");
-        ApiError::internal(anyhow!("failed to list repositories: {err}"))
-    })?;
-    Ok(rows.into_iter().map(|(name, _)| name).collect())
 }
 
 fn log_warnings(trigger_id: Option<&TriggerId>, warnings: &[ValidationWarning]) {
@@ -267,6 +246,20 @@ fn log_warnings(trigger_id: Option<&TriggerId>, warnings: &[ValidationWarning]) 
                 );
             }
         }
+    }
+}
+
+fn map_upsert_error(err: UpsertTriggerError) -> ApiError {
+    match err {
+        UpsertTriggerError::Validation(detail) => validation_error(detail),
+        UpsertTriggerError::UnknownRepo(repo_name) => {
+            let body = json!({
+                "code": "unknown_repo",
+                "message": format!("repository '{repo_name}' is not registered"),
+            });
+            ApiError::bad_request(body.to_string())
+        }
+        UpsertTriggerError::Store { source } => map_trigger_error(source, None),
     }
 }
 

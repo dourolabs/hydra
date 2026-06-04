@@ -298,6 +298,13 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn get_trigger_versions(
+        &self,
+        _id: &TriggerId,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        fail()
+    }
+
     async fn get_project(
         &self,
         _id: &ProjectId,

@@ -1,9 +1,8 @@
 //! Integration tests for `/v1/triggers` and the
 //! `ScheduledTriggerWorker`.
 //!
-//! Mirrors the §5 test list in `/designs/triggered-actions.md`. The
-//! worker is exercised by calling `run_iteration` directly so tests do
-//! not need to sleep through real 10s ticks.
+//! The worker is exercised by calling `run_iteration` directly so
+//! tests do not need to sleep through real 10s ticks.
 
 use crate::{
     background::scheduled_triggers::ScheduledTriggerWorker,
@@ -121,8 +120,41 @@ async fn post_rejects_unknown_template_variable() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn post_rejects_unknown_repo_name() -> anyhow::Result<()> {
+    // `session_settings.repo_name` references a repo the store does not
+    // know about. `AppState::create_trigger` performs a targeted
+    // `Store::get_repository` lookup and rejects the write with 400.
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    let mut request = sample_request(Schedule::Cron {
+        expression: "* * * * *".to_string(),
+        timezone: None,
+    });
+    let Action::CreateIssue(ref mut a) = request.actions[0];
+    a.session_settings.repo_name = Some(std::str::FromStr::from_str("acme/unknown").unwrap());
+
+    let response = client
+        .post(format!("{}/v1/triggers", server.base_url()))
+        .json(&request)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: Value = response.json().await?;
+    let message = body
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        message.contains("unknown_repo") || message.contains("acme/unknown"),
+        "body should mention unknown repo: {message}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn post_warns_on_past_once() -> anyhow::Result<()> {
-    // Past-Once is a warning, not a rejection (§4.5).
+    // Past-Once is a warning, not a rejection.
     let server = spawn_test_server().await?;
     let client = test_client();
     let past: chrono::DateTime<Utc> = "2020-01-01T00:00:00Z".parse().unwrap();
@@ -271,7 +303,7 @@ async fn worker_idle_with_no_triggers() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn get_trigger_versions_returns_latest_record() -> anyhow::Result<()> {
+async fn get_trigger_versions_returns_full_history() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let created: UpsertTriggerResponse = client
@@ -280,6 +312,24 @@ async fn get_trigger_versions_returns_latest_record() -> anyhow::Result<()> {
             expression: "* * * * *".to_string(),
             timezone: None,
         }))
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    // Drive an update so the trigger has two versions on file.
+    let mut update_body = sample_request(Schedule::Cron {
+        expression: "0 9 * * *".to_string(),
+        timezone: None,
+    });
+    update_body.enabled = false;
+    let _: UpsertTriggerResponse = client
+        .put(format!(
+            "{}/v1/triggers/{}",
+            server.base_url(),
+            created.trigger_id
+        ))
+        .json(&update_body)
         .send()
         .await?
         .json()
@@ -299,7 +349,11 @@ async fn get_trigger_versions_returns_latest_record() -> anyhow::Result<()> {
         .get("versions")
         .and_then(|v| v.as_array())
         .expect("versions array");
-    assert_eq!(arr.len(), 1);
+    assert_eq!(arr.len(), 2, "expected v1 and v2: {arr:?}");
+    let v1 = &arr[0];
+    let v2 = &arr[1];
+    assert_eq!(v1.get("version").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(v2.get("version").and_then(|v| v.as_i64()), Some(2));
     Ok(())
 }
 
@@ -336,7 +390,7 @@ async fn worker_skips_disabled_triggers() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// §5: server restart followed by a worker iteration must not refire a
+/// A server restart followed by a worker iteration must not refire a
 /// slot whose `last_fired_at >= scheduled_at`.
 #[tokio::test]
 async fn worker_does_not_refire_after_restart() -> anyhow::Result<()> {

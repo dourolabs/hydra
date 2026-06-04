@@ -674,16 +674,6 @@ impl StoreWithEvents {
         &self.event_bus
     }
 
-    /// Returns a reference to the inner `Store` implementation.
-    ///
-    /// This bypasses the event-bus wrappers and is intended for callers
-    /// like `Action::run` whose signature is `&dyn Store` and that do
-    /// their own event handling (or, for v1, intentionally skip it — see
-    /// `ScheduledTriggerWorker`).
-    pub fn inner(&self) -> &Arc<dyn Store> {
-        &self.inner
-    }
-
     // ---- Actor-aware mutation methods ----
     //
     // These inherent methods accept an explicit `actor: ActorRef` parameter
@@ -1201,6 +1191,47 @@ impl StoreWithEvents {
         Ok(changed)
     }
 
+    // ---- Trigger mutations ----
+    //
+    // Triggers do not currently have a `MutationPayload` variant — the
+    // event bus is not used by trigger subscribers in v1 — so the
+    // methods are plain passthroughs that take the same shape as the
+    // underlying `Store` calls. When a future PR wires up trigger
+    // events, the emission goes here.
+
+    pub async fn add_trigger(
+        &self,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<(TriggerId, VersionNumber), StoreError> {
+        self.inner.add_trigger(trigger, actor).await
+    }
+
+    pub async fn update_trigger(
+        &self,
+        id: &TriggerId,
+        trigger: Trigger,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.update_trigger(id, trigger, actor).await
+    }
+
+    pub async fn delete_trigger(
+        &self,
+        id: &TriggerId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.delete_trigger(id, actor).await
+    }
+
+    pub async fn record_trigger_fire(
+        &self,
+        id: &TriggerId,
+        fired_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), StoreError> {
+        self.inner.record_trigger_fire(id, fired_at).await
+    }
+
     // ---- Object relationship mutations ----
 
     pub async fn add_relationship_with_actor(
@@ -1603,6 +1634,13 @@ impl ReadOnlyStore for StoreWithEvents {
         include_deleted: bool,
     ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         self.inner.list_triggers(include_deleted).await
+    }
+
+    async fn get_trigger_versions(
+        &self,
+        id: &TriggerId,
+    ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        self.inner.get_trigger_versions(id).await
     }
 
     // ---- Project (read-only) ----
