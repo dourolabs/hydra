@@ -4,24 +4,17 @@ import type { ConversationStatus, ConversationSummary } from "@hydra/api";
 import type { FilterDefinitions, FilterOption } from "../filters";
 import { useUserOptions } from "../filters/options/userOptions";
 import { statusOptions } from "../filters/options/statusOptions";
+import {
+  CONVERSATION_STATUS_LABELS,
+  CONVERSATION_STATUS_TONES,
+} from "./conversationStatusBadge";
 
-const CONVERSATION_STATUS_TONES: Record<ConversationStatus, BadgeStatus> = {
-  active: "conv-active",
-  idle: "conv-idle",
-  closed: "conv-closed",
-};
-
+// `unknown` is intentionally omitted: it is not a user-selectable filter value.
 const CONVERSATION_STATUS_DISPLAY_ORDER: ConversationStatus[] = [
   "active",
   "idle",
   "closed",
 ];
-
-const CONVERSATION_STATUS_LABELS: Record<ConversationStatus, string> = {
-  active: "Active",
-  idle: "Idle",
-  closed: "Closed",
-};
 
 const STATUS_OPTIONS: FilterOption[] = (() => {
   const tones: Record<string, BadgeStatus> = {};

@@ -8,6 +8,7 @@ import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
 import { conversationTitle } from "../features/chat/conversationTitle";
 import { useConversationFilters } from "../features/chat/conversationFilters";
+import { CONVERSATION_STATUS_TONES } from "../features/chat/conversationStatusBadge";
 import {
   filtersFromUrl,
   filtersToUrl,
@@ -246,7 +247,7 @@ export function ChatListPage() {
                       </div>
                     </td>
                     <td className={styles.colStatus}>
-                      <Badge status={`conv-${c.status}`} />
+                      <Badge status={CONVERSATION_STATUS_TONES[c.status]} />
                     </td>
                     <td className={styles.colCreator}>{c.creator}</td>
                     <td className={styles.colMessages}>{c.event_count}</td>

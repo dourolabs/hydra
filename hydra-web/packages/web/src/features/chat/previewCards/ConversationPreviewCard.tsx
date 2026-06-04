@@ -1,5 +1,6 @@
 import { Badge, type BadgeStatus, type PreviewCardTone } from "@hydra/ui";
 import { useConversation } from "../useConversations";
+import { CONVERSATION_STATUS_TONES } from "../conversationStatusBadge";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import {
   FallbackPreviewCard,
@@ -47,7 +48,7 @@ export function ConversationPreviewCard({ id }: ConversationPreviewCardProps) {
     return <FallbackPreviewCard id={id} kindLabel={KIND_LABEL.conversation} to={to} />;
   }
 
-  const status: BadgeStatus = `conv-${data.status}` as BadgeStatus;
+  const status: BadgeStatus = CONVERSATION_STATUS_TONES[data.status];
   const tone = TONE_BY_STATUS[status] ?? "neutral";
   const title = data.title || id;
   const agent = data.agent_name ?? null;
