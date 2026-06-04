@@ -1,5 +1,7 @@
 # hydra-common Guidelines
 
+See also: [`docs/rust/`](../docs/rust/AGENTS.md) for workspace-wide Rust standards and [`docs/architecture/api-wire-contract.md`](../docs/architecture/api-wire-contract.md) for the API v1 evolution rules.
+
 - API v1 types are the wire contract for servers and clients; changes must be additive. You may add new fields or enum variants with sensible defaults, but do not remove or narrow existing information so older peers remain compatible.
 - When these shared types gain new fields that `hydra-server` consumes, mirror them in the domain structs and keep the conversion implementations in sync.
 - Prefer mandatory fields over optional ones; do not add `Default` implementations for types that should always be explicitly set.
