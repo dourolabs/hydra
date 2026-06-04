@@ -1774,7 +1774,7 @@ struct LabelRow {
 #[derive(sqlx::FromRow)]
 struct AgentRow {
     name: String,
-    prompt_path: String,
+    prompt_path: Option<String>,
     mcp_config_path: Option<String>,
     max_tries: i32,
     max_simultaneous: i32,
@@ -5060,7 +5060,7 @@ impl Store for PostgresStoreV2 {
                      WHERE name = $10"
                 );
                 sqlx::query(&sql)
-                    .bind(&agent.prompt_path)
+                    .bind(agent.prompt_path.as_deref())
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
@@ -5114,7 +5114,7 @@ impl Store for PostgresStoreV2 {
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
-                    .bind(&agent.prompt_path)
+                    .bind(agent.prompt_path.as_deref())
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
@@ -5176,7 +5176,7 @@ impl Store for PostgresStoreV2 {
              WHERE name = $9"
         );
         sqlx::query(&sql)
-            .bind(&agent.prompt_path)
+            .bind(agent.prompt_path.as_deref())
             .bind(agent.mcp_config_path.as_deref())
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
@@ -7462,7 +7462,7 @@ mod tests {
     fn sample_agent() -> Agent {
         Agent::new(
             "test-agent".to_string(),
-            "/agents/test-agent/prompt.md".to_string(),
+            Some("/agents/test-agent/prompt.md".to_string()),
             Some("/agents/test-agent/mcp-config.json".to_string()),
             3,
             5,
@@ -7484,7 +7484,10 @@ mod tests {
         // GET — verify all fields
         let fetched = store.get_agent("test-agent").await.unwrap();
         assert_eq!(fetched.name, "test-agent");
-        assert_eq!(fetched.prompt_path, "/agents/test-agent/prompt.md");
+        assert_eq!(
+            fetched.prompt_path.as_deref(),
+            Some("/agents/test-agent/prompt.md")
+        );
         assert_eq!(fetched.max_tries, 3);
         assert_eq!(fetched.max_simultaneous, 5);
         assert!(!fetched.is_assignment_agent);
@@ -7494,7 +7497,7 @@ mod tests {
         // UPDATE — change prompt_path, max_tries, max_simultaneous
         let updated = Agent::new(
             "test-agent".to_string(),
-            "/agents/test-agent/prompt_v2.md".to_string(),
+            Some("/agents/test-agent/prompt_v2.md".to_string()),
             None,
             5,
             10,
@@ -7506,7 +7509,10 @@ mod tests {
 
         // GET — verify updated fields persisted
         let fetched2 = store.get_agent("test-agent").await.unwrap();
-        assert_eq!(fetched2.prompt_path, "/agents/test-agent/prompt_v2.md");
+        assert_eq!(
+            fetched2.prompt_path.as_deref(),
+            Some("/agents/test-agent/prompt_v2.md")
+        );
         assert_eq!(fetched2.max_tries, 5);
         assert_eq!(fetched2.max_simultaneous, 10);
         assert!(fetched2.updated_at >= fetched.created_at);
@@ -7515,7 +7521,10 @@ mod tests {
         let list = store.list_agents().await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "test-agent");
-        assert_eq!(list[0].prompt_path, "/agents/test-agent/prompt_v2.md");
+        assert_eq!(
+            list[0].prompt_path.as_deref(),
+            Some("/agents/test-agent/prompt_v2.md")
+        );
 
         // DELETE
         store.delete_agent("test-agent").await.unwrap();
@@ -7556,7 +7565,7 @@ mod tests {
         // Add agent A with is_assignment_agent = true
         let agent_a = Agent::new(
             "agent-a".to_string(),
-            "/agents/a/prompt.md".to_string(),
+            Some("/agents/a/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7569,7 +7578,7 @@ mod tests {
         // Add agent B with is_assignment_agent = true — should fail
         let agent_b = Agent::new(
             "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
+            Some("/agents/b/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7586,7 +7595,7 @@ mod tests {
         // Add agent B with is_assignment_agent = false — should succeed
         let agent_b_no_assign = Agent::new(
             "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
+            Some("/agents/b/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7599,7 +7608,7 @@ mod tests {
         // Update agent B to set is_assignment_agent = true — should fail
         let agent_b_assign = Agent::new(
             "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
+            Some("/agents/b/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7617,7 +7626,7 @@ mod tests {
         store.delete_agent("agent-a").await.unwrap();
         let agent_c = Agent::new(
             "agent-c".to_string(),
-            "/agents/c/prompt.md".to_string(),
+            Some("/agents/c/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7636,7 +7645,7 @@ mod tests {
         // Add agent A with is_default_conversation_agent = true
         let agent_a = Agent::new(
             "agent-a".to_string(),
-            "/agents/a/prompt.md".to_string(),
+            Some("/agents/a/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7649,7 +7658,7 @@ mod tests {
         // Add agent B with is_default_conversation_agent = true — should fail
         let agent_b = Agent::new(
             "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
+            Some("/agents/b/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7666,7 +7675,7 @@ mod tests {
         // Add agent B with is_default_conversation_agent = false — should succeed
         let agent_b_no_default = Agent::new(
             "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
+            Some("/agents/b/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7679,7 +7688,7 @@ mod tests {
         // Update agent B to set is_default_conversation_agent = true — should fail
         let agent_b_default = Agent::new(
             "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
+            Some("/agents/b/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7699,7 +7708,7 @@ mod tests {
         // Updating agent A in place (still default) — should succeed.
         let agent_a_self_update = Agent::new(
             "agent-a".to_string(),
-            "/agents/a/prompt.md".to_string(),
+            Some("/agents/a/prompt.md".to_string()),
             None,
             10,
             5,
@@ -7713,7 +7722,7 @@ mod tests {
         store.delete_agent("agent-a").await.unwrap();
         let agent_c = Agent::new(
             "agent-c".to_string(),
-            "/agents/c/prompt.md".to_string(),
+            Some("/agents/c/prompt.md".to_string()),
             None,
             3,
             5,
@@ -7742,7 +7751,7 @@ mod tests {
         // Add a new agent with the same name but different fields — reactivation
         let reactivated = Agent::new(
             "test-agent".to_string(),
-            "/agents/test-agent/prompt_new.md".to_string(),
+            Some("/agents/test-agent/prompt_new.md".to_string()),
             None,
             7,
             12,
@@ -7755,7 +7764,10 @@ mod tests {
         // Get the agent — verify it has the new field values and deleted = false
         let fetched = store.get_agent("test-agent").await.unwrap();
         assert_eq!(fetched.name, "test-agent");
-        assert_eq!(fetched.prompt_path, "/agents/test-agent/prompt_new.md");
+        assert_eq!(
+            fetched.prompt_path.as_deref(),
+            Some("/agents/test-agent/prompt_new.md")
+        );
         assert_eq!(fetched.max_tries, 7);
         assert_eq!(fetched.max_simultaneous, 12);
         assert!(!fetched.is_assignment_agent);
@@ -7771,7 +7783,7 @@ mod tests {
         // Create agent with secrets
         let agent = Agent::new(
             "swe".to_string(),
-            "/agents/swe/prompt.md".to_string(),
+            Some("/agents/swe/prompt.md".to_string()),
             None,
             3,
             i32::MAX,

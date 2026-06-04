@@ -382,7 +382,7 @@ mod tests {
     ) -> anyhow::Result<()> {
         let agent = Agent::new(
             name.to_string(),
-            format!("/agents/{name}/prompt.md"),
+            Some(format!("/agents/{name}/prompt.md")),
             None,
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -408,7 +408,7 @@ mod tests {
     ) -> anyhow::Result<()> {
         let agent = Agent::new(
             name.to_string(),
-            format!("/agents/{name}/prompt.md"),
+            Some(format!("/agents/{name}/prompt.md")),
             None,
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -436,7 +436,7 @@ mod tests {
     ) -> anyhow::Result<()> {
         let agent = Agent::new(
             name.to_string(),
-            format!("/agents/{name}/prompt.md"),
+            Some(format!("/agents/{name}/prompt.md")),
             None,
             max_tries,
             max_simultaneous,

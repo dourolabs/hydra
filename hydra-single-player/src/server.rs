@@ -399,6 +399,7 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
         let request = UpsertAgentRequest::new(
             name,
             prompt,
+            None,
             3,
             i32::MAX,
             None,

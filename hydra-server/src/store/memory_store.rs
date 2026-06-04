@@ -7269,7 +7269,7 @@ mod tests {
     fn sample_agent(name: &str) -> Agent {
         Agent::new(
             name.to_string(),
-            format!("/agents/{name}/prompt.md"),
+            Some(format!("/agents/{name}/prompt.md")),
             None,
             3,
             i32::MAX,
@@ -7288,7 +7288,10 @@ mod tests {
 
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.name, "swe");
-        assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
+        assert_eq!(
+            fetched.prompt_path.as_deref(),
+            Some("/agents/swe/prompt.md")
+        );
         assert_eq!(fetched.max_tries, 3);
         assert!(!fetched.is_assignment_agent);
         assert!(!fetched.is_default_conversation_agent);
@@ -7333,12 +7336,12 @@ mod tests {
 
         let mut updated = sample_agent("swe");
         updated.max_tries = 5;
-        updated.prompt_path = "/agents/swe/v2.md".to_string();
+        updated.prompt_path = Some("/agents/swe/v2.md".to_string());
         store.update_agent(updated).await.unwrap();
 
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.max_tries, 5);
-        assert_eq!(fetched.prompt_path, "/agents/swe/v2.md");
+        assert_eq!(fetched.prompt_path.as_deref(), Some("/agents/swe/v2.md"));
     }
 
     #[tokio::test]
@@ -7517,11 +7520,11 @@ mod tests {
 
         // Re-creating with the same name should succeed.
         let mut agent2 = sample_agent("swe");
-        agent2.prompt_path = "new/path".to_string();
+        agent2.prompt_path = Some("new/path".to_string());
         store.add_agent(agent2).await.unwrap();
 
         let fetched = store.get_agent("swe").await.unwrap();
-        assert_eq!(fetched.prompt_path, "new/path");
+        assert_eq!(fetched.prompt_path.as_deref(), Some("new/path"));
         assert!(!fetched.deleted);
     }
 

@@ -37,8 +37,8 @@ impl Render for AgentRecords<'_> {
 
 fn write_agent_details<W: Write>(agent: &AgentRecord, writer: &mut W) -> Result<()> {
     writeln!(writer, "- {}", agent.name)?;
-    if !agent.prompt_path.is_empty() {
-        writeln!(writer, "  prompt_path: {}", agent.prompt_path)?;
+    if let Some(prompt_path) = &agent.prompt_path {
+        writeln!(writer, "  prompt_path: {prompt_path}")?;
     }
     if !agent.prompt.is_empty() {
         writeln!(writer, "  prompt: {}", agent.prompt)?;

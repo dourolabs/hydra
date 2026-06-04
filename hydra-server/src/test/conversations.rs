@@ -108,6 +108,7 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
     let agent_request = UpsertAgentRequest::new(
         "test-agent",
         "test agent prompt",
+        None,
         3,
         1,
         None,

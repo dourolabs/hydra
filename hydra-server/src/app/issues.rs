@@ -1154,7 +1154,7 @@ mod tests {
             .store
             .add_agent(crate::domain::agents::Agent::new(
                 swe_name.as_str().to_string(),
-                "/agents/swe/prompt.md".to_string(),
+                Some("/agents/swe/prompt.md".to_string()),
                 None,
                 3,
                 4,

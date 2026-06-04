@@ -1859,7 +1859,7 @@ async fn register_agent_with_prompt_body(
     let prompt_path = format!("/agents/{name}/prompt.md");
     let agent = Agent::new(
         name.to_string(),
-        prompt_path.clone(),
+        Some(prompt_path.clone()),
         None,
         1,
         1,

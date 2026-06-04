@@ -28,7 +28,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
     for name in agent_names {
         let agent = Agent::new(
             name.to_string(),
-            format!("/agents/{name}/prompt.md"),
+            Some(format!("/agents/{name}/prompt.md")),
             None,
             3,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -54,6 +54,7 @@ fn agent_request(name: &str) -> UpsertAgentRequest {
     UpsertAgentRequest::new(
         name,
         format!("prompt for {name}"),
+        None,
         3,
         DEFAULT_AGENT_MAX_SIMULTANEOUS,
         None,
@@ -147,6 +148,7 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     let request = UpsertAgentRequest::new(
         "alpha",
         "updated prompt",
+        None,
         7,
         11,
         None,

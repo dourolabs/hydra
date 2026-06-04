@@ -446,7 +446,7 @@ struct TaskRow {
 #[derive(sqlx::FromRow)]
 struct AgentRow {
     name: String,
-    prompt_path: String,
+    prompt_path: Option<String>,
     mcp_config_path: Option<String>,
     max_tries: i32,
     max_simultaneous: i32,
@@ -5230,7 +5230,7 @@ impl Store for SqliteStore {
                      WHERE name = ?10"
                 );
                 sqlx::query(&sql)
-                    .bind(&agent.prompt_path)
+                    .bind(agent.prompt_path.as_deref())
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
@@ -5283,7 +5283,7 @@ impl Store for SqliteStore {
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
-                    .bind(&agent.prompt_path)
+                    .bind(agent.prompt_path.as_deref())
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
@@ -5342,7 +5342,7 @@ impl Store for SqliteStore {
              WHERE name = ?9"
         );
         sqlx::query(&sql)
-            .bind(&agent.prompt_path)
+            .bind(agent.prompt_path.as_deref())
             .bind(agent.mcp_config_path.as_deref())
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
@@ -8526,7 +8526,7 @@ mod tests {
     fn sample_agent(name: &str) -> Agent {
         Agent::new(
             name.to_string(),
-            format!("/agents/{name}/prompt.md"),
+            Some(format!("/agents/{name}/prompt.md")),
             None,
             3,
             i32::MAX,
@@ -8547,7 +8547,10 @@ mod tests {
 
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.name, "swe");
-        assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
+        assert_eq!(
+            fetched.prompt_path.as_deref(),
+            Some("/agents/swe/prompt.md")
+        );
         assert_eq!(fetched.max_tries, 3);
         assert!(!fetched.is_assignment_agent);
         assert!(!fetched.is_default_conversation_agent);
@@ -8592,12 +8595,12 @@ mod tests {
 
         let mut updated = sample_agent("swe");
         updated.max_tries = 5;
-        updated.prompt_path = "/agents/swe/v2.md".to_string();
+        updated.prompt_path = Some("/agents/swe/v2.md".to_string());
         store.update_agent(updated).await.unwrap();
 
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.max_tries, 5);
-        assert_eq!(fetched.prompt_path, "/agents/swe/v2.md");
+        assert_eq!(fetched.prompt_path.as_deref(), Some("/agents/swe/v2.md"));
     }
 
     #[tokio::test]
@@ -8695,11 +8698,11 @@ mod tests {
         store.delete_agent("swe").await.unwrap();
 
         let mut agent2 = sample_agent("swe");
-        agent2.prompt_path = "new/path".to_string();
+        agent2.prompt_path = Some("new/path".to_string());
         store.add_agent(agent2).await.unwrap();
 
         let fetched = store.get_agent("swe").await.unwrap();
-        assert_eq!(fetched.prompt_path, "new/path");
+        assert_eq!(fetched.prompt_path.as_deref(), Some("new/path"));
         assert!(!fetched.deleted);
     }
 
@@ -8791,7 +8794,7 @@ mod tests {
         let store = create_test_store().await;
         let agent = Agent::new(
             "swe".to_string(),
-            "/agents/swe/prompt.md".to_string(),
+            Some("/agents/swe/prompt.md".to_string()),
             Some("/agents/swe/mcp-config.json".to_string()),
             3,
             i32::MAX,

@@ -103,6 +103,16 @@ fn default_max_simultaneous() -> i32 {
     i32::MAX
 }
 
+// Accept omission, JSON `null`, or `""` as `None` so older clients that
+// still send the empty-string sentinel for "no path" remain compatible.
+fn deserialize_empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(deserializer)?;
+    Ok(raw.filter(|s| !s.is_empty()))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -111,8 +121,8 @@ pub struct AgentRecord {
     pub name: String,
     #[serde(default)]
     pub prompt: String,
-    #[serde(default)]
-    pub prompt_path: String,
+    #[serde(default, deserialize_with = "deserialize_empty_string_as_none")]
+    pub prompt_path: Option<String>,
     #[serde(default)]
     pub mcp_config_path: Option<String>,
     #[serde(default)]
@@ -134,7 +144,7 @@ impl AgentRecord {
     pub fn new(
         name: impl Into<String>,
         prompt: impl Into<String>,
-        prompt_path: impl Into<String>,
+        prompt_path: Option<String>,
         mcp_config_path: Option<String>,
         mcp_config: Option<String>,
         max_tries: i32,
@@ -146,7 +156,7 @@ impl AgentRecord {
         Self {
             name: name.into(),
             prompt: prompt.into(),
-            prompt_path: prompt_path.into(),
+            prompt_path,
             mcp_config_path,
             mcp_config,
             max_tries,
@@ -165,8 +175,8 @@ impl AgentRecord {
 pub struct UpsertAgentRequest {
     pub name: String,
     pub prompt: String,
-    #[serde(default)]
-    pub prompt_path: String,
+    #[serde(default, deserialize_with = "deserialize_empty_string_as_none")]
+    pub prompt_path: Option<String>,
     #[serde(default)]
     pub mcp_config_path: Option<String>,
     #[serde(default)]
@@ -188,6 +198,7 @@ impl UpsertAgentRequest {
     pub fn new(
         name: impl Into<String>,
         prompt: impl Into<String>,
+        prompt_path: Option<String>,
         max_tries: i32,
         max_simultaneous: i32,
         mcp_config_path: Option<String>,
@@ -199,7 +210,7 @@ impl UpsertAgentRequest {
         Self {
             name: name.into(),
             prompt: prompt.into(),
-            prompt_path: String::new(),
+            prompt_path,
             mcp_config_path,
             mcp_config,
             max_tries,
@@ -296,7 +307,7 @@ mod tests {
         let record = AgentRecord::new(
             "swe",
             "do work",
-            "/agents/swe/prompt.md",
+            Some("/agents/swe/prompt.md".to_string()),
             None,
             None,
             3,
@@ -327,6 +338,80 @@ mod tests {
         }"#;
         let parsed: AgentRecord = serde_json::from_str(json).unwrap();
         assert!(!parsed.is_default_conversation_agent);
+        assert_eq!(parsed.prompt_path.as_deref(), Some("/agents/swe/prompt.md"));
+    }
+
+    #[test]
+    fn agent_record_prompt_path_back_compat_empty_string_is_none() {
+        // Older clients sent the empty-string sentinel for "no path";
+        // deserialization must accept it and surface `None`.
+        let json = r#"{
+            "name": "swe",
+            "prompt": "draft",
+            "prompt_path": "",
+            "mcp_config_path": null,
+            "mcp_config": null,
+            "max_tries": 3,
+            "max_simultaneous": 5,
+            "is_assignment_agent": false,
+            "is_default_conversation_agent": false,
+            "secrets": []
+        }"#;
+        let parsed: AgentRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.prompt_path, None);
+    }
+
+    #[test]
+    fn agent_record_prompt_path_back_compat_null_is_none() {
+        let json = r#"{
+            "name": "swe",
+            "prompt": "draft",
+            "prompt_path": null,
+            "max_tries": 3,
+            "max_simultaneous": 5,
+            "is_assignment_agent": false,
+            "is_default_conversation_agent": false,
+            "secrets": []
+        }"#;
+        let parsed: AgentRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.prompt_path, None);
+    }
+
+    #[test]
+    fn agent_record_prompt_path_back_compat_omitted_is_none() {
+        let json = r#"{
+            "name": "swe",
+            "prompt": "draft",
+            "max_tries": 3,
+            "max_simultaneous": 5,
+            "is_assignment_agent": false,
+            "is_default_conversation_agent": false,
+            "secrets": []
+        }"#;
+        let parsed: AgentRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.prompt_path, None);
+    }
+
+    #[test]
+    fn agent_record_prompt_path_none_round_trips_cleanly() {
+        let record = AgentRecord::new("swe", "draft", None, None, None, 3, 5, false, false, vec![]);
+        let json = serde_json::to_string(&record).unwrap();
+        let parsed: AgentRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, record);
+    }
+
+    #[test]
+    fn upsert_agent_request_prompt_path_back_compat_empty_string_is_none() {
+        let json = r#"{
+            "name": "swe",
+            "prompt": "draft",
+            "prompt_path": "",
+            "max_tries": 3,
+            "max_simultaneous": 5,
+            "is_assignment_agent": false
+        }"#;
+        let parsed: UpsertAgentRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.prompt_path, None);
     }
 
     #[test]

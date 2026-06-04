@@ -318,7 +318,7 @@ async fn seed_default_conversation_agent(store: &dyn Store) -> anyhow::Result<()
     let prompt_path = "/agents/default-test-agent/prompt.md".to_string();
     let agent = Agent::new(
         "default-test-agent".to_string(),
-        prompt_path.clone(),
+        Some(prompt_path.clone()),
         None,
         1,
         1,

@@ -251,6 +251,7 @@ async fn create_agent(
         UpsertAgentRequest::new(
             name,
             prompt,
+            None,
             args.max_tries,
             args.max_simultaneous,
             None,
@@ -261,9 +262,10 @@ async fn create_agent(
         )
     } else if let Some(ref prompt_path) = args.prompt_path {
         let prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
-        let mut req = UpsertAgentRequest::new(
+        UpsertAgentRequest::new(
             name,
             String::new(),
+            Some(prompt_path),
             args.max_tries,
             args.max_simultaneous,
             None,
@@ -271,9 +273,7 @@ async fn create_agent(
             args.is_assignment_agent,
             args.is_default_conversation_agent,
             parse_secrets(args.secrets.as_deref()),
-        );
-        req.prompt_path = prompt_path;
-        req
+        )
     } else {
         bail!("either --prompt-file or --prompt-path must be provided");
     };
@@ -303,9 +303,9 @@ async fn update_agent(
 
     if let Some(prompt_file) = &args.prompt_file {
         request.prompt = read_prompt_file(prompt_file)?;
-        request.prompt_path = String::new();
+        request.prompt_path = None;
     } else if let Some(ref prompt_path) = args.prompt_path {
-        request.prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
+        request.prompt_path = Some(normalize_non_empty(prompt_path, "prompt path")?);
         request.prompt = String::new();
     }
     if let Some(mcp_config_path) = args.mcp_config_path {
@@ -391,7 +391,7 @@ mod tests {
             AgentRecord::new(
                 "alpha",
                 "",
-                "",
+                None,
                 None,
                 None,
                 3,
@@ -403,7 +403,7 @@ mod tests {
             AgentRecord::new(
                 "beta",
                 "",
-                "",
+                None,
                 None,
                 None,
                 3,
@@ -443,7 +443,7 @@ mod tests {
         let agents = vec![AgentRecord::new(
             "alpha",
             "prompt",
-            "/agents/alpha/prompt.md",
+            Some("/agents/alpha/prompt.md".to_string()),
             None,
             None,
             2,
@@ -479,7 +479,7 @@ mod tests {
         let response = AgentResponse::new(AgentRecord::new(
             "swe",
             "do software engineering",
-            "/agents/swe/prompt.md",
+            Some("/agents/swe/prompt.md".to_string()),
             None,
             None,
             3,
@@ -525,7 +525,7 @@ mod tests {
         let response = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft this",
-            "",
+            None,
             None,
             None,
             2,
@@ -538,7 +538,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "writer",
                 "prompt": "draft this",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 2,
@@ -583,7 +583,7 @@ mod tests {
         let response = AgentResponse::new(AgentRecord::new(
             "pm",
             "assign issues",
-            "",
+            None,
             None,
             None,
             3,
@@ -596,7 +596,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "pm",
                 "prompt": "assign issues",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -640,7 +640,7 @@ mod tests {
         let response = AgentResponse::new(AgentRecord::new(
             "chat",
             "chat with users",
-            "",
+            None,
             None,
             None,
             3,
@@ -653,7 +653,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "chat",
                 "prompt": "chat with users",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -682,7 +682,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -694,7 +694,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -712,7 +712,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "draft",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -755,7 +755,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -767,7 +767,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -785,7 +785,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "draft",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -852,7 +852,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -864,7 +864,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "revised",
-            "",
+            None,
             None,
             None,
             3,
@@ -884,7 +884,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "revised",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -929,7 +929,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -941,7 +941,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -959,7 +959,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "draft",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1002,7 +1002,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -1014,7 +1014,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -1032,7 +1032,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "draft",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1075,7 +1075,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -1087,7 +1087,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -1105,7 +1105,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "draft",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1172,7 +1172,7 @@ mod tests {
         let deleted = AgentRecord::new(
             "writer",
             "",
-            "",
+            None,
             None,
             None,
             3,
@@ -1217,7 +1217,7 @@ mod tests {
         let response = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             None,
             3,
@@ -1230,7 +1230,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1259,7 +1259,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             None,
             3,
@@ -1271,7 +1271,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             None,
             3,
@@ -1289,7 +1289,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/worker").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1332,7 +1332,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             None,
             3,
@@ -1344,7 +1344,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             None,
             3,
@@ -1362,7 +1362,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/worker").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1402,7 +1402,7 @@ mod tests {
         let agents = vec![AgentRecord::new(
             "worker",
             "prompt",
-            "",
+            None,
             None,
             None,
             3,
@@ -1502,7 +1502,7 @@ mod tests {
         let response = AgentResponse::new(AgentRecord::new(
             "tester",
             "",
-            "/agents/tester/prompt.md",
+            Some("/agents/tester/prompt.md".to_string()),
             Some("/agents/tester/mcp-config.json".to_string()),
             None,
             3,
@@ -1531,7 +1531,10 @@ mod tests {
         mock.assert();
 
         assert_eq!(agent.name, "tester");
-        assert_eq!(agent.prompt_path, "/agents/tester/prompt.md");
+        assert_eq!(
+            agent.prompt_path.as_deref(),
+            Some("/agents/tester/prompt.md")
+        );
         assert_eq!(
             agent.mcp_config_path,
             Some("/agents/tester/mcp-config.json".to_string())
@@ -1618,7 +1621,7 @@ mod tests {
         let response = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             Some(r#"{"mcpServers": {"test": {}}}"#.to_string()),
             3,
@@ -1631,7 +1634,7 @@ mod tests {
             when.method(POST).path("/v1/agents").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": "{\"mcpServers\": {\"test\": {}}}",
                 "max_tries": 3,
@@ -1662,7 +1665,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "old prompt",
-            "",
+            None,
             None,
             None,
             3,
@@ -1674,7 +1677,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "",
-            "/agents/writer/prompt.md",
+            Some("/agents/writer/prompt.md".to_string()),
             None,
             None,
             3,
@@ -1723,7 +1726,10 @@ mod tests {
         get_mock.assert();
         put_mock.assert();
         assert_eq!(response.prompt, "");
-        assert_eq!(response.prompt_path, "/agents/writer/prompt.md");
+        assert_eq!(
+            response.prompt_path.as_deref(),
+            Some("/agents/writer/prompt.md")
+        );
 
         Ok(())
     }
@@ -1736,7 +1742,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             None,
             None,
             3,
@@ -1748,7 +1754,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "draft",
-            "",
+            None,
             Some("/agents/writer/mcp-config.json".to_string()),
             None,
             3,
@@ -1766,7 +1772,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "draft",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": "/agents/writer/mcp-config.json",
                 "mcp_config": null,
                 "max_tries": 3,
@@ -1812,7 +1818,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             None,
             3,
@@ -1825,7 +1831,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             None,
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
@@ -1843,7 +1849,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/worker").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": "{\"mcpServers\": {}}",
                 "max_tries": 3,
@@ -1889,7 +1895,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             Some("/agents/worker/mcp-config.json".to_string()),
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
@@ -1901,7 +1907,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "worker",
             "do stuff",
-            "",
+            None,
             Some("/agents/worker/mcp-config.json".to_string()),
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
@@ -1919,7 +1925,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/worker").json_body(json!({
                 "name": "worker",
                 "prompt": "do stuff",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": "/agents/worker/mcp-config.json",
                 "mcp_config": "{\"mcpServers\": {}}",
                 "max_tries": 3,
@@ -1965,7 +1971,7 @@ mod tests {
         let existing = AgentResponse::new(AgentRecord::new(
             "writer",
             "",
-            "/agents/writer/prompt.md",
+            Some("/agents/writer/prompt.md".to_string()),
             None,
             None,
             3,
@@ -1977,7 +1983,7 @@ mod tests {
         let updated = AgentResponse::new(AgentRecord::new(
             "writer",
             "new inline prompt",
-            "",
+            None,
             None,
             None,
             3,
@@ -1997,7 +2003,7 @@ mod tests {
             when.method(PUT).path("/v1/agents/writer").json_body(json!({
                 "name": "writer",
                 "prompt": "new inline prompt",
-                "prompt_path": "",
+                "prompt_path": null,
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
@@ -2028,7 +2034,7 @@ mod tests {
         get_mock.assert();
         put_mock.assert();
         assert_eq!(response.prompt, "new inline prompt");
-        assert_eq!(response.prompt_path, "");
+        assert_eq!(response.prompt_path, None);
 
         Ok(())
     }
@@ -2038,7 +2044,7 @@ mod tests {
         let agents = vec![AgentRecord::new(
             "worker",
             "prompt",
-            "/agents/worker/prompt.md",
+            Some("/agents/worker/prompt.md".to_string()),
             Some("/agents/worker/mcp-config.json".to_string()),
             None,
             3,

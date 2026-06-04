@@ -106,12 +106,8 @@ impl AppState {
 
     /// Fetch the prompt text for an agent from the document store.
     ///
-    /// Returns an error if `prompt_path` is empty or the document is not found.
+    /// Returns an error if the document is not found at `prompt_path`.
     pub async fn resolve_agent_prompt(&self, prompt_path: &str) -> anyhow::Result<String> {
-        if prompt_path.is_empty() {
-            anyhow::bail!("prompt_path is empty");
-        }
-
         let query =
             SearchDocumentsQuery::new(None, Some(prompt_path.to_string()), Some(true), None);
 
@@ -132,7 +128,7 @@ impl AppState {
     ///
     /// Returns a map from agent name to prompt text.
     pub async fn resolve_agent_prompts(&self, agents: &[Agent]) -> HashMap<String, String> {
-        self.resolve_batch_from_documents(agents, |agent| Some(agent.prompt_path.as_str()))
+        self.resolve_batch_from_documents(agents, |agent| agent.prompt_path.as_deref())
             .await
     }
 

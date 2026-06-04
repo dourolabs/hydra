@@ -38,7 +38,7 @@ export function createAgentRoutes(store: Store): Hono {
     const agent: AgentRecord = {
       name: body.name,
       prompt: body.prompt,
-      prompt_path: body.prompt_path ?? `/agents/${body.name}/prompt.md`,
+      prompt_path: body.prompt_path || `/agents/${body.name}/prompt.md`,
       mcp_config_path: body.mcp_config_path,
       mcp_config: body.mcp_config,
       max_tries: body.max_tries,
@@ -59,7 +59,7 @@ export function createAgentRoutes(store: Store): Hono {
     const agent: AgentRecord = {
       name: body.name,
       prompt: body.prompt,
-      prompt_path: body.prompt_path ?? `/agents/${body.name}/prompt.md`,
+      prompt_path: body.prompt_path || `/agents/${body.name}/prompt.md`,
       mcp_config_path: body.mcp_config_path,
       mcp_config: body.mcp_config,
       max_tries: body.max_tries,

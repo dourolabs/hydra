@@ -391,7 +391,7 @@ mod tests {
     fn make_agent(agent_name: &str) -> crate::domain::agents::Agent {
         crate::domain::agents::Agent::new(
             agent_name.to_string(),
-            format!("/agents/{agent_name}/prompt.md"),
+            Some(format!("/agents/{agent_name}/prompt.md")),
             None,
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -414,7 +414,7 @@ mod tests {
         AgentQueue::new(
             Agent::new(
                 agent_name.to_string(),
-                format!("/agents/{agent_name}/prompt.md"),
+                Some(format!("/agents/{agent_name}/prompt.md")),
                 None,
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -451,7 +451,7 @@ mod tests {
             handles,
             Agent::new(
                 agent_name.to_string(),
-                format!("/agents/{agent_name}/prompt.md"),
+                Some(format!("/agents/{agent_name}/prompt.md")),
                 None,
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -470,7 +470,10 @@ mod tests {
         prompt: &str,
     ) -> anyhow::Result<()> {
         use crate::domain::documents::Document;
-        let path = agent.prompt_path.clone();
+        let path = agent
+            .prompt_path
+            .clone()
+            .expect("seeded test agents always carry a prompt_path");
         let doc = Document {
             title: format!("{} prompt", agent.name),
             body_markdown: prompt.to_string(),
@@ -906,7 +909,7 @@ mod tests {
             AgentQueue::new(
                 Agent::new(
                     "assignment".to_string(),
-                    "/agents/assignment/prompt.md".to_string(),
+                    Some("/agents/assignment/prompt.md".to_string()),
                     None,
                     DEFAULT_AGENT_MAX_TRIES,
                     DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -1739,7 +1742,7 @@ mod tests {
 
         let agent = Agent::new(
             "test-agent".to_string(),
-            "/agents/test-agent/prompt.md".to_string(),
+            Some("/agents/test-agent/prompt.md".to_string()),
             None,
             5,
             10,
@@ -1751,7 +1754,10 @@ mod tests {
         let queue = AgentQueue::new(agent, shared_attempts());
 
         assert_eq!(queue.agent.name, "test-agent");
-        assert_eq!(queue.agent.prompt_path, "/agents/test-agent/prompt.md");
+        assert_eq!(
+            queue.agent.prompt_path.as_deref(),
+            Some("/agents/test-agent/prompt.md")
+        );
         assert_eq!(queue.agent.max_tries, 5);
         assert_eq!(queue.agent.max_simultaneous, 10);
         assert!(queue.agent.is_assignment_agent);
@@ -2207,7 +2213,7 @@ mod tests {
         AgentQueue::new(
             Agent::new(
                 agent_name.to_string(),
-                format!("/agents/{agent_name}/prompt.md"),
+                Some(format!("/agents/{agent_name}/prompt.md")),
                 Some(mcp_config_path.to_string()),
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
@@ -2246,7 +2252,7 @@ mod tests {
         use crate::domain::agents::Agent;
         let agent = Agent::new(
             agent_name.to_string(),
-            format!("/agents/{agent_name}/prompt.md"),
+            Some(format!("/agents/{agent_name}/prompt.md")),
             Some(mcp_config_path.to_string()),
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,

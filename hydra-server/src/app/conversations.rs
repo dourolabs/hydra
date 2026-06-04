@@ -595,7 +595,7 @@ mod tests {
         let prompt_path = format!("/agents/{name}/prompt.md");
         let agent = Agent::new(
             name.to_string(),
-            prompt_path.clone(),
+            Some(prompt_path.clone()),
             None,
             1,
             1,
@@ -630,7 +630,7 @@ mod tests {
         let mcp_path = format!("/agents/{name}/mcp.json");
         let agent = Agent::new(
             name.to_string(),
-            prompt_path.clone(),
+            Some(prompt_path.clone()),
             Some(mcp_path.clone()),
             1,
             1,

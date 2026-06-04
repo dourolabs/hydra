@@ -59,10 +59,10 @@ pub async fn get_agent(
         .await
         .map_err(map_agent_error)?;
 
-    let prompt = state
-        .resolve_agent_prompt(&agent.prompt_path)
-        .await
-        .unwrap_or_default();
+    let prompt = match agent.prompt_path.as_deref() {
+        Some(path) => state.resolve_agent_prompt(path).await.unwrap_or_default(),
+        None => String::new(),
+    };
 
     let mcp_config = state.resolve_mcp_config_content(&agent).await;
 
@@ -82,8 +82,8 @@ pub async fn create_agent(
 
     let created = state.create_agent(agent).await.map_err(map_agent_error)?;
 
-    if let Some(prompt) = &prompt_text {
-        write_prompt(&state, &created.prompt_path, prompt, &actor).await?;
+    if let (Some(prompt), Some(prompt_path)) = (&prompt_text, created.prompt_path.as_deref()) {
+        write_prompt(&state, prompt_path, prompt, &actor).await?;
     }
     if let Some(mcp_config) = &mcp_config_text {
         if let Some(mcp_config_path) = &created.mcp_config_path {
@@ -118,8 +118,8 @@ pub async fn update_agent(
         .await
         .map_err(map_agent_error)?;
 
-    if let Some(prompt) = &prompt_text {
-        write_prompt(&state, &updated.prompt_path, prompt, &actor).await?;
+    if let (Some(prompt), Some(prompt_path)) = (&prompt_text, updated.prompt_path.as_deref()) {
+        write_prompt(&state, prompt_path, prompt, &actor).await?;
     }
     if let Some(mcp_config) = &mcp_config_text {
         if let Some(mcp_config_path) = &updated.mcp_config_path {
@@ -130,10 +130,10 @@ pub async fn update_agent(
     let resolved_prompt = if prompt_text.is_some() {
         prompt_text.unwrap_or_default()
     } else {
-        state
-            .resolve_agent_prompt(&updated.prompt_path)
-            .await
-            .unwrap_or_default()
+        match updated.prompt_path.as_deref() {
+            Some(path) => state.resolve_agent_prompt(path).await.unwrap_or_default(),
+            None => String::new(),
+        }
     };
 
     let resolved_mcp_config = if mcp_config_text.is_some() {
@@ -172,11 +172,15 @@ fn normalize_and_build_agent(
     payload: UpsertAgentRequest,
 ) -> Result<(Agent, Option<String>, Option<String>), ApiError> {
     let name = normalize_non_empty("name", payload.name)?;
-    let prompt_path = if payload.prompt_path.trim().is_empty() {
-        default_prompt_path(&name)
-    } else {
-        payload.prompt_path.trim().to_string()
-    };
+    let prompt_path = Some(
+        payload
+            .prompt_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| default_prompt_path(&name)),
+    );
 
     let prompt_text = if payload.prompt.trim().is_empty() {
         None

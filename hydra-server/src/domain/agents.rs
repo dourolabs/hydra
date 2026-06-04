@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Agent {
     pub name: String,
-    pub prompt_path: String,
+    pub prompt_path: Option<String>,
     pub mcp_config_path: Option<String>,
     pub max_tries: i32,
     pub max_simultaneous: i32,
@@ -23,7 +23,7 @@ impl Agent {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
-        prompt_path: String,
+        prompt_path: Option<String>,
         mcp_config_path: Option<String>,
         max_tries: i32,
         max_simultaneous: i32,

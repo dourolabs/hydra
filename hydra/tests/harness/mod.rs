@@ -468,7 +468,7 @@ impl TestHarnessBuilder {
                 .unwrap_or(false);
             let agent = Agent::new(
                 name.clone(),
-                format!("/agents/{name}/prompt.md"),
+                Some(format!("/agents/{name}/prompt.md")),
                 None,
                 3,
                 10,

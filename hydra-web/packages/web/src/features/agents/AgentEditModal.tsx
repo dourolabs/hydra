@@ -65,7 +65,7 @@ export function AgentEditModal({
     mutation.mutate({
       name: agent.name,
       prompt: prompt.trim(),
-      prompt_path: agent.prompt_path,
+      prompt_path: agent.prompt_path ?? null,
       mcp_config_path: mcpConfigPath.trim() || null,
       mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,

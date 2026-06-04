@@ -217,7 +217,7 @@ mod tests {
             .store
             .add_agent(crate::domain::agents::Agent::new(
                 name.to_string(),
-                format!("/agents/{name}/prompt.md"),
+                Some(format!("/agents/{name}/prompt.md")),
                 None,
                 3,
                 4,

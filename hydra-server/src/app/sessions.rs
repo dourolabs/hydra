@@ -50,8 +50,8 @@ pub enum CreateSessionError {
         #[source]
         source: AgentError,
     },
-    /// Reading the agent's prompt document failed (path empty / not found
-    /// / store error).
+    /// Reading the agent's prompt document failed (no path configured,
+    /// document not found, or store error).
     #[error("failed to resolve prompt for agent '{name}': {source}")]
     AgentPromptResolution {
         name: String,
@@ -195,13 +195,19 @@ impl AppState {
                         AgentError::NotFound { name } => CreateSessionError::AgentNotFound { name },
                         other => CreateSessionError::AgentLookup { source: other },
                     })?;
-                let system_prompt = self
-                    .resolve_agent_prompt(&agent.prompt_path)
-                    .await
-                    .map_err(|source| CreateSessionError::AgentPromptResolution {
+                let prompt_path = agent.prompt_path.as_deref().ok_or_else(|| {
+                    CreateSessionError::AgentPromptResolution {
                         name: agent.name.clone(),
-                        source,
-                    })?;
+                        source: anyhow::anyhow!("agent has no prompt_path configured"),
+                    }
+                })?;
+                let system_prompt =
+                    self.resolve_agent_prompt(prompt_path)
+                        .await
+                        .map_err(|source| CreateSessionError::AgentPromptResolution {
+                            name: agent.name.clone(),
+                            source,
+                        })?;
                 let mcp_config = match agent.mcp_config_path.as_deref() {
                     Some(path) => self
                         .resolve_agent_mcp_config(path)
