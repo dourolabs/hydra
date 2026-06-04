@@ -57,6 +57,7 @@ pub async fn login_with_github_device_flow(
                     .unwrap_or_else(|| "unknown error".to_string());
                 bail!("Device flow failed: {error_msg}");
             }
+            _ => bail!("Device flow returned unknown status from server"),
         }
     };
 

@@ -35,6 +35,7 @@ impl From<api::conversations::ConversationStatus> for ConversationStatus {
             api::conversations::ConversationStatus::Active => ConversationStatus::Active,
             api::conversations::ConversationStatus::Idle => ConversationStatus::Idle,
             api::conversations::ConversationStatus::Closed => ConversationStatus::Closed,
+            _ => unreachable!("unsupported ConversationStatus variant"),
         }
     }
 }

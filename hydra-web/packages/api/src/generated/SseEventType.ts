@@ -25,4 +25,5 @@ export type SseEventType =
   | "session_log"
   | "connected"
   | "resync"
-  | "heartbeat";
+  | "heartbeat"
+  | "unknown";

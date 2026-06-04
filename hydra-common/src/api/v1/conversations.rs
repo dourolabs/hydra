@@ -33,10 +33,13 @@ pub struct SearchConversationsQuery {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ConversationStatus {
     Active,
     Idle,
     Closed,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +194,12 @@ mod tests {
             let deserialized: ConversationStatus = serde_json::from_str(&json).unwrap();
             assert_eq!(status, deserialized);
         }
+    }
+
+    #[test]
+    fn conversation_status_unknown_string_deserializes_to_unknown() {
+        let status: ConversationStatus = serde_json::from_str("\"archived\"").unwrap();
+        assert_eq!(status, ConversationStatus::Unknown);
     }
 
     #[test]
