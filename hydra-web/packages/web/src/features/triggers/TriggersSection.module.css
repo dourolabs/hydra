@@ -1,0 +1,168 @@
+/* Triggers list — cards layout. Mirrors agents/repositories cards. */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  transition:
+    border-color var(--tx-fast),
+    background var(--tx-fast);
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-2);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cardLink {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardLink:hover {
+  color: var(--acc);
+}
+
+.cardHeadSpacer {
+  flex: 1;
+}
+
+.schedulePreview {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.metaChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 19px;
+  padding: 0 7px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.metaChipKey {
+  color: var(--fg-3);
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.cardFootSpacer {
+  flex: 1;
+}
+
+/* Modal form helpers. */
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg-0);
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+
+.checkboxLabel input[type="checkbox"] {
+  accent-color: var(--acc);
+}
+
+.actionsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.actionsListHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.actionsListTitle {
+  color: var(--fg-0);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.actionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.actionCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.actionCardLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.formError {
+  color: var(--s-failed);
+  font-size: var(--t-xs);
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}

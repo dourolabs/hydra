@@ -1,6 +1,5 @@
 export { HydraApiClient } from "./client";
 export type { HydraApiClientOptions } from "./client";
-export type { RelationResponse, ListRelationsRequest, ListRelationsResponse } from "./client";
 
 export { ApiError } from "./errors";
 

@@ -1,0 +1,246 @@
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px 32px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.headMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eyebrow {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  letter-spacing: 0.08em;
+}
+
+.title {
+  font-family: var(--f-mono);
+  font-size: var(--t-lg);
+  color: var(--fg-0);
+  margin: 0;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.headMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scheduleSummary {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
+
+.headActions {
+  display: flex;
+  gap: 6px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.section {
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sectionTitle {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--fg-0);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.dlRow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.dlLabel {
+  flex-shrink: 0;
+  width: 120px;
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.dlValue {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  margin: 0;
+  word-break: break-word;
+}
+
+.code {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+}
+
+.codeBlock {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+  background: var(--bg-2);
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.actionsList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.actionCard {
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.actionCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.actionCardLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.actionTypeChip {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--acc);
+  background: var(--acc-soft);
+  padding: 0 6px;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.firingList {
+  display: flex;
+  flex-direction: column;
+}
+
+.firingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.firingRow:last-child {
+  border-bottom: none;
+}
+
+.firingLink {
+  text-decoration: none;
+}
+
+.firingLink:hover .code {
+  color: var(--acc);
+}
+
+.firingTime {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+}
+
+.absoluteTs {
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+}
+
+.muted {
+  color: var(--fg-3);
+  font-size: var(--t-sm);
+  margin: 0;
+}
+
+.empty {
+  color: var(--fg-3);
+  font-size: var(--t-sm);
+  margin: 0;
+}
+
+.error {
+  color: var(--s-failed);
+  font-size: var(--t-sm);
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .detail {
+    padding: 16px;
+  }
+  .dlRow {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .dlLabel {
+    width: auto;
+  }
+}

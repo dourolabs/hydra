@@ -176,6 +176,12 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
       isActive: () => isAllIssuesActive,
     },
     {
+      to: "/triggers",
+      label: "Triggers",
+      testId: "sidebar-triggers",
+      icon: <Icons.IconTime />,
+    },
+    {
       to: "/patches",
       label: "Patches",
       testId: "sidebar-patches",
