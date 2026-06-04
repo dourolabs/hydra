@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub mod ids {
-    use hydra_common::{HydraIdError, IssueId, LabelId, PatchId, SessionId};
+    use hydra_common::{HydraIdError, IssueId, LabelId, PatchId, SessionId, TriggerId};
     use std::iter;
     use std::str::FromStr;
 
@@ -18,6 +18,10 @@ pub mod ids {
 
     pub fn label_id(label: &str) -> LabelId {
         parse_or_build(label, "l-")
+    }
+
+    pub fn trigger_id(label: &str) -> TriggerId {
+        parse_or_build(label, "t-")
     }
 
     fn parse_or_build<T>(label: &str, prefix: &str) -> T

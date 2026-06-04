@@ -9,5 +9,6 @@ pub mod output;
 pub mod patches;
 pub mod repos;
 pub mod sessions;
+pub mod triggers;
 pub mod users;
 pub mod utils;

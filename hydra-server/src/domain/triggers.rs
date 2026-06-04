@@ -9,12 +9,17 @@ use crate::domain::actors::ActorRef;
 use crate::domain::issues::Issue as DomainIssue;
 use crate::store::{RelationshipType, StoreError};
 use chrono::{DateTime, Utc};
-use cron::Schedule as CronSchedule;
 use hydra_common::HydraId;
 use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::issues::IssueStatus;
 use hydra_common::principal::Principal;
-use hydra_common::triggers::{Action, CreateIssueAction, Schedule, Trigger};
+use hydra_common::triggers::{
+    Action, CreateIssueAction, Schedule, Trigger, parse_cron_expression, render, validate_template,
+};
+
+// Re-export so existing call sites continue to work via
+// `crate::domain::triggers::{RenderContext, RenderError, ScheduleFiring}`.
+pub use hydra_common::triggers::{RenderContext, RenderError, ScheduleFiring};
 use hydra_common::{IssueId, RepoName, TriggerId};
 use std::str::FromStr;
 use thiserror::Error;
@@ -27,131 +32,6 @@ use tracing::warn;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionTarget {
     Issue(IssueId),
-}
-
-/// Variables available to template strings: `now.iso`, `now.date`,
-/// `scheduled_at`, `trigger.id`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderContext {
-    pub now: DateTime<Utc>,
-    pub scheduled_at: DateTime<Utc>,
-    pub trigger_id: TriggerId,
-}
-
-impl RenderContext {
-    pub fn new(now: DateTime<Utc>, scheduled_at: DateTime<Utc>, trigger_id: TriggerId) -> Self {
-        Self {
-            now,
-            scheduled_at,
-            trigger_id,
-        }
-    }
-
-    fn lookup(&self, name: &str) -> Option<String> {
-        match name {
-            "now.iso" => Some(self.now.to_rfc3339()),
-            "now.date" => Some(self.now.format("%Y-%m-%d").to_string()),
-            "scheduled_at" => Some(self.scheduled_at.to_rfc3339()),
-            "trigger.id" => Some(self.trigger_id.to_string()),
-            _ => None,
-        }
-    }
-}
-
-/// All recognized template variables; the parse-only path consults this
-/// set so `Trigger::validate` can reject an unknown variable without
-/// requiring a fully populated `RenderContext`.
-const KNOWN_VARIABLES: &[&str] = &["now.iso", "now.date", "scheduled_at", "trigger.id"];
-
-/// Failure modes produced by [`render`].
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum RenderError {
-    #[error("unbalanced '{{{{' at byte {position}")]
-    UnbalancedOpen { position: usize },
-    #[error("unbalanced '}}}}' at byte {position}")]
-    UnbalancedClose { position: usize },
-    #[error("unknown template variable '{name}'")]
-    UnknownVariable { name: String },
-    #[error("empty template variable")]
-    EmptyVariable,
-}
-
-/// Parse a 5-field cron expression (the design's wire format) into a
-/// [`cron::Schedule`]. The `cron` crate expects 6 fields (with seconds);
-/// we prepend `0 ` so user-typed `m h dom mon dow` parses correctly.
-///
-/// Returns the cron crate's error message on failure; the caller wraps
-/// it in [`ValidationError::InvalidCron`] with the original expression.
-pub fn parse_cron_expression(expression: &str) -> Result<CronSchedule, String> {
-    let normalised = format!("0 {}", expression.trim());
-    CronSchedule::from_str(&normalised).map_err(|e| e.to_string())
-}
-
-/// Render `template` against `ctx`, substituting `{{ var }}` placeholders.
-///
-/// Whitespace around the variable name inside `{{ }}` is ignored.
-/// Unknown variables, unbalanced braces, and empty `{{ }}` placeholders
-/// produce [`RenderError`].
-pub fn render(template: &str, ctx: &RenderContext) -> Result<String, RenderError> {
-    parse_template(template, Some(ctx))
-}
-
-/// Parse-only variant: walk the template, validate braces and variable
-/// names, but skip substitution. Used by `Trigger::validate` so callers
-/// can lint a stored trigger without supplying a `RenderContext`.
-fn validate_template(template: &str) -> Result<(), RenderError> {
-    parse_template(template, None).map(drop)
-}
-
-fn parse_template(template: &str, ctx: Option<&RenderContext>) -> Result<String, RenderError> {
-    let mut out = String::with_capacity(template.len());
-    let bytes = template.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let rest = &template[i..];
-        if let Some(after_open) = rest.strip_prefix("{{") {
-            let var_start = i + 2;
-            let close_rel = after_open
-                .find("}}")
-                .ok_or(RenderError::UnbalancedOpen { position: i })?;
-            let var_end = var_start + close_rel;
-            // Disallow a stray '{{' inside the variable region — it would
-            // otherwise let `{{ foo {{ bar }}` parse as `foo {{ bar` and
-            // mask the real unbalanced-open error.
-            if template[var_start..var_end].contains("{{") {
-                return Err(RenderError::UnbalancedOpen { position: i });
-            }
-            let raw = template[var_start..var_end].trim();
-            if raw.is_empty() {
-                return Err(RenderError::EmptyVariable);
-            }
-            if !KNOWN_VARIABLES.contains(&raw) {
-                return Err(RenderError::UnknownVariable {
-                    name: raw.to_string(),
-                });
-            }
-            if let Some(c) = ctx {
-                // Lookup is infallible here because we just verified `raw`
-                // is in `KNOWN_VARIABLES`; the `expect` is a defense
-                // against the two lists drifting apart.
-                let value = c
-                    .lookup(raw)
-                    .expect("KNOWN_VARIABLES and RenderContext::lookup must agree");
-                out.push_str(&value);
-            }
-            i = var_end + 2;
-        } else if rest.starts_with("}}") {
-            return Err(RenderError::UnbalancedClose { position: i });
-        } else {
-            // Take one char to handle multibyte boundaries cleanly.
-            let ch = rest.chars().next().expect("rest is non-empty");
-            if ctx.is_some() {
-                out.push(ch);
-            }
-            i += ch.len_utf8();
-        }
-    }
-    Ok(out)
 }
 
 /// A non-fatal issue raised during [`Trigger::validate`].
@@ -412,68 +292,6 @@ async fn run_create_issue(
     Ok(ActionTarget::Issue(issue_id))
 }
 
-/// Extension trait so a `Schedule` can answer "is this trigger due to
-/// fire right now, and if so, at which slot?" in one constant-time call.
-///
-/// `Schedule` lives in `hydra-common`, so the inherent method form is not
-/// available — this trait is the orphan-rule workaround. The worker calls
-/// `schedule.get_fire_candidate(last_fire, now)` once per trigger per
-/// tick.
-pub trait ScheduleFiring {
-    /// Returns the slot the trigger should fire at, or `None` if it is
-    /// not due.
-    ///
-    /// For `Cron`: the most recent slot ≤ `now` that is strictly after
-    /// `last_fire`. Computed via `cron::Schedule::after(now).next_back()`
-    /// (i.e. the crate's internal `prev_from`), not by iterating slots.
-    ///
-    /// For `Once { at }`: returns `Some(at)` iff `last_fire.is_none()`
-    /// and `at <= now`.
-    fn get_fire_candidate(
-        &self,
-        last_fire: Option<DateTime<Utc>>,
-        now: DateTime<Utc>,
-    ) -> Option<DateTime<Utc>>;
-}
-
-impl ScheduleFiring for Schedule {
-    fn get_fire_candidate(
-        &self,
-        last_fire: Option<DateTime<Utc>>,
-        now: DateTime<Utc>,
-    ) -> Option<DateTime<Utc>> {
-        match self {
-            Schedule::Cron { expression, .. } => {
-                let schedule = parse_cron_expression(expression).ok()?;
-                // Most recent slot ≤ now. The cron crate's `after()`
-                // iterator implements `DoubleEndedIterator`; `next_back()`
-                // invokes the crate's private `prev_from`, which steps
-                // through the schedule's field ranges and returns the
-                // most recent slot strictly before `now`. We check
-                // `includes(now)` first to include `now` itself when it
-                // is exactly a slot boundary.
-                let candidate = if schedule.includes(now) {
-                    Some(now)
-                } else {
-                    schedule.after(&now).next_back()
-                };
-                let candidate = candidate?;
-                match last_fire {
-                    Some(prev) if candidate <= prev => None,
-                    _ => Some(candidate),
-                }
-            }
-            Schedule::Once { at } => {
-                if last_fire.is_some() || *at > now {
-                    None
-                } else {
-                    Some(*at)
-                }
-            }
-        }
-    }
-}
-
 /// Extension trait so callers can write `action.run(...)`. `Action`
 /// lives in `hydra-common`, so the inherent method form (`impl Action {
 /// pub async fn run(...) }`) is not available — the trait is the
@@ -509,6 +327,7 @@ impl ActionRun for Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cron::Schedule as CronSchedule;
     use hydra_common::api::v1::issues::SessionSettings;
     use hydra_common::issues::{IssueStatus, IssueType};
     use hydra_common::users::Username;

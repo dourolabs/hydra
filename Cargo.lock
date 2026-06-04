@@ -2259,6 +2259,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "cron",
  "git2",
  "indexmap 2.13.0",
  "octocrab",
@@ -2269,6 +2270,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "serde_yaml_ng",
+ "thiserror 1.0.69",
  "tracing",
  "ts-rs",
 ]

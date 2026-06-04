@@ -13,6 +13,7 @@ mod issues;
 mod patches;
 mod repositories;
 mod sessions;
+mod triggers;
 mod users;
 
 pub use agents::AgentRecords;
@@ -22,6 +23,7 @@ pub use issues::{IssueRecords, IssueSummaryRecords};
 pub use patches::{PatchRecords, PatchSummaryRecords};
 pub use repositories::RepositoryRecords;
 pub use sessions::{SessionRecords, SessionSummaryRecords};
+pub use triggers::TriggerRecords;
 pub use users::UserRecords;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

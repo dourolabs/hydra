@@ -60,10 +60,14 @@ use hydra_common::{
         ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
         SessionVersionRecord, WorkerContext,
     },
+    triggers::{
+        ListTriggerVersionsResponse, ListTriggersResponse, SearchTriggersQuery,
+        TriggerVersionRecord, UpsertTriggerRequest, UpsertTriggerResponse,
+    },
     users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
     ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
-    RepoName, SessionId,
+    RepoName, SessionId, TriggerId,
 };
 use reqwest::Url;
 
@@ -384,6 +388,52 @@ impl HydraClientInterface for RelayCallCountingClient {
 
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
         self.inner.delete_document(document_id).await
+    }
+
+    async fn create_trigger(
+        &self,
+        request: &UpsertTriggerRequest,
+    ) -> Result<UpsertTriggerResponse> {
+        self.inner.create_trigger(request).await
+    }
+
+    async fn update_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        request: &UpsertTriggerRequest,
+    ) -> Result<UpsertTriggerResponse> {
+        self.inner.update_trigger(trigger_id, request).await
+    }
+
+    async fn get_trigger(
+        &self,
+        trigger_id: &TriggerId,
+        include_deleted: bool,
+    ) -> Result<TriggerVersionRecord> {
+        self.inner.get_trigger(trigger_id, include_deleted).await
+    }
+
+    async fn get_trigger_version(
+        &self,
+        trigger_id: &TriggerId,
+        version: RelativeVersionNumber,
+    ) -> Result<TriggerVersionRecord> {
+        self.inner.get_trigger_version(trigger_id, version).await
+    }
+
+    async fn list_triggers(&self, query: &SearchTriggersQuery) -> Result<ListTriggersResponse> {
+        self.inner.list_triggers(query).await
+    }
+
+    async fn list_trigger_versions(
+        &self,
+        trigger_id: &TriggerId,
+    ) -> Result<ListTriggerVersionsResponse> {
+        self.inner.list_trigger_versions(trigger_id).await
+    }
+
+    async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
+        self.inner.delete_trigger(trigger_id).await
     }
 
     async fn subscribe_events(
