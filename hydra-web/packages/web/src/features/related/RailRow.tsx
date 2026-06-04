@@ -16,6 +16,7 @@ import {
 import { descriptionSnippet } from "../../utils/text";
 import { formatTokenCount } from "../../utils/tokens";
 import { conversationTitle } from "../chat/conversationTitle";
+import { CONVERSATION_STATUS_TONES } from "../chat/conversationStatusBadge";
 import { principalAvatarKind, principalDisplayName } from "../principal/formatPrincipal";
 import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
@@ -270,7 +271,7 @@ interface ChatRailRowProps {
 
 export function ChatRailRow({ conversation }: ChatRailRowProps) {
   const navigate = useNavigate();
-  const status: BadgeStatus = `conv-${conversation.status}`;
+  const status: BadgeStatus = CONVERSATION_STATUS_TONES[conversation.status];
   const messageLabel =
     conversation.event_count === 1 ? "1 msg" : `${conversation.event_count} msgs`;
   const to = `/chat/${conversation.conversation_id}`;

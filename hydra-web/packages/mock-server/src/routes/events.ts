@@ -10,7 +10,8 @@ import type { Store, StoreEvent } from "../store.js";
  * `hydra-server/src/routes/events.rs` so the mock server filters the same way
  * the real server does. Returns `null` for non-entity events (`connected`,
  * `resync`, `heartbeat`, `session_log`) that the SSE route writes directly and
- * does not route through the filter.
+ * does not route through the filter, and for `unknown` (forward-compat
+ * fallback variant on `SseEventType`).
  */
 export function eventCategory(eventType: SseEventType): string | null {
   switch (eventType) {
@@ -42,6 +43,7 @@ export function eventCategory(eventType: SseEventType): string | null {
     case "resync":
     case "heartbeat":
     case "session_log":
+    case "unknown":
       return null;
   }
 }

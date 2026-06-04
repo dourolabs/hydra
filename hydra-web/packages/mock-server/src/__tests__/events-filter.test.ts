@@ -126,6 +126,7 @@ describe("eventCategory", () => {
     expect(eventCategory("resync")).toBeNull();
     expect(eventCategory("heartbeat")).toBeNull();
     expect(eventCategory("session_log")).toBeNull();
+    expect(eventCategory("unknown")).toBeNull();
   });
 });
 

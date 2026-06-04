@@ -127,6 +127,21 @@ vi.mock("../../features/chat/conversationFilters", () => ({
   useConversationFilters: () => ({}),
 }));
 
+vi.mock("../../features/chat/conversationStatusBadge", () => ({
+  CONVERSATION_STATUS_TONES: {
+    active: "conv-active",
+    idle: "conv-idle",
+    closed: "conv-closed",
+    unknown: "unknown",
+  },
+  CONVERSATION_STATUS_LABELS: {
+    active: "Active",
+    idle: "Idle",
+    closed: "Closed",
+    unknown: "Unknown",
+  },
+}));
+
 const BADGE_LABELS: Record<string, string> = {
   "conv-active": "Active",
   "conv-idle": "Idle",
