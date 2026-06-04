@@ -7,7 +7,9 @@ import type { Username } from "./Username";
  * Body for `POST /v1/triggers` and `PUT /v1/triggers/:id`.
  *
  * `last_fired_at` and `deleted` are stripped — they are owned by the
- * server (see `/designs/triggered-actions.md` §4.4 and §4.6).
+ * server (`last_fired_at` is written in-place by `record_trigger_fire`
+ * and carried forward by `update_trigger`; `deleted` is flipped by
+ * `delete_trigger`).
  */
 export type UpsertTriggerRequest = {
   enabled: boolean;

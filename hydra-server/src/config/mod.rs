@@ -813,7 +813,8 @@ fn default_cleanup_branches_scheduler() -> WorkerSchedulerConfig {
 }
 
 fn default_scheduled_triggers_scheduler() -> WorkerSchedulerConfig {
-    // §4 of /designs/triggered-actions.md commits to a 10s tick.
+    // 10s is the coarsest tick that still gives sub-minute cron schedules
+    // a same-minute fire under normal scheduler jitter.
     WorkerSchedulerConfig {
         interval_secs: 10,
         ..Default::default()
