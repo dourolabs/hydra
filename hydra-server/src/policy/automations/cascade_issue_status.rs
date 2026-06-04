@@ -79,6 +79,16 @@ impl Automation for CascadeIssueStatusAutomation {
     }
 
     async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
+        // Skip events triggered by this automation to avoid infinite loops.
+        if let ActorRef::Automation {
+            automation_name, ..
+        } = ctx.actor()
+        {
+            if automation_name == AUTOMATION_NAME {
+                return Ok(());
+            }
+        }
+
         let ServerEvent::IssueUpdated {
             issue_id, payload, ..
         } = ctx.event
@@ -758,5 +768,59 @@ mod tests {
 
         let automation = CascadeIssueStatusAutomation::new(Some(&params)).unwrap();
         assert_eq!(automation.trigger_statuses, vec![IssueStatus::Closed]);
+    }
+
+    #[tokio::test]
+    async fn skips_events_triggered_by_this_automation() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let child = make_issue(
+            IssueStatus::Open,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
+
+        let mut dropped_parent = parent;
+        dropped_parent.status = IssueStatus::Dropped.into();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: dropped_parent,
+            actor: ActorRef::Automation {
+                automation_name: AUTOMATION_NAME.to_string(),
+                triggered_by: None,
+            },
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        // Child should remain Open — the automation must not act on its own events.
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Open.as_status_key());
     }
 }
