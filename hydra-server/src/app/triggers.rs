@@ -11,7 +11,7 @@ use crate::domain::triggers::{
 };
 use crate::store::{ReadOnlyStore, StoreError};
 use hydra_common::triggers::Trigger;
-use hydra_common::{RepoName, TriggerId};
+use hydra_common::{RepoName, TriggerId, Versioned};
 use hydra_common::{VersionNumber, api::v1::triggers::UpsertTriggerRequest};
 use thiserror::Error;
 
@@ -74,6 +74,19 @@ impl AppState {
         let warnings = self.validate_trigger(&trigger).await?;
         let version = self.store.update_trigger(id, trigger, actor).await?;
         Ok((version, warnings))
+    }
+
+    /// Soft-delete a trigger via the store. Returns the post-deletion
+    /// `Versioned<Trigger>` (fetched with `include_deleted = true`) so the
+    /// caller can populate a response that reflects the new tombstone row.
+    pub async fn delete_trigger(
+        &self,
+        id: &TriggerId,
+        actor: &ActorRef,
+    ) -> Result<Versioned<Trigger>, UpsertTriggerError> {
+        self.store.delete_trigger(id, actor).await?;
+        let versioned = self.store.get_trigger(id, true).await?;
+        Ok(versioned)
     }
 
     /// Self-consistency check on the trigger payload, plus a targeted

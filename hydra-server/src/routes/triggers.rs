@@ -212,15 +212,13 @@ pub async fn delete_trigger(
     TriggerIdPath(trigger_id): TriggerIdPath,
 ) -> Result<Json<TriggerVersionRecord>, ApiError> {
     info!(trigger_id = %trigger_id, "delete_trigger invoked");
-    let store = state.store_with_events();
-    store
+    let versioned = state
         .delete_trigger(&trigger_id, &ActorRef::from(&actor))
         .await
-        .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
-    let versioned = store
-        .get_trigger(&trigger_id, true)
-        .await
-        .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
+        .map_err(|err| match err {
+            UpsertTriggerError::Store { source } => map_trigger_error(source, Some(&trigger_id)),
+            other => map_upsert_error(other),
+        })?;
     info!(trigger_id = %trigger_id, "delete_trigger completed");
     Ok(Json(to_record(&trigger_id, versioned)))
 }
