@@ -37,7 +37,7 @@ Allowed: new fields (use `Option<T>` or `#[serde(default)]`), new enum variants 
 ## When you change an API type, do all of this
 
 1. Update the Rust type in `hydra-common/src/api/v1/<entity>.rs`.
-2. Update the corresponding `domain::<entity>` type in `hydra-server/src/domain/<entity>.rs` and its `From` conversion impls in both directions. The store and policy engine work in `domain`, so the conversion must be exhaustive — if the new variant is added without updating the `From` impl, the route handler's `unreachable!` will panic at runtime.
+2. Update the corresponding `domain::<entity>` type in `hydra-server/src/domain/<entity>.rs` and its `From` conversion impls in both directions. The store and policy engine work in `domain`, so the conversion must be exhaustive — if the new variant is added without updating the `From` impl, the `unreachable!` in the `From<api::…>` arm (e.g. [`hydra-server/src/domain/issues.rs:308,334,357`](../../hydra-server/src/domain/issues.rs)) will panic at runtime the first time the route handler converts an incoming request.
 3. Regenerate the TypeScript bindings:
 
    ```
