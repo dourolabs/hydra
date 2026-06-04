@@ -265,7 +265,7 @@ pub struct Issue {
     /// status list. Never stored: always populated on responses so
     /// frontends don't need a second round trip to render the status
     /// chip, and omitted on create / update requests (the server
-    /// re-resolves from `status_key`).
+    /// re-resolves from [`Self::status`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_status: Option<StatusDefinition>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
