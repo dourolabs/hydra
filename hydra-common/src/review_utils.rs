@@ -3,41 +3,44 @@ use chrono::{DateTime, Utc};
 use crate::api::v1::patches::{PatchVersionRecord, Review};
 use crate::principal::{Principal, principal_eq};
 
-/// Per-review staleness check against a precomputed cutoff timestamp.
-///
-/// - With `cutoff = None`, every review is non-stale (no `commit_range` change
-///   ever invalidated reviews).
-/// - With `cutoff = Some(t)`, the review is non-stale iff it has a
-///   `submitted_at` timestamp at or after `t`. Reviews without a
-///   `submitted_at` are stale whenever a cutoff exists.
-///
-/// Shared by [`is_review_non_stale`] (which derives the cutoff from a patch
-/// version history), [`find_latest_review_by_author`], and
-/// [`has_approved_non_dismissed_review`] so the three cannot drift.
-fn is_non_stale_with_cutoff(review: &Review, cutoff: Option<DateTime<Utc>>) -> bool {
-    match cutoff {
-        Some(t) => review.submitted_at.is_some_and(|s| s >= t),
-        None => true,
+impl Review {
+    /// Per-review staleness check against a precomputed cutoff timestamp.
+    ///
+    /// - With `cutoff = None`, every review is non-stale (no `commit_range`
+    ///   change ever invalidated reviews).
+    /// - With `cutoff = Some(t)`, the review is non-stale iff it has a
+    ///   `submitted_at` timestamp at or after `t`. Reviews without a
+    ///   `submitted_at` are stale whenever a cutoff exists.
+    ///
+    /// Shared by [`Review::is_non_stale`] (which derives the cutoff from a
+    /// patch version history), [`find_latest_review_by_author`], and
+    /// [`has_approved_non_dismissed_review`] so the three cannot drift.
+    pub(crate) fn is_non_stale_with_cutoff(&self, cutoff: Option<DateTime<Utc>>) -> bool {
+        match cutoff {
+            Some(t) => self.submitted_at.is_some_and(|s| s >= t),
+            None => true,
+        }
     }
-}
 
-/// Returns `true` iff `review` is non-stale against the given patch version
-/// history.
-///
-/// "Non-stale" means the review has not been invalidated by a change to the
-/// patch's `commit_range` since it was submitted. Specifically: if
-/// [`find_last_commit_range_change_timestamp`] returns `None` for
-/// `patch_versions`, every review is non-stale; otherwise the review must have
-/// a `submitted_at` timestamp at or after that change.
-///
-/// Per `/designs/merge-time-constraints.md` §6.3 this is the shared predicate
-/// used by the server-side `merge_authorization` restriction (Phase 2 PR-2)
-/// and the CLI (Phase 2 PR-4 / Phase 3 cleanup). The exact semantics match
-/// what [`has_approved_non_dismissed_review`] does today so migrating the CLI
-/// to call the server preflight does not regress behaviour.
-pub fn is_review_non_stale(review: &Review, patch_versions: &[PatchVersionRecord]) -> bool {
-    let cutoff = find_last_commit_range_change_timestamp(patch_versions);
-    is_non_stale_with_cutoff(review, cutoff)
+    /// Returns `true` iff this review is non-stale against the given patch
+    /// version history.
+    ///
+    /// "Non-stale" means the review has not been invalidated by a change to
+    /// the patch's `commit_range` since it was submitted. Specifically: if
+    /// [`find_last_commit_range_change_timestamp`] returns `None` for
+    /// `patch_versions`, every review is non-stale; otherwise the review
+    /// must have a `submitted_at` timestamp at or after that change.
+    ///
+    /// Per `/designs/merge-time-constraints.md` §6.3 this is the shared
+    /// predicate used by the server-side `merge_authorization` restriction
+    /// (Phase 2 PR-2) and the CLI (Phase 2 PR-4 / Phase 3 cleanup). The
+    /// exact semantics match what [`has_approved_non_dismissed_review`]
+    /// does today so migrating the CLI to call the server preflight does
+    /// not regress behaviour.
+    pub fn is_non_stale(&self, patch_versions: &[PatchVersionRecord]) -> bool {
+        let cutoff = find_last_commit_range_change_timestamp(patch_versions);
+        self.is_non_stale_with_cutoff(cutoff)
+    }
 }
 
 /// Find the latest non-stale review by a given author (matched
@@ -63,7 +66,7 @@ pub fn find_latest_review_by_author<'a>(
     reviews
         .iter()
         .filter(|r| principal_eq(&r.author, author))
-        .filter(|r| is_non_stale_with_cutoff(r, staleness_cutoff))
+        .filter(|r| r.is_non_stale_with_cutoff(staleness_cutoff))
         .max_by(|a, b| {
             // Reviews with submitted_at are always newer than those without
             match (&a.submitted_at, &b.submitted_at) {
@@ -115,7 +118,7 @@ pub fn has_approved_non_dismissed_review(
     // `to_ascii_lowercase()` deduplication.
     let mut seen_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
     for review in reviews {
-        let key = canonical_principal_key(&review.author);
+        let key = review.author.canonical_key();
         if !seen_keys.insert(key) {
             continue;
         }
@@ -128,21 +131,6 @@ pub fn has_approved_non_dismissed_review(
         }
     }
     false
-}
-
-/// Canonical, case-folded key for a [`Principal`] — used to dedupe
-/// per-author when scanning a review list. Mirrors the matching done
-/// by [`principal_eq`].
-fn canonical_principal_key(p: &Principal) -> String {
-    match p {
-        Principal::User { name } => format!("users/{}", name.as_str().to_ascii_lowercase()),
-        Principal::Agent { name } => format!("agents/{}", name.as_str().to_ascii_lowercase()),
-        Principal::External { system, username } => format!(
-            "external/{}/{}",
-            system.as_str(),
-            username.to_ascii_lowercase()
-        ),
-    }
 }
 
 #[cfg(test)]
@@ -451,7 +439,7 @@ mod tests {
         assert!(!has_approved_non_dismissed_review(&reviews, Some(cutoff)));
     }
 
-    // --- Unit tests for is_review_non_stale ---
+    // --- Unit tests for Review::is_non_stale ---
 
     fn range_a() -> Option<CommitRange> {
         Some(CommitRange::new(
@@ -474,14 +462,14 @@ mod tests {
         // review is non-stale, including those without a `submitted_at`.
         let versions = vec![make_version_record(1, now, range_a())];
         let review = make_review("LGTM", true, "alice", None);
-        assert!(is_review_non_stale(&review, &versions));
+        assert!(review.is_non_stale(&versions));
     }
 
     #[test]
     fn is_review_non_stale_true_with_empty_version_history() {
         // No versions at all → no commit_range change → cutoff is None.
         let review = make_review("LGTM", true, "alice", Some(Utc::now()));
-        assert!(is_review_non_stale(&review, &[]));
+        assert!(review.is_non_stale(&[]));
     }
 
     #[test]
@@ -494,7 +482,7 @@ mod tests {
             make_version_record(2, change_ts, range_b()),
         ];
         let review = make_review("LGTM", true, "alice", Some(review_ts));
-        assert!(!is_review_non_stale(&review, &versions));
+        assert!(!review.is_non_stale(&versions));
     }
 
     #[test]
@@ -507,7 +495,7 @@ mod tests {
             make_version_record(2, change_ts, range_b()),
         ];
         let review = make_review("LGTM", true, "alice", Some(review_ts));
-        assert!(is_review_non_stale(&review, &versions));
+        assert!(review.is_non_stale(&versions));
     }
 
     #[test]
@@ -521,7 +509,7 @@ mod tests {
             make_version_record(2, change_ts, range_b()),
         ];
         let review = make_review("LGTM", true, "alice", Some(change_ts));
-        assert!(is_review_non_stale(&review, &versions));
+        assert!(review.is_non_stale(&versions));
     }
 
     #[test]
@@ -533,7 +521,7 @@ mod tests {
             make_version_record(2, now - Duration::hours(1), range_b()),
         ];
         let review = make_review("LGTM", true, "alice", None);
-        assert!(!is_review_non_stale(&review, &versions));
+        assert!(!review.is_non_stale(&versions));
     }
 
     #[test]
@@ -552,14 +540,14 @@ mod tests {
         let fresh = make_review("LGTM", true, "bob", Some(now));
 
         // Just the stale approval -> no non-dismissed approval.
-        assert!(!is_review_non_stale(&stale, &versions));
+        assert!(!stale.is_non_stale(&versions));
         assert!(!has_approved_non_dismissed_review(
             std::slice::from_ref(&stale),
             cutoff,
         ));
 
         // Add the fresh approval from a different author -> one survives.
-        assert!(is_review_non_stale(&fresh, &versions));
+        assert!(fresh.is_non_stale(&versions));
         assert!(has_approved_non_dismissed_review(&[stale, fresh], cutoff,));
     }
 }
