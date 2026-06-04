@@ -21,12 +21,13 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
+use hydra_common::api::v1::projects::Project;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId, TriggerId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId, RepoName, SessionId,
+    TriggerId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -294,6 +295,21 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _include_deleted: bool,
     ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
+        fail()
+    }
+
+    async fn get_project(
+        &self,
+        _id: &ProjectId,
+        _include_deleted: bool,
+    ) -> Result<Versioned<Project>, StoreError> {
+        fail()
+    }
+
+    async fn list_projects(
+        &self,
+        _include_deleted: bool,
+    ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         fail()
     }
 
@@ -719,6 +735,31 @@ impl Store for FailingStore {
         _id: &TriggerId,
         _fired_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
+        fail()
+    }
+
+    async fn add_project(
+        &self,
+        _project: Project,
+        _actor: &ActorRef,
+    ) -> Result<(ProjectId, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn update_project(
+        &self,
+        _id: &ProjectId,
+        _project: Project,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn delete_project(
+        &self,
+        _id: &ProjectId,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
         fail()
     }
 }
