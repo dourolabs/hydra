@@ -53,10 +53,5 @@ without the feature.
 
 ## Postgres migration baselines
 
-`hydra-server/migrations/` is the sqlx migration directory used by the
-Postgres store (`MIGRATOR` in `ee/store/postgres_v2.rs`). New migrations land
-there as `<version>__<description>.sql`; in-Rust steps interleave at a declared
-SQL version via the planner in `src/store/migrations/mod.rs`. Baseline test
-fixtures live in `hydra-server/tests/fixtures/migration_baselines/` and are
-anchored to a real sqlx migration version — see `hydra-server/AGENTS.md` for
-the "Migration baselines" rule.
+See [`docs/rust/migrations.md`](rust/migrations.md) for migration mechanics,
+baselines, and the SQLite + Postgres parity rule.

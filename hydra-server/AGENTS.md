@@ -21,4 +21,4 @@ See also: [`docs/rust/`](../docs/rust/AGENTS.md) for workspace-wide Rust standar
 - Every background job invocation must log at `info!` when it starts (including job name and key parameters) and again when it finishes, capturing whether it succeeded and any high-level outcome so operators can understand what happened in that run.
 
 ## Migration baselines
-Versioned baseline fixtures live in `hydra-server/tests/fixtures/migration_baselines/<version>__<description>.sql`. Each file is named after the highest sqlx migration version against which its INSERT shapes are valid. Add a new baseline file only when a new sqlx migration introduces a source shape no existing baseline exercises; otherwise extend the appropriate existing baseline. See `/designs/migration-testing-redesign.md` for the test loop's exact semantics.
+See [`docs/rust/migrations.md`](../docs/rust/migrations.md) for migration mechanics, baselines, and the SQLite + Postgres parity rule.
