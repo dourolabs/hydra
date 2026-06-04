@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum WorkerMessage {
     /// Phase 1 — fresh worker boot; expect `ResumeContext`.
     Fresh,
@@ -60,6 +61,7 @@ pub enum WorkerMessage {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "version", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SessionStatePayload {
     /// Version 1: Claude's session UUID plus an optional transcript blob.
     V1 {
@@ -82,6 +84,7 @@ pub enum SessionStatePayload {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ServerMessage {
     /// Phase 1 (Fresh) — server-side resume context. `resume_blob` carries
     /// the persisted opaque bytes (if any); `prior_session_id` is set when

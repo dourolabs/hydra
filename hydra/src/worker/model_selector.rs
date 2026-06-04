@@ -1326,6 +1326,7 @@ mod tests {
                     assert_eq!(session_id, "sess-123");
                     assert_eq!(transcript.as_deref(), Some(&b"{\"hello\":true}\n"[..]));
                 }
+                other => panic!("expected V1, got {other:?}"),
             }
         }
 
@@ -1352,6 +1353,7 @@ mod tests {
                     assert_eq!(session_id, "sess-x");
                     assert!(transcript.is_none());
                 }
+                other => panic!("expected V1, got {other:?}"),
             }
         }
 
@@ -1375,6 +1377,7 @@ mod tests {
                             assert_eq!(session_id, "sess-123");
                             assert_eq!(transcript.as_deref(), Some(&b"hello\n"[..]));
                         }
+                        other => panic!("expected V1, got {other:?}"),
                     }
                 }
                 other => panic!("expected SessionStateUpload, got {other:?}"),
