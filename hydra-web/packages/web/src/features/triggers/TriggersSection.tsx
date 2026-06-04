@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Chip } from "@hydra/ui";
-import type { TriggerVersionRecord } from "@hydra/api";
+import type { ListTriggersResponse, TriggerVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useTriggers } from "./useTriggers";
 import { useAuth } from "../auth/useAuth";
@@ -35,18 +35,49 @@ export function TriggersSection({
   const [deleteTarget, setDeleteTarget] =
     useState<TriggerVersionRecord | null>(null);
 
-  const deleteMutation = useMutation({
+  const deleteMutation = useMutation<
+    TriggerVersionRecord,
+    Error,
+    string,
+    { snapshots: Array<[readonly unknown[], ListTriggersResponse | undefined]> }
+  >({
     mutationFn: (triggerId: string) => apiClient.deleteTrigger(triggerId),
+    onMutate: async (triggerId) => {
+      await queryClient.cancelQueries({ queryKey: ["triggers"] });
+      const snapshots = queryClient.getQueriesData<ListTriggersResponse>({
+        queryKey: ["triggers"],
+      });
+      queryClient.setQueriesData<ListTriggersResponse>(
+        { queryKey: ["triggers"] },
+        (old) =>
+          old
+            ? {
+                ...old,
+                triggers: old.triggers.filter(
+                  (t) => t.trigger_id !== triggerId,
+                ),
+              }
+            : old,
+      );
+      return { snapshots };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["triggers"] });
       addToast("Trigger deleted", "success");
       setDeleteTarget(null);
     },
-    onError: (err) => {
+    onError: (err, _triggerId, context) => {
+      if (context) {
+        for (const [key, data] of context.snapshots) {
+          queryClient.setQueryData(key, data);
+        }
+      }
       addToast(
         err instanceof Error ? err.message : "Failed to delete trigger",
         "error",
       );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["triggers"] });
     },
   });
 

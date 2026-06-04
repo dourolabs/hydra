@@ -1,9 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import { Button, Chip } from "@hydra/ui";
-import type { TriggerAction, TriggerVersionRecord } from "@hydra/api";
+import type {
+  ListTriggersResponse,
+  TriggerAction,
+  TriggerVersionRecord,
+} from "@hydra/api";
 import { hydraIdKind } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
@@ -27,18 +30,49 @@ export function TriggerDetail({ record }: TriggerDetailProps) {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
 
-  const deleteMutation = useMutation({
+  const deleteMutation = useMutation<
+    TriggerVersionRecord,
+    Error,
+    void,
+    { snapshots: Array<[readonly unknown[], ListTriggersResponse | undefined]> }
+  >({
     mutationFn: () => apiClient.deleteTrigger(trigger_id),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["triggers"] });
+      const snapshots = queryClient.getQueriesData<ListTriggersResponse>({
+        queryKey: ["triggers"],
+      });
+      queryClient.setQueriesData<ListTriggersResponse>(
+        { queryKey: ["triggers"] },
+        (old) =>
+          old
+            ? {
+                ...old,
+                triggers: old.triggers.filter(
+                  (t) => t.trigger_id !== trigger_id,
+                ),
+              }
+            : old,
+      );
+      return { snapshots };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["triggers"] });
       addToast("Trigger deleted", "success");
       navigate("/triggers");
     },
-    onError: (err) => {
+    onError: (err, _variables, context) => {
+      if (context) {
+        for (const [key, data] of context.snapshots) {
+          queryClient.setQueryData(key, data);
+        }
+      }
       addToast(
         err instanceof Error ? err.message : "Failed to delete trigger",
         "error",
       );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["triggers"] });
     },
   });
 
