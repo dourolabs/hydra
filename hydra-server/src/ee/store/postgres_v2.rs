@@ -33,12 +33,13 @@ use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, Rgb, SessionId,
-    TriggerId, VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId, RepoName, Rgb,
+    SessionId, TriggerId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -160,6 +161,7 @@ const TABLE_USER_SECRETS: &str = "metis.user_secrets";
 const TABLE_OBJECT_RELATIONSHIPS: &str = "metis.object_relationships";
 const TABLE_CONVERSATIONS_V2: &str = "metis.conversations_v2";
 const TABLE_TRIGGERS: &str = "metis.triggers";
+const TABLE_PROJECTS: &str = "metis.projects";
 const TABLE_SESSION_EVENTS_V2: &str = "metis.session_events_v2";
 const TABLE_SESSION_STATE_V2: &str = "metis.session_state_v2";
 
@@ -314,6 +316,11 @@ impl PostgresStoreV2 {
     async fn next_trigger_id(&self) -> Result<TriggerId, StoreError> {
         let len = random_len_for_count(self.estimated_row_count(TABLE_TRIGGERS).await?);
         Ok(TriggerId::generate(len).expect("length within bounds"))
+    }
+
+    async fn next_project_id(&self) -> Result<ProjectId, StoreError> {
+        let len = random_len_for_count(self.estimated_row_count(TABLE_PROJECTS).await?);
+        Ok(ProjectId::generate(len).expect("length within bounds"))
     }
 
     async fn fetch_latest_version_number(
@@ -1293,6 +1300,70 @@ impl PostgresStoreV2 {
         ))
     }
 
+    async fn insert_project_in_tx<'e, E>(
+        executor: E,
+        id: &ProjectId,
+        version_number: VersionNumber,
+        project: &Project,
+        actor: Option<&Value>,
+    ) -> Result<(), StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let version_number = i64::try_from(version_number).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+
+        let statuses_json = serde_json::to_value(&project.statuses).map_err(|e| {
+            StoreError::Internal(format!("failed to serialize project statuses: {e}"))
+        })?;
+
+        let query = format!(
+            "INSERT INTO {TABLE_PROJECTS} \
+             (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        );
+        sqlx::query(&query)
+            .bind(id.as_ref())
+            .bind(version_number)
+            .bind(project.key.as_str())
+            .bind(&project.name)
+            .bind(project.default_status_key.as_str())
+            .bind(&statuses_json)
+            .bind(project.creator.as_str())
+            .bind(project.deleted)
+            .bind(actor)
+            .execute(executor)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        Ok(())
+    }
+
+    fn row_to_project(row: &ProjectRow) -> Result<Project, StoreError> {
+        let statuses: Vec<StatusDefinition> = serde_json::from_value(row.statuses.clone())
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize project statuses: {e}"))
+            })?;
+        let key = ProjectKey::try_new(row.key.clone()).map_err(|e| {
+            StoreError::Internal(format!("invalid project key stored for project: {e}"))
+        })?;
+        let default_status_key =
+            StatusKey::try_new(row.default_status_key.clone()).map_err(|e| {
+                StoreError::Internal(format!(
+                    "invalid default_status_key stored for project: {e}"
+                ))
+            })?;
+        Ok(Project::new(
+            key,
+            row.name.clone(),
+            statuses,
+            default_status_key,
+            hydra_common::api::v1::users::Username::from(row.creator.clone()),
+            row.deleted,
+        ))
+    }
+
     async fn insert_conversation_in_tx<'e, E>(
         executor: E,
         id: &ConversationId,
@@ -1574,6 +1645,24 @@ struct TriggerRow {
     schedule: Value,
     actions: Value,
     last_fired_at: Option<DateTime<Utc>>,
+    deleted: bool,
+    actor: Option<Value>,
+    created_at: DateTime<Utc>,
+    #[allow(dead_code)]
+    updated_at: DateTime<Utc>,
+    #[sqlx(default)]
+    creation_time: Option<DateTime<Utc>>,
+}
+
+#[derive(sqlx::FromRow)]
+struct ProjectRow {
+    id: String,
+    version_number: i64,
+    key: String,
+    name: String,
+    default_status_key: String,
+    statuses: Value,
+    creator: String,
     deleted: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -3625,6 +3714,109 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(triggers)
     }
 
+    // ---- Project (read-only) ----
+
+    async fn get_project(
+        &self,
+        id: &ProjectId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Project>, StoreError> {
+        let row = sqlx::query_as::<_, ProjectRow>(&format!(
+            "SELECT id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, created_at, updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time \
+             FROM {TABLE_PROJECTS} \
+             WHERE id = $1 \
+             ORDER BY version_number DESC \
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let row = row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let project = Self::row_to_project(&row)?;
+
+        if project.deleted && !include_deleted {
+            return Err(StoreError::ProjectNotFound(id.clone()));
+        }
+
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for project '{}'",
+                row.id
+            ))
+        })?;
+        let creation_time = row.creation_time.unwrap_or(row.created_at);
+        let actor_ref = row
+            .actor
+            .map(serde_json::from_value::<ActorRef>)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to parse actor JSON: {e}")))?;
+
+        Ok(Versioned::with_optional_actor(
+            project,
+            version,
+            row.created_at,
+            actor_ref,
+            creation_time,
+        ))
+    }
+
+    async fn list_projects(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
+        let mut sql = format!(
+            "SELECT p.id, p.version_number, p.key, p.name, p.default_status_key, p.statuses, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time \
+             FROM {TABLE_PROJECTS} p \
+             WHERE p.is_latest = true"
+        );
+        if !include_deleted {
+            sql.push_str(" AND p.deleted = false");
+        }
+        sql.push_str(" ORDER BY p.created_at DESC, p.id DESC");
+
+        let rows = sqlx::query_as::<_, ProjectRow>(&sql)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let mut projects = Vec::with_capacity(rows.len());
+        for row in rows {
+            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+                StoreError::Internal(format!(
+                    "invalid version number stored for project '{}'",
+                    row.id
+                ))
+            })?;
+            let creation_time = row.creation_time.unwrap_or(row.created_at);
+            let actor_ref = row
+                .actor
+                .clone()
+                .map(serde_json::from_value::<ActorRef>)
+                .transpose()
+                .map_err(|e| StoreError::Internal(format!("failed to parse actor JSON: {e}")))?;
+            let project_id: ProjectId = row
+                .id
+                .parse()
+                .map_err(|e| StoreError::Internal(format!("invalid project id stored: {e}")))?;
+            let project = Self::row_to_project(&row)?;
+            projects.push((
+                project_id,
+                Versioned::with_optional_actor(
+                    project,
+                    version,
+                    row.created_at,
+                    actor_ref,
+                    creation_time,
+                ),
+            ));
+        }
+        Ok(projects)
+    }
+
     // ---- Object relationships (read-only) ----
 
     async fn get_relationships(
@@ -5412,6 +5604,64 @@ impl Store for PostgresStoreV2 {
             return Err(StoreError::TriggerNotFound(id.clone()));
         }
         Ok(())
+    }
+
+    // ---- Project mutations ----
+
+    async fn add_project(
+        &self,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<(ProjectId, VersionNumber), StoreError> {
+        let id = self.next_project_id().await?;
+        let actor_json = actor_to_json(actor);
+        Self::insert_project_in_tx(&self.pool, &id, 1, &project, Some(&actor_json)).await?;
+        Ok((id, 1))
+    }
+
+    async fn update_project(
+        &self,
+        id: &ProjectId,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let latest_version = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT version_number FROM {TABLE_PROJECTS} \
+             WHERE id = $1 AND is_latest = true \
+             FOR UPDATE"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let latest_version =
+            latest_version.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let latest_version = VersionNumber::try_from(latest_version).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json(actor);
+        Self::insert_project_in_tx(&mut *tx, id, next_version, &project, Some(&actor_json)).await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        Ok(next_version)
+    }
+
+    async fn delete_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let current = self.get_project(id, true).await?;
+        let mut project = current.item;
+        project.deleted = true;
+        self.update_project(id, project, actor).await
     }
 }
 
@@ -9926,5 +10176,149 @@ mod tests {
             .record_trigger_fire(&TriggerId::new(), Utc::now())
             .await;
         assert!(matches!(result, Err(StoreError::TriggerNotFound(_))));
+    }
+
+    // ---- Project tests --------------------------------------------------
+
+    fn sample_project_pg() -> Project {
+        use hydra_common::api::v1::projects::{IconKey, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let statuses = vec![
+            StatusDefinition::new(
+                StatusKey::try_new("backlog").unwrap(),
+                "Backlog".to_string(),
+                IconKey::try_new("circle").unwrap(),
+                "#abcdef".parse().unwrap(),
+                false,
+                false,
+                false,
+                None,
+            ),
+            StatusDefinition::new(
+                StatusKey::try_new("done").unwrap(),
+                "Done".to_string(),
+                IconKey::try_new("check-circle").unwrap(),
+                "#00ff00".parse().unwrap(),
+                true,
+                true,
+                false,
+                None,
+            ),
+        ];
+        Project::new(
+            ProjectKey::try_new("engineering").unwrap(),
+            "Engineering".to_string(),
+            statuses,
+            StatusKey::try_new("backlog").unwrap(),
+            ApiUsername::from("alice"),
+            false,
+        )
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn project_round_trip_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (id, version) = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.name, "Engineering");
+        assert_eq!(fetched.item.statuses.len(), 2);
+
+        let listed = store.list_projects(false).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, id);
+
+        let mut updated = sample_project_pg();
+        updated.name = "Engineering Renamed".to_string();
+        let v2 = store
+            .update_project(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+        assert_eq!(
+            store.get_project(&id, false).await.unwrap().item.name,
+            "Engineering Renamed"
+        );
+
+        let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        assert_eq!(v3, 3);
+        assert!(store.list_projects(false).await.unwrap().is_empty());
+        assert_eq!(store.list_projects(true).await.unwrap().len(), 1);
+        assert!(matches!(
+            store.get_project(&id, false).await,
+            Err(StoreError::ProjectNotFound(_))
+        ));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_project_not_found_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let result = store.get_project(&ProjectId::new(), false).await;
+        assert!(matches!(result, Err(StoreError::ProjectNotFound(_))));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn update_project_not_found_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let result = store
+            .update_project(&ProjectId::new(), sample_project_pg(), &ActorRef::test())
+            .await;
+        assert!(matches!(result, Err(StoreError::ProjectNotFound(_))));
+    }
+
+    /// `update_project` must flip the prior `is_latest` row to false and
+    /// insert the new latest in one transaction. Verify there is exactly
+    /// one `is_latest = true` row after the second write — the BEFORE
+    /// INSERT trigger `trg_maintain_latest_projects` is responsible for
+    /// the flip.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn update_project_maintains_single_is_latest_row_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool.clone());
+        let (id, _) = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut updated = sample_project_pg();
+        updated.name = "v2".to_string();
+        store
+            .update_project(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM metis.projects WHERE id = $1 AND is_latest = true",
+        )
+        .bind(id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "exactly one is_latest row per project id");
+    }
+
+    /// Migration must add `project_id` to existing `issues_v2` rows
+    /// without losing data — verify the column exists and is nullable.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn issues_v2_has_nullable_project_id_column_pg(pool: PgStorePool) {
+        let row: (String, String) = sqlx::query_as(
+            "SELECT data_type, is_nullable FROM information_schema.columns \
+             WHERE table_schema = 'metis' AND table_name = 'issues_v2' AND column_name = 'project_id'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, "text");
+        assert_eq!(row.1, "YES");
     }
 }

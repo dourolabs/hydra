@@ -16,13 +16,14 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
+use hydra_common::api::v1::projects::Project;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::principal::Principal;
 use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId, TriggerId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId, RepoName, SessionId,
+    TriggerId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     repositories::{Repository, SearchRepositoriesQuery},
 };
@@ -279,6 +280,8 @@ pub enum StoreError {
     ConversationNotFound(ConversationId),
     #[error("Trigger not found: {0}")]
     TriggerNotFound(TriggerId),
+    #[error("Project not found: {0}")]
+    ProjectNotFound(ProjectId),
     #[error("Issue not found: {0}")]
     IssueNotFound(IssueId),
     #[error("Patch not found: {0}")]
@@ -814,6 +817,29 @@ pub trait ReadOnlyStore: Send + Sync {
         include_deleted: bool,
     ) -> Result<Vec<Versioned<Trigger>>, StoreError>;
 
+    // ---- Project (read-only) ----
+
+    /// Retrieves a project by its [`ProjectId`].
+    ///
+    /// # Arguments
+    /// * `id` - The ProjectId to look up
+    /// * `include_deleted` - If true, returns the project even if it has been
+    ///   soft-deleted. If false, returns `StoreError::ProjectNotFound` for
+    ///   deleted projects.
+    async fn get_project(
+        &self,
+        id: &ProjectId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Project>, StoreError>;
+
+    /// Lists all projects.
+    ///
+    /// By default, deleted projects are filtered out unless `include_deleted: true`.
+    async fn list_projects(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError>;
+
     // ---- Object relationships (read-only) ----
 
     /// Returns object relationships matching the given filters.
@@ -1223,6 +1249,40 @@ pub trait Store: ReadOnlyStore {
     async fn delete_trigger(
         &self,
         id: &TriggerId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    // ---- Project mutations ----
+
+    /// Adds a new project to the store and assigns it a [`ProjectId`].
+    ///
+    /// Returns the new ProjectId and its initial version number.
+    async fn add_project(
+        &self,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<(ProjectId, VersionNumber), StoreError>;
+
+    /// Updates an existing project in the store.
+    ///
+    /// Returns the new version number, or `StoreError::ProjectNotFound` if
+    /// the project does not exist.
+    async fn update_project(
+        &self,
+        id: &ProjectId,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Soft-deletes a project by setting its `deleted` flag to true.
+    ///
+    /// This creates a new version of the project with `deleted: true`.
+    /// The project can still be retrieved via `get_project` with
+    /// `include_deleted: true` but is filtered from `list_projects` by
+    /// default. Returns the version number of the deletion record.
+    async fn delete_project(
+        &self,
+        id: &ProjectId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 

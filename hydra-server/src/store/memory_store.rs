@@ -24,12 +24,13 @@ use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
+use hydra_common::api::v1::projects::Project;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RepoName, SessionId, TriggerId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId, RepoName, SessionId,
+    TriggerId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     ids::random_len_for_count,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -79,6 +80,8 @@ pub struct MemoryStore {
     conversations: DashMap<ConversationId, Vec<Versioned<Conversation>>>,
     /// Maps trigger IDs to their versioned Trigger data
     triggers: DashMap<TriggerId, Vec<Versioned<Trigger>>>,
+    /// Maps project IDs to their versioned Project data
+    projects: DashMap<ProjectId, Vec<Versioned<Project>>>,
     /// Maps session IDs to their versioned session events. Each entry pairs
     /// the event with the monotonic `next_session_event_seq` value assigned
     /// at append time, which serves as the global ordering primitive used by
@@ -114,6 +117,7 @@ impl MemoryStore {
             object_relationships: DashMap::new(),
             conversations: DashMap::new(),
             triggers: DashMap::new(),
+            projects: DashMap::new(),
             session_events: DashMap::new(),
             session_state: DashMap::new(),
             next_session_event_seq: AtomicU64::new(1),
@@ -158,6 +162,11 @@ impl MemoryStore {
     fn next_trigger_id(&self) -> TriggerId {
         let len = random_len_for_count(self.triggers.len() as u64);
         TriggerId::generate(len).expect("length within bounds")
+    }
+
+    fn next_project_id(&self) -> ProjectId {
+        let len = random_len_for_count(self.projects.len() as u64);
+        ProjectId::generate(len).expect("length within bounds")
     }
 
     fn latest_versioned<T: Clone>(versions: &[Versioned<T>]) -> Option<Versioned<T>> {
@@ -1399,6 +1408,46 @@ impl ReadOnlyStore for MemoryStore {
         Ok(items)
     }
 
+    // ---- Project (read-only) ----
+
+    async fn get_project(
+        &self,
+        id: &ProjectId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Project>, StoreError> {
+        let entry = self
+            .projects
+            .get(id)
+            .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let versioned = Self::latest_versioned(entry.value())
+            .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+
+        if !include_deleted && versioned.item.deleted {
+            return Err(StoreError::ProjectNotFound(id.clone()));
+        }
+
+        Ok(versioned)
+    }
+
+    async fn list_projects(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
+        let mut items: Vec<(ProjectId, Versioned<Project>)> = self
+            .projects
+            .iter()
+            .filter_map(|entry| {
+                let versioned = Self::latest_versioned(entry.value())?;
+                if !include_deleted && versioned.item.deleted {
+                    return None;
+                }
+                Some((entry.key().clone(), versioned))
+            })
+            .collect();
+        items.sort_by(|a, b| b.1.creation_time.cmp(&a.1.creation_time));
+        Ok(items)
+    }
+
     // ---- Object relationships (read-only) ----
 
     async fn get_relationships(
@@ -2592,6 +2641,48 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
         latest.item.last_fired_at = Some(fired_at);
         Ok(())
+    }
+
+    // ---- Project mutations ----
+
+    async fn add_project(
+        &self,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<(ProjectId, VersionNumber), StoreError> {
+        let id = self.next_project_id();
+        self.projects.insert(
+            id.clone(),
+            vec![Self::versioned_now_with_actor(project, 1, actor)],
+        );
+        Ok((id, 1))
+    }
+
+    async fn update_project(
+        &self,
+        id: &ProjectId,
+        project: Project,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut entry = self
+            .projects
+            .get_mut(id)
+            .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let versions = entry.value_mut();
+        let next_version = Self::next_version(versions);
+        versions.push(Self::versioned_now_with_actor(project, next_version, actor));
+        Ok(next_version)
+    }
+
+    async fn delete_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let current = self.get_project(id, true).await?;
+        let mut project = current.item;
+        project.deleted = true;
+        self.update_project(id, project, actor).await
     }
 }
 
@@ -9272,5 +9363,109 @@ mod tests {
         let id = TriggerId::new();
         let result = store.record_trigger_fire(&id, Utc::now()).await;
         assert!(matches!(result, Err(StoreError::TriggerNotFound(_))));
+    }
+
+    // ---- Project CRUD tests -------------------------------------------------
+
+    fn sample_project() -> Project {
+        use hydra_common::api::v1::projects::{IconKey, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let statuses = vec![
+            StatusDefinition::new(
+                StatusKey::try_new("backlog").unwrap(),
+                "Backlog".to_string(),
+                IconKey::try_new("circle").unwrap(),
+                "#abcdef".parse().unwrap(),
+                false,
+                false,
+                false,
+                None,
+            ),
+            StatusDefinition::new(
+                StatusKey::try_new("done").unwrap(),
+                "Done".to_string(),
+                IconKey::try_new("check-circle").unwrap(),
+                "#00ff00".parse().unwrap(),
+                true,
+                true,
+                false,
+                None,
+            ),
+        ];
+        Project::new(
+            ProjectKey::try_new("engineering").unwrap(),
+            "Engineering".to_string(),
+            statuses,
+            StatusKey::try_new("backlog").unwrap(),
+            ApiUsername::from("alice"),
+            false,
+        )
+    }
+
+    #[tokio::test]
+    async fn project_round_trip_create_get_list_update_delete() {
+        let store = MemoryStore::new();
+        let (id, version) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.name, "Engineering");
+        assert_eq!(fetched.item.statuses.len(), 2);
+
+        let listed = store.list_projects(false).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, id);
+
+        let mut updated = sample_project();
+        updated.name = "Engineering Renamed".to_string();
+        let v2 = store
+            .update_project(&id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v2, 2);
+        assert_eq!(
+            store.get_project(&id, false).await.unwrap().item.name,
+            "Engineering Renamed"
+        );
+
+        let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        assert_eq!(v3, 3);
+        // List excludes deleted by default.
+        assert!(store.list_projects(false).await.unwrap().is_empty());
+        // List includes deleted on request.
+        assert_eq!(store.list_projects(true).await.unwrap().len(), 1);
+        // Get without include_deleted returns NotFound.
+        assert!(matches!(
+            store.get_project(&id, false).await,
+            Err(StoreError::ProjectNotFound(_))
+        ));
+        // Get with include_deleted returns the tombstoned row.
+        let tombstoned = store.get_project(&id, true).await.unwrap();
+        assert!(tombstoned.item.deleted);
+    }
+
+    #[tokio::test]
+    async fn get_project_not_found() {
+        let store = MemoryStore::new();
+        let id = ProjectId::new();
+        assert!(matches!(
+            store.get_project(&id, false).await,
+            Err(StoreError::ProjectNotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_project_not_found() {
+        let store = MemoryStore::new();
+        let id = ProjectId::new();
+        let result = store
+            .update_project(&id, sample_project(), &ActorRef::test())
+            .await;
+        assert!(matches!(result, Err(StoreError::ProjectNotFound(_))));
     }
 }

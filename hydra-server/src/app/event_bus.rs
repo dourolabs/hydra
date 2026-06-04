@@ -17,12 +17,13 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
+use hydra_common::api::v1::projects::Project;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
 use hydra_common::{
-    ConversationId, DocumentId, HydraId, LabelId, PatchId, RepoName, SessionId, TriggerId,
-    VersionNumber, Versioned,
+    ConversationId, DocumentId, HydraId, LabelId, PatchId, ProjectId, RepoName, SessionId,
+    TriggerId, VersionNumber, Versioned,
     api::v1::labels::{LabelSummary, SearchLabelsQuery},
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
@@ -1592,6 +1593,23 @@ impl ReadOnlyStore for StoreWithEvents {
         include_deleted: bool,
     ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
         self.inner.list_triggers(include_deleted).await
+    }
+
+    // ---- Project (read-only) ----
+
+    async fn get_project(
+        &self,
+        id: &ProjectId,
+        include_deleted: bool,
+    ) -> Result<Versioned<Project>, StoreError> {
+        self.inner.get_project(id, include_deleted).await
+    }
+
+    async fn list_projects(
+        &self,
+        include_deleted: bool,
+    ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
+        self.inner.list_projects(include_deleted).await
     }
 
     // ---- Object relationships (read-only) ----
