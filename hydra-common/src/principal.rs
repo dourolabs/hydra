@@ -1,11 +1,6 @@
 //! Shared [`Principal`] type for attribution fields (assignees, review
 //! authors, merge-policy `any_of`).
 //!
-//! Introduced in Phase 1 of the actor-system overhaul
-//! (`/designs/actor-system-overhaul.md`, §4.1). Later phases migrate
-//! `Issue.assignee`, `Review.author`, and the existing
-//! `crate::api::v1::repositories::Principal` to use this shared type.
-//!
 //! `Principal` is the durable subset of [`crate::actor_ref::ActorId`] —
 //! `User`, `Agent`, `External`. It deliberately omits `Adhoc` (sessions
 //! are transient identities) and `Legacy` (read-only catch-all).
@@ -44,11 +39,10 @@ impl std::error::Error for ExternalSystemError {}
 /// A validated identifier for an external identity provider
 /// (e.g. `github`).
 ///
-/// Open string by design (clarification C4 in
-/// `/designs/actor-system-overhaul.md`): we do not enumerate a closed
-/// set. Known systems get UI affordances (icon, label), but any
-/// well-formed identifier is accepted on the wire so new integrations
-/// don't require an enum change.
+/// Open string by design: we do not enumerate a closed set. Known
+/// systems get UI affordances (icon, label), but any well-formed
+/// identifier is accepted on the wire so new integrations don't
+/// require an enum change.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, type = "string"))]
@@ -123,12 +117,9 @@ impl AsRef<str> for ExternalSystem {
 /// **Path form** (canonical, used in URLs, CLI args, and indexed DB
 /// columns): `users/<x>` / `agents/<x>` / `external/<system>/<username>`.
 ///
-/// Phase 5a of `/designs/actor-system-overhaul.md` unifies this with the
-/// merge-policy principal: `crate::api::v1::repositories::Principal`
-/// (the old bare-string wire enum) is gone, replaced by an `AssigneeRef`
-/// wrapper that stores `Principal` for its static case. The Phase 1
-/// `rename = "ActorPrincipal"` workaround is dropped here so the shared
-/// type takes back ownership of `Principal.ts`.
+/// This is also the merge-policy principal: [`crate::api::v1::repositories::AssigneeRef`]
+/// wraps a `Principal` for its `Static` case, and `Principal.ts` is
+/// generated from this type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -191,8 +182,8 @@ impl Principal {
         }
     }
 
-    /// Apply the Phase 4a/4b backfill heuristic to a raw legacy
-    /// `Issue.assignee` string, producing a [`Principal`]:
+    /// Parse a raw legacy `Issue.assignee` string into a [`Principal`]
+    /// using the v1 → v2 backfill heuristic:
     ///
     /// 1. If the input parses via [`Principal::from_str`] (canonical path
     ///    form `users/<x>` / `agents/<x>` / `external/<system>/<x>`), use
@@ -219,16 +210,15 @@ impl Principal {
         None
     }
 
-    /// Variant of [`Principal::parse_legacy_assignee`] that consults a
-    /// known-agent-names set to disambiguate bare strings.
+    /// Variant of [`Principal::parse_legacy_assignee`] that disambiguates
+    /// bare strings against a known-agent-names set.
     ///
-    /// Historically `Issue.assignee` and `Review.author` conflated user
-    /// and agent names in the same bare-string column. The Phase 4a
-    /// migration first classified every bare string as
-    /// `Principal::User`, lifting agents like `swe` / `reviewer` /
-    /// `merger` to the wrong kind. This variant fixes that by
-    /// case-sensitively matching the input against `agent_names`
-    /// before falling back to `Principal::User`.
+    /// Bare `Issue.assignee` / `Review.author` strings historically
+    /// conflated users and agents in the same column; without this
+    /// disambiguation, agents like `swe` / `reviewer` / `merger` get
+    /// classified as `Principal::User`. This variant case-sensitively
+    /// matches the input against `agent_names` before falling back to
+    /// `Principal::User`.
     ///
     /// Classification order:
     /// 1. Canonical `users/<x>` / `agents/<x>` / `external/<sys>/<x>`
@@ -269,10 +259,9 @@ impl Principal {
 /// never compare equal — a [`Principal::User`] named `swe` does not match a
 /// [`Principal::Agent`] named `swe`.
 ///
-/// Phase 6 of `/designs/actor-system-overhaul.md` uses this helper in
-/// every merge-authorisation matching site (mergers list, reviewer-group
-/// quorum, author exclusion) so the same principal-equality rule is
-/// applied uniformly.
+/// Used at every merge-authorisation matching site (mergers list,
+/// reviewer-group quorum, author exclusion) so the same
+/// principal-equality rule is applied uniformly.
 pub fn principal_eq(a: &Principal, b: &Principal) -> bool {
     match (a, b) {
         (Principal::User { name: n1 }, Principal::User { name: n2 }) => {
@@ -503,7 +492,7 @@ mod tests {
         assert!(matches!(err, PrincipalParseError::UnknownKind(ref k) if k == "alice"));
     }
 
-    // --- parse_legacy_assignee (Phase 4a/4b backfill heuristic) ----------
+    // --- parse_legacy_assignee ---
 
     #[test]
     fn parse_legacy_assignee_accepts_canonical_path() {
@@ -531,7 +520,7 @@ mod tests {
         assert_eq!(Principal::parse_legacy_assignee("alice bob"), None);
     }
 
-    // --- parse_legacy_assignee_with_agents (Phase 4a fix) ----------------
+    // --- parse_legacy_assignee_with_agents ---
 
     fn agent_set(names: &[&str]) -> HashSet<String> {
         names.iter().map(|s| s.to_string()).collect()
@@ -640,7 +629,7 @@ mod tests {
         );
     }
 
-    // --- principal_eq (Phase 6 kind-aware case-insensitive equality) -----
+    // --- principal_eq ---
 
     #[test]
     fn principal_eq_user_case_insensitive() {
