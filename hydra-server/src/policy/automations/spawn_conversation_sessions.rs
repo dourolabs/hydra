@@ -69,18 +69,18 @@ impl Automation for SpawnConversationSessionsAutomation {
             }
         }
 
-        tracing::info!(
-            automation = AUTOMATION_NAME,
-            event = %ctx.event.summary(),
-            "automation invoked",
-        );
-
         match ctx.event {
             ServerEvent::ConversationCreated {
                 conversation_id,
                 payload,
                 ..
             } => {
+                tracing::info!(
+                    automation = AUTOMATION_NAME,
+                    conversation_id = %conversation_id,
+                    event = "ConversationCreated",
+                    "automation invoked",
+                );
                 let MutationPayload::Conversation { new, .. } = payload.as_ref() else {
                     return Ok(());
                 };
@@ -94,6 +94,12 @@ impl Automation for SpawnConversationSessionsAutomation {
                 payload,
                 ..
             } => {
+                tracing::info!(
+                    automation = AUTOMATION_NAME,
+                    conversation_id = %conversation_id,
+                    event = "ConversationUpdated",
+                    "automation invoked",
+                );
                 let MutationPayload::Conversation { old, new, .. } = payload.as_ref() else {
                     return Ok(());
                 };
@@ -108,7 +114,17 @@ impl Automation for SpawnConversationSessionsAutomation {
                 let is_resume = old.status != ConversationStatus::Active;
                 spawn_session(ctx, conversation_id, new, is_resume).await?;
             }
-            ServerEvent::SessionUpdated { payload, .. } => {
+            ServerEvent::SessionUpdated {
+                session_id,
+                payload,
+                ..
+            } => {
+                tracing::info!(
+                    automation = AUTOMATION_NAME,
+                    session_id = %session_id,
+                    event = "SessionUpdated",
+                    "automation invoked",
+                );
                 let MutationPayload::Session { old, new, .. } = payload.as_ref() else {
                     return Ok(());
                 };

@@ -6,6 +6,8 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::Status;
 
+const AUTOMATION_NAME: &str = "kill_tasks_on_issue_failure";
+
 /// When an issue's status changes to a terminal/failure status, kill all active
 /// tasks (Created/Pending/Running) for that issue.
 ///
@@ -22,7 +24,7 @@ impl KillTasksOnFailureAutomation {
 #[async_trait]
 impl Automation for KillTasksOnFailureAutomation {
     fn name(&self) -> &str {
-        "kill_tasks_on_issue_failure"
+        AUTOMATION_NAME
     }
 
     fn event_filter(&self) -> EventFilter {
@@ -50,7 +52,7 @@ impl Automation for KillTasksOnFailureAutomation {
         };
 
         tracing::info!(
-            automation = "kill_tasks_on_issue_failure",
+            automation = AUTOMATION_NAME,
             issue_id = %issue_id,
             "automation invoked",
         );

@@ -7,6 +7,8 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::Status;
 
+const AUTOMATION_NAME: &str = "start_created_sessions";
+
 /// When a session is created or updated into `Created` status, automatically
 /// start it by calling `start_pending_task`.
 ///
@@ -23,7 +25,7 @@ impl StartCreatedSessionsAutomation {
 #[async_trait]
 impl Automation for StartCreatedSessionsAutomation {
     fn name(&self) -> &str {
-        "start_created_sessions"
+        AUTOMATION_NAME
     }
 
     fn event_filter(&self) -> EventFilter {
@@ -67,7 +69,7 @@ impl Automation for StartCreatedSessionsAutomation {
         };
 
         tracing::info!(
-            automation = "start_created_sessions",
+            automation = AUTOMATION_NAME,
             session_id = %session_id,
             "automation invoked",
         );
