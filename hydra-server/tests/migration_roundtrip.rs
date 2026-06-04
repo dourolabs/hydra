@@ -1371,7 +1371,7 @@ async fn smoke_create_issue(store: &PostgresStoreV2) -> Result<()> {
         "post-migration write-path round-trip for Principal::Agent assignees".to_string(),
         Username::from("jayantk"),
         String::new(),
-        IssueStatus::Open,
+        IssueStatus::Open.into(),
         Some(Principal::Agent {
             name: agent.clone(),
         }),
