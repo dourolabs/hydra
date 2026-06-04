@@ -66,6 +66,12 @@ impl Automation for StartCreatedSessionsAutomation {
             _ => return Ok(()),
         };
 
+        tracing::info!(
+            automation = "start_created_sessions",
+            session_id = %session_id,
+            "automation invoked",
+        );
+
         if new.status != Status::Created || !transitioned_into_created {
             return Ok(());
         }

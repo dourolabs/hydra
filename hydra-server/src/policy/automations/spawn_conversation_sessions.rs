@@ -69,6 +69,12 @@ impl Automation for SpawnConversationSessionsAutomation {
             }
         }
 
+        tracing::info!(
+            automation = AUTOMATION_NAME,
+            event = %ctx.event.summary(),
+            "automation invoked",
+        );
+
         match ctx.event {
             ServerEvent::ConversationCreated {
                 conversation_id,

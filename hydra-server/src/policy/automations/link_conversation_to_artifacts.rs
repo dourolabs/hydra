@@ -131,6 +131,12 @@ impl Automation for LinkConversationToArtifactsAutomation {
             _ => return Ok(()),
         };
 
+        tracing::info!(
+            automation = AUTOMATION_NAME,
+            artifact_id = %artifact_hid,
+            "automation invoked",
+        );
+
         let actor = ctx.actor();
         let mut conversation_ids: HashSet<ConversationId> = HashSet::new();
 

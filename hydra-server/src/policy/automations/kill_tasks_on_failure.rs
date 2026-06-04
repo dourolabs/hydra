@@ -49,6 +49,12 @@ impl Automation for KillTasksOnFailureAutomation {
             return Ok(());
         };
 
+        tracing::info!(
+            automation = "kill_tasks_on_issue_failure",
+            issue_id = %issue_id,
+            "automation invoked",
+        );
+
         // Only trigger when the status changed to a terminal/failure status
         if old.status == new.status {
             return Ok(());

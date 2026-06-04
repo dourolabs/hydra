@@ -62,6 +62,12 @@ impl Automation for SpawnSessionsAutomation {
             }
         }
 
+        tracing::info!(
+            automation = AUTOMATION_NAME,
+            event = %ctx.event.summary(),
+            "automation invoked",
+        );
+
         let agents =
             ctx.app_state.list_agents().await.map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!("failed to list agents: {e}"))
