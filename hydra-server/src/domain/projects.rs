@@ -2,8 +2,17 @@
 //! `project_id`. Reproduces today's `IssueStatus` semantics so legacy
 //! issues continue to resolve without a per-row migration.
 //!
-//! See `/designs/per-project-issue-statuses.md` §4
-//! "Default-project synthesis" for the full table of flag values.
+//! Flag table for the synthesized statuses:
+//!
+//! | key           | unblocks_parents | unblocks_dependents | cascades_to_children |
+//! |---------------|------------------|---------------------|----------------------|
+//! | `open`        | false            | false               | false                |
+//! | `in-progress` | false            | false               | false                |
+//! | `closed`      | true             | true                | false                |
+//! | `dropped`     | true             | false               | true                 |
+//! | `failed`      | true             | false               | true                 |
+//!
+//! Default status key is `open`; no status has `on_enter` automation.
 
 use hydra_common::Rgb;
 use hydra_common::api::v1::projects::{IconKey, Project, ProjectKey, StatusDefinition, StatusKey};
@@ -22,9 +31,8 @@ const SYSTEM_USERNAME: &str = "system";
 /// The synthesized default project, lazily constructed once per process.
 ///
 /// The five statuses (`open`, `in-progress`, `closed`, `dropped`, `failed`)
-/// reproduce today's `IssueStatus` flag semantics — see
-/// `/designs/per-project-issue-statuses.md` §4 "Default-project
-/// synthesis" for the table. The status colors are explicit hex values
+/// reproduce today's `IssueStatus` flag semantics — see the table in this
+/// module's top-level doc-comment. The status colors are explicit hex values
 /// approximating the existing frontend badge palette
 /// (`hydra-web/packages/ui/src/theme/tokens.css:78-83` —
 /// `--s-open` blue, `--s-progress` amber, `--s-closed` green,

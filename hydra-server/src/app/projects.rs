@@ -1,10 +1,11 @@
 //! `AppState::resolve_status` — single resolution point from
-//! `(project_id, status)` to a [`StatusDefinition`]. See
-//! `/designs/per-project-issue-statuses.md` §4 for the rationale.
+//! `(project_id, status)` to a [`StatusDefinition`].
 //!
-//! PR 3 routes per-issue lookups through the project store when
-//! `Issue.project_id` is set, falling back to `default_project` when
-//! it's `None`.
+//! Per-issue lookups go through the project store when `Issue.project_id`
+//! is set, falling back to the synthesized `default_project` when it's
+//! `None`. Centralizing here keeps storage, validation, and `on_enter`
+//! automation aligned on one resolver instead of duplicating the
+//! `project_id → statuses` walk at each call site.
 
 use crate::domain::issues::Issue;
 use crate::domain::projects::default_project;

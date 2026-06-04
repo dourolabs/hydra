@@ -1,6 +1,9 @@
 //! HTTP routes for `/v1/projects`.
 //!
-//! See `/designs/per-project-issue-statuses.md` §4 "Storage" and §7 PR 3.
+//! Exposes project CRUD plus the per-project status set (the wire shape
+//! every issue's `resolved_status` is computed against). The synthesized
+//! `default` project is served from the in-memory const without a store
+//! lookup so legacy issues with `project_id = NULL` resolve unchanged.
 //! Auth + error mapping follow the existing `/v1/labels` pattern.
 
 use crate::app::AppState;

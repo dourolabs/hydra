@@ -208,10 +208,11 @@ impl AppState {
                 .map_err(|message| UpsertIssueError::InvalidForm { message })?;
         }
         // Validate that `status` is one of the resolved project's status
-        // keys (per /designs/per-project-issue-statuses.md §4
-        // "Default-project synthesis"). When `project_id` is None this
-        // resolves against the synthesized default project; otherwise
-        // it reads the project from the store.
+        // keys; reject unknown keys with a policy violation. When
+        // `project_id` is None this resolves against the synthesized
+        // default project (open/in-progress/closed/dropped/failed);
+        // otherwise it reads the project's declared statuses from the
+        // store.
         match self.resolve_status(&issue).await {
             Ok(_) => {}
             Err(crate::app::projects::ResolveStatusError::ProjectNotFound(project_id)) => {

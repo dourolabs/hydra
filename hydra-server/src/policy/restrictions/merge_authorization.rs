@@ -1,8 +1,8 @@
 //! Server-authoritative gate on patch status transitions to `Merged`.
 //!
-//! See `/designs/merge-time-constraints.md` §4.3 for the high-level flow and
-//! §4.5 for the structured error shape carried in
-//! [`PolicyViolation::message`].
+//! Gates `Patch → Merged` transitions against the repository's `MergePolicy`
+//! and emits structured `MergeBlockedError` payloads via
+//! [`PolicyViolation::message`] when the policy is unsatisfied.
 //!
 //! The restriction is a strict no-op for repositories without a configured
 //! `merge_policy`, preserving backward-compatibility with every repo today.
@@ -28,8 +28,9 @@ use crate::store::ReadOnlyStore;
 const RESTRICTION_NAME: &str = "merge_authorization";
 
 /// Layer priority used to gate the response: the response carries failures
-/// from the first layer in this list that has any. Future layers slot in by
-/// extending this constant (see design §4.5).
+/// from the first layer in this list that has any, so the SWE agent only has
+/// to address one layer per round-trip. Future layers slot in by appending
+/// to this constant.
 const LAYER_PRIORITY: &[&str] = &["reviews", "mergers"];
 
 /// Restriction that enforces the repository's [`MergePolicy`] on every
@@ -52,8 +53,7 @@ impl Restriction for MergeAuthorizationRestriction {
     async fn evaluate(&self, ctx: &RestrictionContext<'_>) -> Result<(), PolicyViolation> {
         // 1. Status-transition gating: only fires on UpdatePatch transitions
         //    INTO Merged. Create-as-Merged would arguably qualify but is not
-        //    a path the API exposes; restrict to UpdatePatch here to match
-        //    the design (§4.3).
+        //    a path the API exposes; restrict to UpdatePatch here.
         if ctx.operation != Operation::UpdatePatch {
             return Ok(());
         }

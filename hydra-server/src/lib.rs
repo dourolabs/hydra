@@ -71,8 +71,9 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
             // Runs SQL + Rust migrations inline. The events Rust pass is
             // idempotent and fast on already-migrated data, so blocking
             // startup is acceptable today. If a future Rust migration is
-            // long-running, the spawn-and-forget mode would need to come
-            // back — see `/designs/migration-testing-redesign.md` §10.
+            // long-running (minutes), a spawn-and-forget mode would need
+            // to be reintroduced so startup isn't blocked on the migration
+            // finishing.
             crate::store::sqlite_store::run_migrations(&pool, None)
                 .await
                 .context("failed to run SQLite migrations")?;

@@ -428,7 +428,10 @@ async fn build_review_entries(
     Ok(dedupe_reviews(entries))
 }
 
-/// Resolve a raw GitHub login to a [`Principal`] per design §4.4.
+/// Resolve a raw GitHub login to a [`Principal`]: if the login already maps
+/// to a Hydra `User` (GH SSO derives usernames from logins), return
+/// `Principal::User`; else return `Principal::External { system: github,
+/// username: login }`.
 async fn principal_for_github_login(
     store: &dyn crate::store::ReadOnlyStore,
     login: &str,

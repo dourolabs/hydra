@@ -780,9 +780,9 @@ async fn find_first_user_message_for_conversation(
 /// then flips the conversation `Active → Idle` from that terminal transition.
 ///
 /// Chat content (`UserMessage` / `AssistantMessage`) lives only on the
-/// session log per Phase E step 18. The conversation's own status sequence
-/// (each transition is a new versioned row on `conversations` /
-/// `conversations_v2`) carries the lifecycle history.
+/// session log. The conversation's own status sequence (each transition is
+/// a new versioned row on `conversations` / `conversations_v2`) carries the
+/// lifecycle history.
 async fn handle_worker_event(
     state: &AppState,
     session_id: &SessionId,
