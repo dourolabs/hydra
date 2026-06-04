@@ -179,8 +179,7 @@ impl Automation for LinkConversationToArtifactsAutomation {
                 continue;
             }
             ctx.app_state
-                .store
-                .add_relationship_with_actor(
+                .add_relationship(
                     &cid_hid,
                     &artifact_hid,
                     RelationshipType::RefersTo,

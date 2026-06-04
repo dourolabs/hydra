@@ -268,8 +268,7 @@ pub async fn create_relation(
     let rel_type = parse_rel_type(&payload.rel_type)?;
 
     let was_created = state
-        .store
-        .add_relationship_with_actor(
+        .add_relationship(
             &payload.source_id,
             &payload.target_id,
             rel_type,
@@ -316,8 +315,7 @@ pub async fn remove_relation(
     let rel_type = parse_rel_type(&payload.rel_type)?;
 
     let removed = state
-        .store
-        .remove_relationship_with_actor(
+        .remove_relationship(
             &payload.source_id,
             &payload.target_id,
             rel_type,

@@ -132,8 +132,7 @@ impl Automation for LinkArtifactsToIssueAutomation {
 
         let source_id: HydraId = issue_id.clone().into();
         ctx.app_state
-            .store
-            .add_relationship_with_actor(&source_id, &target_id, rel_type, actor.clone())
+            .add_relationship(&source_id, &target_id, rel_type, actor.clone())
             .await
             .map_err(|e| {
                 AutomationError::Other(anyhow::anyhow!(
