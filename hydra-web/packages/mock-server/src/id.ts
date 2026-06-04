@@ -6,6 +6,7 @@ const PREFIXES = {
   patch: "p-",
   document: "d-",
   conversation: "c-",
+  trigger: "t-",
 } as const;
 
 export type EntityType = keyof typeof PREFIXES;

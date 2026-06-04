@@ -2814,7 +2814,62 @@
       }
     ]
   },
+  "triggers": {
+    "t-trig0001": {
+      "enabled": true,
+      "schedule": {
+        "Cron": { "expression": "0 9 * * 1", "timezone": "America/Los_Angeles" }
+      },
+      "actions": [
+        {
+          "CreateIssue": {
+            "type": "task",
+            "title": "Weekly platform health review — {{trigger.fired_at_date}}",
+            "description": "Walk the platform health dashboard, file any regressions as child issues.",
+            "assignee": "users/alice",
+            "status": "open"
+          }
+        }
+      ],
+      "creator": "alice",
+      "last_fired_at": "2026-06-01T09:00:00.000Z",
+      "last_updated_at": "2026-04-15T12:00:00.000Z"
+    },
+    "t-trig0002": {
+      "enabled": false,
+      "schedule": {
+        "Once": { "at": "2026-06-30T15:00:00.000Z" }
+      },
+      "actions": [
+        {
+          "CreateIssue": {
+            "type": "task",
+            "title": "Q2 retrospective: collect notes",
+            "description": "Gather team notes for the Q2 retro and post them in #eng.",
+            "assignee": "users/bob"
+          }
+        },
+        {
+          "CreateIssue": {
+            "type": "task",
+            "title": "Q2 retrospective: schedule readout",
+            "description": "Book a 30 min slot for the retro readout once notes are in.",
+            "assignee": "agents/swe"
+          }
+        }
+      ],
+      "creator": "bob",
+      "last_fired_at": null,
+      "last_updated_at": "2026-05-20T17:30:00.000Z"
+    }
+  },
   "relations": [
+    { "source_id": "t-trig0001", "target_id": "i-seed00007", "rel_type": "created", "created_at": "2026-05-04T09:00:12.000Z" },
+    { "source_id": "t-trig0001", "target_id": "i-seed00015", "rel_type": "created", "created_at": "2026-05-11T09:00:08.000Z" },
+    { "source_id": "t-trig0001", "target_id": "i-seed00016", "rel_type": "created", "created_at": "2026-05-18T09:00:09.000Z" },
+    { "source_id": "t-trig0001", "target_id": "i-seed00009", "rel_type": "created", "created_at": "2026-05-25T09:00:11.000Z" },
+    { "source_id": "t-trig0001", "target_id": "i-seed00010", "rel_type": "created", "created_at": "2026-06-01T09:00:07.000Z" },
+
     { "source_id": "c-seed00001", "target_id": "i-seed00001", "rel_type": "refers-to" },
     { "source_id": "c-seed00001", "target_id": "i-seed00002", "rel_type": "refers-to" },
     { "source_id": "c-seed00001", "target_id": "i-seed00005", "rel_type": "refers-to" },

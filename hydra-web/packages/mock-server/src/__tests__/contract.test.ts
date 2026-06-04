@@ -8,6 +8,7 @@ import type {
   UpsertAgentRequest,
   CreateRepositoryRequest,
   UpdateRepositoryRequest,
+  UpsertTriggerRequest,
 } from "@hydra/api";
 import { startMockServer, type MockServerHandle } from "../index.js";
 
@@ -1255,5 +1256,87 @@ describe("Seed data", () => {
     const list = await client.listConversations();
     expect(list.length).toBeGreaterThanOrEqual(1);
     expect(list.some((c) => c.conversation_id === "c-seed00001")).toBe(true);
+  });
+
+  it("seed triggers are loaded with both Cron and Once schedules", async () => {
+    const list = await client.listTriggers();
+    expect(list.triggers.length).toBeGreaterThanOrEqual(2);
+    const schedules = list.triggers.map((t) => t.trigger.schedule);
+    expect(schedules.some((s) => "Cron" in s)).toBe(true);
+    expect(schedules.some((s) => "Once" in s)).toBe(true);
+  });
+
+  it("seed triggers expose `created` relations with created_at for firing history", async () => {
+    const list = await client.listTriggers();
+    const cronTrigger = list.triggers.find((t) => "Cron" in t.trigger.schedule);
+    expect(cronTrigger).toBeDefined();
+    const fires = await client.listRelations({
+      source_id: cronTrigger!.trigger_id,
+      rel_type: "created",
+    });
+    expect(fires.relations.length).toBeGreaterThanOrEqual(2);
+    for (const rel of fires.relations) {
+      expect(rel.rel_type).toBe("created");
+      expect(rel.created_at).toBeTruthy();
+      expect(typeof rel.created_at).toBe("string");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Triggers
+// ---------------------------------------------------------------------------
+describe("Triggers", () => {
+  beforeEach(async () => {
+    await resetServer();
+  });
+
+  const triggerPayload: UpsertTriggerRequest = {
+    enabled: true,
+    schedule: { Cron: { expression: "0 0 * * *", timezone: "UTC" } },
+    actions: [
+      {
+        CreateIssue: {
+          type: "task",
+          title: "Nightly health check",
+          description: "Run the nightly health check sweep.",
+        },
+      },
+    ],
+    creator: "dev-user",
+  };
+
+  it("round-trip: create → get → list → update → delete → 404", async () => {
+    const created = await client.createTrigger(triggerPayload);
+    expect(created.trigger_id).toBeTruthy();
+    const triggerId = created.trigger_id;
+
+    const fetched = await client.getTrigger(triggerId);
+    expect(fetched.trigger_id).toBe(triggerId);
+    expect(fetched.trigger.enabled).toBe(true);
+    expect("Cron" in fetched.trigger.schedule).toBe(true);
+    expect(fetched.creation_time).toBeTruthy();
+
+    const list = await client.listTriggers();
+    expect(list.triggers.some((t) => t.trigger_id === triggerId)).toBe(true);
+
+    await client.updateTrigger(triggerId, { ...triggerPayload, enabled: false });
+    const refetched = await client.getTrigger(triggerId);
+    expect(refetched.trigger.enabled).toBe(false);
+
+    const deleted = await client.deleteTrigger(triggerId);
+    expect(deleted.trigger.deleted).toBe(true);
+
+    await expect(client.getTrigger(triggerId)).rejects.toThrow(ApiError);
+  });
+
+  it("versions: create → update → list versions", async () => {
+    const created = await client.createTrigger(triggerPayload);
+    await client.updateTrigger(created.trigger_id, {
+      ...triggerPayload,
+      enabled: false,
+    });
+    const versions = await client.listTriggerVersions(created.trigger_id);
+    expect(versions.versions.length).toBeGreaterThanOrEqual(2);
   });
 });
