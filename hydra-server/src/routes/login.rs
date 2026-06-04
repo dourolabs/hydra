@@ -124,6 +124,7 @@ pub async fn device_poll(
     state.config.auth.require_github()?;
 
     let device_session_id = &payload.device_session_id;
+    info!(device_session_id = %device_session_id, "device_poll invoked");
 
     // Check session exists and extract fields needed for the GitHub request.
     let (device_code, client_id, oauth_base_url) = {
@@ -136,6 +137,7 @@ pub async fn device_poll(
         if Instant::now() >= session.expires_at {
             drop(session);
             state.device_sessions.remove(device_session_id);
+            info!(device_session_id = %device_session_id, outcome = "expired", "device_poll completed");
             return Ok(Json(v1::login::DevicePollResponse::error(
                 "expired".to_string(),
             )));
@@ -204,7 +206,12 @@ pub async fn device_poll(
         // Clean up the session on success.
         state.device_sessions.remove(device_session_id);
 
-        info!(username = %login_response.user.username, "device flow login completed");
+        info!(
+            device_session_id = %device_session_id,
+            username = %login_response.user.username,
+            outcome = "complete",
+            "device_poll completed",
+        );
 
         return Ok(Json(v1::login::DevicePollResponse::complete(
             login_response.login_token,
@@ -214,22 +221,28 @@ pub async fn device_poll(
 
     // Handle GitHub error codes.
     match github_response.error.as_deref() {
-        Some("authorization_pending") => Ok(Json(v1::login::DevicePollResponse::pending())),
+        Some("authorization_pending") => {
+            info!(device_session_id = %device_session_id, outcome = "pending", "device_poll completed");
+            Ok(Json(v1::login::DevicePollResponse::pending()))
+        }
         Some("slow_down") => {
             // Increase the poll interval as GitHub requests.
             if let Some(mut session) = state.device_sessions.get_mut(device_session_id) {
                 session.poll_interval += Duration::from_secs(5);
             }
+            info!(device_session_id = %device_session_id, outcome = "slow_down", "device_poll completed");
             Ok(Json(v1::login::DevicePollResponse::pending()))
         }
         Some("expired_token") => {
             state.device_sessions.remove(device_session_id);
+            info!(device_session_id = %device_session_id, outcome = "expired_token", "device_poll completed");
             Ok(Json(v1::login::DevicePollResponse::error(
                 "expired".to_string(),
             )))
         }
         Some("access_denied") => {
             state.device_sessions.remove(device_session_id);
+            info!(device_session_id = %device_session_id, outcome = "access_denied", "device_poll completed");
             Ok(Json(v1::login::DevicePollResponse::error(
                 "access_denied".to_string(),
             )))
@@ -237,12 +250,14 @@ pub async fn device_poll(
         Some(other) => {
             warn!(error = %other, "unexpected GitHub device flow error");
             state.device_sessions.remove(device_session_id);
+            info!(device_session_id = %device_session_id, outcome = "github_error", "device_poll completed");
             Ok(Json(v1::login::DevicePollResponse::error(
                 other.to_string(),
             )))
         }
         None => {
             error!("GitHub token response had no access_token and no error field");
+            info!(device_session_id = %device_session_id, outcome = "unknown", "device_poll completed");
             Ok(Json(v1::login::DevicePollResponse::error(
                 "unknown".to_string(),
             )))
