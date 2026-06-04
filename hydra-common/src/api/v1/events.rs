@@ -64,6 +64,7 @@ impl EventsQuery {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+// wire-casing-exempt: published SSE `event:` strings (e.g. `issue_created`) are consumed by hydra-web and CLI watchers; coordinated rename tracked under parent issue i-glwrexmf.
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SseEventType {
