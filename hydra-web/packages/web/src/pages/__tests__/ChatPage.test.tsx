@@ -150,6 +150,12 @@ vi.mock("@hydra/ui", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div>,
   Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
+  Icons: new Proxy(
+    {},
+    {
+      get: (_t, prop) => () => <span data-testid={`icon-${String(prop)}`} />,
+    },
+  ),
 }));
 
 // CSS Module proxies
