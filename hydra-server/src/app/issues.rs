@@ -592,6 +592,7 @@ impl AppState {
                 issue.status = status.into();
             }
             Effect::RecordOnly => {}
+            _ => {}
         }
 
         let version = self
@@ -894,6 +895,7 @@ fn validate_field_value(input: &Input, value: &Value) -> Option<String> {
             }
             None
         }
+        _ => None,
     }
 }
 

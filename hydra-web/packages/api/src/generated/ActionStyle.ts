@@ -3,4 +3,4 @@
 /**
  * Visual style for an action button.
  */
-export type ActionStyle = "primary" | "danger" | "default";
+export type ActionStyle = "primary" | "danger" | "default" | "unknown";
