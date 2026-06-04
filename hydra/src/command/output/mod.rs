@@ -23,7 +23,10 @@ pub use documents::{
     DeletedDocumentOutcome, DocumentRecordsView, DocumentSummaryRecords, SyncEvent, SyncSummary,
 };
 pub use issues::{DeletedIssueOutcome, IssueRecords, IssueSummaryRecords, SubmitFormOutcome};
-pub use patches::{DeletedPatchOutcome, PatchRecords, PatchSummaryRecords};
+pub use patches::{
+    ApplyOutcome, DeletedPatchOutcome, MergeOutcome, PatchRecords, PatchSummaryRecords,
+    ReviewSubmittedOutcome,
+};
 pub use projects::{ProjectRecords, ProjectStatuses};
 pub use repositories::RepositoryRecords;
 pub use sessions::{SessionRecords, SessionSummaryRecords};
