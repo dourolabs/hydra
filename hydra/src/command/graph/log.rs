@@ -81,6 +81,65 @@ impl LogEvent {
             LogEvent::Created { id, .. } | LogEvent::Updated { id, .. } => id,
         }
     }
+
+    fn version(&self) -> VersionNumber {
+        match self {
+            LogEvent::Created { version, .. } | LogEvent::Updated { version, .. } => *version,
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        match self {
+            LogEvent::Created {
+                kind,
+                id,
+                version,
+                ts,
+                actor,
+                object,
+            } => serde_json::json!({
+                "event": "created",
+                "kind": kind.as_str(),
+                "id": id.as_ref(),
+                "version": version,
+                "ts": ts.to_rfc3339(),
+                "actor": actor_json(actor),
+                "object": object,
+            }),
+            LogEvent::Updated {
+                kind,
+                id,
+                version,
+                ts,
+                actor,
+                changes,
+            } => {
+                let changes_value = Value::Object(
+                    changes
+                        .iter()
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                serde_json::json!({
+                                    "before": v.before,
+                                    "after": v.after,
+                                }),
+                            )
+                        })
+                        .collect(),
+                );
+                serde_json::json!({
+                    "event": "updated",
+                    "kind": kind.as_str(),
+                    "id": id.as_ref(),
+                    "version": version,
+                    "ts": ts.to_rfc3339(),
+                    "actor": actor_json(actor),
+                    "changes": changes_value,
+                })
+            }
+        }
+    }
 }
 
 /// Top-level entry point for `hydra graph log`.
@@ -161,15 +220,9 @@ pub(crate) fn sort_and_truncate(events: &mut Vec<LogEvent>, limit: usize) {
         b.timestamp()
             .cmp(&a.timestamp())
             .then_with(|| a.id().as_ref().cmp(b.id().as_ref()))
-            .then_with(|| event_version(a).cmp(&event_version(b)))
+            .then_with(|| a.version().cmp(&b.version()))
     });
     events.truncate(limit);
-}
-
-fn event_version(event: &LogEvent) -> VersionNumber {
-    match event {
-        LogEvent::Created { version, .. } | LogEvent::Updated { version, .. } => *version,
-    }
 }
 
 /// Concurrently fetch version histories for each id and turn them into
@@ -292,7 +345,7 @@ fn render(
 
 fn render_jsonl(events: &[LogEvent], writer: &mut impl Write) -> Result<()> {
     for event in events {
-        let value = event_to_json(event);
+        let value = event.to_json();
         serde_json::to_writer(&mut *writer, &value)?;
         writer.write_all(b"\n")?;
     }
@@ -314,59 +367,6 @@ fn actor_json(actor: &Option<ActorRef>) -> Value {
     match actor {
         Some(a) => Value::String(a.display_name()),
         None => Value::Null,
-    }
-}
-
-fn event_to_json(event: &LogEvent) -> Value {
-    match event {
-        LogEvent::Created {
-            kind,
-            id,
-            version,
-            ts,
-            actor,
-            object,
-        } => serde_json::json!({
-            "event": "created",
-            "kind": kind.as_str(),
-            "id": id.as_ref(),
-            "version": version,
-            "ts": ts.to_rfc3339(),
-            "actor": actor_json(actor),
-            "object": object,
-        }),
-        LogEvent::Updated {
-            kind,
-            id,
-            version,
-            ts,
-            actor,
-            changes,
-        } => {
-            let changes_value = Value::Object(
-                changes
-                    .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.clone(),
-                            serde_json::json!({
-                                "before": v.before,
-                                "after": v.after,
-                            }),
-                        )
-                    })
-                    .collect(),
-            );
-            serde_json::json!({
-                "event": "updated",
-                "kind": kind.as_str(),
-                "id": id.as_ref(),
-                "version": version,
-                "ts": ts.to_rfc3339(),
-                "actor": actor_json(actor),
-                "changes": changes_value,
-            })
-        }
     }
 }
 
@@ -788,7 +788,7 @@ mod tests {
             actor: Some(session_actor("s-abcdef")),
             object: serde_json::json!({ "title": "t", "status": "open" }),
         };
-        let value = event_to_json(&event);
+        let value = event.to_json();
         assert_eq!(value["event"], "created");
         assert_eq!(value["kind"], "issue");
         assert_eq!(value["id"], id_a.as_ref());
@@ -866,7 +866,7 @@ mod tests {
             actor: None,
             changes,
         };
-        let value = event_to_json(&event);
+        let value = event.to_json();
         assert_eq!(value["event"], "updated");
         assert_eq!(value["changes"]["status"]["before"], "open");
         assert_eq!(value["changes"]["status"]["after"], "in-progress");
@@ -888,7 +888,7 @@ mod tests {
             actor: Some(actor),
             object: serde_json::json!({}),
         };
-        let value = event_to_json(&event);
+        let value = event.to_json();
         assert_eq!(value["actor"], "worker");
     }
 }

@@ -145,7 +145,7 @@ fn render_jsonl(
     writer: &mut impl Write,
 ) -> Result<()> {
     for node in nodes {
-        let record = json_record(node, level);
+        let record = node.json_record(level);
         serde_json::to_writer(&mut *writer, &record)?;
         writer.write_all(b"\n")?;
     }
@@ -153,12 +153,14 @@ fn render_jsonl(
     Ok(())
 }
 
-fn json_record(node: &HydratedNode, level: VerbosityLevel) -> Value {
-    serde_json::json!({
-        "id": node.id().as_ref(),
-        "kind": node.kind().as_str(),
-        "object": node.render(level),
-    })
+impl HydratedNode {
+    fn json_record(&self, level: VerbosityLevel) -> Value {
+        serde_json::json!({
+            "id": self.id().as_ref(),
+            "kind": self.kind().as_str(),
+            "object": self.render(level),
+        })
+    }
 }
 
 fn render_pretty(
