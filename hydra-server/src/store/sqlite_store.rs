@@ -435,9 +435,7 @@ struct TaskRow {
     // These columns are the canonical source for session shape
     // (`mount_spec`, `agent_config`, `mode`); INSERTs populate them from
     // the domain object's typed fields and reads deserialize them back
-    // into those fields. The legacy `context` / `prompt` / `model` /
-    // `mcp_config` / `interactive` columns they replaced have been
-    // dropped from the schema.
+    // into those fields.
     mount_spec: String,
     agent_config: String,
     mode: String,
@@ -1702,11 +1700,9 @@ impl SqliteStore {
             })
             .transpose()?;
 
-        // The legacy `context` / `prompt` / `model` / `mcp_config` /
-        // `interactive` columns are no longer written and have been
-        // dropped from the schema. `mount_spec`, `agent_config`, and
-        // `mode` are NOT NULL in every row and are the canonical source
-        // for session shape on this read path.
+        // `mount_spec`, `agent_config`, and `mode` are NOT NULL in every
+        // row and are the canonical source for session shape on this
+        // read path.
         let mount_spec = serde_json::from_str(&row.mount_spec)
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
         let agent_config = serde_json::from_str(&row.agent_config).map_err(|e| {

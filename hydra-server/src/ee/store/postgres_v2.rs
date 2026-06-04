@@ -919,11 +919,9 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        // The legacy `context` / `prompt` / `model` / `mcp_config` /
-        // `interactive` columns are no longer written and have been
-        // dropped from the schema. `mount_spec`, `agent_config`, and
-        // `mode` are NOT NULL in every row and are the canonical source
-        // for session shape on this read path.
+        // `mount_spec`, `agent_config`, and `mode` are NOT NULL in every
+        // row and are the canonical source for session shape on this
+        // read path.
         let mount_spec = serde_json::from_value(row.mount_spec.clone())
             .map_err(|e| StoreError::Internal(format!("failed to deserialize mount_spec: {e}")))?;
         let agent_config = serde_json::from_value(row.agent_config.clone()).map_err(|e| {
@@ -1610,8 +1608,6 @@ struct TaskRow {
     conversation_id: Option<String>,
     #[sqlx(default)]
     usage: Option<Value>,
-    // The legacy `context` / `prompt` / `model` / `mcp_config` /
-    // `interactive` columns have been dropped from the schema;
     // `mount_spec` / `agent_config` / `mode` are the canonical source
     // for session shape, NOT NULL in every row and populated from the
     // domain object's typed fields on INSERT.
