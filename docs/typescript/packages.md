@@ -54,7 +54,7 @@ Two rules, in order:
 
 Existing generic components — full list in `packages/ui/src/index.ts`; new generic components join this list:
 
-`Avatar`, `Badge`, `Button`, `Chip`, `CopyButton`, `DiffViewer`, `ErrorBoundary`, `HydraMark`, `Icons`, `Input`, `Kbd`, `LogViewer`, `MarkdownViewer`, `Modal`, `Panel`, `Picker`, `PreviewCard`, `Select`, `SessionStatusIndicator`, `Spinner`, `Tabs`, `Textarea`, `Toast`, `Tooltip`, `TreeView`, `TypeChip`
+`Avatar`, `Badge`, `Button`, `Chip`, `CopyButton`, `DiffViewer`, `ErrorBoundary`, `HydraMark`, `Icons`, `Input`, `Kbd`, `LogViewer`, `MarkdownViewer`, `Modal`, `Panel`, `Picker`, `PreviewCard`, `Select`, `SessionStatusIndicator`, `Spinner`, `StatusDot`, `Tabs`, `Textarea`, `Toast`, `Tooltip`, `TreeView`, `TypeChip`
 
 App-specific extraction:
 

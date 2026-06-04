@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Avatar, Icons, TypeChip } from "@hydra/ui";
+import { Avatar, Icons, StatusDot, TypeChip } from "@hydra/ui";
 import type { BadgeStatus } from "@hydra/ui";
 import type {
   ConversationSummary,
@@ -23,30 +23,6 @@ import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSe
 import type { ChildStatus } from "../dashboard/computeIssueProgress";
 import { PatchRepoLink } from "../patches/PatchRepoLink";
 import styles from "./RailRow.module.css";
-
-const STATUS_DOT_CLASS: Partial<Record<BadgeStatus, string>> = {
-  open: styles.toneOpen,
-  "in-progress": styles.toneInProgress,
-  closed: styles.toneClosed,
-  "issue-closed": styles.toneClosed,
-  approved: styles.toneClosed,
-  failed: styles.toneFailed,
-  dropped: styles.toneDropped,
-  blocked: styles.toneBlocked,
-  pending: styles.toneInProgress,
-  running: styles.toneInProgress,
-  complete: styles.toneClosed,
-  "changes-requested": styles.toneRejected,
-  merged: styles.toneClosed,
-  "conv-active": styles.toneInProgress,
-  "conv-idle": styles.toneOpen,
-  "conv-closed": styles.toneClosed,
-};
-
-function StatusDot({ status }: { status: BadgeStatus }) {
-  const cls = STATUS_DOT_CLASS[status] ?? styles.toneNeutral;
-  return <span className={`${styles.dot} ${cls}`} aria-hidden="true" />;
-}
 
 interface IssueRailRowProps {
   record: IssueSummaryRecord;
@@ -104,12 +80,12 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
     >
       {dotColor ? (
         <span
-          className={styles.dot}
+          className={styles.dotCustomColor}
           style={{ backgroundColor: dotColor }}
           aria-hidden="true"
         />
       ) : (
-        <StatusDot status={dotTone} />
+        <StatusDot status={dotTone} className={styles.dotInRow} />
       )}
       <div className={styles.body}>
         <div className={styles.title}>{issue.title || "(untitled)"}</div>
@@ -166,7 +142,7 @@ export function PatchRailRow({ record, linkSearch }: PatchRailRowProps) {
       }}
       data-testid={`related-rail-row-patch-${record.patch_id}`}
     >
-      <StatusDot status={status} />
+      <StatusDot status={status} className={styles.dotInRow} />
       <div className={styles.body}>
         <div className={styles.title}>{p.title || "(untitled)"}</div>
         <div className={styles.meta}>
@@ -218,7 +194,7 @@ export function SessionRailRow({ record, display }: SessionRailRowProps) {
       }}
       data-testid={`related-rail-row-session-${record.session_id}`}
     >
-      <StatusDot status={status} />
+      <StatusDot status={status} className={styles.dotInRow} />
       <div className={styles.body}>
         <div className={styles.title}>{title}</div>
         <div className={styles.meta}>
@@ -313,7 +289,7 @@ export function ChatRailRow({ conversation }: ChatRailRowProps) {
       }}
       data-testid={`related-rail-row-chat-${conversation.conversation_id}`}
     >
-      <StatusDot status={status} />
+      <StatusDot status={status} className={styles.dotInRow} />
       <div className={styles.body}>
         <div className={styles.title}>{conversationTitle(conversation)}</div>
         <div className={styles.meta}>
