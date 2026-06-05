@@ -128,6 +128,33 @@ async function assertNoOverflow(page: Page, viewportWidth: number, label: string
     offenders,
     `${label} @${viewportWidth} elements extending past viewport: ${JSON.stringify(offenders, null, 2)}`,
   ).toEqual([]);
+
+  // 4. Per-rail-row content fit. The Related tab's chat-panel `aside` is an
+  //    `overflow-x: auto` container, so a row whose content overflows would
+  //    scroll *inside* the panel without bubbling to <main> or
+  //    documentElement — the previous three assertions all stay green. Walk
+  //    each rendered rail row and require its content fit its own width, so a
+  //    regression like long document paths missing the truncate pattern is
+  //    caught before users see an inner scrollbar on the Related pane.
+  const rowOverflow = await page.evaluate(() => {
+    const rows = document.querySelectorAll('[data-testid^="related-rail-row-"]');
+    const offenders: { testid: string; scrollWidth: number; clientWidth: number }[] = [];
+    for (const row of rows) {
+      const el = row as HTMLElement;
+      if (el.scrollWidth > el.clientWidth + 1) {
+        offenders.push({
+          testid: el.dataset.testid ?? "",
+          scrollWidth: el.scrollWidth,
+          clientWidth: el.clientWidth,
+        });
+      }
+    }
+    return offenders;
+  });
+  expect(
+    rowOverflow,
+    `${label} @${viewportWidth} rail rows with internal overflow: ${JSON.stringify(rowOverflow, null, 2)}`,
+  ).toEqual([]);
 }
 
 for (const viewportWidth of VIEWPORT_WIDTHS) {

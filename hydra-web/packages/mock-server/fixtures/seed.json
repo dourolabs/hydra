@@ -2066,6 +2066,11 @@
       "title": "GraphQL Federation Migration Plan",
       "body_markdown": "# GraphQL Federation Migration Plan\n\n## Phases\n\n### Phase 1: Gateway + Core Subgraphs (Complete)\n- Apollo Gateway deployed\n- Users subgraph live\n- Issues subgraph live\n\n### Phase 2: Extended Subgraphs (In Progress)\n- Sessions subgraph (agent actively working)\n- Patches subgraph (blocked on Sessions)\n\n### Phase 3: Cleanup\n- Remove REST endpoints\n- Update all client code\n- Deprecate REST API docs",
       "path": "/research/graphql-federation-plan"
+    },
+    "d-seed00006": {
+      "title": "Per-project issue statuses rollout plan",
+      "body_markdown": "# Per-project issue statuses rollout plan\n\nThe per-project issue-status design lets each project declare its own status taxonomy (e.g. `triage`, `in-review`, `shipped`) on top of the platform-wide `open` / `in-progress` / `closed` set. This doc tracks the rollout.\n\n## Phases\n\n1. Add `project_statuses` column to the issue table (migration only, no API change).\n2. Surface custom statuses on the issue detail rail.\n3. Filter chips on the issue list page.\n4. Bulk re-statusing tools for migrations between schemas.",
+      "path": "/designs/per-project-issue-statuses-implementation-rollout-and-migration.md"
     }
   },
   "repositories": {
@@ -2876,6 +2881,7 @@
     { "source_id": "c-seed00001", "target_id": "i-seed00006", "rel_type": "refers-to" },
     { "source_id": "c-seed00001", "target_id": "i-seed00013", "rel_type": "refers-to" },
     { "source_id": "c-seed00001", "target_id": "i-seed00017", "rel_type": "refers-to" },
+    { "source_id": "c-seed00001", "target_id": "d-seed00006", "rel_type": "refers-to" },
 
     { "source_id": "c-seed00002", "target_id": "i-seed00002", "rel_type": "refers-to" },
     { "source_id": "c-seed00002", "target_id": "i-seed00005", "rel_type": "refers-to" },
