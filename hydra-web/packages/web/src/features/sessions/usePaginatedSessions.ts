@@ -73,6 +73,7 @@ export function useSessionCount(filters: SessionFilters, enabled = true) {
       const resp = await apiClient.listSessions(query);
       return Number(resp.total_count ?? 0);
     },
+    placeholderData: keepPreviousData,
     enabled,
   });
 }

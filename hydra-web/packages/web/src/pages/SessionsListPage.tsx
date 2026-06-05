@@ -235,7 +235,7 @@ export function SessionsListPage() {
   return (
     <SessionsView
       rows={rows}
-      isLoading={isLoading || relationsLoading}
+      isLoading={isLoading}
       error={error ?? null}
       hasNextPage={hasNextPage ?? false}
       isFetchingNextPage={isFetchingNextPage ?? false}

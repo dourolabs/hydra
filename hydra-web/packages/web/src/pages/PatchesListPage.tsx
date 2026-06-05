@@ -164,7 +164,7 @@ export function PatchesListPage() {
   return (
     <PatchesView
       patches={patches}
-      isLoading={isLoading || relationsLoading}
+      isLoading={isLoading}
       hasNextPage={hasNextPage ?? false}
       isFetchingNextPage={isFetchingNextPage ?? false}
       onLoadMore={handleLoadMore}

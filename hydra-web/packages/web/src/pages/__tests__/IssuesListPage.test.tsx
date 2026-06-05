@@ -24,9 +24,19 @@ vi.mock("../../features/issues/issueFilters", () => ({
 // Relation resolver issues `/v1/relations` queries via useQueries, which
 // needs a QueryClient. Stub it to a no-op `null` result (no relation filter
 // active) so the page exercises the URL → server-query mapping for the
-// scalar filters covered by the rest of this file.
+// scalar filters covered by the rest of this file. The `relationsState`
+// object lets the few relation-aware tests below flip the resolver into
+// a loading state to verify the "previous render persists" behaviour.
+const relationsState: {
+  issueIds: string[] | null;
+  isLoading: boolean;
+} = { issueIds: null, isLoading: false };
+
 vi.mock("../../features/issues/useRelationFilteredIssueIds", () => ({
-  useRelationFilteredIssueIds: () => ({ issueIds: null, isLoading: false }),
+  useRelationFilteredIssueIds: () => ({
+    issueIds: relationsState.issueIds,
+    isLoading: relationsState.isLoading,
+  }),
   RELATION_FILTER_IDS: [
     "relatedPatch",
     "relatedChat",
@@ -265,6 +275,8 @@ beforeEach(() => {
   paginatedState.countFilters = undefined;
   treesState.childStatusMap = new Map();
   treesState.sessionsByIssue = new Map();
+  relationsState.issueIds = null;
+  relationsState.isLoading = false;
 });
 
 afterEach(() => {
@@ -601,5 +613,45 @@ describe("IssuesListPage IssuesTable rendering", () => {
     expect(fills[0]!.className).not.toContain("progressFillActive");
     expect(fills[1]!.className).toContain("progressFill");
     expect(fills[1]!.className).toContain("progressFillActive");
+  });
+});
+
+describe("IssuesListPage relation-resolution loading persistence", () => {
+  // PR-2: When the relation resolver re-runs (user changed a relation chip
+  // value), the page must keep rendering the previously-loaded rows from
+  // the list query — driven by `placeholderData: keepPreviousData` on
+  // `usePaginatedIssues` / `useIssueCount` — instead of flashing the
+  // skeleton or zero-state. The fix drops `|| (isTable && relationsLoading)`
+  // from the `isLoading` prop forwarded to <IssuesView>.
+
+  it("keeps prior rows visible while relations are resolving", () => {
+    paginatedState.issues = [
+      makeIssue("i-prev-1", { title: "prior row 1" }),
+      makeIssue("i-prev-2", { title: "prior row 2" }),
+    ];
+    relationsState.issueIds = ["i-prev-1", "i-prev-2"];
+    relationsState.isLoading = true;
+
+    const { container } = renderIssuesList("/?relatedPatch=p-a,p-b");
+
+    // No loading or empty state — previous render persists.
+    expect(container.textContent).not.toContain("Loading issues");
+    expect(container.textContent).not.toContain(
+      "No issues match the current filters",
+    );
+    // Both prior rows still in the DOM.
+    expect(container.textContent).toContain("prior row 1");
+    expect(container.textContent).toContain("prior row 2");
+  });
+
+  it("does not force the loading skeleton when relations re-resolve over an existing render", () => {
+    paginatedState.issues = [makeIssue("i-keep", { title: "keep me" })];
+    relationsState.issueIds = ["i-keep"];
+    relationsState.isLoading = true;
+
+    const { container } = renderIssuesList("/?relatedPatch=p-a");
+
+    expect(container.textContent).not.toContain("Loading issues");
+    expect(container.textContent).toContain("keep me");
   });
 });

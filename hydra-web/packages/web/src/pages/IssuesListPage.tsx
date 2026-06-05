@@ -381,7 +381,7 @@ export function IssuesListPage() {
         issues={issues}
         childStatusMap={childStatusMap}
         sessionsByIssue={sessionsByIssue}
-        isLoading={isLoading || (isTable && relationsLoading)}
+        isLoading={isLoading}
         baseFilters={boardBaseFilters}
         username={currentUser}
         filterRootId={framing.rootId}
