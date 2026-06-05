@@ -175,6 +175,25 @@ describe("Issue list filtering", () => {
     const data = await listIssues({ status: "closed" });
     expect(data.issues).toHaveLength(0);
   });
+
+  // Parity with prod: `SearchIssuesQuery::ids` is `Vec<IssueId>`, so a
+  // mixed-prefix CSV must 400. Previously the mock filtered as strings and
+  // silently dropped non-issue ids, masking the filter-by-conversation bug.
+  it("rejects ids with non-`i-` prefix (400)", async () => {
+    store.create("issues", "i-1", makeIssue(), "issue");
+    const qs = new URLSearchParams({ ids: "i-1,p-foo" }).toString();
+    const res = await app.request(`http://localhost/v1/issues?${qs}`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/p-foo/);
+  });
+
+  it("accepts a CSV of `i-` prefixed ids unchanged", async () => {
+    store.create("issues", "i-1", makeIssue(), "issue");
+    store.create("issues", "i-2", makeIssue(), "issue");
+    const data = await listIssues({ ids: "i-1,i-2" });
+    expect(data.issues).toHaveLength(2);
+  });
 });
 
 describe("Patch list filtering", () => {

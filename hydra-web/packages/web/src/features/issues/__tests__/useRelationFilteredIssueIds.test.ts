@@ -123,3 +123,70 @@ describe("useRelationFilteredIssueIds truncation", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("useRelationFilteredIssueIds prefix bucketing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("relatedChat: drops non-`i-` target_ids before they reach the `ids` CSV", async () => {
+    // Conversation→artifact `refers-to` edges fan out across issues, patches,
+    // and documents. The mock-server lenient handler used to silently filter
+    // mixed-prefix ids; the real backend rejects the whole query as 400 (per
+    // `IssueId::try_from` strictness in hydra-common/src/ids.rs). Bucketing
+    // client-side is what keeps the query well-formed against prod.
+    mockListRelations.mockResolvedValue({
+      relations: [
+        { source_id: "c-1", target_id: "i-seed00001" },
+        { source_id: "c-1", target_id: "i-seed00002" },
+        { source_id: "c-1", target_id: "d-seed00006" },
+        { source_id: "c-1", target_id: "p-seed00010" },
+      ],
+    });
+
+    const filters: Filter[] = [
+      { _uid: "u1", id: "relatedChat", op: "in", values: ["c-1"] },
+    ];
+
+    const { result } = renderHook(() => useRelationFilteredIssueIds(filters), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.issueIds).not.toBeNull();
+    });
+
+    expect(result.current.issueIds?.sort()).toEqual([
+      "i-seed00001",
+      "i-seed00002",
+    ]);
+  });
+
+  it("relatedChat: empty after bucketing → resolver returns [] (sentinel path)", async () => {
+    // When a conversation only `refers-to` non-issue artifacts, the resolver
+    // must yield `[]` so the caller's zero-row sentinel fires — not `null`
+    // (which would mean "no narrowing").
+    mockListRelations.mockResolvedValue({
+      relations: [
+        { source_id: "c-2", target_id: "d-seed00001" },
+        { source_id: "c-2", target_id: "p-seed00001" },
+      ],
+    });
+
+    const filters: Filter[] = [
+      { _uid: "u1", id: "relatedChat", op: "in", values: ["c-2"] },
+    ];
+
+    const { result } = renderHook(() => useRelationFilteredIssueIds(filters), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.issueIds).not.toBeNull();
+    });
+
+    expect(result.current.issueIds).toEqual([]);
+  });
+});
