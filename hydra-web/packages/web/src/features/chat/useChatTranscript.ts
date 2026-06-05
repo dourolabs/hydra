@@ -49,6 +49,13 @@ export function useChatTranscript(conversationId: string): ChatTranscriptResult 
         conversation_id: conversationId as unknown as ConversationId,
       }),
     enabled: !!conversationId,
+    // Force a fresh fetch on every chat-page mount so the activity indicator
+    // (derived from the events tail) is reconciled with the server on
+    // navigate-back, not whatever the cache held when the user last navigated
+    // away. The global `staleTime: 30_000` (App.tsx) plus missable SSE
+    // invalidations (disconnected EventSource, payload racing the route
+    // change) can otherwise pin a stale "thinking…" tail until a hard refresh.
+    refetchOnMount: "always",
   });
 
   const orderedSessionIds = useMemo(() => {
@@ -64,6 +71,9 @@ export function useChatTranscript(conversationId: string): ChatTranscriptResult 
       queryKey: ["sessionEvents", sid],
       queryFn: () => apiClient.getSessionEvents(sid),
       enabled: !!sid,
+      // Same rationale as `sessionsQuery`: the activity indicator reads off
+      // the events tail, so the per-session log must refresh on remount.
+      refetchOnMount: "always" as const,
     })),
   });
 

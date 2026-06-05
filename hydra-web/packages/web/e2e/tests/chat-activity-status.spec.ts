@@ -143,4 +143,54 @@ test.describe("Chat activity line @chat:activity-status", () => {
       ).toBe(1);
     },
   );
+
+  // Regression guard for [[i-dihnqqsc]]: the user opens a chat where the
+  // agent is mid-flight (tail = user_message → "Thinking…"), navigates
+  // away, the agent's reply lands while the page is unmounted, then the
+  // user navigates back. The chat page must reconcile with the server view
+  // on remount and clear the indicator — even when the SSE-driven cache
+  // invalidation didn't reach the client (a real failure mode in prod that
+  // also happens to be the default in the mock-server here, see the file
+  // header on why `/v1/events` doesn't deliver `session_event_created`).
+  test(
+    "clears a stale Thinking… indicator on navigate-away + navigate-back without a hard refresh @chat:activity-status",
+    async ({ authenticatedPage: page, request }) => {
+      await page.goto(`/chat/${SEED_CONVERSATION_ID}`);
+      await expect(page.getByTestId("chat-message-list")).toBeVisible();
+
+      // Kick the chat into the live "Thinking…" state via the optimistic
+      // user_message tail — same mechanism as the first test in this file.
+      const composer = page.getByPlaceholder("Type a message…");
+      await composer.fill("Wait for me to come back");
+      await page.getByRole("button", { name: "Send" }).click();
+      await expect(page.getByTestId("chat-activity-line-verb")).toHaveText(
+        "Thinking…",
+      );
+
+      // Navigate away — ExistingChatPage unmounts.
+      await page.goto("/chat");
+      await expect(page).toHaveURL(/\/chat$/);
+
+      // Agent's reply lands on the server while we're away. We deliberately
+      // DO NOT call `invalidateSessionEvents` here: that models the missed
+      // SSE invalidation that triggered the original bug report.
+      await appendSessionEventToMock(request, SEED_SESSION_ID, {
+        type: "assistant_message",
+        content: "Welcome back — here's the answer.",
+        timestamp: new Date(Date.now() + 2000).toISOString(),
+      });
+
+      // Navigate back. The chat page must refetch the per-session events on
+      // mount and reflect the new tail, not the cached user_message tail.
+      await page.goto(`/chat/${SEED_CONVERSATION_ID}`);
+      await expect(page.getByTestId("chat-message-list")).toBeVisible();
+
+      // Indicator must clear — agent replied, no live work in flight.
+      await expect(page.getByTestId("chat-activity-line")).toHaveCount(0);
+      // And the agent's message must be visible without a hard refresh.
+      await expect(page.getByTestId("chat-message-list")).toContainText(
+        "Welcome back — here's the answer.",
+      );
+    },
+  );
 });
