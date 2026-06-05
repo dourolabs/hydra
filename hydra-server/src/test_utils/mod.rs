@@ -328,8 +328,7 @@ async fn seed_default_conversation_agent(store: &dyn Store) -> anyhow::Result<()
     );
     match store.add_agent(agent).await {
         Ok(_) => {}
-        Err(StoreError::AgentAlreadyExists(_))
-        | Err(StoreError::ConversationAgentAlreadyExists) => {}
+        Err(StoreError::AgentAlreadyExists(_)) => {}
         Err(err) => {
             return Err(anyhow::anyhow!(
                 "failed to seed default conversation agent: {err}"

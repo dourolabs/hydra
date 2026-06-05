@@ -306,10 +306,6 @@ pub enum StoreError {
     AgentNotFound(String),
     #[error("Agent already exists: {0}")]
     AgentAlreadyExists(String),
-    #[error("Only one assignment agent is allowed")]
-    AssignmentAgentAlreadyExists,
-    #[error("Only one default conversation agent is allowed")]
-    ConversationAgentAlreadyExists,
     #[error("Label not found: {0}")]
     LabelNotFound(LabelId),
     #[error("Label already exists: {0}")]
@@ -1100,21 +1096,17 @@ pub trait Store: ReadOnlyStore {
     /// Adds a new agent to the store.
     ///
     /// Returns `StoreError::AgentAlreadyExists` if a non-deleted agent with
-    /// the same name already exists.
-    /// Returns `StoreError::AssignmentAgentAlreadyExists` if `is_assignment_agent`
-    /// is true and another non-deleted agent already has this flag set.
-    /// Returns `StoreError::ConversationAgentAlreadyExists` if
-    /// `is_default_conversation_agent` is true and another non-deleted agent already
-    /// has this flag set.
+    /// the same name already exists. Role-flag uniqueness
+    /// (`is_assignment_agent`, `is_default_conversation_agent`) is workflow
+    /// state and is enforced by the `agent_role_uniqueness` `Restriction` in
+    /// `AppState`, not here.
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError>;
 
     /// Updates an existing agent.
     ///
     /// Returns `StoreError::AgentNotFound` if the agent does not exist.
-    /// Returns `StoreError::AssignmentAgentAlreadyExists` if setting
-    /// `is_assignment_agent` to true when another agent already has it set.
-    /// Returns `StoreError::ConversationAgentAlreadyExists` if setting
-    /// `is_default_conversation_agent` to true when another agent already has it set.
+    /// Role-flag uniqueness is enforced by the `agent_role_uniqueness`
+    /// `Restriction` in `AppState`, not here.
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError>;
 
     /// Soft-deletes an agent by setting its `deleted` flag to true.

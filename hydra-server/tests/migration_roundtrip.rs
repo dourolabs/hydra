@@ -398,26 +398,26 @@ async fn assert_data_shape_invariants(pool: &PgPool) -> Result<()> {
         bail!("expected s-headless01.mode.type='headless'; got {mode}");
     }
 
-    let row = sqlx::query("SELECT mode::text FROM metis.tasks_v2 WHERE id = 's-interact01'")
+    let row = sqlx::query("SELECT mode::text FROM metis.tasks_v2 WHERE id = 's-interbase'")
         .fetch_one(pool)
         .await?;
     let mode_text: String = row.get(0);
     let mode: serde_json::Value = serde_json::from_str(&mode_text)?;
     if mode.get("type").and_then(|v| v.as_str()) != Some("interactive") {
-        bail!("expected s-interact01.mode.type='interactive'; got {mode}");
+        bail!("expected s-interbase.mode.type='interactive'; got {mode}");
     }
-    if mode.get("conversation_id").and_then(|v| v.as_str()) != Some("c-conv00001") {
-        bail!("expected s-interact01.mode.conversation_id='c-conv00001'; got {mode}");
+    if mode.get("conversation_id").and_then(|v| v.as_str()) != Some("c-convbase") {
+        bail!("expected s-interbase.mode.conversation_id='c-convbase'; got {mode}");
     }
 
-    // resumed_from on s-interact02 should point at s-interact01 (the
+    // resumed_from on s-interresume should point at s-interbase (the
     // is_latest-true predecessor in the same conversation).
-    let row = sqlx::query("SELECT resumed_from FROM metis.tasks_v2 WHERE id = 's-interact02'")
+    let row = sqlx::query("SELECT resumed_from FROM metis.tasks_v2 WHERE id = 's-interresume'")
         .fetch_one(pool)
         .await?;
     let resumed_from: Option<String> = row.get(0);
-    if resumed_from.as_deref() != Some("s-interact01") {
-        bail!("expected s-interact02.resumed_from='s-interact01'; got {resumed_from:?}");
+    if resumed_from.as_deref() != Some("s-interbase") {
+        bail!("expected s-interresume.resumed_from='s-interbase'; got {resumed_from:?}");
     }
 
     Ok(())

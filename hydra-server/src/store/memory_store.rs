@@ -2307,28 +2307,6 @@ impl Store for MemoryStore {
             }
         }
 
-        // Validate assignment agent uniqueness.
-        if agent.is_assignment_agent {
-            let has_assignment = self
-                .agents
-                .iter()
-                .any(|e| e.value().is_assignment_agent && !e.value().deleted);
-            if has_assignment {
-                return Err(StoreError::AssignmentAgentAlreadyExists);
-            }
-        }
-
-        // Validate default-conversation-agent uniqueness.
-        if agent.is_default_conversation_agent {
-            let has_default = self
-                .agents
-                .iter()
-                .any(|e| e.value().is_default_conversation_agent && !e.value().deleted);
-            if has_default {
-                return Err(StoreError::ConversationAgentAlreadyExists);
-            }
-        }
-
         self.agents.insert(agent.name.clone(), agent);
         Ok(())
     }
@@ -2336,28 +2314,6 @@ impl Store for MemoryStore {
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
         // Check the agent exists and is not deleted.
         let _ = self.get_agent(&agent.name).await?;
-
-        // Validate assignment agent uniqueness (exclude self).
-        if agent.is_assignment_agent {
-            let conflict = self.agents.iter().any(|e| {
-                e.value().is_assignment_agent && !e.value().deleted && e.key() != &agent.name
-            });
-            if conflict {
-                return Err(StoreError::AssignmentAgentAlreadyExists);
-            }
-        }
-
-        // Validate default-conversation-agent uniqueness (exclude self).
-        if agent.is_default_conversation_agent {
-            let conflict = self.agents.iter().any(|e| {
-                e.value().is_default_conversation_agent
-                    && !e.value().deleted
-                    && e.key() != &agent.name
-            });
-            if conflict {
-                return Err(StoreError::ConversationAgentAlreadyExists);
-            }
-        }
 
         self.agents.insert(agent.name.clone(), agent);
         Ok(())
@@ -7368,31 +7324,26 @@ mod tests {
         assert!(matches!(err, StoreError::AgentNotFound(_)));
     }
 
+    // Role-flag uniqueness (`is_assignment_agent`,
+    // `is_default_conversation_agent`) is workflow state and is enforced by
+    // the `agent_role_uniqueness` `Restriction` in `AppState`, not at the
+    // store layer. This test exists to keep that boundary explicit: a direct
+    // store insert of a second role-flagged agent must succeed.
     #[tokio::test]
-    async fn assignment_agent_uniqueness_on_add() {
+    async fn store_does_not_enforce_role_uniqueness() {
         let store = MemoryStore::new();
         let mut pm = sample_agent("pm");
         pm.is_assignment_agent = true;
+        pm.is_default_conversation_agent = true;
         store.add_agent(pm).await.unwrap();
 
         let mut pm2 = sample_agent("pm2");
         pm2.is_assignment_agent = true;
-        let err = store.add_agent(pm2).await.unwrap_err();
-        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
-    }
-
-    #[tokio::test]
-    async fn assignment_agent_uniqueness_on_update() {
-        let store = MemoryStore::new();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        store.add_agent(pm).await.unwrap();
-        store.add_agent(sample_agent("swe")).await.unwrap();
-
-        let mut swe_updated = sample_agent("swe");
-        swe_updated.is_assignment_agent = true;
-        let err = store.update_agent(swe_updated).await.unwrap_err();
-        assert!(matches!(err, StoreError::AssignmentAgentAlreadyExists));
+        pm2.is_default_conversation_agent = true;
+        store
+            .add_agent(pm2)
+            .await
+            .expect("store layer should not enforce role-flag uniqueness");
     }
 
     #[tokio::test]
@@ -7426,33 +7377,6 @@ mod tests {
 
         let fetched = store.get_agent("pm2").await.unwrap();
         assert!(fetched.is_assignment_agent);
-    }
-
-    #[tokio::test]
-    async fn default_conversation_agent_uniqueness_on_add() {
-        let store = MemoryStore::new();
-        let mut chat = sample_agent("chat");
-        chat.is_default_conversation_agent = true;
-        store.add_agent(chat).await.unwrap();
-
-        let mut chat2 = sample_agent("chat2");
-        chat2.is_default_conversation_agent = true;
-        let err = store.add_agent(chat2).await.unwrap_err();
-        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
-    }
-
-    #[tokio::test]
-    async fn default_conversation_agent_uniqueness_on_update() {
-        let store = MemoryStore::new();
-        let mut chat = sample_agent("chat");
-        chat.is_default_conversation_agent = true;
-        store.add_agent(chat).await.unwrap();
-        store.add_agent(sample_agent("swe")).await.unwrap();
-
-        let mut swe_updated = sample_agent("swe");
-        swe_updated.is_default_conversation_agent = true;
-        let err = store.update_agent(swe_updated).await.unwrap_err();
-        assert!(matches!(err, StoreError::ConversationAgentAlreadyExists));
     }
 
     #[tokio::test]

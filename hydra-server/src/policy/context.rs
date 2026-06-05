@@ -17,6 +17,8 @@ pub enum Operation {
     CreateDocument,
     UpdateDocument,
     DeleteDocument,
+    CreateAgent,
+    UpdateAgent,
 }
 
 /// The payload describing the proposed change for restriction evaluation.
@@ -46,6 +48,12 @@ pub enum OperationPayload {
         document_id: Option<hydra_common::DocumentId>,
         new: crate::domain::documents::Document,
         old: Option<crate::domain::documents::Document>,
+    },
+    /// An agent is being created or updated.
+    Agent {
+        name: Option<String>,
+        new: crate::domain::agents::Agent,
+        old: Option<crate::domain::agents::Agent>,
     },
 }
 

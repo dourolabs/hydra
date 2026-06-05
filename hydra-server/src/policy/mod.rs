@@ -380,6 +380,50 @@ impl PolicyEngine {
         self.check_restrictions(&ctx).await
     }
 
+    /// Check restrictions for creating an agent.
+    pub async fn check_create_agent(
+        &self,
+        new: &crate::domain::agents::Agent,
+        store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Agent {
+            name: None,
+            new: new.clone(),
+            old: None,
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::CreateAgent,
+            payload: &payload,
+            store,
+            actor,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
+    /// Check restrictions for updating an agent.
+    pub async fn check_update_agent(
+        &self,
+        name: &str,
+        new: &crate::domain::agents::Agent,
+        old: Option<&crate::domain::agents::Agent>,
+        store: &dyn crate::store::ReadOnlyStore,
+        actor: &crate::domain::actors::ActorRef,
+    ) -> Result<(), PolicyViolation> {
+        let payload = context::OperationPayload::Agent {
+            name: Some(name.to_string()),
+            new: new.clone(),
+            old: old.cloned(),
+        };
+        let ctx = RestrictionContext {
+            operation: context::Operation::UpdateAgent,
+            payload: &payload,
+            store,
+            actor,
+        };
+        self.check_restrictions(&ctx).await
+    }
+
     /// Check restrictions for updating a job/task status.
     pub async fn check_update_job(
         &self,

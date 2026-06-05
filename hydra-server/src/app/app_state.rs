@@ -51,6 +51,7 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
                 PolicyEntry::Name("require_creator".to_string()),
                 PolicyEntry::Name("merge_authorization".to_string()),
+                PolicyEntry::Name("agent_role_uniqueness".to_string()),
             ],
             automations: vec![
                 PolicyEntry::Name("cascade_issue_status".to_string()),

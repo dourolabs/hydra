@@ -5022,32 +5022,7 @@ impl Store for PostgresStoreV2 {
                 return Err(StoreError::AgentAlreadyExists(agent.name));
             }
             Some(true) => {
-                // Soft-deleted agent exists — validate uniqueness, then reactivate.
-                if agent.is_assignment_agent {
-                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_assignment_agent = true AND NOT deleted)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_assignment {
-                        return Err(StoreError::AssignmentAgentAlreadyExists);
-                    }
-                }
-                if agent.is_default_conversation_agent {
-                    let has_default = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_default_conversation_agent = true AND NOT deleted)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_default {
-                        return Err(StoreError::ConversationAgentAlreadyExists);
-                    }
-                }
-
+                // Soft-deleted agent exists — reactivate.
                 let now = Utc::now();
                 let secrets_json = serde_json::to_value(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
@@ -5077,32 +5052,7 @@ impl Store for PostgresStoreV2 {
                 Ok(())
             }
             None => {
-                // No existing row — validate uniqueness, then insert.
-                if agent.is_assignment_agent {
-                    let has_assignment = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_assignment_agent = true AND NOT deleted)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_assignment {
-                        return Err(StoreError::AssignmentAgentAlreadyExists);
-                    }
-                }
-                if agent.is_default_conversation_agent {
-                    let has_default = sqlx::query_scalar::<_, bool>(&format!(
-                        "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                         WHERE is_default_conversation_agent = true AND NOT deleted)"
-                    ))
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx_error)?;
-                    if has_default {
-                        return Err(StoreError::ConversationAgentAlreadyExists);
-                    }
-                }
-
+                // No existing row — insert.
                 let secrets_json = serde_json::to_value(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
@@ -5136,35 +5086,6 @@ impl Store for PostgresStoreV2 {
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
         // Check it exists (and is not deleted).
         let _ = self.get_agent(&agent.name).await?;
-
-        // Validate assignment agent uniqueness (exclude self).
-        if agent.is_assignment_agent {
-            let conflict = sqlx::query_scalar::<_, bool>(&format!(
-                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                 WHERE is_assignment_agent = true AND NOT deleted AND name != $1)"
-            ))
-            .bind(&agent.name)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-            if conflict {
-                return Err(StoreError::AssignmentAgentAlreadyExists);
-            }
-        }
-        // Validate default-conversation-agent uniqueness (exclude self).
-        if agent.is_default_conversation_agent {
-            let conflict = sqlx::query_scalar::<_, bool>(&format!(
-                "SELECT EXISTS(SELECT 1 FROM {TABLE_AGENTS} \
-                 WHERE is_default_conversation_agent = true AND NOT deleted AND name != $1)"
-            ))
-            .bind(&agent.name)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-            if conflict {
-                return Err(StoreError::ConversationAgentAlreadyExists);
-            }
-        }
 
         let secrets_json = serde_json::to_value(&agent.secrets)
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
@@ -7548,12 +7469,16 @@ mod tests {
         );
     }
 
+    // Role-flag uniqueness (`is_assignment_agent`,
+    // `is_default_conversation_agent`) is workflow state and is enforced by
+    // the `agent_role_uniqueness` `Restriction` in `AppState`, not at the
+    // store layer. This test exists to keep that boundary explicit: a direct
+    // store insert of a second role-flagged agent must succeed.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn agent_assignment_uniqueness_v2(pool: PgStorePool) {
+    async fn store_does_not_enforce_role_uniqueness_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
 
-        // Add agent A with is_assignment_agent = true
         let agent_a = Agent::new(
             "agent-a".to_string(),
             "/agents/a/prompt.md".to_string(),
@@ -7561,12 +7486,11 @@ mod tests {
             3,
             5,
             true,
-            false,
+            true,
             Vec::new(),
         );
         store.add_agent(agent_a).await.unwrap();
 
-        // Add agent B with is_assignment_agent = true — should fail
         let agent_b = Agent::new(
             "agent-b".to_string(),
             "/agents/b/prompt.md".to_string(),
@@ -7574,154 +7498,13 @@ mod tests {
             3,
             5,
             true,
-            false,
-            Vec::new(),
-        );
-        let add_result = store.add_agent(agent_b).await;
-        assert!(
-            matches!(add_result, Err(StoreError::AssignmentAgentAlreadyExists)),
-            "expected AssignmentAgentAlreadyExists, got: {add_result:?}"
-        );
-
-        // Add agent B with is_assignment_agent = false — should succeed
-        let agent_b_no_assign = Agent::new(
-            "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            false,
-            false,
-            Vec::new(),
-        );
-        store.add_agent(agent_b_no_assign).await.unwrap();
-
-        // Update agent B to set is_assignment_agent = true — should fail
-        let agent_b_assign = Agent::new(
-            "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            true,
-            false,
-            Vec::new(),
-        );
-        let update_result = store.update_agent(agent_b_assign).await;
-        assert!(
-            matches!(update_result, Err(StoreError::AssignmentAgentAlreadyExists)),
-            "expected AssignmentAgentAlreadyExists, got: {update_result:?}"
-        );
-
-        // Delete agent A, then add agent C with is_assignment_agent = true — should succeed
-        store.delete_agent("agent-a").await.unwrap();
-        let agent_c = Agent::new(
-            "agent-c".to_string(),
-            "/agents/c/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            true,
-            false,
-            Vec::new(),
-        );
-        store.add_agent(agent_c).await.unwrap();
-    }
-
-    #[sqlx::test(migrations = "./migrations")]
-    #[ignore]
-    async fn agent_default_conversation_uniqueness_v2(pool: PgStorePool) {
-        let store = PostgresStoreV2::new(pool);
-
-        // Add agent A with is_default_conversation_agent = true
-        let agent_a = Agent::new(
-            "agent-a".to_string(),
-            "/agents/a/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            false,
             true,
             Vec::new(),
         );
-        store.add_agent(agent_a).await.unwrap();
-
-        // Add agent B with is_default_conversation_agent = true — should fail
-        let agent_b = Agent::new(
-            "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            false,
-            true,
-            Vec::new(),
-        );
-        let add_result = store.add_agent(agent_b).await;
-        assert!(
-            matches!(add_result, Err(StoreError::ConversationAgentAlreadyExists)),
-            "expected ConversationAgentAlreadyExists, got: {add_result:?}"
-        );
-
-        // Add agent B with is_default_conversation_agent = false — should succeed
-        let agent_b_no_default = Agent::new(
-            "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            false,
-            false,
-            Vec::new(),
-        );
-        store.add_agent(agent_b_no_default).await.unwrap();
-
-        // Update agent B to set is_default_conversation_agent = true — should fail
-        let agent_b_default = Agent::new(
-            "agent-b".to_string(),
-            "/agents/b/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            false,
-            true,
-            Vec::new(),
-        );
-        let update_result = store.update_agent(agent_b_default).await;
-        assert!(
-            matches!(
-                update_result,
-                Err(StoreError::ConversationAgentAlreadyExists)
-            ),
-            "expected ConversationAgentAlreadyExists, got: {update_result:?}"
-        );
-
-        // Updating agent A in place (still default) — should succeed.
-        let agent_a_self_update = Agent::new(
-            "agent-a".to_string(),
-            "/agents/a/prompt.md".to_string(),
-            None,
-            10,
-            5,
-            false,
-            true,
-            Vec::new(),
-        );
-        store.update_agent(agent_a_self_update).await.unwrap();
-
-        // Delete agent A, then add agent C with is_default_conversation_agent = true — should succeed
-        store.delete_agent("agent-a").await.unwrap();
-        let agent_c = Agent::new(
-            "agent-c".to_string(),
-            "/agents/c/prompt.md".to_string(),
-            None,
-            3,
-            5,
-            false,
-            true,
-            Vec::new(),
-        );
-        store.add_agent(agent_c).await.unwrap();
+        store
+            .add_agent(agent_b)
+            .await
+            .expect("store layer should not enforce role-flag uniqueness");
     }
 
     #[sqlx::test(migrations = "./migrations")]
