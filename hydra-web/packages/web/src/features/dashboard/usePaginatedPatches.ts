@@ -56,6 +56,7 @@ export function usePatchCount(filters: PatchFilters, enabled = true) {
       const resp = await apiClient.listPatches(query);
       return Number(resp.total_count ?? 0);
     },
+    placeholderData: keepPreviousData,
     enabled,
   });
 }

@@ -125,10 +125,18 @@ vi.mock("../../features/sessions/sessionFilters", () => ({
 
 // Relation resolver issues `/v1/relations` via useQueries — stub to no-op
 // (no relatedPatch active) so the page exercises the inline mappings.
+// The `relationsState` object lets the relation-aware tests below flip the
+// resolver into a loading state to verify the "previous render persists"
+// behaviour.
+const relationsState: {
+  patchIssueIds: string[] | null;
+  isLoading: boolean;
+} = { patchIssueIds: null, isLoading: false };
+
 vi.mock("../../features/sessions/useRelationFilteredSessionIds", () => ({
   useRelationFilteredSessionIds: () => ({
-    patchIssueIds: null,
-    isLoading: false,
+    patchIssueIds: relationsState.patchIssueIds,
+    isLoading: relationsState.isLoading,
   }),
   SESSION_RELATION_FILTER_IDS: ["relatedPatch"],
 }));
@@ -218,6 +226,8 @@ function reset() {
   usePaginatedSessionsMock.mockReset();
   useSessionCountMock.mockReset();
   mockUser = { actor: { type: "user", username: "alice" } };
+  relationsState.patchIssueIds = null;
+  relationsState.isLoading = false;
 }
 
 describe("SessionsListPage", () => {
@@ -402,5 +412,39 @@ describe("SessionsListPage filter wiring", () => {
     render(<SessionsListPage />);
     const firstArg = usePaginatedSessionsMock.mock.calls[0]?.[0];
     expect(firstArg).toMatchObject({ q: "deploy", creator: "alice" });
+  });
+});
+
+describe("SessionsListPage relation-resolution loading persistence", () => {
+  // PR-2: When the relation resolver re-runs (user changed a relation chip
+  // value), the page must keep rendering the previously-loaded rows from
+  // the list query — driven by `placeholderData: keepPreviousData` on
+  // `usePaginatedSessions` / `useSessionCount` — instead of flashing the
+  // skeleton or zero-state. The fix drops `|| relationsLoading` from the
+  // `isLoading` prop forwarded to <SessionsView>.
+
+  beforeEach(() => {
+    reset();
+    useBreadcrumbsMock.mockReset();
+    cleanup();
+  });
+
+  it("keeps prior rows visible while relations are resolving", () => {
+    searchParamsString = "relatedPatch=p-a";
+    setSessions([
+      rec("t-prev-1", "running", "i-prev-1", "first prior task"),
+      rec("t-prev-2", "complete", "i-prev-2", "second prior task"),
+    ]);
+    relationsState.patchIssueIds = ["i-prev-1", "i-prev-2"];
+    relationsState.isLoading = true;
+
+    render(<SessionsListPage />);
+
+    // No loading / empty state — previous render persists.
+    expect(screen.queryByText(/loading sessions/i)).toBeNull();
+    expect(screen.queryByText(/no sessions match the current filters/i)).toBeNull();
+    // Both prior rows still rendered.
+    expect(screen.getByTestId("sessions-list-row-t-prev-1")).toBeDefined();
+    expect(screen.getByTestId("sessions-list-row-t-prev-2")).toBeDefined();
   });
 });

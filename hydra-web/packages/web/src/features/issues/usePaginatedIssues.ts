@@ -222,6 +222,7 @@ export function useIssueCount(filters: IssueFilters, enabled = true) {
       const resp = await apiClient.listIssues(query);
       return Number(resp.total_count ?? 0);
     },
+    placeholderData: keepPreviousData,
     enabled,
   });
 }
