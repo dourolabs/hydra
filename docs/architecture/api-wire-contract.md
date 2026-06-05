@@ -32,7 +32,7 @@ pub struct UpsertIssueRequest {
 }
 ```
 
-Allowed: new fields (use `Option<T>` or `#[serde(default)]`), new enum variants on `#[non_exhaustive]` enums, new request/response types. Not allowed: renames, removals, type changes, tightening required fields, changing wire tag literals (the `kebab-case` discriminator strings on `IssueStatus` and friends are part of the contract).
+Allowed: new fields (use `Option<T>` or `#[serde(default)]`), new enum variants on `#[non_exhaustive]` enums, new request/response types. Not allowed: renames, removals, type changes, tightening required fields, changing wire tag literals (the `kebab-case` discriminator strings on `IssueStatus` and friends are part of the contract). (See also [`docs/rust/idioms.md`](../rust/idioms.md) — the `Option<T>` sentinel rule explicitly excludes existing wire types for this reason.)
 
 ## When you change an API type, do all of this
 
