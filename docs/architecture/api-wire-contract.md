@@ -48,13 +48,67 @@ Allowed: new fields (use `Option<T>` or `#[serde(default)]`), new enum variants 
 
 4. Verify the frontend still compiles: `cd hydra-web && pnpm typecheck`.
 5. Add a wire-format shape test in `hydra-common` if the change introduces a new tag or representation — the JSON literals are *our* contract, not serde's.
+6. If the enum is a tagged union with payload-carrying variants, pair `#[non_exhaustive]` with the `<EnumName>Helper` + custom `Deserialize` pattern (see [`#[non_exhaustive]` on tagged-union enums](#non_exhaustive-on-tagged-union-enums) below). `#[serde(other)]` alone can't carry an `Unknown` fallback through an externally-tagged shape, and a payload-bearing variant can't be the catch-all.
 
 ## Conventions worth knowing
 
-- Wire enums use `#[serde(rename_all = "kebab-case")]`. The string `"in-progress"` is part of the API; don't change the casing.
-- `#[non_exhaustive]` on a wire enum with a `Unknown` `#[serde(other)]` variant lets older clients accept new variants gracefully. Add new variants this way too.
+- **New** wire enums should use `#[serde(rename_all = "kebab-case")]` (e.g. `IssueStatus` with `"in-progress"`). **Existing** wire formats are grandfathered — never change a live wire tag literal, since that breaks every existing client. Many older multi-word enums ship with `snake_case` for that reason (e.g. `task_status::Status`, `SessionMode`, `SessionEvent`, `MountItem`, `Bundle`, `relay::*`, `merge_check::*`); leave their casing alone.
+- `#[non_exhaustive]` on a wire enum with a `Unknown` `#[serde(other)]` variant lets older clients accept new variants gracefully — add new variants this way for *unit-variant* enums (`IssueStatus`, `Status`, `PatchKind`). Tagged unions whose variants carry payload need a slightly different shape; see [the dedicated section](#non_exhaustive-on-tagged-union-enums) below.
 - All IDs use the `HydraId`-backed newtypes (`IssueId`, `SessionId`, …). Routes accept and emit those types; the store generates them — see [`domain-store-routes.md`](./domain-store-routes.md).
 - Query-param structs implement `Serialize`/`Deserialize` and rely on `serde_urlencoded`; helper functions for principal-path encoding (e.g. on `SearchIssuesQuery`) keep query strings stable across URL escaping. Don't bypass them.
+
+## `#[non_exhaustive]` on tagged-union enums
+
+`#[serde(other)]` requires the catch-all variant to be a unit variant, and the enum to be internally tagged (`#[serde(tag = "…")]`). For *externally*-tagged enums and for any enum where the forward-compat story has to tolerate richer payload changes (renamed/removed fields on known variants, etc.), `#[serde(other)]` alone isn't enough — you also need a private `<EnumName>Helper` plus a hand-written `Deserialize` that converts a parse failure into the `Unknown` variant.
+
+Canonical examples live in [`hydra-common/src/api/v1/sessions.rs`](../../hydra-common/src/api/v1/sessions.rs): see `Bundle` / `BundleHelper` (~lines 327–368) and `MountItem` / `MountItemHelper` (~lines 480–579). Sketch:
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Bundle {
+    None,
+    GitRepository { url: String, rev: String },
+    #[serde(other)]
+    Unknown,
+}
+
+// Private helper mirrors the public shape but without `Unknown`. Lives in
+// the same module; never re-exported.
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum BundleHelper {
+    None,
+    GitRepository { url: String, rev: String },
+}
+
+impl<'de> Deserialize<'de> for Bundle {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        match serde_json::from_value::<BundleHelper>(v) {
+            Ok(BundleHelper::None) => Ok(Bundle::None),
+            Ok(BundleHelper::GitRepository { url, rev }) => Ok(Bundle::GitRepository { url, rev }),
+            Err(_) => Ok(Bundle::Unknown),
+        }
+    }
+}
+```
+
+For flat internally-tagged enums whose only forward-compat concern is unknown *tags* (not unknown fields), the simpler `#[serde(other)] Unknown` shape is enough — `SessionEvent::Unknown` at `hydra-common/src/api/v1/sessions.rs:996-997` is the model.
+
+## Safety-critical wire enums (rejection-on-unknown)
+
+A small set of wire types are *policy boundaries*: their variants correspond to decisions about who is allowed to do what. For those, forward-compat tolerance is a footgun — silently mapping an unrecognized tag to `Unknown` could mask a policy bug or let a server send a value the client should have rejected outright. These enums get `#[non_exhaustive]` (so the Rust side stays additive) but explicitly do **not** get `#[serde(other)] Unknown`: deserialization of an unknown tag must fail.
+
+The canonical example is [`merge_check::*`](../../hydra-common/src/api/v1/merge_check.rs) — every wire enum in that module is `#[non_exhaustive]` without an `Unknown` variant, and every one of them has a `unknown_*_is_rejected` test asserting the wire-side rejection (`unknown_code_is_rejected`, `unknown_blocked_at_layer_is_rejected`, `unknown_reason_kind_is_rejected`, etc.).
+
+If you add a new safety-critical wire enum, follow that pattern:
+
+1. Apply `#[non_exhaustive]` (Rust-side additive forward compat).
+2. Do **not** add `#[serde(other)] Unknown`.
+3. Add an inline `// safety-critical: rejection-on-unknown` comment so the next reader understands the missing `Unknown` is intentional, not an oversight.
+4. Add a `unknown_<thing>_is_rejected` test that asserts `serde_json::from_str::<YourEnum>("\"made-up-tag\"")` returns `Err`.
 
 ## CI guard
 
