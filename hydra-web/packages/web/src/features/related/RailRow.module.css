@@ -77,6 +77,16 @@
   font-size: var(--t-xxs);
   color: var(--fg-2);
   white-space: nowrap;
+  /* Long monospace meta strings (notably document paths in DocumentRailRow)
+   * would otherwise push the .meta line — and the row — wider than the rail
+   * column at narrow viewports, surfacing a horizontal scrollbar on the page.
+   * min-width:0 lets the flex item shrink below its nowrap intrinsic width,
+   * and max-width:100% caps it at the .meta container so the ellipsis kicks
+   * in instead of overflowing. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .metaApproved {
