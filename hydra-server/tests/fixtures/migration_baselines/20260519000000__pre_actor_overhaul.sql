@@ -55,18 +55,18 @@ VALUES
     ('s-headless01', 1, 'do a thing',
      '{"type":"none"}'::jsonb,
      false, NULL, NULL, '2026-05-10T10:00:00Z'),
-    ('s-interact01', 1, 'chat',
+    ('s-interbase', 1, 'chat',
      '{"type":"git_repository","remote_url":"https://example.invalid/repo.git"}'::jsonb,
-     true,  'c-conv00001', NULL, '2026-05-10T11:00:00Z'),
-    ('s-interact02', 1, 'chat continued',
+     true,  'c-convbase', NULL, '2026-05-10T11:00:00Z'),
+    ('s-interresume', 1, 'chat continued',
      '{"type":"git_repository","remote_url":"https://example.invalid/repo.git"}'::jsonb,
-     true,  'c-conv00001', 1,    '2026-05-10T12:00:00Z');
+     true,  'c-convbase', 1,    '2026-05-10T12:00:00Z');
 
 --------------------------------------------------------------------------------
 -- conversations_v2 — the parent conversation for the tasks/events above
 --------------------------------------------------------------------------------
 INSERT INTO metis.conversations_v2 (id, version_number, creator)
-VALUES ('c-conv00001', 1, 'jayantk');
+VALUES ('c-convbase', 1, 'jayantk');
 
 --------------------------------------------------------------------------------
 -- conversation_events_v2 — populated event rows whose `event_data` matches the
@@ -74,16 +74,16 @@ VALUES ('c-conv00001', 1, 'jayantk');
 -- (hooked in `run_external_migrations`) copies these into `session_events_v2`
 -- verbatim, and `Store::get_session_events` then deserializes them back into
 -- typed `SessionEvent` variants for the §3.3 smoke. Explicit `created_at`
--- timestamps anchor the rows inside s-interact01's window ([11:00, 12:00) at
+-- timestamps anchor the rows inside s-interbase's window ([11:00, 12:00) at
 -- the baseline tasks_v2 creation_time values above) so the partitioning is
 -- deterministic across hosts.
 --------------------------------------------------------------------------------
 INSERT INTO metis.conversation_events_v2 (conversation_id, version_number, event_type, event_data, created_at)
 VALUES
-    ('c-conv00001', 1, 'user_message',
+    ('c-convbase', 1, 'user_message',
      '{"type":"user_message","content":"hello","timestamp":"2026-05-10T11:15:00Z"}'::jsonb,
      '2026-05-10T11:15:00Z'),
-    ('c-conv00001', 2, 'assistant_message',
+    ('c-convbase', 2, 'assistant_message',
      '{"type":"assistant_message","content":"hi","timestamp":"2026-05-10T11:30:00Z"}'::jsonb,
      '2026-05-10T11:30:00Z');
 
