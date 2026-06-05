@@ -31,6 +31,8 @@ blocks before adding new code under `ee/`.
 
 ## Topics
 
+- [../testing.md](../testing.md) — cross-cutting testing rules: TDD is
+  required, and never widen exports for tests.
 - [style.md](style.md) — naming, `HydraId`, libgit2, `///` docs, and where env
   vars are read.
 - [idioms.md](idioms.md) — store-owned IDs, mandatory fields over `Option`,

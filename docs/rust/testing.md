@@ -1,5 +1,8 @@
 # Testing
 
+Cross-cutting testing rules (TDD-first, never widen exports for tests) live
+in [../testing.md](../testing.md) and apply here as well.
+
 ## The pre-PR gate
 
 All three must pass before opening a PR:

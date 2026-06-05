@@ -14,6 +14,7 @@ packages/web   →  @hydra/web   the SPA itself
 
 ## Docs
 
+- [../testing.md](../testing.md) — cross-cutting testing rules: TDD is required, and never widen exports for tests.
 - [packages.md](./packages.md) — workspace layout, `HydraApiClient` as the single API entry point, `utils/` and `@hydra/ui` checklists before adding new code.
 - [style.md](./style.md) — CSS Modules only, dark terminal theme tokens, and the HMR rule against co-exporting hooks and components.
 - [react-query-and-sse.md](./react-query-and-sse.md) — React Query v5 query-key conventions and how `useSSE()` keeps the cache live without polling.
