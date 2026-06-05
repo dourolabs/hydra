@@ -31,6 +31,13 @@ fn find_issue(id: String) -> Option<Issue> { ... }
 fn find_issue(id: &IssueId) -> Option<Issue> { ... }
 ```
 
+The same rule applies to any non-`HydraId` typed newtype that exists for an
+identifier — e.g. `RepoName`, `Username`, `ActorId`, `StatusKey`, `LabelName`.
+Function signatures should take the typed form (`&RepoName`, `&Username`, …)
+rather than raw `&str`. Parse at the boundary (DB rows, CLI input, JSON
+deserialization) and thread typed refs internally. See [[p-efmgbyhp]] for the
+canonical "parse at the DB-row boundary" example.
+
 ## Git operations: libgit2, not the shell
 
 CLI git operations go through the `git2` crate; do not shell out to the `git`
@@ -86,6 +93,14 @@ pub fn get_issue(id: &IssueId) -> Option<Issue> { ... }
 /// rows should use `get_issue_including_deleted`.
 pub fn get_issue(id: &IssueId) -> Option<Issue> { ... }
 ```
+
+This rule applies self-consistently to rustdoc `# Arguments` and `# Returns`
+stanzas: avoid stanzas that restate parameter or return types, because the
+well-named identifiers and signature already convey them. Only include such a
+stanza when there is non-obvious context — unit conventions, invariants,
+side effects. See [[p-ljunbvev]] (16+/107− diff on
+`hydra-server/src/store/mod.rs`) for evidence of the prevalent restate
+pattern this rule is meant to prevent.
 
 ## Comments are self-contained
 
