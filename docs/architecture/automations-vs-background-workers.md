@@ -22,9 +22,45 @@ Wiring a new one takes three steps; skipping any of them leaves it silently iner
 2. Register a factory under that name in [`build_default_registry`](../../hydra-server/src/policy/registry.rs).
 3. Add the name to [`default_policy_config`](../../hydra-server/src/app/app_state.rs) or to the operator's `policies.automations` config. Registration alone does **not** activate; activation comes from the `PolicyList`.
 
-To avoid infinite loops, automations should skip events triggered by themselves — check `ctx.actor()` for an `ActorRef::Automation` with the matching `automation_name`.
-
 Current defaults: `cascade_issue_status`, `kill_tasks_on_issue_failure`, `github_pr_sync`, `link_artifacts_to_issue`, `link_conversation_to_artifacts`, `spawn_sessions`, `spawn_conversation_sessions`, `start_created_sessions`.
+
+### Self-event filter (avoiding infinite loops)
+
+If your automation subscribes to and also emits events of the **same class**, it must filter self-triggered events to avoid feedback loops. The canonical check is:
+
+```rust
+if let ActorRef::Automation { automation_name, .. } = ctx.actor() {
+    if automation_name == AUTOMATION_NAME {
+        return Ok(());
+    }
+}
+```
+
+If your automation does **not** emit any event of the subscribed class, the self-filter rule does not apply. You may then choose either policy on automation-actor events — early-return (as in [`link_artifacts_to_issue`](../../hydra-server/src/policy/automations/link_artifacts_to_issue.rs)) or intentional unwrap via `on_behalf_of()` (as in [`link_conversation_to_artifacts`](../../hydra-server/src/policy/automations/link_conversation_to_artifacts.rs)) — both are correct.
+
+#### When the actor-name filter is dead code (delegated-actor automations)
+
+The actor-name check only fires when the downstream mutation is itself stamped with `ActorRef::Automation`. If your automation routes side effects through a different actor — e.g. dispatching to a system worker — the canonical block would never match and adding it would be dead code.
+
+[`start_created_sessions`](../../hydra-server/src/policy/automations/start_created_sessions.rs) is the live example: it subscribes to `SessionCreated`/`SessionUpdated` and ultimately emits another `SessionUpdated`, but it does so through `ActorRef::System { worker_name: WORKER_NAME_SESSION_LIFECYCLE, .. }`, not `ActorRef::Automation`. Its self-loop defense is a **structural transition-guard**: it only fires when the new status is `Created` *and* the previous status was not, so the downstream `Created → Pending` transition cannot re-trigger it.
+
+A structural transition-guard is an acceptable alternative to the actor-name check when the canonical mechanism would be inert. Document the guard near the top of `execute`, as `start_created_sessions` does.
+
+### Default automations: subscribe / emit / self-filter strategy
+
+Use this table to decide whether the self-filter rule applies before reading an automation's body.
+
+| Automation | Subscribes to | Emits same class? | Self-filter strategy |
+|---|---|---|---|
+| `cascade_issue_status` | `IssueUpdated` | Yes (via `upsert_issue`) | Canonical actor-name check |
+| `kill_tasks_on_issue_failure` | `IssueUpdated` | No (kills sessions → `SessionUpdated`) | N/A |
+| `link_artifacts_to_issue` | `Patch*` / `Document*` | No (only adds relationships) | N/A — early-returns on automation-actor events |
+| `link_conversation_to_artifacts` | `Issue*` / `Patch*` / `Document*` | No (only adds relationships) | N/A — intentionally unwraps via `on_behalf_of()` |
+| `spawn_sessions` | `Issue*` / `Session*` | Yes | Canonical actor-name check |
+| `spawn_conversation_sessions` | `Conversation*` / `Session*` | Yes | Canonical actor-name check |
+| `start_created_sessions` | `SessionCreated` / `SessionUpdated` | Yes (via system actor) | Structural transition-guard (see above) |
+
+`github_pr_sync` is also a default automation; its impl lives under [`policy/integrations/`](../../hydra-server/src/policy/integrations/github_pr_sync.rs). It subscribes to `PatchCreated`/`PatchUpdated` and pushes state to GitHub rather than emitting hydra events, so the self-filter rule does not apply.
 
 ## Background workers
 
