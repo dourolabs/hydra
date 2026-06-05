@@ -269,6 +269,11 @@ impl PolicyEngine {
         self.automations.len()
     }
 
+    /// Returns the names of all registered automations, in registration order.
+    pub fn automation_names(&self) -> Vec<&str> {
+        self.automations.iter().map(|a| a.name()).collect()
+    }
+
     // ----- Shortcut methods for each mutation type -----
 
     /// Check restrictions for creating an issue.

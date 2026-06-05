@@ -1,6 +1,6 @@
 use crate::{
     domain::actors::ActorRef,
-    domain::issues::{Issue, IssueDependencyType, IssueStatus},
+    domain::issues::{Issue, IssueDependencyType},
     store::{ReadOnlyStore, Status, StoreError},
 };
 use chrono::Utc;
@@ -106,6 +106,12 @@ pub enum SubmitFormActionError {
     ValidationFailed {
         field_errors: HashMap<String, String>,
     },
+    #[error(
+        "form action's `set_feedback_from = {field_key}` references a field \
+         not present in the submitted response; the action should list it \
+         under `requires:`"
+    )]
+    SetFeedbackFromMissingField { field_key: String },
     #[error("issue store operation failed")]
     Store {
         #[source]
@@ -448,10 +454,87 @@ impl AppState {
         Ok(())
     }
 
+    /// Unified readiness rule:
+    ///
+    /// ```text
+    /// ready ⇔
+    ///     !resolve_status(issue).unblocks_parents
+    ///   ∧ every blocked_on dep    has resolve_status(dep).unblocks_dependents = true
+    ///   ∧ every direct child      has resolve_status(child).unblocks_parents  = true
+    /// ```
+    ///
+    /// Status resolution failures (unknown project, malformed key) are
+    /// treated as "not ready" and logged — upstream validation should have
+    /// prevented these, so the warn flags a real misconfiguration rather
+    /// than a routine signal.
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.as_ref();
-        let mut visited = HashSet::new();
-        issue_ready(store, issue_id, &mut visited).await
+        let issue = store.get_issue(issue_id, false).await?.item;
+
+        let resolved = match self.resolve_status(&issue).await {
+            Ok(def) => def,
+            Err(err) => {
+                tracing::warn!(
+                    issue_id = %issue_id,
+                    status = %issue.status,
+                    error = %err,
+                    "is_issue_ready: failed to resolve status; treating as not ready"
+                );
+                return Ok(false);
+            }
+        };
+        // TODO: drop this clause once agents can be configured per-status —
+        // then the way you opt a status out of dispatch is to leave its
+        // agent slot empty, not to ask readiness whether the parent has
+        // already unblocked.
+        if resolved.unblocks_parents {
+            return Ok(false);
+        }
+
+        for dependency in &issue.dependencies {
+            if dependency.dependency_type != IssueDependencyType::BlockedOn {
+                continue;
+            }
+            let blocker = store.get_issue(&dependency.issue_id, false).await?.item;
+            let blocker_resolved = match self.resolve_status(&blocker).await {
+                Ok(def) => def,
+                Err(err) => {
+                    tracing::warn!(
+                        issue_id = %issue_id,
+                        blocker_id = %dependency.issue_id,
+                        blocker_status = %blocker.status,
+                        error = %err,
+                        "is_issue_ready: failed to resolve blocker status; treating as not ready"
+                    );
+                    return Ok(false);
+                }
+            };
+            if !blocker_resolved.unblocks_dependents {
+                return Ok(false);
+            }
+        }
+
+        for child_id in store.get_issue_children(issue_id).await? {
+            let child = store.get_issue(&child_id, false).await?.item;
+            let child_resolved = match self.resolve_status(&child).await {
+                Ok(def) => def,
+                Err(err) => {
+                    tracing::warn!(
+                        issue_id = %issue_id,
+                        child_id = %child_id,
+                        child_status = %child.status,
+                        error = %err,
+                        "is_issue_ready: failed to resolve child status; treating as not ready"
+                    );
+                    return Ok(false);
+                }
+            };
+            if !child_resolved.unblocks_parents {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 
     pub async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
@@ -588,8 +671,23 @@ impl AppState {
         issue.form_response = Some(form_response.clone());
 
         match effect {
-            Effect::UpdateIssue { status } => {
-                issue.status = status.into();
+            Effect::UpdateIssue {
+                status,
+                set_feedback_from,
+            } => {
+                issue.status = status;
+                if let Some(field_key) = set_feedback_from {
+                    let coerced = match form_response.values.get(&field_key) {
+                        None | Some(Value::Null) => {
+                            return Err(SubmitFormActionError::SetFeedbackFromMissingField {
+                                field_key,
+                            });
+                        }
+                        Some(Value::String(s)) => s.clone(),
+                        Some(other) => other.to_string(),
+                    };
+                    issue.feedback = Some(coerced);
+                }
             }
             Effect::RecordOnly => {}
             _ => {}
@@ -632,15 +730,14 @@ impl AppState {
 
         let mut issue = versioned.item;
 
-        // 2. Set feedback
+        // Set feedback. Status side-effects intentionally absent: callers
+        // that want to re-route work issue an explicit status transition
+        // (typically through a form action), which gives the project's
+        // `on_enter` automation a chance to reassign and attach a form
+        // deterministically.
         issue.feedback = Some(feedback);
 
-        // 3. If status is terminal, transition to InProgress
-        if issue.status_as_legacy().is_some_and(|s| s.is_terminal()) {
-            issue.status = IssueStatus::InProgress.into();
-        }
-
-        // 4. Update the issue
+        // Update the issue
         let version = self
             .store
             .update_issue_with_actor(&issue_id, issue, actor)
@@ -687,105 +784,6 @@ impl AppState {
         info!(issue_id = %issue_id, "feedback submitted");
         Ok(version)
     }
-}
-
-fn issue_ready<'a>(
-    store: &'a dyn ReadOnlyStore,
-    issue_id: &'a IssueId,
-    visited: &'a mut HashSet<IssueId>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, StoreError>> + Send + 'a>> {
-    Box::pin(async move {
-        if !visited.insert(issue_id.clone()) {
-            // Cycle detected: treat as not ready to break the loop.
-            return Ok(false);
-        }
-
-        let issue = store.get_issue(issue_id, false).await?;
-        let issue = issue.item;
-
-        match issue.status_as_legacy() {
-            Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed) => Ok(false),
-            // Treat custom (non-default-project) statuses as Open for readiness purposes
-            // in PR 3. PR 4 will replace this with `resolve_status` flag reads.
-            Some(IssueStatus::Open) | None => {
-                for dependency in issue.dependencies.iter().filter(|dependency| {
-                    dependency.dependency_type == IssueDependencyType::BlockedOn
-                }) {
-                    let blocker = store.get_issue(&dependency.issue_id, false).await?;
-                    if blocker.item.status_as_legacy() != Some(IssueStatus::Closed) {
-                        return Ok(false);
-                    }
-                }
-
-                Ok(true)
-            }
-            Some(IssueStatus::InProgress) => {
-                // Parent is ready when no issue in its entire child subtree is ready.
-                // This enables re-planning: if all descendants are stuck, the parent can spawn.
-                // We must check the full subtree, not just direct children, because a
-                // non-ready child (InProgress) may still have ready descendants.
-                for child_id in store.get_issue_children(issue_id).await? {
-                    if subtree_has_ready_issue(store, &child_id, visited).await? {
-                        return Ok(false);
-                    }
-                }
-
-                Ok(true)
-            }
-        }
-    })
-}
-
-/// Returns true if any issue in the subtree rooted at `issue_id` is ready.
-///
-/// Unlike `issue_ready` (which answers "is this specific issue ready?"), this function
-/// answers "does any ready issue exist anywhere in this subtree?". It mirrors the
-/// status-based logic of `issue_ready` but recurses into children for InProgress nodes
-/// to find ready descendants at any depth.
-fn subtree_has_ready_issue<'a>(
-    store: &'a dyn ReadOnlyStore,
-    issue_id: &'a IssueId,
-    visited: &'a mut HashSet<IssueId>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, StoreError>> + Send + 'a>> {
-    Box::pin(async move {
-        if !visited.insert(issue_id.clone()) {
-            return Ok(false);
-        }
-
-        let issue = store.get_issue(issue_id, false).await?;
-        let issue = issue.item;
-
-        match issue.status_as_legacy() {
-            Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed) => Ok(false),
-            // Treat custom (non-default-project) statuses as Open for readiness purposes
-            // in PR 3. PR 4 will replace this with `resolve_status` flag reads.
-            Some(IssueStatus::Open) | None => {
-                // An Open issue is ready if all its blockers are closed.
-                for dependency in issue.dependencies.iter().filter(|dependency| {
-                    dependency.dependency_type == IssueDependencyType::BlockedOn
-                }) {
-                    let blocker = store.get_issue(&dependency.issue_id, false).await?;
-                    if blocker.item.status_as_legacy() != Some(IssueStatus::Closed) {
-                        return Ok(false);
-                    }
-                }
-                Ok(true)
-            }
-            Some(IssueStatus::InProgress) => {
-                // An InProgress node's subtree always contains at least one ready issue:
-                // either a ready descendant, or the InProgress node itself (which is ready
-                // when all descendants are stuck). We still recurse into children so the
-                // visited set is populated for cycle detection.
-                for child_id in store.get_issue_children(issue_id).await? {
-                    if subtree_has_ready_issue(store, &child_id, visited).await? {
-                        return Ok(true);
-                    }
-                }
-                // No child subtree has a ready issue, so this InProgress node itself is ready.
-                Ok(true)
-            }
-        }
-    })
 }
 
 static REGEX_CACHE: LazyLock<Mutex<HashMap<String, regex::Regex>>> =
@@ -1595,7 +1593,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_progress_parent_ready_when_child_failed_and_sibling_blocked() {
+    async fn in_progress_parent_not_ready_when_child_open_even_if_blocked() {
+        // Documented behavior shift #2 (subtree-deeply-stuck): under the
+        // unified rule, "every direct child has unblocks_parents = true"
+        // — a child being blocked-on-failed does NOT satisfy the parent
+        // gate, even though the child itself is not ready.
+        //
+        // The old "re-plan on stuck subtree" path is intentionally lost
+        // to keep one readiness rule for every status.
         let state = test_state();
 
         let store = state.store.as_ref();
@@ -1630,9 +1635,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Neither child is Ready: A is Failed (terminal), B is blocked on non-Closed A.
-        // Parent should be ready.
-        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -1755,11 +1758,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_progress_grandparent_not_ready_when_parent_ready_due_to_blocked_child() {
+    async fn neither_parent_nor_grandparent_ready_when_only_child_is_blocked_open() {
+        // Documented behavior shift #2 (subtree-deeply-stuck) at depth 3.
+        // Old behavior: parent was ready because no ready issue existed
+        // anywhere in its subtree. New behavior: parent NOT ready because
+        // the only direct child has `unblocks_parents = false`. Grandparent
+        // NOT ready by the same rule applied one level up.
         let state = test_state();
 
         let store = state.store.as_ref();
-        // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, blocked)
         let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
         let (grandparent_id, _) = store
             .add_issue_with_actor(grandparent, ActorRef::test())
@@ -1773,7 +1780,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Create a blocker issue that is still open (not closed)
         let blocker = issue_with_status("blocker", IssueStatus::Open, vec![]);
         let (blocker_id, _) = store
             .add_issue_with_actor(blocker, ActorRef::test())
@@ -1794,11 +1800,36 @@ mod tests {
             .await
             .unwrap();
 
-        // Child is NOT ready (blocked).
-        // Parent IS ready (no ready children).
-        // Grandparent is NOT ready (Parent is ready in its subtree).
-        assert!(state.is_issue_ready(&parent_id).await.unwrap());
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
         assert!(!state.is_issue_ready(&grandparent_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn open_issue_not_ready_when_child_non_terminal() {
+        // Documented behavior shift #1: an Open issue with non-terminal
+        // children is no longer Ready, even when its blockers are
+        // satisfied. Open issues with children are rare but the unified
+        // rule treats every direct child the same way regardless of the
+        // parent's own status.
+        let state = test_state();
+        let store = state.store.as_ref();
+
+        let parent = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let (parent_id, _) = store
+            .add_issue_with_actor(parent, ActorRef::test())
+            .await
+            .unwrap();
+
+        let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
+        store
+            .add_issue_with_actor(
+                issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&parent_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -1954,9 +1985,10 @@ mod tests {
 
         {
             let store = state.store.as_ref();
+            // A failed parent cascades children to `failed`.
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Dropped.as_status_key()
+                IssueStatus::Failed.as_status_key()
             );
         }
 

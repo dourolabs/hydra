@@ -4,64 +4,25 @@ use std::collections::HashSet;
 use crate::app::AppState;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
-use crate::domain::issues::IssueStatus;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::IssueId;
+use hydra_common::api::v1::projects::StatusKey;
 
 const AUTOMATION_NAME: &str = "cascade_issue_status";
 
-/// When an issue's status changes to a terminal/failure status, recursively
-/// drop all child issues.
+/// When an issue transitions into a status whose `cascades_to_children`
+/// flag is `true`, recursively transition every non-`unblocks_parents`
+/// descendant to the **same status key** the parent landed in (per child's
+/// own project resolution).
 ///
-/// Configurable via `trigger_statuses` param (defaults to Dropped, Failed).
-pub struct CascadeIssueStatusAutomation {
-    trigger_statuses: Vec<IssueStatus>,
-}
+/// The trigger is data-driven via `resolve_status(...).cascades_to_children`,
+/// not a hardcoded enum list.
+pub struct CascadeIssueStatusAutomation;
 
 impl CascadeIssueStatusAutomation {
-    pub fn new(params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
-        let trigger_statuses = if let Some(params) = params {
-            let mapping = params
-                .as_mapping()
-                .ok_or("cascade_issue_status params must be a mapping")?;
-            if let Some(statuses) = mapping.get("trigger_statuses") {
-                let arr = statuses
-                    .as_sequence()
-                    .ok_or("trigger_statuses must be a sequence")?;
-                let mut result = Vec::new();
-                for v in arr {
-                    let s = v
-                        .as_str()
-                        .ok_or("trigger_statuses entries must be strings")?;
-                    let status = parse_issue_status(s)?;
-                    result.push(status);
-                }
-                result
-            } else {
-                default_trigger_statuses()
-            }
-        } else {
-            default_trigger_statuses()
-        };
-        Ok(Self { trigger_statuses })
-    }
-}
-
-fn default_trigger_statuses() -> Vec<IssueStatus> {
-    vec![IssueStatus::Dropped, IssueStatus::Failed]
-}
-
-fn parse_issue_status(s: &str) -> Result<IssueStatus, String> {
-    match s.to_lowercase().as_str() {
-        "dropped" => Ok(IssueStatus::Dropped),
-        // Backward-compat: old "rejected" wire values deserialize to Dropped; remove once the 2026-05-08 migration has soaked.
-        "rejected" => Ok(IssueStatus::Dropped),
-        "failed" => Ok(IssueStatus::Failed),
-        "closed" => Ok(IssueStatus::Closed),
-        "open" => Ok(IssueStatus::Open),
-        "in-progress" | "in_progress" => Ok(IssueStatus::InProgress),
-        other => Err(format!("unknown issue status: '{other}'")),
+    pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
+        Ok(Self)
     }
 }
 
@@ -111,32 +72,38 @@ impl Automation for CascadeIssueStatusAutomation {
             "automation invoked",
         );
 
-        // Only trigger when the status changed to one of the trigger statuses
         if old.status == new.status {
             return Ok(());
         }
-        // PR 3: still match on the legacy enum via `status_as_legacy`.
-        // Custom statuses outside the default project are silently ignored
-        // until PR 4 swaps in `resolve_status().cascades_to_children`.
-        let Some(new_legacy) = new.status_as_legacy() else {
-            return Ok(());
+        let resolved = match ctx.app_state.resolve_status(new).await {
+            Ok(def) => def,
+            Err(err) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    issue_id = %issue_id,
+                    status = %new.status,
+                    error = %err,
+                    "cascade_issue_status: failed to resolve new status; skipping cascade"
+                );
+                return Ok(());
+            }
         };
-        if !self.trigger_statuses.contains(&new_legacy) {
+        if !resolved.cascades_to_children {
             return Ok(());
         }
 
-        let store = ctx.store;
+        let target_key = resolved.key.clone();
+
         let actor = ActorRef::Automation {
             automation_name: AUTOMATION_NAME.into(),
             triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 
-        // Drop all children recursively
-        drop_children_recursively(ctx.app_state, store, issue_id, actor).await?;
+        cascade_to_descendants(ctx.app_state, issue_id, &target_key, actor).await?;
 
         tracing::info!(
             issue_id = %issue_id,
-            new_status = ?new.status,
+            new_status = %new.status,
             "cascade_issue_status completed"
         );
 
@@ -164,13 +131,16 @@ async fn upsert_issue(
     Ok(())
 }
 
-/// Recursively drop all child issues of the given issue via BFS.
-async fn drop_children_recursively(
+/// Recursively transition every non-`unblocks_parents` descendant to
+/// `target_key` (per child's own project resolution). Cross-project
+/// children whose project has no matching key are skipped with a warning.
+async fn cascade_to_descendants(
     app_state: &AppState,
-    store: &dyn crate::store::ReadOnlyStore,
     issue_id: &IssueId,
+    target_key: &StatusKey,
     actor: ActorRef,
 ) -> Result<(), AutomationError> {
+    let store = app_state.store();
     let mut to_visit = store.get_issue_children(issue_id).await.map_err(|e| {
         AutomationError::Other(anyhow::anyhow!("failed to get children of {issue_id}: {e}"))
     })?;
@@ -188,14 +158,54 @@ async fn drop_children_recursively(
             ))
         })?;
 
-        if !child
-            .item
-            .status_as_legacy()
-            .is_some_and(|s| s.is_terminal())
-        {
-            let mut child_issue = child.item;
-            child_issue.status = IssueStatus::Dropped.into();
-            upsert_issue(app_state, &child_id, child_issue, actor.clone()).await?;
+        let mut child_issue = child.item;
+        let resolved_current = match app_state.resolve_status(&child_issue).await {
+            Ok(def) => Some(def),
+            Err(err) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    child_id = %child_id,
+                    status = %child_issue.status,
+                    error = %err,
+                    "cascade_issue_status: child has unresolvable current status; skipping but still descending"
+                );
+                None
+            }
+        };
+        let is_terminal_child = resolved_current
+            .as_ref()
+            .is_some_and(|d| d.unblocks_parents);
+
+        if !is_terminal_child {
+            // Check that the child's resolved project declares `target_key`.
+            // Cross-project children where the key is missing are skipped
+            // and logged.
+            let target_in_child_project: Result<bool, _> =
+                child_project_has_key(app_state, &child_issue, target_key).await;
+            match target_in_child_project {
+                Ok(true) => {
+                    child_issue.status = target_key.clone();
+                    upsert_issue(app_state, &child_id, child_issue, actor.clone()).await?;
+                }
+                Ok(false) => {
+                    tracing::warn!(
+                        automation = AUTOMATION_NAME,
+                        child_id = %child_id,
+                        target_status = %target_key,
+                        project_id = ?child_issue.project_id,
+                        "cascade_issue_status: child's project does not declare cascade target; skipping"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        automation = AUTOMATION_NAME,
+                        child_id = %child_id,
+                        target_status = %target_key,
+                        error = %err,
+                        "cascade_issue_status: failed to look up child's project; skipping"
+                    );
+                }
+            }
         }
 
         let grandchildren = store.get_issue_children(&child_id).await.map_err(|e| {
@@ -205,6 +215,33 @@ async fn drop_children_recursively(
     }
 
     Ok(())
+}
+
+/// Returns whether the child's resolved project declares a status with
+/// `target_key`. Errors propagate to the caller, which logs and skips.
+async fn child_project_has_key(
+    app_state: &AppState,
+    child: &crate::domain::issues::Issue,
+    target_key: &StatusKey,
+) -> Result<bool, anyhow::Error> {
+    use crate::domain::projects::default_project;
+    use crate::store::StoreError;
+    match &child.project_id {
+        None => Ok(default_project().find_status(target_key).is_some()),
+        Some(project_id) => {
+            let store = app_state.store();
+            let project = match store.get_project(project_id, false).await {
+                Ok(versioned) => versioned.item,
+                Err(StoreError::ProjectNotFound(_)) => return Ok(false),
+                Err(err) => {
+                    return Err(anyhow::anyhow!(
+                        "store error reading project {project_id}: {err}"
+                    ));
+                }
+            };
+            Ok(project.find_status(target_key).is_some())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +337,9 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_cascade_to_blocked_on_dependents_when_failed() {
+        // Cascade only follows `child-of` edges; `blocked-on` dependents
+        // never receive the cascaded status, regardless of which terminal
+        // key the parent landed in.
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -320,8 +360,9 @@ mod tests {
         );
         let (id_b, _) = store.add_issue(issue_b, &ActorRef::test()).await.unwrap();
 
-        // Fail issue A — Failed is no longer a trigger status,
-        // so the automation should not fire and B should stay Open.
+        // Fail issue A — B is a blocked-on dependent (not a child-of), so
+        // it should stay Open even though the cascade fires for child-of
+        // descendants.
         let mut failed_a = issue_a;
         failed_a.status = IssueStatus::Failed.into();
         store
@@ -358,7 +399,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drops_children_when_parent_failed() {
+    async fn fails_children_when_parent_failed() {
+        // A `failed` parent cascades children to `failed`. A cascaded child
+        // then reads as "failed because parent failed" rather than "dropped."
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
@@ -378,7 +421,7 @@ mod tests {
         );
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
-        // Fail the parent — children should be dropped.
+        // Fail the parent — children should now also be Failed (not Dropped).
         let mut failed_parent = parent;
         failed_parent.status = IssueStatus::Failed.into();
         store
@@ -412,7 +455,7 @@ mod tests {
         let child_result = store.get_issue(&child_id, false).await.unwrap();
         assert_eq!(
             child_result.item.status,
-            IssueStatus::Dropped.as_status_key()
+            IssueStatus::Failed.as_status_key()
         );
     }
 
@@ -762,12 +805,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn custom_trigger_statuses_from_config() {
-        let params: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str("trigger_statuses:\n  - closed").unwrap();
+    async fn does_not_cascade_when_parent_closed() {
+        // `closed.cascades_to_children = false` in DefaultProject, so a
+        // closed parent leaves its children untouched.
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
 
-        let automation = CascadeIssueStatusAutomation::new(Some(&params)).unwrap();
-        assert_eq!(automation.trigger_statuses, vec![IssueStatus::Closed]);
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let child = make_issue(
+            IssueStatus::Open,
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
+
+        let mut closed_parent = parent;
+        closed_parent.status = IssueStatus::Closed.into();
+        store
+            .update_issue(&parent_id, closed_parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: closed_parent,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let child_result = store.get_issue(&child_id, false).await.unwrap();
+        assert_eq!(child_result.item.status, IssueStatus::Open.as_status_key());
     }
 
     #[tokio::test]

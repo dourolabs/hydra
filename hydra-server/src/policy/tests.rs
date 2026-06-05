@@ -776,7 +776,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 6);
-    assert_eq!(engine.automation_count(), 8);
+    assert_eq!(engine.automation_count(), 9);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -790,6 +790,7 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("agent_role_uniqueness".to_string()),
             ],
             automations: vec![
+                PolicyEntry::Name("apply_status_on_enter".to_string()),
                 PolicyEntry::Name("cascade_issue_status".to_string()),
                 PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
@@ -803,7 +804,7 @@ fn default_config_enables_all_builtin_policies() {
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 6);
-    assert_eq!(explicit_engine.automation_count(), 8);
+    assert_eq!(explicit_engine.automation_count(), 9);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked
@@ -935,24 +936,27 @@ fn unknown_policy_name_in_config_errors() {
     );
 }
 
-/// Test: Invalid params for a known policy produce an error during validation.
+/// Test: Unknown automation names error during validation. This stands
+/// in for the "invalid params" check now that `cascade_issue_status`
+/// ignores its params entirely.
 #[test]
 fn invalid_params_produce_error_during_validation() {
     let registry = registry::build_default_registry();
 
-    // cascade_issue_status expects trigger_statuses to be a mapping, not a string
     let config = PolicyConfig {
         global: PolicyList {
             restrictions: vec![],
-            automations: vec![PolicyEntry::WithParams {
-                name: "cascade_issue_status".to_string(),
-                params: serde_yaml_ng::Value::String("invalid".to_string()),
-            }],
+            automations: vec![PolicyEntry::Name(
+                "definitely_not_a_real_automation".to_string(),
+            )],
         },
     };
 
     let result = registry.validate_config(&config);
-    assert!(result.is_err(), "validation should error on invalid params");
+    assert!(
+        result.is_err(),
+        "validation should error on unknown automation names"
+    );
 }
 
 /// Test: YAML deserialization of a full config with policies section works.

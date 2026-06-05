@@ -1,4 +1,4 @@
-use super::issues::IssueStatus;
+use super::projects::StatusKey;
 use crate::actor_ref::ActorId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -158,9 +158,19 @@ pub struct Action {
 #[serde(tag = "type")]
 #[non_exhaustive]
 pub enum Effect {
-    /// Update the issue's status.
+    /// Update the issue's status and, optionally, copy a form-field value
+    /// into `issue.feedback` in the same write.
+    ///
+    /// When `set_feedback_from = Some(field_key)`, the form-action handler
+    /// reads `form_response.values[field_key]`, coerces it to a string, and
+    /// writes it to `issue.feedback` atomically with the status transition.
+    /// When `None`, only the status is set (existing behavior).
     #[serde(rename = "update_issue")]
-    UpdateIssue { status: IssueStatus },
+    UpdateIssue {
+        status: StatusKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set_feedback_from: Option<String>,
+    },
 
     /// No automated effect — just record the action in the activity log.
     #[serde(rename = "record_only")]
@@ -220,7 +230,8 @@ mod tests {
                     style: ActionStyle::Primary,
                     requires: vec![],
                     effect: Effect::UpdateIssue {
-                        status: IssueStatus::Closed,
+                        status: StatusKey::try_new("closed").unwrap(),
+                        set_feedback_from: None,
                     },
                 },
                 Action {
@@ -311,7 +322,8 @@ mod tests {
                 style: ActionStyle::Primary,
                 requires: vec!["name".to_string(), "env".to_string()],
                 effect: Effect::UpdateIssue {
-                    status: IssueStatus::Closed,
+                    status: StatusKey::try_new("closed").unwrap(),
+                    set_feedback_from: None,
                 },
             }],
         };
@@ -424,7 +436,8 @@ mod tests {
     #[test]
     fn effect_update_issue_round_trip() {
         let effect = Effect::UpdateIssue {
-            status: IssueStatus::Closed,
+            status: StatusKey::try_new("closed").unwrap(),
+            set_feedback_from: None,
         };
         let json = serde_json::to_value(&effect).unwrap();
         assert_eq!(json, json!({"type": "update_issue", "status": "closed"}));
@@ -449,6 +462,25 @@ mod tests {
             let round_trip: ActionStyle = serde_json::from_value(json).unwrap();
             assert_eq!(style, round_trip);
         }
+    }
+
+    #[test]
+    fn effect_update_issue_with_set_feedback_from_round_trip() {
+        let effect = Effect::UpdateIssue {
+            status: StatusKey::try_new("in-development").unwrap(),
+            set_feedback_from: Some("review_comment".to_string()),
+        };
+        let json = serde_json::to_value(&effect).unwrap();
+        assert_eq!(
+            json,
+            json!({
+                "type": "update_issue",
+                "status": "in-development",
+                "set_feedback_from": "review_comment"
+            })
+        );
+        let round_trip: Effect = serde_json::from_value(json).unwrap();
+        assert_eq!(effect, round_trip);
     }
 
     #[test]

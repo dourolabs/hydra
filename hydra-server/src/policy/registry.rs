@@ -173,6 +173,9 @@ pub fn build_default_registry() -> PolicyRegistry {
     });
 
     // Automations (order matters: cascade must run before kill_tasks)
+    registry.register_automation("apply_status_on_enter", |params| {
+        Ok(Box::new(ApplyStatusOnEnterAutomation::new(params)?))
+    });
     registry.register_automation("cascade_issue_status", |params| {
         Ok(Box::new(CascadeIssueStatusAutomation::new(params)?))
     });
