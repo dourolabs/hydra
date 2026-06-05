@@ -19,6 +19,21 @@ struct Issue { assignee: String } // "" means unassigned
 struct Issue { assignee: Option<Principal> }
 ```
 
+**Wire-type carve-out.** If the field lives on a `#[derive(Serialize,
+Deserialize)]` wire type in `hydra-common/src/api/v1/**` and the type already
+ships, you cannot retroactively change its on-wire shape — this would break
+existing consumers and stored JSON. See
+[`docs/architecture/api-wire-contract.md`](../architecture/api-wire-contract.md)
+("changes must be additive"). The sentinel-to-`Option<T>` rule applies only
+to:
+
+- new wire types being introduced for the first time, and
+- non-wire types (`domain::*` types, internal helpers, store records).
+
+For existing wire types with empty-string sentinels (e.g.
+`AgentRecord.prompt_path`, `Issue.title`, `Issue.progress`), the sentinel is
+part of the API contract and stays.
+
 ## The store owns id generation
 
 Entity ids are minted by the store layer. Callers — routes, jobs, CLI
