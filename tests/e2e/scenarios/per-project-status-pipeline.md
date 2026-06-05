@@ -13,13 +13,13 @@
 
 **Estimated duration:** ~30 minutes
 
-**Queued under `scenarios/planned/` (see `tests/e2e/scenarios/planned/README.md`).** The tester's `ls tests/e2e/scenarios/*.md` enumeration skips this directory by design — that is the entire skip mechanism. Activate with a single `git mv tests/e2e/scenarios/planned/per-project-status-pipeline.md tests/e2e/scenarios/per-project-status-pipeline.md` once **all six implementation PRs of [[i-ctfcvyru]]** ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) have merged AND the runner-side seeding (Project `engineering-v2` plus the three cloned agents — see **Setup** below) is wired up in `tests/e2e/run.sh` and `$DOC_STORE`. The activation PR should reference those gate-PRs. The Step 1 skip-if pre-check below is kept as belt-and-suspenders for the period immediately after activation, when the seeding may not yet be on every test instance.
+**Activated under [[i-bhaxdizc]]** after all six implementation PRs of [[i-ctfcvyru]] ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) merged. The runner-side seeding (Project `engineering-v2` plus the three cloned agents — see **Setup** below) is tracked as a follow-up; until it lands on a given test instance, the Step 1 skip-if pre-check causes this scenario to self-skip (a pass, not a failure).
 
 ## Description
 
 Exercises the per-project status workflow designed in [[d-druoexk]] end-to-end through the dashboard. Covers both the **custom inbox/backlog/release pipeline** (design §4 "End-to-end use cases" — custom inbox/backlog/release pipeline) and the **same-issue review hand-off** (design §4 "End-to-end use cases" — same-issue review hand-off), exercising `apply_status_on_enter` automation (design §4 "Spawn dispatch and on_enter automation") and the unified readiness rule (design §4 "Dependencies, readiness, cascade") in one pass.
 
-This is a **paper spec** authored ahead of implementation. It lives under `scenarios/planned/` so the tester's `ls tests/e2e/scenarios/*.md` enumeration skips it; once the six implementation PRs of [[i-ctfcvyru]] merge and the runner-side seeding lands, the activation PR `git mv`s the file up one directory and the tester picks it up. The Step 1 skip-if pre-check below remains as belt-and-suspenders during that transition.
+This scenario was authored ahead of implementation and lived under `scenarios/planned/` until [[i-bhaxdizc]] promoted it. The Step 1 skip-if pre-check below remains as belt-and-suspenders for test instances where the per-project-statuses feature has shipped but the runner-side `engineering-v2` seeding has not yet been wired up.
 
 ## Setup
 
