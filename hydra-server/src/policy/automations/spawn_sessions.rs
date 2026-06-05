@@ -10,7 +10,7 @@ use crate::policy::automations::agent_queue::{
 };
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
-use hydra_common::api::v1::issues::{IssueStatus, SearchIssuesQuery};
+use hydra_common::api::v1::issues::SearchIssuesQuery;
 
 const AUTOMATION_NAME: &str = "spawn_sessions";
 
@@ -124,17 +124,14 @@ impl Automation for SpawnSessionsAutomation {
             .find(|q| q.agent.is_assignment_agent && !q.agent.deleted)
             .map(|q| q.agent.clone());
 
-        // Scan all open/in-progress issues for spawn readiness on every event.
+        // Scan all non-deleted issues for spawn readiness on every event.
         // This ensures that when a child issue transitions to a terminal state,
         // the parent issue is also evaluated for readiness.
+        // Don't filter by status; agent_queue::spawn_for_issue uses
+        // is_issue_ready/resolve_status to skip terminal issues, so the
+        // upstream filter would just re-encode legacy enum semantics here.
         let mut target_issues: Vec<_> = {
-            let query = SearchIssuesQuery::new(
-                None,
-                vec![IssueStatus::Open, IssueStatus::InProgress],
-                None,
-                None,
-                None,
-            );
+            let query = SearchIssuesQuery::new(None, vec![], None, None, None);
             ctx.app_state
                 .list_issues_with_query(&query)
                 .await
@@ -1053,6 +1050,93 @@ mod tests {
             }
             other => panic!("expected assignee Principal::Agent('agent-a'); got {other:?}"),
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn spawns_session_for_issue_with_custom_status() -> anyhow::Result<()> {
+        use hydra_common::api::v1::projects::{
+            IconKey, Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+        };
+        use hydra_common::principal::Principal;
+
+        let handles = test_utils::test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
+        let agent_name = "pm";
+
+        register_agent(&handles, agent_name).await?;
+        add_repository(&handles.state, repo_name.clone(), repository()).await?;
+
+        // Project with a custom `backlog` status whose `on_enter` assigns to pm.
+        // The on_enter automation is exercised separately; this test simulates
+        // the post-`apply_status_on_enter` state (assignee already = pm) and
+        // verifies spawn_sessions picks the issue up despite the non-legacy
+        // status string.
+        let on_enter = StatusOnEnter::new(
+            Some(Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new(agent_name).unwrap(),
+            }),
+            None,
+        );
+        let statuses = vec![
+            StatusDefinition::new(
+                StatusKey::try_new("backlog").unwrap(),
+                "Backlog".to_string(),
+                IconKey::try_new("circle").unwrap(),
+                "#abcdef".parse().unwrap(),
+                false,
+                false,
+                false,
+                Some(on_enter),
+            ),
+            StatusDefinition::new(
+                StatusKey::try_new("done").unwrap(),
+                "Done".to_string(),
+                IconKey::try_new("circle").unwrap(),
+                "#abcdef".parse().unwrap(),
+                true,
+                true,
+                false,
+                None,
+            ),
+        ];
+        let project = Project::new(
+            ProjectKey::try_new("engineering").unwrap(),
+            "Engineering".to_string(),
+            statuses,
+            StatusKey::try_new("backlog").unwrap(),
+            hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
+            false,
+        );
+        let (project_id, _) = handles
+            .store
+            .add_project(project, &ActorRef::test())
+            .await?;
+
+        let mut issue = make_issue(agent_name, &repo_name);
+        issue.project_id = Some(project_id);
+        issue.status = StatusKey::try_new("backlog").unwrap();
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        let event = issue_created_event(issue_id, issue);
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let sessions = handles.state.list_sessions().await?;
+        assert_eq!(
+            sessions.len(),
+            1,
+            "expected spawn_sessions to spawn for a custom-status (backlog) issue"
+        );
 
         Ok(())
     }
