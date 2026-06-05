@@ -37,7 +37,7 @@ impl Automation for ApplyStatusOnEnterAutomation {
 
     fn event_filter(&self) -> EventFilter {
         EventFilter {
-            event_types: vec![EventType::IssueUpdated],
+            event_types: vec![EventType::IssueCreated, EventType::IssueUpdated],
             ..Default::default()
         }
     }
@@ -53,24 +53,26 @@ impl Automation for ApplyStatusOnEnterAutomation {
             }
         }
 
-        let ServerEvent::IssueUpdated {
-            issue_id, payload, ..
-        } = ctx.event
-        else {
+        let (issue_id, payload) = match ctx.event {
+            ServerEvent::IssueCreated {
+                issue_id, payload, ..
+            }
+            | ServerEvent::IssueUpdated {
+                issue_id, payload, ..
+            } => (issue_id, payload),
+            _ => return Ok(()),
+        };
+
+        let MutationPayload::Issue { old, new, .. } = payload.as_ref() else {
             return Ok(());
         };
 
-        let MutationPayload::Issue {
-            old: Some(old),
-            new,
-            ..
-        } = payload.as_ref()
-        else {
-            return Ok(());
-        };
-
-        // Only fire when the status key actually changed.
-        if old.status == new.status {
+        // On update, only fire when the status key actually changed; on
+        // create, the issue is entering its initial status for the first
+        // time, so always evaluate `on_enter`.
+        if let Some(old) = old.as_ref()
+            && old.status == new.status
+        {
             return Ok(());
         }
 
@@ -281,6 +283,21 @@ mod tests {
             seq: 1,
             issue_id,
             version: 2,
+            timestamp: Utc::now(),
+            payload,
+        }
+    }
+
+    fn issue_created_event(issue_id: hydra_common::IssueId, new: Issue) -> ServerEvent {
+        let payload = Arc::new(MutationPayload::Issue {
+            old: None,
+            new,
+            actor: ActorRef::test(),
+        });
+        ServerEvent::IssueCreated {
+            seq: 1,
+            issue_id,
+            version: 1,
             timestamp: Utc::now(),
             payload,
         }
@@ -535,5 +552,89 @@ mod tests {
             "default engine wiring missing {AUTOMATION_NAME}; got {:?}",
             engine.automation_names()
         );
+    }
+
+    #[tokio::test]
+    async fn precedes_spawn_sessions_in_default_engine_wiring() {
+        use crate::app::default_policy_config;
+        let engine = crate::app::AppState::build_policy_engine(Some(&default_policy_config()));
+        let names = engine.automation_names();
+        let on_enter_idx = names
+            .iter()
+            .position(|n| *n == AUTOMATION_NAME)
+            .expect("apply_status_on_enter registered");
+        let spawn_idx = names
+            .iter()
+            .position(|n| *n == "spawn_sessions")
+            .expect("spawn_sessions registered");
+        assert!(
+            on_enter_idx < spawn_idx,
+            "apply_status_on_enter must run before spawn_sessions (so newly-created issues are reassigned per on_enter before the assignment-agent fallback)"
+        );
+    }
+
+    #[tokio::test]
+    async fn issue_created_triggers_on_enter() {
+        let handles = test_utils::test_state_handles();
+        let agent = hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        test_utils::add_agent_with_name(&handles, "reviewer").await;
+
+        // Build a project whose *initial* status `open` has an on_enter
+        // rule. A fresh issue lands directly in `open`, so creation should
+        // fire the automation.
+        let statuses = vec![
+            status_def_with_on_enter(
+                "open",
+                false,
+                Some(StatusOnEnter::new(
+                    Some(Principal::Agent {
+                        name: agent.clone(),
+                    }),
+                    None,
+                )),
+            ),
+            status_def_with_on_enter("closed", true, None),
+        ];
+        let project = hydra_common::api::v1::projects::Project::new(
+            hydra_common::api::v1::projects::ProjectKey::try_new("engineering").unwrap(),
+            "Engineering".to_string(),
+            statuses,
+            StatusKey::try_new("open").unwrap(),
+            hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
+            false,
+        );
+        let (project_id, _) = handles
+            .store
+            .add_project(project, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut issue = make_issue(IssueStatus::Open);
+        issue.project_id = Some(project_id);
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = issue_created_event(issue_id.clone(), issue);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let stored = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .item;
+        match stored.assignee {
+            Some(Principal::Agent { ref name }) => assert_eq!(name.as_str(), "reviewer"),
+            other => panic!("expected reviewer assignee; got {other:?}"),
+        }
     }
 }

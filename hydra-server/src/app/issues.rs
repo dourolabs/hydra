@@ -454,11 +454,6 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
-        let mut visited = HashSet::new();
-        self.issue_ready(issue_id, &mut visited).await
-    }
-
     /// Unified readiness rule:
     ///
     /// ```text
@@ -472,82 +467,74 @@ impl AppState {
     /// treated as "not ready" and logged — upstream validation should have
     /// prevented these, so the warn flags a real misconfiguration rather
     /// than a routine signal.
-    fn issue_ready<'a>(
-        &'a self,
-        issue_id: &'a IssueId,
-        visited: &'a mut HashSet<IssueId>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, StoreError>> + Send + 'a>>
-    {
-        Box::pin(async move {
-            if !visited.insert(issue_id.clone()) {
-                // Cycle detected: treat as not ready to break the loop.
+    pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
+        let store = self.store.as_ref();
+        let issue = store.get_issue(issue_id, false).await?.item;
+
+        let resolved = match self.resolve_status(&issue).await {
+            Ok(def) => def,
+            Err(err) => {
+                tracing::warn!(
+                    issue_id = %issue_id,
+                    status = %issue.status,
+                    error = %err,
+                    "is_issue_ready: failed to resolve status; treating as not ready"
+                );
                 return Ok(false);
             }
+        };
+        // TODO: drop this clause once agents can be configured per-status —
+        // then the way you opt a status out of dispatch is to leave its
+        // agent slot empty, not to ask readiness whether the parent has
+        // already unblocked.
+        if resolved.unblocks_parents {
+            return Ok(false);
+        }
 
-            let store = self.store.as_ref();
-            let issue = store.get_issue(issue_id, false).await?.item;
-
-            let resolved = match self.resolve_status(&issue).await {
+        for dependency in &issue.dependencies {
+            if dependency.dependency_type != IssueDependencyType::BlockedOn {
+                continue;
+            }
+            let blocker = store.get_issue(&dependency.issue_id, false).await?.item;
+            let blocker_resolved = match self.resolve_status(&blocker).await {
                 Ok(def) => def,
                 Err(err) => {
                     tracing::warn!(
                         issue_id = %issue_id,
-                        status = %issue.status,
+                        blocker_id = %dependency.issue_id,
+                        blocker_status = %blocker.status,
                         error = %err,
-                        "is_issue_ready: failed to resolve status; treating as not ready"
+                        "is_issue_ready: failed to resolve blocker status; treating as not ready"
                     );
                     return Ok(false);
                 }
             };
-            if resolved.unblocks_parents {
+            if !blocker_resolved.unblocks_dependents {
                 return Ok(false);
             }
+        }
 
-            for dependency in &issue.dependencies {
-                if dependency.dependency_type != IssueDependencyType::BlockedOn {
-                    continue;
-                }
-                let blocker = store.get_issue(&dependency.issue_id, false).await?.item;
-                let blocker_resolved = match self.resolve_status(&blocker).await {
-                    Ok(def) => def,
-                    Err(err) => {
-                        tracing::warn!(
-                            issue_id = %issue_id,
-                            blocker_id = %dependency.issue_id,
-                            blocker_status = %blocker.status,
-                            error = %err,
-                            "is_issue_ready: failed to resolve blocker status; treating as not ready"
-                        );
-                        return Ok(false);
-                    }
-                };
-                if !blocker_resolved.unblocks_dependents {
+        for child_id in store.get_issue_children(issue_id).await? {
+            let child = store.get_issue(&child_id, false).await?.item;
+            let child_resolved = match self.resolve_status(&child).await {
+                Ok(def) => def,
+                Err(err) => {
+                    tracing::warn!(
+                        issue_id = %issue_id,
+                        child_id = %child_id,
+                        child_status = %child.status,
+                        error = %err,
+                        "is_issue_ready: failed to resolve child status; treating as not ready"
+                    );
                     return Ok(false);
                 }
+            };
+            if !child_resolved.unblocks_parents {
+                return Ok(false);
             }
+        }
 
-            for child_id in store.get_issue_children(issue_id).await? {
-                let child = store.get_issue(&child_id, false).await?.item;
-                let child_resolved = match self.resolve_status(&child).await {
-                    Ok(def) => def,
-                    Err(err) => {
-                        tracing::warn!(
-                            issue_id = %issue_id,
-                            child_id = %child_id,
-                            child_status = %child.status,
-                            error = %err,
-                            "is_issue_ready: failed to resolve child status; treating as not ready"
-                        );
-                        return Ok(false);
-                    }
-                };
-                if !child_resolved.unblocks_parents {
-                    return Ok(false);
-                }
-            }
-
-            Ok(true)
-        })
+        Ok(true)
     }
 
     pub async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {

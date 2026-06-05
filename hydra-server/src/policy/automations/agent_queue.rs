@@ -220,19 +220,6 @@ impl AgentQueue {
             return Ok(SpawnResult::Skipped);
         }
 
-        // Compute guard conditions via project-aware status resolution.
-        // The terminal predicate is `unblocks_parents` — every status that
-        // halted spawn in the legacy enum world declared
-        // `unblocks_parents = true` on `DefaultProject`. The "hard skip"
-        // for `dropped` (work explicitly abandoned, never re-spawned even
-        // on feedback) is derived from `cascades_to_children && !unblocks_dependents`:
-        // those are the same flags `dropped` carries on `DefaultProject`
-        // and the same flags any custom drop-like status will carry.
-        let resolved = state.resolve_status(issue).await.with_context(|| {
-            format!("failed to resolve status for issue {issue_id} during spawn check")
-        })?;
-        let is_terminal = resolved.unblocks_parents;
-        let is_dropped = resolved.cascades_to_children && !resolved.unblocks_dependents;
         let is_ready = state
             .is_issue_ready(issue_id)
             .await
@@ -243,16 +230,9 @@ impl AgentQueue {
         let has_active_session = task_state.existing_issue_ids.contains(issue_id);
         let parent_running = parent_has_running_task(state, issue).await?;
 
-        // Determine whether to skip this issue.
-        // Feedback bypasses terminal status (Closed/Failed), dependency readiness, and
-        // parent running checks. Dropped is a hard skip — feedback never re-spawns a
-        // dropped issue, since "dropped" means the work was explicitly abandoned.
-        // Active session and capacity checks are always enforced.
-        if at_capacity
-            || has_active_session
-            || is_dropped
-            || (!has_feedback && (is_terminal || !is_ready || parent_running))
-        {
+        // Feedback bypasses readiness and parent-running checks; capacity and
+        // active-session checks are always enforced.
+        if at_capacity || has_active_session || (!has_feedback && (!is_ready || parent_running)) {
             return Ok(SpawnResult::Skipped);
         }
 
@@ -2487,8 +2467,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn feedback_does_not_bypass_dropped_status() -> anyhow::Result<()> {
+    async fn feedback_respawns_dropped_issue() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
+        seed_agent_prompt(&handles, "agent-a", "Reconsider").await?;
 
         let (issue_id, _) = handles
             .store
@@ -2521,8 +2502,8 @@ mod tests {
             .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(
-            !result.is_spawned(),
-            "feedback should NOT bypass Dropped status"
+            result.is_spawned(),
+            "feedback should bypass Dropped status and respawn"
         );
 
         Ok(())
