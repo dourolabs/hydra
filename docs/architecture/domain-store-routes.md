@@ -39,7 +39,11 @@ impl Store for SqliteStore {
 
 Why: the store is also used by tests, automations, and read-only paths that must not re-run validation. Policies are configurable (operators can swap restrictions in `hydra-server/config.yaml`), and they need read access to other entities — both incompatible with embedding rules in the persistence layer.
 
-Stores enforce **referential** integrity only — e.g. `StoreError::InvalidDependency` for an unknown `blocked-on` target — because that protects the schema. Anything that depends on workflow state (closing with open children, illegal status transitions, branch-name collisions) goes in a [`Restriction`](../../hydra-server/src/policy/restrictions/).
+Stores enforce **referential** integrity only — e.g. `StoreError::InvalidDependency` for an unknown `blocked-on` target — because that protects the schema. Anything that depends on workflow state (closing with open children, illegal status transitions, branch-name collisions, singleton-uniqueness flags on entity tables) goes in a [`Restriction`](../../hydra-server/src/policy/restrictions/).
+
+The rule of thumb: *per-row* invariants (FK presence, NOT NULL, basic shape) stay on the DB / Store layer because they protect the schema and apply uniformly to every writer. *Cross-row* invariants — anything that has to look at sibling rows to decide whether this write is legal — climb up to a `Restriction` so the rule lives in one place and policies can read other entities during evaluation.
+
+**Singleton-uniqueness flags on entity tables.** When an entity table has a boolean flag enforcing at-most-one-row-with-this-flag (e.g. `agents.is_assignment_agent`, `agents.is_default_conversation_agent`), enforce uniqueness through a `Restriction` called from `AppState::create_X` / `update_X`, not through partial unique indexes on the database or inline store-level checks. This is the same shape as branch-name collisions — a workflow-level cross-row check, not referential integrity. See [`AgentRoleUniquenessRestriction`](../../hydra-server/src/policy/restrictions/agent_role_uniqueness.rs) for the canonical pattern.
 
 ## Conversions: wire ↔ domain
 
