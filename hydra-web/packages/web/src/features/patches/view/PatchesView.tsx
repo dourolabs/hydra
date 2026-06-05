@@ -128,7 +128,11 @@ export function PatchesView({
                       ? "approved"
                       : normalizePatchStatus(p.status);
                   return (
-                    <tr key={rec.patch_id} onClick={() => handleRowClick(rec.patch_id)}>
+                    <tr
+                      key={rec.patch_id}
+                      data-testid={`patches-list-row-${rec.patch_id}`}
+                      onClick={() => handleRowClick(rec.patch_id)}
+                    >
                       <td className={styles.colTitle}>
                         <div className={styles.titleCell}>
                           <span className={styles.titleText}>{p.title || "(untitled)"}</span>

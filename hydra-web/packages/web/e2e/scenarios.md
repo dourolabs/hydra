@@ -31,6 +31,8 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@issues:update-status` — User can change an issue's status
 - `@issues:create` — User can create a new issue
 - `@issues:navigate-tabs` — User can navigate between Related, Activity, and Details tabs in the issue right panel
+- `@issues:filter-related-chat-narrows` — Issues list FilterBar can add a Related chat chip and pick a seeded conversation; the listIssues request goes out with `ids=` containing only `i-`-prefixed ids (no `d-`/`p-` leakage from chat→artifact `refers-to` edges) and the rendered rows are exactly the issues the seed says that conversation refers to. URL persists `?relatedChat=<id>` and reload rehydrates the chip + narrowed list.
+- `@issues:filter-related-chat-no-flash` — Changing a rehydrated Related chat chip's selection (adding a second value) keeps the previous narrowed rows rendered until the new resolution lands: with the swap's `/v1/relations` call held by a test intercept, the rows container never empties to zero and neither the "Loading issues…" skeleton nor the empty state appears. Releasing the held call swaps in the new union of rows.
 
 ## Labels
 
@@ -49,6 +51,8 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@patches:view-detail` — User can view a patch's details and metadata
 - `@patches:navigate` — User can navigate to a patch from an issue
 - `@patches:filter-bar` — Patches list toolbar uses the generic `<FilterBar>`. User can open + Filter, pick Status → Merged, the URL persists `?status=Merged`, the table narrows server-side (`listPatches` is called with `status=Merged`), and a page reload re-hydrates the chip from the URL.
+- `@patches:filter-related-issue-narrows` — Patches list FilterBar can add a Related issue chip and pick one or more seeded issues; the listPatches request goes out with `ids=` containing only `p-`-prefixed ids and the rendered rows are exactly the patches the seed says those issues `has-patch` reference. URL persists `?relatedIssue=<csv>` and reload rehydrates the chip + narrowed list.
+- `@patches:filter-related-issue-no-flash` — Changing a rehydrated Related issue chip's selection (adding a second value) keeps the previous narrowed rows rendered until the new resolution lands: with the swap's `/v1/relations` call held by a test intercept, the rows container never empties to zero and neither the "Loading patches…" skeleton nor the empty state appears. Releasing the held call swaps in the new union of rows.
 
 ## Documents
 

@@ -102,7 +102,11 @@ export function IssuesTable({
               : styles.progressFill;
 
             return (
-              <tr key={id} onClick={() => handleRowClick(id)}>
+              <tr
+                key={id}
+                data-testid={`issues-list-row-${id}`}
+                onClick={() => handleRowClick(id)}
+              >
                 <td className={styles.colTitle}>
                   <div className={styles.titleCell}>
                     <span className={styles.titleText}>{issue.title || "(untitled)"}</span>
