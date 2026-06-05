@@ -147,7 +147,22 @@ export function createIssueRoutes(store: Store): Hono {
 
     let filtered = items;
     if (ids) {
-      const idSet = new Set(ids.split(",").map((s) => s.trim()));
+      // Parity with prod: `SearchIssuesQuery::ids` is `Vec<IssueId>`, and
+      // `IssueId::try_from` (`hydra-common/src/ids.rs`) requires the `i-`
+      // prefix. A single bad element rejects the whole query as 400. The
+      // mock used to accept any string here, which masked client bugs where
+      // mixed-prefix relation target_ids leaked into the CSV.
+      const parsed = ids.split(",").map((s) => s.trim());
+      const invalid = parsed.filter((s) => !s.startsWith("i-"));
+      if (invalid.length > 0) {
+        return c.json(
+          {
+            error: `invalid issue id(s) in 'ids' parameter: ${invalid.join(", ")}`,
+          },
+          400,
+        );
+      }
+      const idSet = new Set(parsed);
       filtered = filtered.filter(({ id }) => idSet.has(id));
     }
     if (issueType) {

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
+import { hydraIdKind } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import type { Filter } from "../filters";
 
@@ -111,7 +112,9 @@ async function fetchIssueIdsForFilter(
       );
       for (const session of sessions) {
         const spawnedFrom = session?.session.spawned_from;
-        if (spawnedFrom) issueIds.add(spawnedFrom);
+        if (spawnedFrom && hydraIdKind(spawnedFrom) === "issue") {
+          issueIds.add(spawnedFrom);
+        }
       }
       continue;
     }
@@ -126,9 +129,17 @@ async function fetchIssueIdsForFilter(
       //   source ← target (filter selected target_ids, collect source_ids).
       // Inbound: issue is target, source is the related entity → walk
       //   target ← source (filter selected source_ids, collect target_ids).
-      const issueId =
+      const candidateId =
         spec.direction === "outbound" ? rel.source_id : rel.target_id;
-      issueIds.add(issueId);
+      // Conversation→artifact `refers-to` edges fan out across all artifact
+      // kinds (issues, patches, documents), so an inbound walk may surface
+      // non-`i-` ids. The CSV is forwarded to `/v1/issues?ids=`, which the
+      // real backend deserializes as `Vec<IssueId>` — a single non-issue id
+      // rejects the whole query with 400. Other specs (has-patch outbound,
+      // child-of, session spawned_from) naturally only yield issue ids in
+      // the field we read here, so this bucket is a safety net there too.
+      if (hydraIdKind(candidateId) !== "issue") continue;
+      issueIds.add(candidateId);
     }
   }
   return issueIds;
