@@ -1,5 +1,7 @@
 # Testing
 
+Cross-cutting testing rules (TDD-first, never widen exports for tests) live in [../testing.md](../testing.md) and apply here as well.
+
 Two layers: Vitest (unit + contract) and Playwright (e2e + visual audit). The Playwright configs declare a `webServer` block that owns the dev-stack lifecycle, so agents don't manage processes by hand.
 
 ## E2E with `pnpm e2e`
