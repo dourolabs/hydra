@@ -174,6 +174,12 @@ pub struct StatusDefinition {
     pub cascades_to_children: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_enter: Option<StatusOnEnter>,
+    /// Doc-store path for the per-status prompt slice that gets concatenated
+    /// into a session's `system_prompt` at create-time. `None` contributes
+    /// an empty slice (typical for terminal statuses, which the spawn
+    /// dispatcher skips anyway).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_path: Option<String>,
 }
 
 impl StatusDefinition {
@@ -197,6 +203,7 @@ impl StatusDefinition {
             unblocks_dependents,
             cascades_to_children,
             on_enter,
+            prompt_path: None,
         }
     }
 }
@@ -215,6 +222,11 @@ pub struct Project {
     pub creator: Username,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
+    /// Doc-store path for the project-layer prompt slice that gets
+    /// concatenated into a session's `system_prompt` at create-time.
+    /// `None` contributes an empty slice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_path: Option<String>,
 }
 
 /// Validation failure for [`Project::validate`].
@@ -262,6 +274,7 @@ impl Project {
             default_status_key,
             creator,
             deleted,
+            prompt_path: None,
         }
     }
 
@@ -537,6 +550,78 @@ mod tests {
         let def = status("open", "Open");
         let json = serde_json::to_string(&def).unwrap();
         assert!(!json.contains("on_enter"));
+    }
+
+    #[test]
+    fn status_definition_omits_prompt_path_when_none() {
+        let def = status("open", "Open");
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(
+            !json.contains("prompt_path"),
+            "prompt_path should be skipped when None; got {json}"
+        );
+    }
+
+    #[test]
+    fn status_definition_round_trips_prompt_path() {
+        let mut def = status("open", "Open");
+        def.prompt_path = Some("/projects/default/statuses/open.md".to_string());
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"prompt_path\""));
+        let parsed: StatusDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.prompt_path.as_deref(),
+            Some("/projects/default/statuses/open.md")
+        );
+    }
+
+    #[test]
+    fn project_omits_prompt_path_when_none() {
+        let proj = project("open", vec![status("open", "Open")]);
+        let json = serde_json::to_string(&proj).unwrap();
+        assert!(
+            !json.contains("prompt_path"),
+            "prompt_path should be skipped when None; got {json}"
+        );
+    }
+
+    #[test]
+    fn project_round_trips_prompt_path() {
+        let mut proj = project("open", vec![status("open", "Open")]);
+        proj.prompt_path = Some("/projects/default/prompt.md".to_string());
+        let json = serde_json::to_string(&proj).unwrap();
+        assert!(json.contains("\"prompt_path\""));
+        let parsed: Project = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.prompt_path.as_deref(),
+            Some("/projects/default/prompt.md")
+        );
+    }
+
+    #[test]
+    fn project_deserializes_legacy_wire_payload_without_prompt_path() {
+        // Old payload (pre-PR1) had no `prompt_path` on Project or StatusDefinition;
+        // it must continue to parse to `None` so older clients don't break the wire.
+        let legacy = serde_json::json!({
+            "key": "eng",
+            "name": "Engineering",
+            "statuses": [
+                {
+                    "key": "open",
+                    "label": "Open",
+                    "icon": "circle",
+                    "color": "#abcdef",
+                    "unblocks_parents": false,
+                    "unblocks_dependents": false,
+                    "cascades_to_children": false,
+                }
+            ],
+            "default_status_key": "open",
+            "creator": "jayantk",
+        });
+        let parsed: Project = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.prompt_path.is_none());
+        assert!(parsed.statuses[0].prompt_path.is_none());
     }
 
     #[test]
