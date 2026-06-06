@@ -364,10 +364,10 @@ const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
 const CHAT_PROMPT: &str = include_str!("../../prompts/agents/chat.md");
 
 // Embedded four-level prompt content (compiled into the binary).
-// Per the four-level agent prompts design ([[d-rzreslz]]), session prompts
-// concatenate four layers — system, agent, project, status. The slimmed agent
-// prompts above carry the role-only slice; the documents below carry the
-// shared system slice and DefaultProject's project / status slices.
+// Session prompts concatenate four layers — system, agent, project, status.
+// The slimmed agent prompts above carry the role-only slice; the documents
+// below carry the shared system slice and DefaultProject's project / status
+// slices.
 const SYSTEM_PROMPT: &str = include_str!("../../prompts/system_prompt.md");
 const DEFAULT_PROJECT_PROMPT: &str = include_str!("../../prompts/projects/default/prompt.md");
 const DEFAULT_PROJECT_OPEN_PROMPT: &str =
