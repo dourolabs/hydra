@@ -2,6 +2,7 @@
 import type { AgentName } from "./AgentName";
 import type { ConversationId } from "./ConversationId";
 import type { ConversationStatus } from "./ConversationStatus";
+import type { IssueId } from "./IssueId";
 import type { SessionSettings } from "./SessionSettings";
 import type { Username } from "./Username";
 
@@ -12,6 +13,7 @@ export type Conversation = {
   status: ConversationStatus;
   creator: Username;
   session_settings?: SessionSettings;
+  spawned_from?: IssueId | null;
   created_at: string;
   updated_at: string;
 };

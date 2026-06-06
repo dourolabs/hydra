@@ -283,6 +283,7 @@ struct ConversationRow {
     title: Option<String>,
     agent_name: Option<String>,
     session_settings: String,
+    spawned_from: Option<String>,
     status: String,
     creator: String,
     deleted: bool,
@@ -926,12 +927,21 @@ impl SqliteStore {
             .map_err(|e| {
                 StoreError::Internal(format!("invalid agent_name in conversation row: {e}"))
             })?;
+        let spawned_from = row
+            .spawned_from
+            .as_deref()
+            .map(|s| s.parse::<hydra_common::IssueId>())
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("invalid spawned_from in conversation row: {e}"))
+            })?;
         Ok(Conversation {
             title: row.title.clone(),
             agent_name,
             status,
             creator: Username::from(row.creator.clone()),
             session_settings,
+            spawned_from,
             deleted: row.deleted,
         })
     }
@@ -968,14 +978,15 @@ impl SqliteStore {
             })?;
 
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
+            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
         ))
         .bind(id.as_ref())
         .bind(version_number)
         .bind(&conversation.title)
         .bind(conversation.agent_name.as_ref().map(|n| n.as_str()))
         .bind(&session_settings_json)
+        .bind(conversation.spawned_from.as_ref().map(|i| i.as_ref().to_string()))
         .bind(Self::conversation_status_str(&conversation.status))
         .bind(conversation.creator.as_str())
         .bind(conversation.deleted)
@@ -2024,6 +2035,11 @@ fn build_conversations_predicates_sqlite(
             s1 = start + 1,
             s2 = start + 2,
         ));
+    }
+
+    if let Some(spawned_from) = query.spawned_from.as_ref() {
+        bindings.push(spawned_from.as_ref().to_string());
+        predicates.push(format!("spawned_from = ?{}", bindings.len()));
     }
 
     if !query.include_deleted.unwrap_or(false) {
@@ -4415,7 +4431,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let row = sqlx::query_as::<_, ConversationRow>(&format!(
-            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
              FROM {TABLE_CONVERSATIONS}
              WHERE id = ?1
@@ -4462,7 +4478,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
-            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, c.spawned_from, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = c.id) AS creation_time
              FROM {TABLE_CONVERSATIONS} c
              WHERE c.is_latest = 1"
@@ -4527,7 +4543,7 @@ impl ReadOnlyStore for SqliteStore {
         id: &ConversationId,
     ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
         let rows = sqlx::query_as::<_, ConversationRow>(&format!(
-            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
              FROM {TABLE_CONVERSATIONS}
              WHERE id = ?1
@@ -10576,6 +10592,7 @@ mod tests {
             status: crate::domain::conversations::ConversationStatus::Active,
             creator: Username::from("testuser".to_string()),
             session_settings: Default::default(),
+            spawned_from: None,
             deleted: false,
         }
     }
@@ -10762,6 +10779,66 @@ mod tests {
         let results = store.list_conversations(&query).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.item.title, Some("Meeting notes".to_string()),);
+    }
+
+    #[tokio::test]
+    async fn conversation_round_trips_spawned_from() {
+        use hydra_common::IssueId;
+        use std::str::FromStr;
+        let store = create_test_store().await;
+        let issue_id = IssueId::from_str("i-spawnz").unwrap();
+        let mut conv = sample_conversation();
+        conv.spawned_from = Some(issue_id.clone());
+        let (id, _) = store
+            .add_conversation(conv, &ActorRef::test())
+            .await
+            .unwrap();
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_eq!(fetched.item.spawned_from, Some(issue_id));
+    }
+
+    #[tokio::test]
+    async fn list_conversations_filters_by_spawned_from() {
+        use hydra_common::IssueId;
+        use std::str::FromStr;
+        let store = create_test_store().await;
+        let issue_a = IssueId::from_str("i-aaaaaa").unwrap();
+        let issue_b = IssueId::from_str("i-bbbbbb").unwrap();
+
+        let mut conv_a = sample_conversation();
+        conv_a.spawned_from = Some(issue_a.clone());
+        store
+            .add_conversation(conv_a, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut conv_b = sample_conversation();
+        conv_b.spawned_from = Some(issue_b.clone());
+        store
+            .add_conversation(conv_b, &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .add_conversation(sample_conversation(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let all = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+
+        let results = store
+            .list_conversations(&SearchConversationsQuery {
+                spawned_from: Some(issue_a.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.spawned_from, Some(issue_a));
     }
 
     #[tokio::test]

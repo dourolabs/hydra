@@ -1,6 +1,6 @@
 use super::agents::AgentName;
 use super::issues::SessionSettings;
-use crate::{ConversationId, users::Username};
+use crate::{ConversationId, IssueId, users::Username};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,6 +21,9 @@ pub struct SearchConversationsQuery {
     /// Include soft-deleted conversations in results.
     #[serde(default)]
     pub include_deleted: Option<bool>,
+    /// Filter by the issue that spawned this conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
     /// Maximum number of results to return.
     #[serde(default)]
     pub limit: Option<u32>,
@@ -54,6 +57,8 @@ pub struct Conversation {
     pub creator: Username,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
     pub session_settings: SessionSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -67,6 +72,7 @@ impl Conversation {
         status: ConversationStatus,
         creator: Username,
         session_settings: SessionSettings,
+        spawned_from: Option<IssueId>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -77,6 +83,7 @@ impl Conversation {
             status,
             creator,
             session_settings,
+            spawned_from,
             created_at,
             updated_at,
         }
@@ -262,6 +269,69 @@ mod tests {
         assert_eq!(req.session_settings, None);
     }
 
+    #[test]
+    fn conversation_round_trips_with_spawned_from_some() {
+        use chrono::TimeZone;
+        let issue_id = IssueId::from_str("i-testid").unwrap();
+        let mut conv = Conversation::new(
+            ConversationId::new(),
+            None,
+            None,
+            ConversationStatus::Active,
+            Username::from("alice"),
+            SessionSettings::default(),
+            Some(issue_id.clone()),
+            Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 5, 2, 12, 0, 0).unwrap(),
+        );
+        conv.spawned_from = Some(issue_id.clone());
+        let json = serde_json::to_string(&conv).unwrap();
+        assert!(json.contains("spawned_from"));
+        let de: Conversation = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.spawned_from, Some(issue_id));
+        assert_eq!(de, conv);
+    }
+
+    #[test]
+    fn conversation_omits_spawned_from_when_none() {
+        use chrono::TimeZone;
+        let conv = Conversation::new(
+            ConversationId::new(),
+            None,
+            None,
+            ConversationStatus::Active,
+            Username::from("alice"),
+            SessionSettings::default(),
+            None,
+            Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2026, 5, 2, 12, 0, 0).unwrap(),
+        );
+        let json = serde_json::to_string(&conv).unwrap();
+        assert!(!json.contains("spawned_from"));
+        let de: Conversation = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.spawned_from, None);
+    }
+
+    #[test]
+    fn search_conversations_query_round_trips_spawned_from() {
+        let issue_id = IssueId::from_str("i-abcdef").unwrap();
+        let query = SearchConversationsQuery {
+            spawned_from: Some(issue_id.clone()),
+            ..SearchConversationsQuery::default()
+        };
+        let json = serde_json::to_string(&query).unwrap();
+        assert!(json.contains("spawned_from"));
+        let de: SearchConversationsQuery = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.spawned_from, Some(issue_id));
+    }
+
+    #[test]
+    fn search_conversations_query_omits_spawned_from_when_none() {
+        let query = SearchConversationsQuery::default();
+        let json = serde_json::to_string(&query).unwrap();
+        assert!(!json.contains("spawned_from"));
+    }
+
     mod graph_view {
         use super::*;
         use crate::graph::{GraphView, ObjectKind};
@@ -276,6 +346,7 @@ mod tests {
                 ConversationStatus::Active,
                 Username::from("alice"),
                 SessionSettings::default(),
+                None,
                 Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap(),
                 Utc.with_ymd_and_hms(2026, 5, 2, 12, 0, 0).unwrap(),
             )

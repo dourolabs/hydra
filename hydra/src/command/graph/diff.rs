@@ -826,6 +826,7 @@ mod tests {
                 status,
                 Username::from("creator"),
                 SessionSettings::default(),
+                None,
                 ts(0),
                 ts(0),
             )

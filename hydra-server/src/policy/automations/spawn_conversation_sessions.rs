@@ -423,6 +423,7 @@ mod tests {
             status,
             creator: Username::from("creator"),
             session_settings: SessionSettings::default(),
+            spawned_from: None,
             deleted: false,
         }
     }
