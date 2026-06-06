@@ -1049,6 +1049,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
             start_time: None,
             end_time: None,
             usage: None,
+            proxy_targets: Vec::new(),
         }
     };
     let (job_id, _) = handles

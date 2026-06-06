@@ -830,9 +830,17 @@ impl PostgresStoreV2 {
             .as_ref()
             .map(|s| s.as_ref().to_string());
 
+        let proxy_targets_json = if session.proxy_targets.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_value(&session.proxy_targets).map_err(|e| {
+                StoreError::Internal(format!("failed to serialize proxy_targets: {e}"))
+            })?)
+        };
+
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)"
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -858,6 +866,7 @@ impl PostgresStoreV2 {
             .bind(&agent_config_json)
             .bind(&mode_json)
             .bind(resumed_from_str.as_deref())
+            .bind(proxy_targets_json.as_ref())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -938,6 +947,17 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
+        let proxy_targets = row
+            .proxy_targets
+            .as_ref()
+            .map(|v| {
+                serde_json::from_value(v.clone()).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize proxy_targets: {e}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+
         Ok(Session {
             creator: Username::from(row.creator.as_str()),
             spawned_from,
@@ -958,6 +978,7 @@ impl PostgresStoreV2 {
             start_time: row.start_time,
             end_time: row.end_time,
             usage,
+            proxy_targets,
         })
     }
 
@@ -1616,6 +1637,8 @@ struct TaskRow {
     mode: Value,
     #[sqlx(default)]
     resumed_from: Option<String>,
+    #[sqlx(default)]
+    proxy_targets: Option<Value>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3078,7 +3101,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -3115,7 +3138,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -3156,7 +3179,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time, t.conversation_id, t.usage, t.mount_spec, t.agent_config, t.mode, t.resumed_from \
+            "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time, t.conversation_id, t.usage, t.mount_spec, t.agent_config, t.mode, t.resumed_from, t.proxy_targets \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
@@ -3248,7 +3271,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -5929,6 +5952,16 @@ mod tests {
             cache_read_input_tokens: 89,
             cache_creation_input_tokens: 10,
         });
+        session.proxy_targets = vec![
+            hydra_common::api::v1::sessions::ProxyTarget {
+                port: 3000,
+                ready_path: Some("/ready".to_string()),
+            },
+            hydra_common::api::v1::sessions::ProxyTarget {
+                port: 5173,
+                ready_path: None,
+            },
+        ];
         session
     }
 

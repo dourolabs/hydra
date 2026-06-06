@@ -17,6 +17,7 @@ mod login;
 pub(crate) mod merge_queues;
 mod patches;
 mod projects;
+mod proxy_targets;
 mod relations;
 mod repositories;
 mod secrets;

@@ -388,6 +388,15 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/sessions/:session_id/events",
             get(routes::sessions::relay::session_events_or_relay),
         )
+        .route(
+            "/v1/sessions/:session_id/proxy-targets",
+            get(routes::sessions::proxy_targets::list_proxy_targets)
+                .post(routes::sessions::proxy_targets::upsert_proxy_target),
+        )
+        .route(
+            "/v1/sessions/:session_id/proxy-targets/:port",
+            axum::routing::delete(routes::sessions::proxy_targets::delete_proxy_target),
+        )
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users", get(routes::users::list_users))
         .route("/v1/users/:username", get(routes::users::get_user))

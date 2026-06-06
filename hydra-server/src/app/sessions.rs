@@ -1191,6 +1191,55 @@ impl AppState {
             .await
     }
 
+    /// Upsert a proxy target (port + optional ready_path) on a session.
+    /// Idempotent: re-posting an existing `port` replaces `ready_path`.
+    pub async fn upsert_proxy_target(
+        &self,
+        session_id: &SessionId,
+        target: hydra_common::api::v1::sessions::ProxyTarget,
+        actor: ActorRef,
+    ) -> Result<Versioned<Session>, StoreError> {
+        let latest = self.store.get_session(session_id, false).await?;
+        let mut updated = latest.item;
+        match updated
+            .proxy_targets
+            .iter_mut()
+            .find(|t| t.port == target.port)
+        {
+            Some(existing) => *existing = target,
+            None => updated.proxy_targets.push(target),
+        }
+        self.store
+            .update_session_with_actor(session_id, updated, actor)
+            .await
+    }
+
+    /// Remove a proxy target by `port`. Idempotent: returns the current
+    /// `Versioned<Session>` unchanged when the port is absent.
+    pub async fn remove_proxy_target(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        actor: ActorRef,
+    ) -> Result<Versioned<Session>, StoreError> {
+        let latest = self.store.get_session(session_id, false).await?;
+        let mut updated = latest.item;
+        let before = updated.proxy_targets.len();
+        updated.proxy_targets.retain(|t| t.port != port);
+        if updated.proxy_targets.len() == before {
+            return Ok(Versioned {
+                item: updated,
+                version: latest.version,
+                timestamp: latest.timestamp,
+                actor: latest.actor,
+                creation_time: latest.creation_time,
+            });
+        }
+        self.store
+            .update_session_with_actor(session_id, updated, actor)
+            .await
+    }
+
     pub(crate) async fn get_latest_session(
         &self,
         session_id: &SessionId,

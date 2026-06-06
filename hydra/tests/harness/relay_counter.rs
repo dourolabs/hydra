@@ -60,9 +60,9 @@ use hydra_common::{
     },
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{
-        CreateSessionRequest, CreateSessionResponse, KillSessionResponse,
+        CreateSessionRequest, CreateSessionResponse, KillSessionResponse, ListProxyTargetsResponse,
         ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
-        SessionVersionRecord, WorkerContext,
+        SessionVersionRecord, UpsertProxyTargetRequest, WorkerContext,
     },
     triggers::{
         ListTriggerVersionsResponse, ListTriggersResponse, SearchTriggersQuery,
@@ -150,6 +150,22 @@ impl HydraClientInterface for RelayCallCountingClient {
 
     async fn get_session_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
         self.inner.get_session_context(job_id).await
+    }
+
+    async fn list_proxy_targets(&self, session_id: &SessionId) -> Result<ListProxyTargetsResponse> {
+        self.inner.list_proxy_targets(session_id).await
+    }
+
+    async fn upsert_proxy_target(
+        &self,
+        session_id: &SessionId,
+        request: &UpsertProxyTargetRequest,
+    ) -> Result<()> {
+        self.inner.upsert_proxy_target(session_id, request).await
+    }
+
+    async fn delete_proxy_target(&self, session_id: &SessionId, port: u16) -> Result<()> {
+        self.inner.delete_proxy_target(session_id, port).await
     }
 
     async fn list_session_versions(

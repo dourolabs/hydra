@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 use hydra_common::ActorId;
 use hydra_common::api::v1 as api;
 use hydra_common::api::v1::agents::AgentName;
-use hydra_common::api::v1::sessions::{McpConfig, MountSpec, ResumeSource, TokenUsage};
+use hydra_common::api::v1::sessions::{
+    McpConfig, MountSpec, ProxyTarget, ResumeSource, TokenUsage,
+};
 use hydra_common::{ConversationId, IssueId, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -129,6 +131,11 @@ pub struct Session {
     pub end_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+    /// Ports the worker has advertised as HTTP targets for the interactive
+    /// dev preview. Edited via `hydra worker proxy {start,stop}`. Default
+    /// empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proxy_targets: Vec<ProxyTarget>,
 }
 
 /// Build the [`ActorId`] for a session from its embedded
@@ -188,6 +195,7 @@ impl Session {
             start_time: None,
             end_time: None,
             usage: None,
+            proxy_targets: Vec::new(),
         }
     }
 
@@ -326,6 +334,7 @@ impl TryFrom<api::sessions::Session> for Session {
             start_time: value.start_time,
             end_time: value.end_time,
             usage: value.usage,
+            proxy_targets: value.proxy_targets,
         })
     }
 }
@@ -353,6 +362,7 @@ impl From<Session> for api::sessions::Session {
             value.end_time,
         );
         session.usage = value.usage;
+        session.proxy_targets = value.proxy_targets;
         session
     }
 }
@@ -587,6 +597,42 @@ mod tests {
             round_trip.agent_config.model,
             domain_session.agent_config.model
         );
+    }
+
+    #[test]
+    fn session_roundtrip_preserves_proxy_targets() {
+        use hydra_common::api::v1::sessions::ProxyTarget;
+        let mut domain_session = Session::new(
+            Username::from("test-creator"),
+            None,
+            None,
+            AgentConfig::default(),
+            test_mount_spec(),
+            None,
+            HashMap::new(),
+            None,
+            None,
+            None,
+            SessionMode::Headless,
+            Status::Created,
+            None,
+            None,
+        );
+        domain_session.proxy_targets = vec![
+            ProxyTarget {
+                port: 3000,
+                ready_path: Some("/ready".to_string()),
+            },
+            ProxyTarget {
+                port: 8080,
+                ready_path: None,
+            },
+        ];
+
+        let api_session: api::sessions::Session = domain_session.clone().into();
+        let round_trip: Session = api_session.try_into().unwrap();
+
+        assert_eq!(round_trip.proxy_targets, domain_session.proxy_targets);
     }
 
     #[test]

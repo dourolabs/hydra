@@ -170,6 +170,11 @@ pub enum Commands {
         #[arg(long = "agent", value_name = "AGENT")]
         agent: Option<String>,
     },
+    /// Worker-side helpers (used by the agent inside its container).
+    Worker {
+        #[command(subcommand)]
+        command: command::worker::WorkerCommand,
+    },
 }
 
 impl Cli {
@@ -350,6 +355,9 @@ pub async fn dispatch(cli: Cli, client: Arc<HydraClient>, context: &CommandConte
         }
         Commands::Chat { prompt, agent } => {
             command::chat::run(client.as_ref(), prompt, agent, context).await?
+        }
+        Commands::Worker { command } => {
+            command::worker::run(trait_client, command, context).await?
         }
     }
 

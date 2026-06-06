@@ -206,10 +206,17 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         ("tasks_v2", "resumed_from"),
         ("repositories_v2", "merge_policy"),
         ("issues_v2", "project_id"),
+        ("tasks_v2", "proxy_targets"),
     ] {
         if !column_exists(pool, table, col).await? {
             bail!("expected metis.{table}.{col} to exist after rollforward");
         }
+    }
+
+    // The proxy_targets column must be nullable so existing rows inflate to
+    // an empty `Vec<ProxyTarget>` on read.
+    if !column_is_nullable(pool, "tasks_v2", "proxy_targets").await? {
+        bail!("expected metis.tasks_v2.proxy_targets to be nullable after rollforward");
     }
 
     // Columns dropped by this release's migrations.

@@ -469,6 +469,14 @@ async fn assert_schema_invariants(pool: &SqlitePool) -> Result<()> {
         bail!("expected `issues_v2.project_id` column to exist after rollforward");
     }
 
+    // Column added by 20260606000000_add_session_proxy_targets.sql.
+    if !column_exists(pool, "tasks_v2", "proxy_targets").await? {
+        bail!("expected `tasks_v2.proxy_targets` column to exist after rollforward");
+    }
+    if !column_is_nullable(pool, "tasks_v2", "proxy_targets").await? {
+        bail!("expected `tasks_v2.proxy_targets` to be nullable after rollforward");
+    }
+
     // Indexes added by the three migrations under test. Listed verbatim so
     // a future rename without a baseline bump fails this assertion loud.
     for index in [
@@ -529,6 +537,22 @@ async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<b
         }
     }
     Ok(false)
+}
+
+async fn column_is_nullable(pool: &SqlitePool, table: &str, column: &str) -> Result<bool> {
+    let rows = sqlx::query("SELECT name, \"notnull\" FROM pragma_table_info(?1)")
+        .bind(table)
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("pragma_table_info(`{table}`)"))?;
+    for row in rows {
+        let name: String = row.try_get(0)?;
+        if name == column {
+            let notnull: i64 = row.try_get(1)?;
+            return Ok(notnull == 0);
+        }
+    }
+    bail!("column `{table}.{column}` not found");
 }
 
 // ---------------------------------------------------------------------------

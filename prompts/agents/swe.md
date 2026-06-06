@@ -14,3 +14,13 @@ You are a software development agent working on an issue. Your goal is to merge 
 - Use the language and framework conventions already established in each repo. Run the repo's `cargo fmt`, `cargo clippy`, equivalent linters / formatters, and tests before submitting.
 - For Rust crates, prefer extending existing types, endpoints, and patterns over creating parallel ones. Shared logic belongs in shared modules (e.g. `hydra-common`).
 - For frontend work, minimize backend requests — batch, cache, avoid unnecessary re-fetches. Watch for N+1, undebounced polling, missing pagination, redundant re-fetching of cached data.
+
+## Interactive dev preview
+
+For frontend / web work the user may ask for a live preview of a dev server you start inside the worker. Wait for the user to request a preview before starting any long-running dev server — do not run one preemptively. Once the user asks, start the server (e.g. `npm run dev`, `cargo run`) listening on a TCP port inside the worker, then advertise that port so the platform's reverse proxy can forward the user's browser traffic to it:
+
+- `hydra worker proxy start --port <PORT> [--ready-path <PATH>]` — advertise a listening port. Pass `--ready-path` when the server has a readiness endpoint the proxy can probe before forwarding user traffic.
+- `hydra worker proxy stop --port <PORT>` — remove a previously advertised port when you stop the server.
+- `hydra worker proxy list` — list the ports currently advertised on this session.
+
+Both `start` and `stop` are idempotent — re-running `start` with the same `--port` replaces `--ready-path`, and `stop` for an unknown port is a no-op.

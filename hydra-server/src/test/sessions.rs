@@ -274,6 +274,7 @@ async fn list_sessions_includes_usage_in_summary() -> anyhow::Result<()> {
             start_time: None,
             end_time: None,
             usage: Some(usage.clone()),
+            proxy_targets: Vec::new(),
         }
     };
     let (session_id, _) = store
@@ -496,6 +497,7 @@ async fn get_session_rejects_session_id_with_whitespace_padding() -> anyhow::Res
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             now - Duration::seconds(30),
             &ActorRef::test(),
@@ -772,6 +774,7 @@ async fn set_session_status_persists_result_for_spawn_tasks() -> anyhow::Result<
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -852,6 +855,7 @@ async fn set_session_status_can_mark_failed() -> anyhow::Result<()> {
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -953,6 +957,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1011,6 +1016,7 @@ async fn get_session_context_returns_context_for_spawn_tasks() -> anyhow::Result
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1086,6 +1092,7 @@ async fn get_session_context_includes_model_from_task() -> anyhow::Result<()> {
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1139,6 +1146,7 @@ async fn get_session_context_includes_task_variables() -> anyhow::Result<()> {
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1206,6 +1214,7 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1289,6 +1298,7 @@ async fn get_session_context_populates_github_token_from_creator_secret() -> any
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1345,6 +1355,7 @@ async fn get_session_context_returns_none_token_when_creator_has_no_secret() -> 
                 start_time: None,
                 end_time: None,
                 usage: None,
+                proxy_targets: Vec::new(),
             },
             Utc::now(),
             &ActorRef::test(),
@@ -1425,6 +1436,7 @@ fn make_session_with_service_repo(
         start_time: None,
         end_time: None,
         usage: None,
+        proxy_targets: Vec::new(),
     }
 }
 
@@ -1452,6 +1464,7 @@ fn make_session_no_bundle(env_vars: HashMap<String, String>) -> Session {
         start_time: None,
         end_time: None,
         usage: None,
+        proxy_targets: Vec::new(),
     }
 }
 
@@ -1623,6 +1636,7 @@ async fn get_session_context_omits_build_cache_when_no_service_repo() -> anyhow:
         start_time: None,
         end_time: None,
         usage: None,
+        proxy_targets: Vec::new(),
     };
     let (session_id, _) = store
         .add_session(session, Utc::now(), &ActorRef::test())
