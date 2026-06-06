@@ -99,21 +99,44 @@ impl Automation for ApplyStatusOnEnterAutomation {
             ..
         } = on_enter;
 
-        // Resolve the target form (if any) before mutating the issue, so a
-        // missing/invalid form aborts cleanly without leaving a partial
-        // assignee update behind.
+        // Resolve the target form (if any) before mutating the issue.
+        //
+        // Three failure modes are handled distinctly so a misconfigured
+        // fixture doesn't silently drop the `assign_to` half of `on_enter`
+        // (see [[i-kjkgdkyu]]):
+        //
+        // * `NotFound`  — operator misconfiguration. Log a warning and
+        //   continue so the assignee is still rewritten; the form simply
+        //   stays unattached until the doc is uploaded.
+        // * `Transient` — store/IO error. Abort so the automation can be
+        //   retried; partial application would leave the assignee changed
+        //   but the form perpetually missing.
+        // * `Malformed` — the doc exists but is unparseable. Abort and
+        //   surface — the config is broken and needs a human.
         let target_form = match attach_form.as_ref() {
             Some(path) => match load_form_from_document(ctx, path.as_str()).await {
                 Ok(form) => Some(form),
-                Err(err) => {
+                Err(FormLoadError::NotFound(msg)) => {
                     tracing::warn!(
                         automation = AUTOMATION_NAME,
                         issue_id = %issue_id,
+                        project_id = ?new.project_id,
+                        status = %new.status,
                         form_path = %path,
-                        error = %err,
-                        "apply_status_on_enter: failed to load form document; skipping form attach"
+                        reason = %msg,
+                        "apply_status_on_enter: form document missing; applying assign_to only"
                     );
-                    return Ok(());
+                    None
+                }
+                Err(FormLoadError::Transient(err)) => {
+                    return Err(AutomationError::Other(anyhow::anyhow!(
+                        "failed to load form '{path}' for issue {issue_id}: {err}"
+                    )));
+                }
+                Err(FormLoadError::Malformed(err)) => {
+                    return Err(AutomationError::Other(anyhow::anyhow!(
+                        "form '{path}' for issue {issue_id} is malformed: {err}"
+                    )));
                 }
             },
             None => None,
@@ -171,28 +194,57 @@ impl Automation for ApplyStatusOnEnterAutomation {
     }
 }
 
+/// Categorises why `load_form_from_document` failed, so the caller can
+/// choose between "log and continue", "abort and retry", and "abort and
+/// surface" without sniffing error strings.
+#[derive(Debug)]
+enum FormLoadError {
+    /// The document does not exist (or has been deleted) at the given path.
+    /// Treated as operator misconfiguration: the automation continues with
+    /// the remaining on_enter actions.
+    NotFound(String),
+    /// An underlying store/IO error occurred. The automation aborts so the
+    /// framework can retry the event.
+    Transient(anyhow::Error),
+    /// The document exists but its body is not a valid form. Aborts and
+    /// surfaces so an operator can fix the doc.
+    Malformed(anyhow::Error),
+}
+
 /// Look up a document by path and parse its body as a YAML [`Form`].
 /// This is the same wire format the CLI accepts via `--form`.
-async fn load_form_from_document(ctx: &AutomationContext<'_>, path: &str) -> anyhow::Result<Form> {
+async fn load_form_from_document(
+    ctx: &AutomationContext<'_>,
+    path: &str,
+) -> Result<Form, FormLoadError> {
     use crate::store::StoreError;
 
     let store = ctx.app_state.store();
     let doc_id = store
         .find_non_deleted_document_by_exact_path(path)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("no document at path '{path}'"))?;
+        .await
+        .map_err(|e| {
+            FormLoadError::Transient(anyhow::anyhow!("store error reading '{path}': {e}"))
+        })?
+        .ok_or_else(|| FormLoadError::NotFound(format!("no document at path '{path}'")))?;
     let doc = match store.get_document(&doc_id, false).await {
         Ok(versioned) => versioned.item,
         Err(StoreError::DocumentNotFound(_)) => {
-            return Err(anyhow::anyhow!("document '{path}' was deleted"));
+            return Err(FormLoadError::NotFound(format!(
+                "document '{path}' was deleted"
+            )));
         }
-        Err(err) => return Err(anyhow::anyhow!("store error reading '{path}': {err}")),
+        Err(err) => {
+            return Err(FormLoadError::Transient(anyhow::anyhow!(
+                "store error reading '{path}': {err}"
+            )));
+        }
     };
 
     let form: Form = serde_yaml_ng::from_str(&doc.body_markdown)
-        .map_err(|e| anyhow::anyhow!("form '{path}' is not valid YAML: {e}"))?;
+        .map_err(|e| FormLoadError::Malformed(anyhow::anyhow!("not valid YAML: {e}")))?;
     form.validate_field_keys()
-        .map_err(|e| anyhow::anyhow!("form '{path}' has invalid fields: {e}"))?;
+        .map_err(|e| FormLoadError::Malformed(anyhow::anyhow!("invalid fields: {e}")))?;
     Ok(form)
 }
 
@@ -636,5 +688,161 @@ mod tests {
             Some(Principal::Agent { ref name }) => assert_eq!(name.as_str(), "reviewer"),
             other => panic!("expected reviewer assignee; got {other:?}"),
         }
+    }
+
+    /// When `on_enter` has BOTH `assign_to` AND `attach_form`, the
+    /// automation must still rewrite the assignee even if the referenced
+    /// form document is missing — the alternative (silently dropping both
+    /// halves) is what shipped the in-review regression that motivated
+    /// this code path.
+    #[tokio::test]
+    async fn missing_form_still_applies_assign_to() {
+        let handles = test_utils::test_state_handles();
+        let agent = hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        test_utils::add_agent_with_name(&handles, "reviewer").await;
+
+        // Deliberately do NOT add the form document — the on_enter rule
+        // references `/forms/review.yaml`, which is absent.
+        let project_id = build_engineering_project(
+            &handles,
+            StatusOnEnter::new(
+                Some(Principal::Agent {
+                    name: agent.clone(),
+                }),
+                Some("/forms/review.yaml".parse().unwrap()),
+            ),
+        )
+        .await;
+
+        let mut issue = make_issue(IssueStatus::Open);
+        issue.project_id = Some(project_id);
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut transitioned = issue.clone();
+        transitioned.status = StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&issue_id, transitioned.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = issue_updated_event(issue_id.clone(), issue, transitioned);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation
+            .execute(&ctx)
+            .await
+            .expect("missing form should not abort the automation");
+
+        let stored = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .item;
+        match stored.assignee {
+            Some(Principal::Agent { ref name }) => assert_eq!(name.as_str(), "reviewer"),
+            other => panic!("expected reviewer assignee; got {other:?}"),
+        }
+        assert!(
+            stored.form.is_none(),
+            "missing form doc should leave issue.form unattached, got {:?}",
+            stored.form
+        );
+    }
+
+    /// A doc that exists but isn't a parseable form should surface as an
+    /// automation error so an operator notices.
+    #[tokio::test]
+    async fn malformed_form_returns_error() {
+        let handles = test_utils::test_state_handles();
+        test_utils::add_agent_with_name(&handles, "reviewer").await;
+
+        // Upload a doc at the form path whose body is not a valid form
+        // (missing `prompt`, missing `actions`).
+        let doc = Document {
+            title: "Broken form".to_string(),
+            body_markdown: "this: is: not: a form".to_string(),
+            path: Some("/forms/review.yaml".parse().unwrap()),
+            deleted: false,
+        };
+        handles
+            .store
+            .add_document(doc, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let agent = hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        let project_id = build_engineering_project(
+            &handles,
+            StatusOnEnter::new(
+                Some(Principal::Agent { name: agent }),
+                Some("/forms/review.yaml".parse().unwrap()),
+            ),
+        )
+        .await;
+
+        let mut issue = make_issue(IssueStatus::Open);
+        issue.project_id = Some(project_id);
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut transitioned = issue.clone();
+        transitioned.status = StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&issue_id, transitioned.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = issue_updated_event(issue_id.clone(), issue, transitioned);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        let err = automation
+            .execute(&ctx)
+            .await
+            .expect_err("malformed form should surface as an automation error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("malformed")
+                || msg.contains("not valid YAML")
+                || msg.contains("invalid fields"),
+            "expected malformed-form error, got: {msg}"
+        );
+    }
+
+    /// `/forms/review.yaml` (shipped under `tests/e2e/fixtures/forms/` and
+    /// seeded by `tests/e2e/run.sh`) must parse and validate as a `Form`.
+    /// This catches a broken fixture before the e2e harness boots.
+    #[test]
+    fn shipped_review_form_fixture_parses() {
+        let body = include_str!("../../../../tests/e2e/fixtures/forms/review.yaml");
+        let form: Form = serde_yaml_ng::from_str(body)
+            .expect("review.yaml fixture should deserialize as a Form");
+        form.validate_field_keys()
+            .expect("review.yaml fixture should have unique field keys");
+        assert!(
+            form.actions.iter().any(|a| a.id == "approve"),
+            "review form should declare an approve action"
+        );
+        assert!(
+            form.actions.iter().any(|a| a.id == "request_changes"),
+            "review form should declare a request_changes action"
+        );
     }
 }
