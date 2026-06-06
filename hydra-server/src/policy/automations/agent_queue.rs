@@ -10,17 +10,19 @@ use crate::{
     app::AppState,
     domain::{
         actors::ActorRef,
+        conversations::ConversationStatus,
         issues::{Issue, IssueDependencyType},
     },
-    store::{Status, StoreError},
+    store::{ReadOnlyStore, Status, StoreError},
 };
 use anyhow::Context;
 #[cfg(test)]
 use hydra_common::RepoName;
 use hydra_common::api::v1 as api;
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::projects::StatusKey;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
-use hydra_common::{IssueId, SessionId, VersionNumber};
+use hydra_common::{ConversationId, IssueId, SessionId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::str::FromStr;
@@ -40,6 +42,10 @@ pub(crate) enum SpawnResult {
     /// (PR-E §2.5: `build_task` no longer just builds a `Session` — it goes
     /// through `AppState::create_session`, which persists the row.)
     Spawned(SessionId),
+    /// A conversation was created in the store for an interactive-status
+    /// issue. The companion session is materialized asynchronously by
+    /// `SpawnConversationSessionsAutomation`.
+    SpawnedConversation(ConversationId),
     /// The issue was skipped (not eligible for spawning).
     Skipped,
     /// The spawn attempt retry cap has been exhausted for this issue.
@@ -56,9 +62,29 @@ impl SpawnResult {
         }
     }
 
-    /// Returns `true` if a session was spawned.
+    /// Returns the spawned conversation id, or `None` if the result is not
+    /// `SpawnedConversation`.
+    fn into_conversation_id(self) -> Option<ConversationId> {
+        match self {
+            SpawnResult::SpawnedConversation(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if anything was spawned (either a session or a
+    /// conversation). Existing headless-path tests use this as a coarse
+    /// "did the spawn succeed?" check; interactive-path tests pair it with
+    /// `into_conversation_id`.
     fn is_spawned(&self) -> bool {
-        matches!(self, SpawnResult::Spawned(_))
+        matches!(
+            self,
+            SpawnResult::Spawned(_) | SpawnResult::SpawnedConversation(_)
+        )
+    }
+
+    /// Returns `true` only if a `Conversation` was spawned (interactive branch).
+    fn is_spawned_conversation(&self) -> bool {
+        matches!(self, SpawnResult::SpawnedConversation(_))
     }
 }
 
@@ -83,7 +109,10 @@ impl AgentQueue {
         }
     }
 
-    async fn build_task(
+    /// Headless branch: build a `Session` for `issue` and persist it via
+    /// `AppState::create_session`. Used when the issue's resolved status
+    /// definition has `interactive: false`.
+    async fn build_session_task(
         &self,
         state: &AppState,
         issue_id: &IssueId,
@@ -144,6 +173,43 @@ impl AgentQueue {
             .context("failed to create session via AppState::create_session")?;
 
         Ok(Some(session_id))
+    }
+
+    /// Interactive branch: create a `Conversation` linked back to the issue.
+    /// The companion session is materialized asynchronously by
+    /// `SpawnConversationSessionsAutomation`, which inherits `spawned_from`
+    /// and stamps `HYDRA_ISSUE_ID` on the session env.
+    async fn build_conversation_task(
+        &self,
+        state: &AppState,
+        issue_id: &IssueId,
+        issue: &Issue,
+    ) -> anyhow::Result<Option<ConversationId>> {
+        let session_settings =
+            state.apply_session_settings_defaults(issue.session_settings.clone());
+
+        let agent_name = hydra_common::api::v1::agents::AgentName::try_new(self.agent.name.clone())
+            .with_context(|| {
+                format!("agent '{}' has invalid name in the store", self.agent.name)
+            })?;
+
+        let system_actor = ActorRef::System {
+            worker_name: "agent_queue".into(),
+            on_behalf_of: None,
+        };
+        let (conversation_id, _versioned) = state
+            .create_conversation(
+                None,
+                Some(agent_name),
+                session_settings,
+                Some(issue_id.clone()),
+                system_actor,
+                issue.creator.clone(),
+            )
+            .await
+            .context("failed to create conversation via AppState::create_conversation")?;
+
+        Ok(Some(conversation_id))
     }
 
     async fn register_spawn_attempt(
@@ -228,11 +294,19 @@ impl AgentQueue {
         let max_simultaneous = self.agent.max_simultaneous as usize;
         let at_capacity = max_simultaneous == 0 || active_tasks >= max_simultaneous;
         let has_active_session = task_state.existing_issue_ids.contains(issue_id);
+        let has_active_conv = has_active_conversation(state, issue_id).await?;
         let parent_running = parent_has_running_task(state, issue).await?;
 
-        // Feedback bypasses readiness and parent-running checks; capacity and
-        // active-session checks are always enforced.
-        if at_capacity || has_active_session || (!has_feedback && (!is_ready || parent_running)) {
+        // Feedback bypasses readiness and parent-running checks; capacity,
+        // active-session, and active-conversation checks are always enforced.
+        // The conversation gate is the sibling of `has_active_session`: it
+        // blocks any spawn (headless or interactive) when a live conversation
+        // already exists for this issue.
+        if at_capacity
+            || has_active_session
+            || has_active_conv
+            || (!has_feedback && (!is_ready || parent_running))
+        {
             return Ok(SpawnResult::Skipped);
         }
 
@@ -268,13 +342,60 @@ impl AgentQueue {
             });
         }
 
-        let maybe_session_id = self.build_task(state, issue_id, issue).await?;
+        // Dispatch on the resolved status's `interactive` flag. A non-
+        // interactive status (or an unresolvable status) runs the legacy
+        // headless branch; an interactive status mints a `Conversation`
+        // whose companion session is materialized asynchronously by
+        // `SpawnConversationSessionsAutomation`.
+        let interactive = match state.resolve_status(issue).await {
+            Ok(def) => def.interactive,
+            Err(err) => {
+                tracing::warn!(
+                    agent = self.agent.name,
+                    issue_id = %issue_id,
+                    status = %issue.status,
+                    error = %err,
+                    "failed to resolve issue status; defaulting to non-interactive headless branch"
+                );
+                false
+            }
+        };
+
+        if interactive {
+            let maybe_conversation_id =
+                self.build_conversation_task(state, issue_id, issue).await?;
+            let Some(conversation_id) = maybe_conversation_id else {
+                return Ok(SpawnResult::Skipped);
+            };
+            return Ok(SpawnResult::SpawnedConversation(conversation_id));
+        }
+
+        let maybe_session_id = self.build_session_task(state, issue_id, issue).await?;
         let Some(session_id) = maybe_session_id else {
             return Ok(SpawnResult::Skipped);
         };
 
         Ok(SpawnResult::Spawned(session_id))
     }
+}
+
+/// Returns `true` if a non-Closed (`Active` or `Idle`) conversation already
+/// exists for `issue_id`. Mirrors `has_active_session` but on the
+/// conversation domain; applies to both spawn branches so a live interactive
+/// conversation blocks a parallel headless spawn (and vice versa).
+pub(crate) async fn has_active_conversation(
+    state: &AppState,
+    issue_id: &IssueId,
+) -> Result<bool, StoreError> {
+    let query = SearchConversationsQuery {
+        spawned_from: Some(issue_id.clone()),
+        include_deleted: Some(false),
+        ..Default::default()
+    };
+    let conversations = state.store.list_conversations(&query).await?;
+    Ok(conversations
+        .iter()
+        .any(|(_, versioned)| versioned.item.status != ConversationStatus::Closed))
 }
 
 pub(crate) struct AgentTaskState {
@@ -2737,6 +2858,614 @@ mod tests {
             session_a.env_vars.get(AGENT_NAME_ENV_VAR),
             session_b.env_vars.get(AGENT_NAME_ENV_VAR),
             "AGENT_NAME env_var must match"
+        );
+
+        Ok(())
+    }
+
+    // ----- Interactive branch + has_active_conversation gate -----
+
+    /// Seed a project that declares one interactive status (`design-chat`)
+    /// alongside the headless `backlog` status, and return both keys.
+    async fn seed_interactive_project(
+        handles: &TestStateHandles,
+    ) -> (
+        hydra_common::ProjectId,
+        hydra_common::api::v1::projects::StatusKey,
+        hydra_common::api::v1::projects::StatusKey,
+    ) {
+        use hydra_common::api::v1::projects::{
+            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+        };
+        let interactive_key = StatusKey::try_new("design-chat").unwrap();
+        let backlog_key = StatusKey::try_new("backlog").unwrap();
+        let mut interactive_def = StatusDefinition::new(
+            interactive_key.clone(),
+            "Design Chat".to_string(),
+            IconKey::try_new("chat").unwrap(),
+            "#3498db".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        interactive_def.interactive = true;
+        let backlog_def = StatusDefinition::new(
+            backlog_key.clone(),
+            "Backlog".to_string(),
+            IconKey::try_new("list").unwrap(),
+            "#9b59b6".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        let project = ApiProject::new(
+            ProjectKey::try_new("engineering-v2").unwrap(),
+            "Engineering v2".to_string(),
+            vec![interactive_def, backlog_def],
+            backlog_key.clone(),
+            hydra_common::api::v1::users::Username::from("alice"),
+            false,
+        );
+        let (project_id, _) = handles
+            .store
+            .add_project(project, &ActorRef::test())
+            .await
+            .unwrap();
+        (project_id, interactive_key, backlog_key)
+    }
+
+    /// Build a ready issue bound to `project_id` in `status_key`, assigned
+    /// to `agent-a` and using the shared test repo.
+    fn interactive_issue(
+        project_id: &hydra_common::ProjectId,
+        status_key: &hydra_common::api::v1::projects::StatusKey,
+        repo_name: &RepoName,
+        description: &str,
+    ) -> Issue {
+        Issue {
+            issue_type: IssueType::Task,
+            title: "Test Title".to_string(),
+            description: description.to_string(),
+            creator: default_user(),
+            progress: String::new(),
+            status: status_key.clone(),
+            project_id: Some(project_id.clone()),
+            assignee: Some(test_agent_principal("agent-a")),
+            session_settings: session_settings(repo_name),
+            dependencies: vec![],
+            patches: Vec::new(),
+            deleted: false,
+            form: None,
+            form_response: None,
+            feedback: None,
+        }
+    }
+
+    /// Interactive status → AgentQueue creates a Conversation (linked back
+    /// via `spawned_from`), not a Session.
+    #[tokio::test]
+    async fn interactive_status_spawns_conversation_not_session() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, _backlog) = seed_interactive_project(&handles).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(
+                    &project_id,
+                    &interactive_key,
+                    &repo_name,
+                    "interactive flow",
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            result.is_spawned_conversation(),
+            "expected SpawnedConversation, got something else"
+        );
+        let conversation_id = result.into_conversation_id().unwrap();
+
+        // Conversation persisted with spawned_from = issue_id.
+        let conversation = handles
+            .state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await?
+            .item;
+        assert_eq!(conversation.spawned_from, Some(issue_id.clone()));
+        assert_eq!(conversation.creator.as_str(), default_user().as_str());
+        assert!(
+            conversation
+                .agent_name
+                .as_ref()
+                .is_some_and(|n| n.as_str() == "agent-a"),
+            "conversation agent_name should be agent-a"
+        );
+
+        // The interactive branch goes through `create_conversation` only;
+        // it does NOT also create a headless session itself.
+        let task_state_after = agent_task_state(&handles.state, "agent-a").await?;
+        assert!(
+            !task_state_after.existing_issue_ids.contains(&issue_id),
+            "interactive branch should not register a headless session for this issue \
+             via AGENT_NAME env var"
+        );
+
+        Ok(())
+    }
+
+    /// Headless (non-interactive) status → unchanged regression: still
+    /// goes through `create_session`, no conversation created.
+    #[tokio::test]
+    async fn non_interactive_status_spawns_session_no_conversation() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, _interactive, backlog_key) = seed_interactive_project(&handles).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &backlog_key, &repo_name, "headless flow"),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            result.is_spawned(),
+            "expected a spawn (headless branch) for non-interactive status"
+        );
+        assert!(
+            !result.is_spawned_conversation(),
+            "non-interactive status must take the headless branch, not the conversation branch"
+        );
+
+        // No conversation was created for this issue.
+        let q = SearchConversationsQuery {
+            spawned_from: Some(issue_id.clone()),
+            include_deleted: Some(false),
+            ..Default::default()
+        };
+        let convs = handles.state.store().list_conversations(&q).await?;
+        assert!(
+            convs.is_empty(),
+            "expected zero conversations for headless issue; got {}",
+            convs.len()
+        );
+
+        Ok(())
+    }
+
+    /// Live conversation linked to an interactive issue blocks any
+    /// further spawn (gate applies to the interactive branch).
+    #[tokio::test]
+    async fn has_active_conversation_blocks_interactive_spawn() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, _backlog) = seed_interactive_project(&handles).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &interactive_key, &repo_name, "guarded"),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // First spawn → conversation is created.
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let first = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(first.is_spawned_conversation());
+
+        // Second invocation → blocked by has_active_conversation gate.
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let second = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            !second.is_spawned(),
+            "second spawn must be Skipped while a live conversation exists"
+        );
+
+        Ok(())
+    }
+
+    /// Same gate, but the live conversation is `Idle` rather than `Active`.
+    /// Both pre-Closed statuses must block.
+    #[tokio::test]
+    async fn idle_linked_conversation_also_blocks_spawn() -> anyhow::Result<()> {
+        use crate::domain::conversations::Conversation;
+        use hydra_common::api::v1::agents::AgentName;
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, _backlog) = seed_interactive_project(&handles).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &interactive_key, &repo_name, "idle gate"),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Pre-seed an Idle conversation linked to the issue.
+        let idle_conv = Conversation {
+            title: None,
+            agent_name: Some(AgentName::try_new("agent-a").unwrap()),
+            status: ConversationStatus::Idle,
+            creator: default_user(),
+            session_settings: session_settings(&repo_name),
+            spawned_from: Some(issue_id.clone()),
+            deleted: false,
+        };
+        handles
+            .store
+            .add_conversation(idle_conv, &ActorRef::test())
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            !result.is_spawned(),
+            "Idle linked conversation must block further spawns"
+        );
+
+        Ok(())
+    }
+
+    /// If only Closed conversations exist for an issue, the gate is open
+    /// — a fresh conversation is allowed (subject to retry budget).
+    #[tokio::test]
+    async fn closed_only_conversations_do_not_block_spawn() -> anyhow::Result<()> {
+        use crate::domain::conversations::Conversation;
+        use hydra_common::api::v1::agents::AgentName;
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, _backlog) = seed_interactive_project(&handles).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &interactive_key, &repo_name, "closed only"),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let closed_conv = Conversation {
+            title: None,
+            agent_name: Some(AgentName::try_new("agent-a").unwrap()),
+            status: ConversationStatus::Closed,
+            creator: default_user(),
+            session_settings: session_settings(&repo_name),
+            spawned_from: Some(issue_id.clone()),
+            deleted: false,
+        };
+        handles
+            .store
+            .add_conversation(closed_conv, &ActorRef::test())
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            result.is_spawned_conversation(),
+            "Closed-only history must NOT block a fresh interactive spawn"
+        );
+
+        Ok(())
+    }
+
+    /// End-to-end (issue → conversation → session) wired through the live
+    /// automation runner. AgentQueue mints a `Conversation` for the
+    /// interactive issue; `SpawnConversationSessionsAutomation` reacts to
+    /// `ConversationCreated` and materialises a session inheriting the
+    /// `spawned_from` issue lineage and stamping both
+    /// `HYDRA_ISSUE_ID` and `HYDRA_CONVERSATION_ID` env vars. The patch
+    /// leg ("session produces a patch via POST /v1/patches") is already
+    /// covered by the headless path's existing integration tests and
+    /// reaches the same store-side reviewer/merger routing once the
+    /// session is in place.
+    #[tokio::test]
+    async fn interactive_chain_materializes_session_inheriting_issue_lineage() -> anyhow::Result<()>
+    {
+        use crate::app::test_helpers::{poll_until, start_test_automation_runner};
+        use hydra_common::api::v1::sessions::SearchSessionsQuery;
+        use hydra_common::constants::{ENV_HYDRA_CONVERSATION_ID, ENV_HYDRA_ISSUE_ID};
+        use std::time::Duration;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, _backlog) = seed_interactive_project(&handles).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &interactive_key, &repo_name, "e2e flow"),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Spawn the conversation manually (mirrors what
+        // `SpawnSessionsAutomation` does in the event loop). The
+        // returned ConversationCreated event flows into the live runner
+        // and triggers the downstream materialization.
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+
+        // Start the runner BEFORE the spawn so it subscribes to the bus
+        // in time to receive the ConversationCreated event.
+        let runner = start_test_automation_runner(&handles.state);
+
+        let spawn_result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let conversation_id = spawn_result
+            .into_conversation_id()
+            .expect("interactive status should mint a conversation");
+
+        let session = poll_until(Duration::from_secs(5), || async {
+            let sessions = handles
+                .state
+                .store()
+                .list_sessions(&SearchSessionsQuery::default())
+                .await
+                .ok()?;
+            sessions
+                .into_iter()
+                .filter_map(|(_, s)| {
+                    (s.item.conversation_id() == Some(&conversation_id)).then_some(s)
+                })
+                .max_by_key(|s| s.creation_time)
+        })
+        .await
+        .expect("expected SpawnConversationSessionsAutomation to materialize a session");
+        runner.shutdown().await;
+
+        let session = session.item;
+        assert_eq!(
+            session.spawned_from,
+            Some(issue_id.clone()),
+            "materialized session must inherit issue lineage from the conversation"
+        );
+        assert!(
+            session.mode.greet_user(),
+            "interactive-issue-backed conversation must set greet_user = true"
+        );
+        assert_eq!(
+            session.env_vars.get(ENV_HYDRA_ISSUE_ID),
+            Some(&issue_id.to_string()),
+            "session must carry HYDRA_ISSUE_ID"
+        );
+        assert_eq!(
+            session.env_vars.get(ENV_HYDRA_CONVERSATION_ID),
+            Some(&conversation_id.to_string()),
+            "session must carry HYDRA_CONVERSATION_ID"
+        );
+
+        Ok(())
+    }
+
+    /// Paired-mode uniformity: a fixture issue run through the headless
+    /// path and through the interactive path yields sessions whose
+    /// agent_config, mount_spec, image, cpu/memory limits, and secrets
+    /// match. The interactive path additionally carries
+    /// `HYDRA_CONVERSATION_ID` in env_vars and runs in `SessionMode::
+    /// Interactive`; both paths inherit `spawned_from = Some(issue_id)`
+    /// and carry `HYDRA_ISSUE_ID`. The surrounding routing pipeline
+    /// (patches, child-of edges, merge policy) is keyed off these
+    /// fields, so equal session content => equal downstream behaviour.
+    #[tokio::test]
+    async fn paired_mode_session_shapes_match_across_branches() -> anyhow::Result<()> {
+        use crate::app::test_helpers::{poll_until, start_test_automation_runner};
+        use hydra_common::api::v1::sessions::SearchSessionsQuery;
+        use hydra_common::constants::{ENV_HYDRA_CONVERSATION_ID, ENV_HYDRA_ISSUE_ID};
+        use std::time::Duration;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, backlog_key) = seed_interactive_project(&handles).await;
+
+        // Headless path: backlog status (non-interactive).
+        let (issue_id_a, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &backlog_key, &repo_name, "headless fixture"),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item_a = handles.store.get_issue(&issue_id_a, false).await?.item;
+        let result_a = queue
+            .spawn_for_issue(&handles.state, &issue_id_a, &issue_item_a, &task_state)
+            .await?;
+        let session_a_id = result_a
+            .into_session_id()
+            .expect("headless path should spawn a session");
+        let session_a = handles.state.get_session(&session_a_id).await?;
+
+        // Interactive path: design-chat status (interactive).
+        let (issue_id_b, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(
+                    &project_id,
+                    &interactive_key,
+                    &repo_name,
+                    "interactive fixture",
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let runner = start_test_automation_runner(&handles.state);
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item_b = handles.store.get_issue(&issue_id_b, false).await?.item;
+        let result_b = queue
+            .spawn_for_issue(&handles.state, &issue_id_b, &issue_item_b, &task_state)
+            .await?;
+        let conversation_id = result_b
+            .into_conversation_id()
+            .expect("interactive path should mint a conversation");
+        let session_b_versioned = poll_until(Duration::from_secs(5), || async {
+            let sessions = handles
+                .state
+                .store()
+                .list_sessions(&SearchSessionsQuery::default())
+                .await
+                .ok()?;
+            sessions
+                .into_iter()
+                .filter_map(|(_, s)| {
+                    (s.item.conversation_id() == Some(&conversation_id)).then_some(s)
+                })
+                .max_by_key(|s| s.creation_time)
+        })
+        .await
+        .expect("expected SpawnConversationSessionsAutomation to materialize a session");
+        runner.shutdown().await;
+        let session_b = session_b_versioned.item;
+
+        // Uniformity invariants — modulo per-branch differences:
+        //   * session_b.mode is Interactive (with greet_user = true) while
+        //     session_a.mode is Headless — different by design.
+        //   * session_b carries HYDRA_CONVERSATION_ID; session_a does not.
+        //   * spawned_from on both is the SAME LOGICAL VALUE (the parent
+        //     issue id), though the literal id differs because the two
+        //     paths use different fixture issues.
+        assert_eq!(
+            session_a.agent_config, session_b.agent_config,
+            "agent_config must match between headless and interactive paths"
+        );
+        assert_eq!(
+            session_a.mount_spec, session_b.mount_spec,
+            "mount_spec must match between headless and interactive paths"
+        );
+        assert_eq!(session_a.image, session_b.image, "image must match");
+        assert_eq!(
+            session_a.cpu_limit, session_b.cpu_limit,
+            "cpu_limit must match"
+        );
+        assert_eq!(
+            session_a.memory_limit, session_b.memory_limit,
+            "memory_limit must match"
+        );
+        assert_eq!(
+            session_a.secrets, session_b.secrets,
+            "secrets must match (both flows go through the same defaulting)"
+        );
+        assert_eq!(
+            session_a.spawned_from,
+            Some(issue_id_a),
+            "headless session must point at its source issue"
+        );
+        assert_eq!(
+            session_b.spawned_from,
+            Some(issue_id_b.clone()),
+            "interactive session must inherit the source issue from the conversation"
+        );
+        assert_eq!(
+            session_a.env_vars.get(ENV_HYDRA_ISSUE_ID),
+            session_a
+                .spawned_from
+                .as_ref()
+                .map(|id| id.to_string())
+                .as_ref(),
+            "headless HYDRA_ISSUE_ID must match spawned_from"
+        );
+        assert_eq!(
+            session_b.env_vars.get(ENV_HYDRA_ISSUE_ID),
+            session_b
+                .spawned_from
+                .as_ref()
+                .map(|id| id.to_string())
+                .as_ref(),
+            "interactive HYDRA_ISSUE_ID must match spawned_from"
+        );
+        assert!(
+            !session_a.env_vars.contains_key(ENV_HYDRA_CONVERSATION_ID),
+            "headless session must NOT carry HYDRA_CONVERSATION_ID"
+        );
+        assert_eq!(
+            session_b.env_vars.get(ENV_HYDRA_CONVERSATION_ID),
+            Some(&conversation_id.to_string()),
+            "interactive session must carry HYDRA_CONVERSATION_ID"
+        );
+
+        Ok(())
+    }
+
+    /// Retry budget bounds conversations too — after `max_tries` attempts
+    /// for the same `(issue_id, status, children_snapshot, feedback)`
+    /// scope key, the queue returns `RetriesExhausted`.
+    #[tokio::test]
+    async fn interactive_branch_respects_retry_budget() -> anyhow::Result<()> {
+        let mut queue = queue("agent-a");
+        queue.agent.max_tries = 1;
+
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, _backlog) = seed_interactive_project(&handles).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &interactive_key, &repo_name, "retry budget"),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        // Attempt 1 of 1 — succeeds.
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let first = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let conversation_id = first.into_conversation_id().unwrap();
+
+        // Close the seeded conversation so the active-conversation gate is
+        // open again, leaving only the retry budget to enforce.
+        handles
+            .state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        // Attempt 2 — exhausted: budget reaches its cap before we hit the
+        // dispatch.
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            matches!(result, SpawnResult::RetriesExhausted { .. }),
+            "expected RetriesExhausted on the second interactive attempt"
         );
 
         Ok(())

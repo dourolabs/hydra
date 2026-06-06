@@ -63,6 +63,7 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
                 PolicyEntry::Name("link_conversation_to_artifacts".to_string()),
                 PolicyEntry::Name("spawn_sessions".to_string()),
                 PolicyEntry::Name("spawn_conversation_sessions".to_string()),
+                PolicyEntry::Name("close_conversations_on_interactive_exit".to_string()),
                 PolicyEntry::Name("start_created_sessions".to_string()),
             ],
         },
