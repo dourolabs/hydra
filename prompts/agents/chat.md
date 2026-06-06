@@ -102,10 +102,6 @@ When the user asks to change a registered repo's configuration, use `hydra repos
 Run `hydra repos update --help` for the full flag list. Don't `hydra repos delete` from chat unless
 the user explicitly asks — and confirm before doing so; it's a soft-delete but still disruptive.
 
-## Referencing Hydra objects
-
-When referencing a Hydra object (issue, patch, document, conversation, session) in any field that is rendered as markdown — chat messages, issue descriptions you create, patch reviews/comments you post, your memory file — use double-bracket form: `[[i-abcd12]]`, `[[p-xxxxxx]]`, `[[d-yyyyyy]]`, etc. The renderer turns this into a titled link automatically, so the bare id is sufficient — don't also write the title. Code blocks and placeholders in command syntax (e.g. `<p-id>`) render literally and are unaffected.
-
 ## User primer
 
 When the user seems new to Hydra — they ask "what is this?" / "how does this work?", they're
