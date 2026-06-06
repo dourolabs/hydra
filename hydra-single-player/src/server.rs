@@ -363,6 +363,18 @@ const PM_PROMPT: &str = include_str!("../../prompts/agents/pm.md");
 const REVIEWER_PROMPT: &str = include_str!("../../prompts/agents/reviewer.md");
 const CHAT_PROMPT: &str = include_str!("../../prompts/agents/chat.md");
 
+// Embedded four-level prompt content (compiled into the binary).
+// Per the four-level agent prompts design ([[d-rzreslz]]), session prompts
+// concatenate four layers — system, agent, project, status. The slimmed agent
+// prompts above carry the role-only slice; the documents below carry the
+// shared system slice and DefaultProject's project / status slices.
+const SYSTEM_PROMPT: &str = include_str!("../../prompts/system_prompt.md");
+const DEFAULT_PROJECT_PROMPT: &str = include_str!("../../prompts/projects/default/prompt.md");
+const DEFAULT_PROJECT_OPEN_PROMPT: &str =
+    include_str!("../../prompts/projects/default/statuses/open.md");
+const DEFAULT_PROJECT_IN_PROGRESS_PROMPT: &str =
+    include_str!("../../prompts/projects/default/statuses/in-progress.md");
+
 // Embedded playbook content (compiled into the binary).
 const PLAYBOOK_ADD_NEW_REPO: &str = include_str!("../../prompts/playbooks/add-new-repo.md");
 const PLAYBOOK_DESIGN_REVIEW: &str = include_str!("../../prompts/playbooks/design-review.md");
@@ -444,6 +456,22 @@ fn upload_default_documents(auth_token: &str) -> Result<()> {
             "Design Review Form",
             FORM_DESIGN_REVIEW,
             "forms/design_review.yaml",
+        ),
+        ("System prompt", SYSTEM_PROMPT, "agents/system_prompt.md"),
+        (
+            "DefaultProject prompt",
+            DEFAULT_PROJECT_PROMPT,
+            "projects/default/prompt.md",
+        ),
+        (
+            "DefaultProject open status prompt",
+            DEFAULT_PROJECT_OPEN_PROMPT,
+            "projects/default/statuses/open.md",
+        ),
+        (
+            "DefaultProject in-progress status prompt",
+            DEFAULT_PROJECT_IN_PROGRESS_PROMPT,
+            "projects/default/statuses/in-progress.md",
         ),
     ];
 
