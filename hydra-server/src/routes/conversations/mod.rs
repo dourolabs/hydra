@@ -14,6 +14,8 @@ use hydra_common::{
 };
 use tracing::{error, info};
 
+pub mod proxy_auth;
+
 #[derive(Debug, Clone)]
 pub struct ConversationIdPath(pub ConversationId);
 

@@ -285,7 +285,10 @@ pub async fn spawn_test_server_with_state(
     seed_default_conversation_agent(store.as_ref()).await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let app = crate::build_router(&state).with_state(state.clone());
+    // `build_app` composes the main API router with the proxy-subdomain
+    // router via host-based dispatch — so e2e tests covering the proxy
+    // flow exercise the same wiring as production.
+    let app = crate::build_app(state.clone());
     let handle = tokio::spawn(async move { run_with_state(state, listener, app).await });
     let server = TestServer {
         address: addr.to_string(),

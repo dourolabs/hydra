@@ -13,6 +13,7 @@ pub mod login;
 pub mod merge_queues;
 pub mod patches;
 pub mod projects;
+pub mod proxy;
 pub mod relations;
 pub mod repositories;
 pub mod secrets;

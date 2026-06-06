@@ -11,8 +11,14 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use super::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use super::{
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+    proxy_http_to_upstream, proxy_ws_to_upstream,
+};
 use crate::domain::actors::Actor;
+use axum::body::Body;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::http::{Request, Response};
 
 /// How long completed/failed process entries are kept before being reaped.
 const COMPLETED_PROCESS_TTL: TimeDelta = TimeDelta::hours(1);
@@ -515,6 +521,40 @@ impl JobEngine for LocalJobEngine {
         info!(hydra_id = %hydra_id, pid = ?pid, "local subprocess killed");
 
         Ok(())
+    }
+
+    /// The in-process engine has no container or pod boundary; user-advertised
+    /// ports live on `127.0.0.1` of the host.
+    async fn proxy_http(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        req: Request<Body>,
+    ) -> Result<Response<Body>, ProxyError> {
+        if !self.processes.contains_key(session_id) {
+            return Err(ProxyError::Unreachable(format!(
+                "session '{session_id}' is not tracked by the local job engine"
+            )));
+        }
+        proxy_http_to_upstream("127.0.0.1", port, req).await
+    }
+
+    async fn proxy_ws(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        upgrade: WebSocketUpgrade,
+    ) -> Result<Response<Body>, ProxyError> {
+        if !self.processes.contains_key(session_id) {
+            return Err(ProxyError::Unreachable(format!(
+                "session '{session_id}' is not tracked by the local job engine"
+            )));
+        }
+        // `WebSocketUpgrade` doesn't expose the upgrade-bearing request's
+        // path, so we forward at `/`. Dev-server WS endpoints (Vite, Next)
+        // are root-mounted; agents using a non-root WS path can adjust
+        // their dev server.
+        proxy_ws_to_upstream("127.0.0.1", port, "/", upgrade).await
     }
 }
 

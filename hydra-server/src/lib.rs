@@ -8,6 +8,7 @@ pub mod ee;
 pub mod job_engine;
 pub mod merge_queue;
 pub mod policy;
+pub mod proxy;
 pub mod routes;
 pub mod store;
 
@@ -397,6 +398,14 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/sessions/:session_id/proxy-targets/:port",
             axum::routing::delete(routes::sessions::proxy_targets::delete_proxy_target),
         )
+        .route(
+            "/v1/sessions/:session_id/proxy-auth",
+            post(routes::sessions::proxy_auth::mint_session_proxy_auth),
+        )
+        .route(
+            "/v1/conversations/:conversation_id/proxy-auth",
+            post(routes::conversations::proxy_auth::mint_conversation_proxy_auth),
+        )
         .route("/v1/whoami", get(routes::whoami::whoami))
         .route("/v1/users", get(routes::users::list_users))
         .route("/v1/users/:username", get(routes::users::get_user))
@@ -462,6 +471,86 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
     Router::new().merge(public_routes).merge(protected_routes)
 }
 
+/// Build the standalone proxy subdomain router. Wired separately from
+/// `build_router` so the two trees share no middleware — the main API's
+/// Bearer-only auth invariant stays enforced.
+pub fn build_proxy_router() -> Router<AppState> {
+    routes::proxy::build_router()
+}
+
+/// Compose the main API router and the proxy subdomain router into a
+/// single tower service that dispatches per request based on the
+/// `Host` header. Hosts matching `*.<proxy_host>` (e.g.
+/// `3000-c-abc.proxy.localhost`) go to the proxy router; everything
+/// else goes to the main API router.
+pub fn build_app(state: AppState) -> Router {
+    let proxy_suffix = state.config.hydra.proxy_host.clone();
+    let main = build_router(&state).with_state(state.clone());
+    let proxy = build_proxy_router().with_state(state);
+    Router::new().fallback_service(host_dispatch::HostDispatch::new(main, proxy, proxy_suffix))
+}
+
+mod host_dispatch {
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, header},
+        response::Response,
+    };
+    use std::{
+        convert::Infallible,
+        future::Future,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use tower::Service;
+
+    /// Tower service that picks between two routers based on the
+    /// inbound `Host` header.
+    #[derive(Clone)]
+    pub struct HostDispatch {
+        main: Router,
+        proxy: Router,
+        proxy_suffix: String,
+    }
+
+    impl HostDispatch {
+        pub fn new(main: Router, proxy: Router, proxy_suffix: String) -> Self {
+            Self {
+                main,
+                proxy,
+                proxy_suffix,
+            }
+        }
+    }
+
+    impl Service<Request<Body>> for HostDispatch {
+        type Response = Response;
+        type Error = Infallible;
+        type Future = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send + 'static>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: Request<Body>) -> Self::Future {
+            let host = req
+                .headers()
+                .get(header::HOST)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            let mut target = if crate::routes::proxy::host_matches_proxy(&host, &self.proxy_suffix)
+            {
+                self.proxy.clone()
+            } else {
+                self.main.clone()
+            };
+            Box::pin(async move { target.call(req).await })
+        }
+    }
+}
+
 pub async fn run_with_state(
     state: AppState,
     listener: tokio::net::TcpListener,
@@ -497,7 +586,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let state = build_app_state(app_config).await?;
 
-    let app = build_router(&state).with_state(state.clone());
+    let app = build_app(state.clone());
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
 
     run_with_state(state, listener, app).await
