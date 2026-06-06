@@ -10,6 +10,7 @@ import type {
   Repository,
   AgentRecord,
   Conversation,
+  Project,
   SessionEvent,
   Trigger,
   UserSummary,
@@ -73,6 +74,7 @@ interface SeedData {
   session_events?: Record<string, SessionEvent[]>;
   triggers?: Record<string, TriggerFixture>;
   relations?: RelationSeed[];
+  projects?: Record<string, Project>;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -238,10 +240,17 @@ export function loadSeedData(store: Store): void {
     }
   }
 
+  if (seed.projects) {
+    for (const [id, project] of Object.entries(seed.projects)) {
+      store.create<Project>("projects", id, project, null);
+    }
+  }
+
   const labelCount = seed.labels ? Object.keys(seed.labels).length : 0;
   const conversationCount = seed.conversations ? Object.keys(seed.conversations).length : 0;
   const triggerCount = seed.triggers ? Object.keys(seed.triggers).length : 0;
   const relationCount = seed.relations ? seed.relations.length : 0;
+  const projectCount = seed.projects ? Object.keys(seed.projects).length : 0;
   console.log(
     `Seed data loaded: ${Object.keys(seed.issues).length} issues, ` +
     `${Object.keys(seed.sessions).length} sessions, ` +
@@ -253,6 +262,7 @@ export function loadSeedData(store: Store): void {
     `${conversationCount} conversations, ` +
     `${sessionEventCount} session events, ` +
     `${triggerCount} triggers, ` +
-    `${relationCount} relations`,
+    `${relationCount} relations, ` +
+    `${projectCount} projects`,
   );
 }

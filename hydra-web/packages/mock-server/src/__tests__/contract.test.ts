@@ -1281,6 +1281,140 @@ describe("Seed data", () => {
       expect(typeof rel.created_at).toBe("string");
     }
   });
+
+  it("seed projects include bespoke engineering-v2 with six ordered statuses", async () => {
+    const list = await client.listProjects();
+    expect(list.projects.length).toBeGreaterThanOrEqual(1);
+
+    const engv2 = list.projects.find((p) => p.project.key === "engineering-v2");
+    expect(engv2).toBeDefined();
+    expect(engv2!.project_id).toBe("j-engv2");
+    expect(engv2!.project.name).toBe("Engineering v2");
+    expect(engv2!.project.default_status_key).toBe("inbox");
+    expect(engv2!.project.prompt_path).toBe("/projects/engineering-v2/prompt.md");
+
+    const statusKeys = engv2!.project.statuses.map((s) => s.key);
+    expect(statusKeys).toEqual([
+      "inbox",
+      "backlog",
+      "pending",
+      "in-development",
+      "in-review",
+      "pending-release",
+    ]);
+
+    // Status definitions for statuses with on_enter carry per-status prompts.
+    const backlog = engv2!.project.statuses.find((s) => s.key === "backlog")!;
+    expect(backlog.on_enter).toEqual({
+      assign_to: { Agent: { name: "pm" } },
+      attach_form: null,
+    });
+    expect(backlog.prompt_path).toBe("/projects/engineering-v2/statuses/backlog.md");
+
+    const inReview = engv2!.project.statuses.find((s) => s.key === "in-review")!;
+    expect(inReview.on_enter).toEqual({
+      assign_to: { Agent: { name: "reviewer" } },
+      attach_form: "/forms/review.yaml",
+    });
+
+    // Terminal-for-dependencies status flips both unblocks_* flags.
+    const release = engv2!.project.statuses.find((s) => s.key === "pending-release")!;
+    expect(release.unblocks_parents).toBe(true);
+    expect(release.unblocks_dependents).toBe(true);
+    expect(release.cascades_to_children).toBe(false);
+  });
+
+  it("GET /v1/projects/:id/statuses returns engineering-v2 status list", async () => {
+    const resp = await client.getProjectStatuses("j-engv2");
+    expect(resp.default_status_key).toBe("inbox");
+    expect(resp.statuses.map((s) => s.key)).toEqual([
+      "inbox",
+      "backlog",
+      "pending",
+      "in-development",
+      "in-review",
+      "pending-release",
+    ]);
+  });
+
+  it("seed issues with project_id round-trip resolved_status through GET /v1/issues/:id", async () => {
+    // i-seed00018 was seeded with project_id=j-engv2 and resolved_status for
+    // `in-review` (icon=eye, color=#8b5cf6). Both fields must survive the
+    // fixture → store → wire round trip so the frontend can render the
+    // project-specific status badge without a second round trip.
+    const inReview = await client.getIssue("i-seed00018");
+    expect(inReview.issue.project_id).toBe("j-engv2");
+    expect(inReview.issue.status).toBe("in-review");
+    expect(inReview.issue.resolved_status).toMatchObject({
+      key: "in-review",
+      label: "In review",
+      icon: "eye",
+      color: "#8b5cf6",
+      unblocks_parents: false,
+      unblocks_dependents: false,
+      cascades_to_children: false,
+    });
+
+    const inDevelopment = await client.getIssue("i-seed00012");
+    expect(inDevelopment.issue.project_id).toBe("j-engv2");
+    expect(inDevelopment.issue.status).toBe("in-development");
+    expect(inDevelopment.issue.resolved_status?.key).toBe("in-development");
+
+    // Spread coverage: at least four distinct status keys across the
+    // project_id-tagged seed issues, so the issues list renders varied chips.
+    const list = await client.listIssues({ limit: 100 });
+    const taggedKeys = new Set<string>();
+    for (const item of list.issues) {
+      const summary = await client.getIssue(item.issue_id);
+      if (summary.issue.project_id === "j-engv2") {
+        taggedKeys.add(summary.issue.status);
+      }
+    }
+    expect(taggedKeys.size).toBeGreaterThanOrEqual(4);
+  });
+
+  it("issues without project_id still resolve through the DefaultProject mapping", async () => {
+    // i-seed00001 was not modified, so it has neither project_id nor
+    // resolved_status — the frontend falls back to DefaultProject (synthesized
+    // by /v1/projects/default/statuses).
+    const seed1 = await client.getIssue("i-seed00001");
+    expect(seed1.issue.project_id ?? null).toBeNull();
+    expect(seed1.issue.resolved_status ?? null).toBeNull();
+  });
+
+  it("seed documents include all four prompt levels", async () => {
+    // System prompt.
+    const sys = await client.getDocumentByPath("/agents/system_prompt.md");
+    expect(sys.document.title).toBe("System prompt");
+    expect(sys.document.body_markdown).toContain("hydra issues");
+
+    // DefaultProject prompt + statuses.
+    const defaultProj = await client.listDocuments({
+      path_prefix: "/projects/default",
+    });
+    const defaultPaths = defaultProj.documents.map((d) => d.document.path);
+    expect(defaultPaths).toEqual(
+      expect.arrayContaining([
+        "/projects/default/prompt.md",
+        "/projects/default/statuses/open.md",
+        "/projects/default/statuses/in-progress.md",
+      ]),
+    );
+
+    // Bespoke project prompt + per-status prompts.
+    const engv2Prompts = await client.listDocuments({
+      path_prefix: "/projects/engineering-v2",
+    });
+    const engv2Paths = engv2Prompts.documents.map((d) => d.document.path);
+    expect(engv2Paths).toEqual(
+      expect.arrayContaining([
+        "/projects/engineering-v2/prompt.md",
+        "/projects/engineering-v2/statuses/backlog.md",
+        "/projects/engineering-v2/statuses/in-development.md",
+        "/projects/engineering-v2/statuses/in-review.md",
+      ]),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
