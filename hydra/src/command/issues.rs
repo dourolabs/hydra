@@ -19,8 +19,8 @@ use hydra_common::{
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueId, IssueStatus, IssueSummaryRecord,
-        IssueType, IssueVersionRecord, SearchIssuesQuery, SessionSettings, SubmitFormRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueId, IssueSummaryRecord, IssueType,
+        IssueVersionRecord, SearchIssuesQuery, SessionSettings, SubmitFormRequest,
         UpsertIssueRequest,
     },
     principal::{Principal, PrincipalParseError},
@@ -72,9 +72,17 @@ pub enum IssueCommands {
         #[arg(long, value_name = "ISSUE_TYPE")]
         r#type: Option<IssueType>,
 
-        /// Filter by issue status.
-        #[arg(long, value_name = "ISSUE_STATUS")]
-        status: Option<IssueStatus>,
+        /// Filter by issue status key (comma-separated). Accepts any
+        /// status key declared by an issue's project — `open`,
+        /// `in-progress`, `closed`, `dropped`, `failed` for the default
+        /// project, plus bespoke per-project keys (e.g. `inbox`, `triage`).
+        #[arg(long, value_name = "STATUS_KEY", value_delimiter = ',')]
+        status: Vec<StatusKey>,
+
+        /// Scope results to a single project by id or key (e.g.
+        /// `j-engineering` or `engineering-v2`).
+        #[arg(long, value_name = "PROJECT_ID_OR_KEY")]
+        project: Option<ProjectRef>,
 
         /// Filter by assignee. Requires the full canonical path form:
         /// `users/<name>`, `agents/<name>`, or `external/<system>/<name>`.
@@ -404,17 +412,23 @@ pub async fn run(
             id,
             r#type,
             status,
+            project,
             assignee,
             query,
             labels,
             include_deleted,
         } => {
             let label_ids = resolve_label_names_to_ids(client, &labels).await?;
+            let project_id = match project {
+                Some(reference) => Some(reference.resolve(client).await?),
+                None => None,
+            };
             let issues = fetch_issues(
                 client,
                 id,
                 r#type,
                 status,
+                project_id,
                 assignee,
                 query,
                 label_ids,
@@ -612,7 +626,8 @@ async fn fetch_issues(
     client: &dyn HydraClientInterface,
     id: Option<IssueId>,
     issue_type: Option<IssueType>,
-    status: Option<IssueStatus>,
+    status: Vec<StatusKey>,
+    project_id: Option<ProjectId>,
     assignee: Option<Principal>,
     query: Option<String>,
     label_ids: Vec<LabelId>,
@@ -629,9 +644,12 @@ async fn fetch_issues(
                 bail!("Issue '{issue_id}' does not match the requested type.");
             }
         }
-        if let Some(expected_status) = status {
-            if record.issue.status.as_str() != expected_status.as_str() {
-                bail!("Issue '{issue_id}' does not match the requested status.");
+        if !status.is_empty() && !status.iter().any(|s| s == &record.issue.status) {
+            bail!("Issue '{issue_id}' does not match the requested status.");
+        }
+        if let Some(ref expected_project) = project_id {
+            if record.issue.project_id.as_ref() != Some(expected_project) {
+                bail!("Issue '{issue_id}' does not belong to project {expected_project}.");
             }
         }
         if let Some(ref expected_assignee) = assignee {
@@ -656,11 +674,12 @@ async fn fetch_issues(
     let include_deleted_opt = if include_deleted { Some(true) } else { None };
     let mut search_query = SearchIssuesQuery::new(
         issue_type,
-        status.into_iter().collect(),
+        status.clone(),
         assignee.clone(),
         trimmed_query,
         include_deleted_opt,
     );
+    search_query.project_id = project_id.clone();
     search_query.label_ids = label_ids;
     let issues = client
         .list_issues(&search_query)
@@ -677,10 +696,16 @@ async fn fetch_issues(
                 );
             }
         }
-        if let Some(expected_status) = status {
-            if issue.issue.status.as_str() != expected_status.as_str() {
+        if !status.is_empty() && !status.iter().any(|s| s == &issue.issue.status) {
+            bail!(
+                "Issue {} does not match the requested status.",
+                issue.issue_id
+            );
+        }
+        if let Some(ref expected_project) = project_id {
+            if issue.issue.project_id.as_ref() != Some(expected_project) {
                 bail!(
-                    "Issue {} does not match the requested status.",
+                    "Issue {} does not belong to project {expected_project}.",
                     issue.issue_id
                 );
             }
@@ -1324,8 +1349,8 @@ mod tests {
     use chrono::Utc;
     use httpmock::prelude::*;
     use hydra_common::issues::{
-        Issue, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse, SessionSettings,
-        UpsertIssueRequest, UpsertIssueResponse,
+        Issue, IssueStatus, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse,
+        SessionSettings, UpsertIssueRequest, UpsertIssueResponse,
     };
     use hydra_common::{users::Username, PatchId, RepoName};
     use reqwest::Client as HttpClient;
@@ -1448,7 +1473,8 @@ mod tests {
             &client,
             None,
             Some(IssueType::Bug),
-            Some(IssueStatus::Open),
+            vec![IssueStatus::Open.into()],
+            None,
             None,
             Some("bug".into()),
             Vec::new(),
@@ -1514,7 +1540,8 @@ mod tests {
             &client,
             Some(issue_id.clone()),
             Some(IssueType::Task),
-            Some(IssueStatus::InProgress),
+            vec![IssueStatus::InProgress.into()],
+            None,
             None,
             None,
             Vec::new(),
@@ -1570,6 +1597,7 @@ mod tests {
             &client,
             None,
             None,
+            Vec::new(),
             None,
             Some(user_principal("owner-a")),
             None,
@@ -3014,6 +3042,7 @@ mod tests {
             &client,
             None,
             None,
+            Vec::new(),
             None,
             None,
             None,
@@ -3025,6 +3054,135 @@ mod tests {
 
         list_mock.assert();
         assert!(issues.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_issues_passes_status_key_filter() {
+        // Comma-separated status keys pass through to the wire
+        // `?status=inbox,triage` query unchanged.
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let issues_response = ListIssuesResponse::new(vec![]);
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("status", "inbox,triage");
+            then.status(200).json_body_obj(&issues_response);
+        });
+
+        let issues = fetch_issues(
+            &client,
+            None,
+            None,
+            vec![
+                StatusKey::try_new("inbox").unwrap(),
+                StatusKey::try_new("triage").unwrap(),
+            ],
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+        assert!(issues.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_issues_passes_project_id_filter() {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let issues_response = ListIssuesResponse::new(vec![]);
+        let project_id = ProjectId::new();
+        let list_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/v1/issues")
+                .query_param("project_id", project_id.as_ref());
+            then.status(200).json_body_obj(&issues_response);
+        });
+
+        let issues = fetch_issues(
+            &client,
+            None,
+            None,
+            Vec::new(),
+            Some(project_id),
+            None,
+            None,
+            Vec::new(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        list_mock.assert();
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn list_command_parses_multi_status_keys_and_project_key() {
+        // `hydra issues list --status inbox,in-progress --project engineering-v2`
+        // must parse cleanly: status values are comma-split into StatusKey
+        // entries, and the project token is resolved as a ProjectKey (since
+        // it's not a valid ProjectId).
+        use crate::cli::Cli;
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "hydra",
+            "issues",
+            "list",
+            "--status",
+            "inbox,in-progress",
+            "--project",
+            "engineering-v2",
+        ])
+        .expect("CLI should parse");
+        match cli.command.expect("subcommand must be present") {
+            crate::cli::Commands::Issues { command } => match command {
+                IssueCommands::List {
+                    status, project, ..
+                } => {
+                    assert_eq!(
+                        status,
+                        vec![
+                            StatusKey::try_new("inbox").unwrap(),
+                            StatusKey::try_new("in-progress").unwrap(),
+                        ]
+                    );
+                    let project = project.expect("project flag should parse");
+                    match project {
+                        crate::command::projects::ProjectRef::Key(key) => {
+                            assert_eq!(key.as_str(), "engineering-v2");
+                        }
+                        other => panic!("expected ProjectRef::Key, got {other:?}"),
+                    }
+                }
+                _ => panic!("expected IssueCommands::List"),
+            },
+            _ => panic!("expected Commands::Issues"),
+        }
+    }
+
+    #[test]
+    fn list_command_rejects_invalid_status_key() {
+        // Uppercase characters and spaces are not valid StatusKey input;
+        // the wire deserialize side enforces lowercase ASCII + digits + `-`,
+        // and the CLI matches.
+        use crate::cli::Cli;
+        use clap::Parser;
+        let result = Cli::try_parse_from(["hydra", "issues", "list", "--status", "Bad Status"]);
+        let err = match result {
+            Ok(_) => panic!("malformed status key should be rejected"),
+            Err(err) => err,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--status"),
+            "expected --status in error: {msg}"
+        );
     }
 
     fn sample_submit_form_response() -> hydra_common::issues::SubmitFormResponse {

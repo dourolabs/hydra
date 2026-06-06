@@ -526,6 +526,12 @@ pub struct SearchIssuesQuery {
     pub ids: Vec<IssueId>,
     #[serde(default)]
     pub issue_type: Option<IssueType>,
+    /// Comma-separated list of [`StatusKey`] strings to filter on.
+    ///
+    /// `StatusKey` is a transparent string newtype, so the five legacy
+    /// `IssueStatus` strings (`open`, `in-progress`, `closed`, `dropped`,
+    /// `failed`) and per-project keys (e.g. `inbox`, `triage`) share the
+    /// same wire shape.
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -533,7 +539,10 @@ pub struct SearchIssuesQuery {
         deserialize_with = "deserialize_comma_separated"
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
-    pub status: Vec<IssueStatus>,
+    pub status: Vec<StatusKey>,
+    /// Scope results to a specific project. Omit to span all projects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
     #[serde(
         default,
         serialize_with = "serialize_option_principal_path",
@@ -571,7 +580,7 @@ pub struct SearchIssuesQuery {
 impl SearchIssuesQuery {
     pub fn new(
         issue_type: Option<IssueType>,
-        status: Vec<IssueStatus>,
+        status: Vec<StatusKey>,
         assignee: Option<Principal>,
         q: Option<String>,
         include_deleted: Option<bool>,
@@ -580,6 +589,7 @@ impl SearchIssuesQuery {
             ids: Vec::new(),
             issue_type,
             status,
+            project_id: None,
             assignee,
             creator: None,
             q,
@@ -842,7 +852,8 @@ mod tests {
         let query = SearchIssuesQuery {
             ids: vec![],
             issue_type: Some(IssueType::Bug),
-            status: vec![IssueStatus::Open],
+            status: vec![status_key("open")],
+            project_id: None,
             assignee: Some(Principal::User {
                 name: Username::from("alice"),
             }),
@@ -898,7 +909,7 @@ mod tests {
     #[test]
     fn search_issues_query_serializes_multi_status() {
         let query = SearchIssuesQuery {
-            status: vec![IssueStatus::Open, IssueStatus::InProgress],
+            status: vec![status_key("open"), status_key("in-progress")],
             ..SearchIssuesQuery::default()
         };
 
@@ -921,6 +932,78 @@ mod tests {
             !params.contains_key("status"),
             "empty status vec should be omitted from serialization"
         );
+    }
+
+    #[test]
+    fn search_issues_query_serializes_status_key_byte_identical_to_legacy() {
+        // Wire-contract check (option A): the on-the-wire string for the
+        // five legacy enum values must be unchanged after the
+        // `Vec<IssueStatus>` -> `Vec<StatusKey>` retype.
+        let query = SearchIssuesQuery {
+            status: vec![
+                status_key("open"),
+                status_key("in-progress"),
+                status_key("closed"),
+                status_key("dropped"),
+                status_key("failed"),
+            ],
+            ..SearchIssuesQuery::default()
+        };
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("status").map(String::as_str),
+            Some("open,in-progress,closed,dropped,failed")
+        );
+    }
+
+    #[test]
+    fn search_issues_query_deserializes_per_project_status_key() {
+        let query: SearchIssuesQuery = serde_urlencoded::from_str("status=inbox").unwrap();
+        assert_eq!(query.status, vec![status_key("inbox")]);
+    }
+
+    #[test]
+    fn search_issues_query_deserializes_mixed_legacy_and_project_status_keys() {
+        let query: SearchIssuesQuery =
+            serde_urlencoded::from_str("status=open%2Cin-progress%2Cinbox").unwrap();
+        assert_eq!(
+            query.status,
+            vec![
+                status_key("open"),
+                status_key("in-progress"),
+                status_key("inbox"),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_issues_query_serializes_project_id() {
+        let project_id: ProjectId = "j-engr".parse().unwrap();
+        let query = SearchIssuesQuery {
+            project_id: Some(project_id),
+            ..SearchIssuesQuery::default()
+        };
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(params.get("project_id").map(String::as_str), Some("j-engr"));
+    }
+
+    #[test]
+    fn search_issues_query_deserializes_project_id() {
+        let query: SearchIssuesQuery = serde_urlencoded::from_str("project_id=j-engr").unwrap();
+        assert_eq!(
+            query.project_id.as_ref().map(|p| p.as_ref()),
+            Some("j-engr")
+        );
+    }
+
+    #[test]
+    fn search_issues_query_project_id_missing_is_none() {
+        let query: SearchIssuesQuery = serde_urlencoded::from_str("").unwrap();
+        assert!(query.project_id.is_none());
     }
 
     #[test]

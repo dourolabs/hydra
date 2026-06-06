@@ -2065,6 +2065,11 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
         }
     }
 
+    if let Some(project_id) = query.project_id.as_ref() {
+        bindings.push(project_id.as_ref().to_string());
+        predicates.push(format!("project_id = ?{}", bindings.len()));
+    }
+
     if let Some(assignee) = query.assignee.as_ref() {
         // Filter against the typed `assignee_principal` column (JSON
         // text) using canonical serialization, not lowercased free-text
@@ -7070,6 +7075,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_issues_filters_by_per_project_status_key() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = create_test_store().await;
+
+        let mut inbox_issue = sample_issue(vec![]);
+        inbox_issue.status = StatusKey::try_new("inbox").unwrap();
+        let (inbox_id, _) = store
+            .add_issue(inbox_issue, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // A second issue with the legacy `open` key.
+        let (_, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.status = vec![StatusKey::try_new("inbox").unwrap()];
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, inbox_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_project_id() {
+        use hydra_common::ProjectId;
+        let store = create_test_store().await;
+
+        let project_a = ProjectId::new();
+        let project_b = ProjectId::new();
+
+        // Issue A in project_a.
+        let mut issue_a = sample_issue(vec![]);
+        issue_a.project_id = Some(project_a.clone());
+        let (id_a, _) = store.add_issue(issue_a, &ActorRef::test()).await.unwrap();
+
+        // Issue B in project_b.
+        let mut issue_b = sample_issue(vec![]);
+        issue_b.project_id = Some(project_b.clone());
+        store.add_issue(issue_b, &ActorRef::test()).await.unwrap();
+
+        // Issue C with no project — must NOT match a project_id filter.
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.project_id = Some(project_a.clone());
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_a);
+    }
+
+    #[tokio::test]
+    async fn list_issues_status_key_and_project_id_intersect() {
+        use hydra_common::ProjectId;
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = create_test_store().await;
+
+        let project = ProjectId::new();
+        let other_project = ProjectId::new();
+
+        // In-project `inbox` issue — must match both filters.
+        let mut target = sample_issue(vec![]);
+        target.project_id = Some(project.clone());
+        target.status = StatusKey::try_new("inbox").unwrap();
+        let (target_id, _) = store.add_issue(target, &ActorRef::test()).await.unwrap();
+
+        // In-project but different status.
+        let mut other_status = sample_issue(vec![]);
+        other_status.project_id = Some(project.clone());
+        other_status.status = StatusKey::try_new("triage").unwrap();
+        store
+            .add_issue(other_status, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Other-project `inbox` issue — must not match.
+        let mut other_proj = sample_issue(vec![]);
+        other_proj.project_id = Some(other_project);
+        other_proj.status = StatusKey::try_new("inbox").unwrap();
+        store
+            .add_issue(other_proj, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.project_id = Some(project);
+        query.status = vec![StatusKey::try_new("inbox").unwrap()];
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, target_id);
+    }
+
+    #[tokio::test]
     async fn list_issues_text_search() {
         let store = create_test_store().await;
 
@@ -9734,7 +9836,7 @@ mod tests {
         // Count only closed
         let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            vec![hydra_common::api::v1::issues::IssueStatus::Closed],
+            vec![IssueStatus::Closed.into()],
             None,
             None,
             None,

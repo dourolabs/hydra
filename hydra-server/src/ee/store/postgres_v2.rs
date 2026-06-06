@@ -1846,6 +1846,11 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         }
     }
 
+    if let Some(project_id) = query.project_id.as_ref() {
+        predicates.push(format!("project_id = ${}", bindings.len() + 1));
+        bindings.push(project_id.as_ref().to_string());
+    }
+
     if let Some(assignee) = query.assignee.as_ref() {
         // Filter against the typed `assignee_principal` JSONB column
         // using canonical serialization. The TEXT-column LIKE search
@@ -8203,13 +8208,8 @@ mod tests {
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
 
         // Count only closed
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![hydra_common::api::v1::issues::IssueStatus::Closed],
-            None,
-            None,
-            None,
-        );
+        let query =
+            SearchIssuesQuery::new(None, vec![IssueStatus::Closed.into()], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
     }
 
@@ -8437,7 +8437,10 @@ mod tests {
         // The first issue (ids[0]) should reflect the latest update.
         let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
         assert_eq!(first.1.item.progress, "v3 progress");
-        assert_eq!(first.1.item.status, IssueStatus::InProgress.as_status_key());
+        assert_eq!(
+            first.1.item.status,
+            StatusKey::from(IssueStatus::InProgress)
+        );
         assert_eq!(first.1.version, 3);
 
         // Paginate with limit=2 and verify we get 2 results, then use cursor
@@ -8454,16 +8457,93 @@ mod tests {
         assert_eq!(store.count_issues(&count_query).await.unwrap(), 3);
 
         // Filter by status=InProgress should return only the updated issue.
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![hydra_common::api::v1::issues::IssueStatus::InProgress],
-            None,
-            None,
-            None,
-        );
+        let query =
+            SearchIssuesQuery::new(None, vec![IssueStatus::InProgress.into()], None, None, None);
         let filtered = store.list_issues(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, ids[0]);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_filters_by_per_project_status_key_v2(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let mut inbox_issue = sample_issue(vec![]);
+        inbox_issue.status = StatusKey::try_new("inbox").unwrap();
+        let (inbox_id, _) = store.add_issue(inbox_issue, &actor).await.unwrap();
+
+        store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.status = vec![StatusKey::try_new("inbox").unwrap()];
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, inbox_id);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_filters_by_project_id_v2(pool: PgStorePool) {
+        use hydra_common::ProjectId;
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let project_a = ProjectId::new();
+        let project_b = ProjectId::new();
+
+        let mut issue_a = sample_issue(vec![]);
+        issue_a.project_id = Some(project_a.clone());
+        let (id_a, _) = store.add_issue(issue_a, &actor).await.unwrap();
+
+        let mut issue_b = sample_issue(vec![]);
+        issue_b.project_id = Some(project_b);
+        store.add_issue(issue_b, &actor).await.unwrap();
+
+        // Issue with no project must not match a project_id filter.
+        store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.project_id = Some(project_a);
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id_a);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_status_key_and_project_id_intersect_v2(pool: PgStorePool) {
+        use hydra_common::ProjectId;
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+
+        let project = ProjectId::new();
+        let other_project = ProjectId::new();
+
+        let mut target = sample_issue(vec![]);
+        target.project_id = Some(project.clone());
+        target.status = StatusKey::try_new("inbox").unwrap();
+        let (target_id, _) = store.add_issue(target, &actor).await.unwrap();
+
+        let mut other_status = sample_issue(vec![]);
+        other_status.project_id = Some(project.clone());
+        other_status.status = StatusKey::try_new("triage").unwrap();
+        store.add_issue(other_status, &actor).await.unwrap();
+
+        let mut other_proj = sample_issue(vec![]);
+        other_proj.project_id = Some(other_project);
+        other_proj.status = StatusKey::try_new("inbox").unwrap();
+        store.add_issue(other_proj, &actor).await.unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.project_id = Some(project);
+        query.status = vec![StatusKey::try_new("inbox").unwrap()];
+        let results = store.list_issues(&query).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, target_id);
     }
 
     #[sqlx::test(migrations = "./migrations")]

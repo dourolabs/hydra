@@ -640,7 +640,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
             None,
-            vec![hydra_common::api::v1::issues::IssueStatus::Closed],
+            vec![hydra_common::api::v1::issues::IssueStatus::Closed.into()],
             None,
             None,
             None,

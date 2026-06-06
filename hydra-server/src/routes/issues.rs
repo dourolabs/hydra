@@ -235,6 +235,7 @@ pub async fn list_issues(
     info!(
         issue_type = ?query.issue_type,
         status = ?query.status,
+        project_id = ?query.project_id,
         assignee = ?query.assignee,
         creator = ?query.creator,
         query = ?query.q,
