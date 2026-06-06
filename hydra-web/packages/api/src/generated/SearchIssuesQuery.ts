@@ -12,12 +12,10 @@ export type SearchIssuesQuery = {
   /**
    * Comma-separated list of [`StatusKey`] strings to filter on.
    *
-   * Wire shape is byte-identical to the prior `Vec<IssueStatus>` type
-   * for the five legacy enum values (`open`, `in-progress`, `closed`,
-   * `dropped`, `failed`) — `StatusKey` is a transparent string newtype
-   * and these strings are well-formed keys. New per-project keys
-   * (e.g. `inbox`, `triage`) now flow through unchanged where they
-   * previously fell into the `Unknown` variant and matched nothing.
+   * `StatusKey` is a transparent string newtype, so the five legacy
+   * `IssueStatus` strings (`open`, `in-progress`, `closed`, `dropped`,
+   * `failed`) and per-project keys (e.g. `inbox`, `triage`) share the
+   * same wire shape.
    */
   status?: string;
   /**

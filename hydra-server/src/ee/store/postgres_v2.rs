@@ -8210,7 +8210,7 @@ mod tests {
         // Count only closed
         let query = SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::Closed.as_status_key()],
+            vec![IssueStatus::Closed.into()],
             None,
             None,
             None,
@@ -8442,7 +8442,7 @@ mod tests {
         // The first issue (ids[0]) should reflect the latest update.
         let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
         assert_eq!(first.1.item.progress, "v3 progress");
-        assert_eq!(first.1.item.status, IssueStatus::InProgress.as_status_key());
+        assert_eq!(first.1.item.status, StatusKey::from(IssueStatus::InProgress));
         assert_eq!(first.1.version, 3);
 
         // Paginate with limit=2 and verify we get 2 results, then use cursor
@@ -8461,7 +8461,7 @@ mod tests {
         // Filter by status=InProgress should return only the updated issue.
         let query = SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::InProgress.as_status_key()],
+            vec![IssueStatus::InProgress.into()],
             None,
             None,
             None,
@@ -8478,13 +8478,10 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let actor = ActorRef::test();
 
-        // Issue with the bespoke per-project status key `inbox` (cannot be
-        // expressed as `IssueStatus`).
         let mut inbox_issue = sample_issue(vec![]);
         inbox_issue.status = StatusKey::try_new("inbox").unwrap();
         let (inbox_id, _) = store.add_issue(inbox_issue, &actor).await.unwrap();
 
-        // A second issue with the legacy `open` key.
         store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
 
         let mut query = SearchIssuesQuery::default();

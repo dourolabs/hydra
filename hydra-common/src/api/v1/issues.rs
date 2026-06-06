@@ -85,14 +85,6 @@ impl IssueStatus {
     pub fn is_active(&self) -> bool {
         matches!(self, IssueStatus::Open | IssueStatus::InProgress)
     }
-
-    /// Returns the [`StatusKey`] equivalent of this legacy enum variant.
-    /// The five legacy strings (and `unknown`) are well-formed
-    /// [`StatusKey`]s by construction, so this never fails.
-    pub fn as_status_key(&self) -> StatusKey {
-        StatusKey::try_new(self.as_str())
-            .expect("IssueStatus wire string is a well-formed StatusKey")
-    }
 }
 
 impl fmt::Display for IssueStatus {
@@ -536,12 +528,10 @@ pub struct SearchIssuesQuery {
     pub issue_type: Option<IssueType>,
     /// Comma-separated list of [`StatusKey`] strings to filter on.
     ///
-    /// Wire shape is byte-identical to the prior `Vec<IssueStatus>` type
-    /// for the five legacy enum values (`open`, `in-progress`, `closed`,
-    /// `dropped`, `failed`) — `StatusKey` is a transparent string newtype
-    /// and these strings are well-formed keys. New per-project keys
-    /// (e.g. `inbox`, `triage`) now flow through unchanged where they
-    /// previously fell into the `Unknown` variant and matched nothing.
+    /// `StatusKey` is a transparent string newtype, so the five legacy
+    /// `IssueStatus` strings (`open`, `in-progress`, `closed`, `dropped`,
+    /// `failed`) and per-project keys (e.g. `inbox`, `triage`) share the
+    /// same wire shape.
     #[serde(
         default,
         skip_serializing_if = "Vec::is_empty",
@@ -970,9 +960,6 @@ mod tests {
 
     #[test]
     fn search_issues_query_deserializes_per_project_status_key() {
-        // Per-project keys (e.g. `inbox`) used to fall into `IssueStatus::Unknown`
-        // and match nothing. With `Vec<StatusKey>` they survive deserialization
-        // and reach the store's filter intact.
         let query: SearchIssuesQuery = serde_urlencoded::from_str("status=inbox").unwrap();
         assert_eq!(query.status, vec![status_key("inbox")]);
     }

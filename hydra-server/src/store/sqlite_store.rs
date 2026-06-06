@@ -7079,9 +7079,6 @@ mod tests {
         use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
 
-        // Issue with the bespoke per-project status key `inbox` — the legacy
-        // `IssueStatus` enum could never represent this; pre-PR it landed in
-        // the catch-all `Unknown` variant and matched nothing.
         let mut inbox_issue = sample_issue(vec![]);
         inbox_issue.status = StatusKey::try_new("inbox").unwrap();
         let (inbox_id, _) = store
@@ -9839,7 +9836,7 @@ mod tests {
         // Count only closed
         let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::Closed.as_status_key()],
+            vec![IssueStatus::Closed.into()],
             None,
             None,
             None,

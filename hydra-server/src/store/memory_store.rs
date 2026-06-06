@@ -5612,7 +5612,7 @@ mod tests {
         // Filter by open status
         let query = SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::Open.as_status_key()],
+            vec![IssueStatus::Open.into()],
             None,
             None,
             None,
@@ -5624,7 +5624,7 @@ mod tests {
         // Filter by closed status
         let query = SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::Closed.as_status_key()],
+            vec![IssueStatus::Closed.into()],
             None,
             None,
             None,
@@ -7567,7 +7567,7 @@ mod tests {
         // Count only closed
         let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::Closed.as_status_key()],
+            vec![IssueStatus::Closed.into()],
             None,
             None,
             None,
