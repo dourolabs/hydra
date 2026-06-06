@@ -17,6 +17,7 @@ import { useIssueFilters } from "../features/issues/issueFilters";
 import {
   filtersFromUrl,
   filtersToUrl,
+  resolveProjectKeyFilter,
   searchToUrl,
   SEARCH_URL_PARAM,
 } from "../features/issues/filterUrlSync";
@@ -25,6 +26,8 @@ import {
   useRelationFilteredIssueIds,
   RELATION_FILTER_IDS,
 } from "../features/issues/useRelationFilteredIssueIds";
+import { useProjects } from "../features/projects/useProjects";
+import { useToast } from "../features/toast/useToast";
 import type { Filter } from "../features/filters";
 import styles from "./IssuesListPage.module.css";
 
@@ -216,6 +219,15 @@ export function IssuesListPage() {
 
   const definitions = useIssueFilters({ filters, addMenuOpen });
 
+  // Project-key resolution: a pasted URL like `?project=engineering-v2`
+  // must round-trip to `?project=j-<id>`. The picker writes the id form
+  // already, so resolution only runs when the URL token lacks the `j-`
+  // prefix. Loaded eagerly because the `useIssueFilters` status options
+  // and the server `project_id=` param both key on the resolved id.
+  const { data: projects } = useProjects();
+  const { addToast } = useToast();
+  const missingKeyToastedRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     const fromUrl = applyLegacySelected(
       filtersFromUrl(searchParams),
@@ -223,11 +235,35 @@ export function IssuesListPage() {
       currentUser,
       currentPrincipalPath,
     );
-    if (filtersCanonicalRepr(filters) !== filtersCanonicalRepr(fromUrl)) {
-      setFiltersState(fromUrl);
+    const resolution = resolveProjectKeyFilter(fromUrl, projects);
+    if (filtersCanonicalRepr(filters) !== filtersCanonicalRepr(resolution.filters)) {
+      setFiltersState(resolution.filters);
+    }
+    if (resolution.outcome === "resolved" || resolution.outcome === "missing") {
+      setSearchParams(
+        (prev) => filtersToUrl(prev, resolution.filters),
+        { replace: true },
+      );
+      if (resolution.outcome === "missing") {
+        const key = resolution.missingKey;
+        if (!missingKeyToastedRef.current.has(key)) {
+          missingKeyToastedRef.current.add(key);
+          addToast(`Unknown project key: ${key}`, "error");
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, currentUser, currentPrincipalPath]);
+  }, [searchParams, currentUser, currentPrincipalPath, projects]);
+
+  // While a non-`j-` project key is still resolving, hold off the server
+  // query — otherwise we'd issue `project_id=<key>` and trip the backend's
+  // strict-prefix 400. Resolution flips this off on the next render after
+  // `useProjects` settles.
+  const projectResolutionPending = useMemo(() => {
+    const pf = filters.find((f) => f.id === "project");
+    if (!pf || pf.values.length === 0) return false;
+    return !pf.values[0].startsWith("j-");
+  }, [filters]);
 
   // Debounced free-text search: `searchValue` is the user-typed string,
   // `searchQuery` is what we actually send to the server / write to the URL
@@ -323,7 +359,7 @@ export function IssuesListPage() {
     return f;
   }, [filters]);
 
-  const tableEnabled = isTable && !relationsLoading;
+  const tableEnabled = isTable && !relationsLoading && !projectResolutionPending;
 
   const {
     data: paginatedData,
