@@ -460,6 +460,103 @@ async fn proxy_concurrency_cap_returns_503() {
     );
 }
 
+/// Stub WebSocket upstream that accepts upgrades and parks the connection.
+/// Used by the WS-cap test to keep the proxy's pump task alive (which
+/// holds the per-target permit) while the test attempts to overrun the
+/// cap.
+async fn spawn_stub_ws_upstream() -> u16 {
+    use axum::extract::ws::WebSocketUpgrade;
+
+    async fn ws_handler(ws: WebSocketUpgrade) -> axum::response::Response {
+        ws.on_upgrade(|mut socket| async move { while socket.recv().await.is_some() {} })
+    }
+
+    let app: Router = Router::new().fallback(any(ws_handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+    port
+}
+
+#[tokio::test]
+async fn proxy_ws_concurrency_cap_returns_503() {
+    // WebSocket sibling of `proxy_concurrency_cap_returns_503`. Holds one
+    // upgraded WS connection through the proxy (per-target cap = 1) and
+    // verifies the next upgrade attempt is rejected with 503 — i.e. the
+    // permit is held for the lifetime of the pump task, not released
+    // after the handshake response is returned.
+    use tokio_tungstenite::tungstenite::Error as TungsteniteError;
+    use tokio_tungstenite::tungstenite::handshake::client::generate_key;
+    use tokio_tungstenite::tungstenite::http::Request as TungReq;
+
+    let upstream_port = spawn_stub_ws_upstream().await;
+    let (server, session_id) = spawn_proxy_server_with_session(upstream_port, 1).await;
+    let target = ProxyTargetId::Session(session_id.clone());
+    let cookie_value = mint_test_cookie(&target, &session_id);
+    let cookie_header = format!("{}={cookie_value}", cookie_name(&target));
+    let host = proxy_host_label(upstream_port, &target);
+    let server_addr = server.address.clone();
+
+    // The URI's scheme/host is what `client_async` validates and uses as
+    // the default Host header; the explicit `Host` header set below wins
+    // for the actual handshake, so we point the URI at the same proxy
+    // host label tokio_tungstenite would expect.
+    let request_uri = format!("ws://{host}/");
+    let build_upgrade_request = || {
+        TungReq::builder()
+            .method("GET")
+            .uri(&request_uri)
+            .header("Host", &host)
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", generate_key())
+            .header("Cookie", &cookie_header)
+            .body(())
+            .expect("build WS upgrade request")
+    };
+
+    // First WS upgrade: must succeed AND the pump-task it spawns must
+    // hold the per-target permit. Keep the client side of the stream
+    // alive in `_first_ws` so the upstream stub never gets EOF — that
+    // would let pump_ws_frames exit and release the permit, which would
+    // make this test trivially pass even if the fix were absent.
+    let stream1 = tokio::net::TcpStream::connect(&server_addr).await.unwrap();
+    let (_first_ws, _resp1) = tokio_tungstenite::client_async(build_upgrade_request(), stream1)
+        .await
+        .expect("first WS upgrade should succeed");
+
+    // Yield long enough for axum to run the on_upgrade callback (which
+    // is what actually captures the permit). Without this we'd race the
+    // spawn and the second request might land before the permit is
+    // visibly held.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Second WS upgrade: per-target cap is exhausted, the proxy returns
+    // 503 BEFORE invoking the WS branch. tokio_tungstenite surfaces any
+    // non-101 response as `Error::Http(response)`; pull the status off
+    // that.
+    let stream2 = tokio::net::TcpStream::connect(&server_addr).await.unwrap();
+    let result = tokio_tungstenite::client_async(build_upgrade_request(), stream2).await;
+    match result {
+        Ok(_) => {
+            panic!("(N+1)th WS upgrade should have been rejected, but the handshake succeeded")
+        }
+        Err(TungsteniteError::Http(resp)) => {
+            assert_eq!(
+                resp.status().as_u16(),
+                503,
+                "(N+1)th WS upgrade should be rejected with 503 when per-target cap is exhausted",
+            );
+        }
+        Err(other) => {
+            panic!("expected Error::Http(503) on second WS upgrade, got: {other:?}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn proxy_streams_chunked_response_body() {
     // Verifies the response body is streamed (not buffered to completion)

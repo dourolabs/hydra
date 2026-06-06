@@ -1,5 +1,5 @@
 use crate::job_engine::{
-    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId, WsPumpGuard,
 };
 use async_trait::async_trait;
 use axum::body::Body;
@@ -268,6 +268,7 @@ impl JobEngine for MockJobEngine {
         _session_id: &SessionId,
         _port: u16,
         _upgrade: WebSocketUpgrade,
+        _pump_guard: WsPumpGuard,
     ) -> Result<Response<Body>, ProxyError> {
         Err(ProxyError::Unsupported(
             "MockJobEngine does not implement proxy_ws".to_string(),

@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use super::{
-    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId, WsPumpGuard,
     proxy_http_to_upstream, proxy_ws_to_upstream,
 };
 use crate::domain::actors::Actor;
@@ -544,6 +544,7 @@ impl JobEngine for LocalJobEngine {
         session_id: &SessionId,
         port: u16,
         upgrade: WebSocketUpgrade,
+        pump_guard: WsPumpGuard,
     ) -> Result<Response<Body>, ProxyError> {
         if !self.processes.contains_key(session_id) {
             return Err(ProxyError::Unreachable(format!(
@@ -554,7 +555,7 @@ impl JobEngine for LocalJobEngine {
         // path, so we forward at `/`. Dev-server WS endpoints (Vite, Next)
         // are root-mounted; agents using a non-root WS path can adjust
         // their dev server.
-        proxy_ws_to_upstream("127.0.0.1", port, "/", upgrade).await
+        proxy_ws_to_upstream("127.0.0.1", port, "/", upgrade, pump_guard).await
     }
 }
 

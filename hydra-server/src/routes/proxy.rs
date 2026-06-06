@@ -151,27 +151,23 @@ async fn handle(
     // process never sees the user's auth state.
     let mut forwarded_req = strip_sensitive_headers(req);
 
-    // WebSocket upgrade path: hand off the upgrade-bearing extractor to
-    // the engine so the bidirectional pump can be spawned after the
-    // handshake completes.
+    // WebSocket upgrade path: hand off the upgrade-bearing extractor and
+    // the concurrency permit to the engine. The permit rides into the
+    // spawned `on_upgrade` task so its `Drop` runs when the bidirectional
+    // pump exits — an open WS connection keeps occupying its per-target
+    // slot for as long as the socket lives.
     if let Some(upgrade) = upgrade {
         info!(
             session_id = %resolved_session_id,
             port = parsed.port,
             "proxying WebSocket upgrade"
         );
+        let pump_guard: crate::job_engine::WsPumpGuard = Box::new(_permit);
         let response = state
             .job_engine
-            .proxy_ws(&resolved_session_id, parsed.port, upgrade)
+            .proxy_ws(&resolved_session_id, parsed.port, upgrade, pump_guard)
             .await
             .map_err(|err| ProxyRejection::bad_gateway(format!("proxy_ws: {err}")))?;
-        // Hold the permit until the response completes the handshake
-        // (axum will run the on_upgrade callback in a spawned task that
-        // outlives this function). We can't keep it alive that long with
-        // this layout; accept that the WS pump runs without the slot
-        // accounted for. A future iteration could attach the permit to
-        // the spawn's lifetime.
-        drop(_permit);
         return Ok(response);
     }
 

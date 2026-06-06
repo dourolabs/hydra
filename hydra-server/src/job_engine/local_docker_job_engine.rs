@@ -19,7 +19,7 @@ use hydra_common::constants::{ENV_HYDRA_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKE
 use tracing::{error, info, warn};
 
 use super::{
-    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId, WsPumpGuard,
     proxy_http_to_upstream, proxy_ws_to_upstream,
 };
 use crate::config::RegistryCredential;
@@ -610,9 +610,10 @@ impl JobEngine for LocalDockerJobEngine {
         session_id: &SessionId,
         port: u16,
         upgrade: WebSocketUpgrade,
+        pump_guard: WsPumpGuard,
     ) -> Result<Response<Body>, ProxyError> {
         let host = self.resolve_container_ip(session_id).await?;
-        proxy_ws_to_upstream(&host, port, "/", upgrade).await
+        proxy_ws_to_upstream(&host, port, "/", upgrade, pump_guard).await
     }
 }
 
