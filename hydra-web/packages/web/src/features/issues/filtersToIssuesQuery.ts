@@ -66,7 +66,15 @@ export function filtersToIssuesQuery({
         out.assignee = filter.values[0];
         break;
       case "project":
-        out.project_id = filter.values[0];
+        // The backend `ProjectId` validator only accepts `j-`-prefixed
+        // ids; a transiently unresolved project key (e.g. pasted
+        // `?project=engineering-v2` mid-resolution) would otherwise 400.
+        // The page-level resolver canonicalizes URL→state on the next
+        // render; we just need to avoid emitting the bad query in the
+        // meantime.
+        if (filter.values[0].startsWith("j-")) {
+          out.project_id = filter.values[0];
+        }
         break;
       // Relation filters are resolved upstream into `extraIds`; no direct
       // mapping here.

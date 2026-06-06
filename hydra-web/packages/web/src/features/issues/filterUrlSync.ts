@@ -1,3 +1,4 @@
+import type { ProjectRecord } from "@hydra/api";
 import type { Filter } from "../filters";
 
 /**
@@ -96,6 +97,62 @@ export function filtersToUrl(
     next.set(filter.id, filter.values.join(","));
   }
   return next;
+}
+
+export type ProjectKeyResolution =
+  | { outcome: "unchanged"; filters: Filter[] }
+  | { outcome: "pending"; filters: Filter[] }
+  | { outcome: "resolved"; filters: Filter[] }
+  | { outcome: "missing"; filters: Filter[]; missingKey: string };
+
+/**
+ * Resolve a `?project=<key>` URL token to its canonical `j-<id>` form.
+ *
+ * The backend `ProjectId` validator only accepts `j-`-prefixed ids; a pasted
+ * URL like `?project=engineering-v2` would otherwise 400 `listIssues` and
+ * produce an empty list with the project pill reset. The picker writes the
+ * id form already, so this handler only kicks in when the project value
+ * arrives as a bare key (no `j-` prefix).
+ *
+ * Outcomes:
+ *   - `unchanged` — no project filter present, or already `j-`-prefixed.
+ *   - `pending` — non-`j-` value, but the projects list hasn't loaded yet.
+ *                 Caller should hold off any server query that would
+ *                 otherwise send the unresolved value.
+ *   - `resolved` — a project with `project.key === <raw>` was found; the
+ *                  returned filters replace the value with `j-<id>`.
+ *   - `missing` — projects loaded but no project matches the key. The
+ *                  project filter is dropped from the returned filters.
+ */
+export function resolveProjectKeyFilter(
+  filters: Filter[],
+  projects: ProjectRecord[] | undefined,
+): ProjectKeyResolution {
+  const projectFilter = filters.find((f) => f.id === "project");
+  if (!projectFilter || projectFilter.values.length === 0) {
+    return { outcome: "unchanged", filters };
+  }
+  const raw = projectFilter.values[0];
+  if (raw.startsWith("j-")) {
+    return { outcome: "unchanged", filters };
+  }
+  if (!projects) {
+    return { outcome: "pending", filters };
+  }
+  const match = projects.find((p) => p.project.key === raw);
+  if (match) {
+    return {
+      outcome: "resolved",
+      filters: filters.map((f) =>
+        f.id === "project" ? { ...f, values: [match.project_id] } : f,
+      ),
+    };
+  }
+  return {
+    outcome: "missing",
+    filters: filters.filter((f) => f.id !== "project"),
+    missingKey: raw,
+  };
 }
 
 /**

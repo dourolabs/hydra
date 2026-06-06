@@ -149,10 +149,27 @@ vi.mock("../../features/dashboard/usePageIssueTrees", () => ({
   }),
 }));
 
+// Mutable holder so individual tests can stage a project list for the
+// project-key resolver (see "IssuesListPage project key resolution" below).
+// `data` is `undefined` while loading and an array (possibly empty) once
+// loaded — matches the real `useProjects` query shape after `select:`.
+interface ProjectsMockState {
+  data: Array<{
+    project_id: string;
+    project: { key: string; name: string };
+  }> | undefined;
+}
+const projectsState: ProjectsMockState = { data: [] };
+
 vi.mock("../../features/projects/useProjects", () => ({
-  useProjects: () => ({ data: [] }),
+  useProjects: () => ({ data: projectsState.data }),
   useProject: () => ({ data: null }),
   useProjectStatuses: () => ({ data: null }),
+}));
+
+const addToastMock = vi.fn();
+vi.mock("../../features/toast/useToast", () => ({
+  useToast: () => ({ addToast: addToastMock }),
 }));
 
 const useBreadcrumbsMock = vi.fn();
@@ -277,6 +294,8 @@ beforeEach(() => {
   treesState.sessionsByIssue = new Map();
   relationsState.issueIds = null;
   relationsState.isLoading = false;
+  projectsState.data = [];
+  addToastMock.mockReset();
 });
 
 afterEach(() => {
@@ -653,5 +672,111 @@ describe("IssuesListPage relation-resolution loading persistence", () => {
 
     expect(container.textContent).not.toContain("Loading issues");
     expect(container.textContent).toContain("keep me");
+  });
+});
+
+describe("IssuesListPage project key resolution", () => {
+  // The Issues-list URL accepts the picker-written id form (`?project=j-…`)
+  // OR a human-friendly project key (`?project=engineering-v2`). Pasted-URL
+  // sweep iter-2 [[i-bnntdrvr]] confirmed the key form would otherwise 400 the
+  // backend `project_id=` filter. These tests exercise the page-level
+  // resolver that canonicalizes URL → state → URL.
+
+  it("rewrites `?project=<key>` to `?project=j-<id>` after resolving the key", () => {
+    projectsState.data = [
+      {
+        project_id: "j-hidryk",
+        project: { key: "engineering-v2", name: "Engineering v2" },
+      },
+    ];
+
+    const { getByTestId } = renderIssuesList("/?project=engineering-v2");
+
+    // URL canonicalized to the id form (server-applicable, copy-paste stable).
+    expect(getByTestId("location").textContent).toBe(
+      "/?project=j-hidryk",
+    );
+    // Server fetch sees the resolved id, not the raw key.
+    expect(paginatedState.paginatedFilters).toEqual({
+      project_id: "j-hidryk",
+    });
+  });
+
+  it("drops the project filter and surfaces a toast for an unknown key", () => {
+    projectsState.data = [
+      {
+        project_id: "j-hidryk",
+        project: { key: "engineering-v2", name: "Engineering v2" },
+      },
+    ];
+
+    const { getByTestId } = renderIssuesList("/?project=does-not-exist");
+
+    // Project filter stripped from the URL — no unresolved value lingers.
+    expect(getByTestId("location").textContent).toBe("/");
+    // Server never sees the unresolved key (would 400 the backend).
+    expect(paginatedState.paginatedFilters).toEqual({});
+    expect(addToastMock).toHaveBeenCalledWith(
+      "Unknown project key: does-not-exist",
+      "error",
+    );
+  });
+
+  it("passes a `j-`-prefixed `?project=` token through unchanged", () => {
+    projectsState.data = [
+      {
+        project_id: "j-hidryk",
+        project: { key: "engineering-v2", name: "Engineering v2" },
+      },
+    ];
+
+    const { getByTestId } = renderIssuesList("/?project=j-hidryk");
+
+    // No URL rewrite when the value already matches the canonical form.
+    expect(getByTestId("location").textContent).toBe(
+      "/?project=j-hidryk",
+    );
+    expect(paginatedState.paginatedFilters).toEqual({
+      project_id: "j-hidryk",
+    });
+    expect(addToastMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves the project key before sending project+status to the server", () => {
+    projectsState.data = [
+      {
+        project_id: "j-hidryk",
+        project: { key: "engineering-v2", name: "Engineering v2" },
+      },
+    ];
+
+    const { getByTestId } = renderIssuesList(
+      "/?project=engineering-v2&status=inbox",
+    );
+
+    // URL: project canonicalized; status passed through.
+    expect(getByTestId("location").textContent).toBe(
+      "/?status=inbox&project=j-hidryk",
+    );
+    // Server fetch carries the resolved id alongside the per-project status key.
+    expect(paginatedState.paginatedFilters).toEqual({
+      project_id: "j-hidryk",
+      status: "inbox",
+    });
+  });
+
+  it("holds off the project_id query param while the projects list is still loading", () => {
+    // Simulate the in-flight projects query: `data` is `undefined`.
+    projectsState.data = undefined;
+
+    const { getByTestId } = renderIssuesList("/?project=engineering-v2");
+
+    // No `project_id=engineering-v2` ever reaches the server (would 400).
+    // `filtersToIssuesQuery` drops non-`j-`-prefixed project values; the URL
+    // is left as the user pasted it, awaiting the projects list to resolve.
+    expect(paginatedState.paginatedFilters).toEqual({});
+    expect(getByTestId("location").textContent).toBe(
+      "/?project=engineering-v2",
+    );
   });
 });
