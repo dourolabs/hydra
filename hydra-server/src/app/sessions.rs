@@ -51,7 +51,9 @@ pub enum CreateSessionError {
         source: AgentError,
     },
     /// Reading the agent's prompt document failed (path empty / not found
-    /// / store error).
+    /// / store error). Carries the four-level resolver's error from
+    /// [`AppState::resolve_session_system_prompt`] — only the agent layer
+    /// hard-fails; project / status / system layers tolerate misses.
     #[error("failed to resolve prompt for agent '{name}': {source}")]
     AgentPromptResolution {
         name: String,
@@ -195,8 +197,9 @@ impl AppState {
                         AgentError::NotFound { name } => CreateSessionError::AgentNotFound { name },
                         other => CreateSessionError::AgentLookup { source: other },
                     })?;
+                let (project, status) = self.resolve_prompt_layers_for(spawned_from.as_ref()).await;
                 let system_prompt = self
-                    .resolve_agent_prompt(&agent.prompt_path)
+                    .resolve_session_system_prompt(&agent, &project, &status)
                     .await
                     .map_err(|source| CreateSessionError::AgentPromptResolution {
                         name: agent.name.clone(),
@@ -289,6 +292,72 @@ impl AppState {
         session.creation_time = Some(creation_time);
 
         Ok((session_id, session))
+    }
+
+    /// Resolve the `(Project, StatusDefinition)` pair feeding the four-level
+    /// prompt resolver for a new session.
+    ///
+    /// - `Some(issue_id)`: load the issue, resolve its status via
+    ///   [`AppState::resolve_status`], and pick the project from the store
+    ///   (or [`default_project`] for `project_id = None`). On any lookup
+    ///   failure we fall back to the no-project sentinel — the session
+    ///   still spawns, and the empty project / status slices keep
+    ///   `system_prompt` byte-identical to today's `resolve_agent_prompt`
+    ///   output. This matches the "tolerate missing layers" invariant
+    ///   from the design doc.
+    /// - `None`: conversation sessions and other issue-less spawns get the
+    ///   [`no_project_sentinel`] (both `prompt_path = None`), so the
+    ///   resolver emits system + agent only.
+    async fn resolve_prompt_layers_for(
+        &self,
+        spawned_from: Option<&IssueId>,
+    ) -> (
+        hydra_common::api::v1::projects::Project,
+        hydra_common::api::v1::projects::StatusDefinition,
+    ) {
+        use crate::domain::projects::{default_project, no_project_sentinel};
+
+        let Some(issue_id) = spawned_from else {
+            return no_project_sentinel();
+        };
+        let issue = match self.get_issue(issue_id, false).await {
+            Ok(v) => v.item,
+            Err(err) => {
+                info!(
+                    issue_id = %issue_id,
+                    error = %err,
+                    "could not load spawned_from issue for prompt layering; using no-project sentinel"
+                );
+                return no_project_sentinel();
+            }
+        };
+        let status = match self.resolve_status(&issue).await {
+            Ok(def) => def,
+            Err(err) => {
+                info!(
+                    issue_id = %issue_id,
+                    error = %err,
+                    "could not resolve status for prompt layering; using no-project sentinel"
+                );
+                return no_project_sentinel();
+            }
+        };
+        let project = match &issue.project_id {
+            None => default_project().clone(),
+            Some(project_id) => match self.store.as_ref().get_project(project_id, false).await {
+                Ok(v) => v.item,
+                Err(err) => {
+                    info!(
+                        issue_id = %issue_id,
+                        project_id = %project_id,
+                        error = %err,
+                        "could not load project for prompt layering; using no-project sentinel"
+                    );
+                    return no_project_sentinel();
+                }
+            },
+        };
+        (project, status)
     }
 
     pub(crate) fn apply_session_settings_defaults(
@@ -1660,10 +1729,142 @@ mod tests {
         );
     }
 
-    // PR-1 removed `create_session`'s derivation from the linked
-    // `Conversation`. Callers (today: `spawn_conversation_sessions`)
-    // pre-resolve the conversation's `session_settings` into request
-    // fields before calling, so this test no longer applies.
+    /// Issues with `project_id = None` should exercise the four-level
+    /// prompt resolver via the DefaultProject path references. Because
+    /// the new system / project / status docs don't yet exist in the
+    /// doc store (PR 2 authors them), all three new layers resolve to
+    /// empty slices and the spawned session's `system_prompt` is
+    /// byte-identical to today's agent prompt — that's the "no
+    /// observable behavior change" invariant from the design.
+    #[tokio::test]
+    async fn create_session_for_issue_with_no_project_id_returns_agent_body_only() {
+        use crate::domain::agents::Agent;
+        use crate::domain::documents::Document;
+        use hydra_common::api::v1::sessions::{
+            AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+        };
+
+        let state = state_with_default_model("default-model");
+
+        let agent_name = "swe";
+        let prompt_path = format!("/agents/{agent_name}/prompt.md");
+        let agent = Agent::new(
+            agent_name.to_string(),
+            prompt_path.clone(),
+            None,
+            1,
+            1,
+            false,
+            false,
+            vec![],
+        );
+        state.store.add_agent(agent).await.unwrap();
+        let doc = Document {
+            title: "swe".to_string(),
+            body_markdown: "AGENT BODY".to_string(),
+            path: Some(prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        let issue = issue_with_status("test", IssueStatus::Open, vec![]);
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        let agent_name_typed =
+            hydra_common::api::v1::agents::AgentName::try_new(agent_name).unwrap();
+        let request = CreateSessionRequest {
+            mode: SessionMode::Headless,
+            agent_config: AgentSpec::Named {
+                name: agent_name_typed,
+            },
+            model: None,
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: Some(issue_id),
+            resumed_from: None,
+        };
+        let (session_id, _) = state
+            .create_session(request, ActorRef::test(), Username::from("creator"))
+            .await
+            .unwrap();
+        let session = state.get_session(&session_id).await.unwrap();
+        assert_eq!(session.resolved_prompt(), "AGENT BODY");
+    }
+
+    /// Conversation sessions (no `spawned_from`) must use the no-project
+    /// sentinel, so the four-level resolver emits system + agent only.
+    /// In PR 1 the system doc also doesn't exist, so the effective output
+    /// equals just the agent body.
+    #[tokio::test]
+    async fn create_session_without_spawned_from_uses_no_project_sentinel() {
+        use crate::domain::agents::Agent;
+        use crate::domain::documents::Document;
+        use hydra_common::api::v1::sessions::{
+            AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+        };
+
+        let state = state_with_default_model("default-model");
+        let agent_name = "chat";
+        let prompt_path = format!("/agents/{agent_name}/prompt.md");
+        let agent = Agent::new(
+            agent_name.to_string(),
+            prompt_path.clone(),
+            None,
+            1,
+            1,
+            false,
+            false,
+            vec![],
+        );
+        state.store.add_agent(agent).await.unwrap();
+        let doc = Document {
+            title: "chat".to_string(),
+            body_markdown: "CHAT AGENT BODY".to_string(),
+            path: Some(prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        let agent_name_typed =
+            hydra_common::api::v1::agents::AgentName::try_new(agent_name).unwrap();
+        let request = CreateSessionRequest {
+            mode: SessionMode::Headless,
+            agent_config: AgentSpec::Named {
+                name: agent_name_typed,
+            },
+            model: None,
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: None,
+            resumed_from: None,
+        };
+        let (session_id, _) = state
+            .create_session(request, ActorRef::test(), Username::from("creator"))
+            .await
+            .unwrap();
+        let session = state.get_session(&session_id).await.unwrap();
+        assert_eq!(session.resolved_prompt(), "CHAT AGENT BODY");
+    }
 
     #[test]
     fn apply_session_settings_defaults_sets_model() {

@@ -3,12 +3,19 @@ use crate::{
     store::ReadOnlyStore,
 };
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
+use hydra_common::api::v1::projects::{Project, StatusDefinition};
 use hydra_common::api::v1::sessions::McpConfig;
 use std::collections::HashMap;
 use thiserror::Error;
 use tracing::{info, warn};
 
 use super::app_state::AppState;
+
+/// Doc-store path for the shared system-prompt slice that every named-agent
+/// session inherits. Designed by [[d-rzreslz]]: a singleton document edited
+/// the same way as today's agent prompts; missing or empty content
+/// contributes an empty slice rather than failing the spawn.
+pub const SYSTEM_PROMPT_PATH: &str = "/agents/system_prompt.md";
 
 #[derive(Debug, Error)]
 pub enum AgentError {
@@ -103,6 +110,65 @@ impl AppState {
 
         info!(agent = %agent_name, "agent updated");
         Ok(updated)
+    }
+
+    /// Concatenate the four prompt layers — system, agent, project, status —
+    /// into the `system_prompt` for a named-agent session.
+    ///
+    /// The agent layer keeps today's hard-fail semantics: a missing or empty
+    /// `agent.prompt_path` is an error. The other three layers tolerate
+    /// `None` paths or missing documents and contribute an empty slice
+    /// instead (logged at `info`). The final string is the non-empty slices
+    /// joined by `\n\n`, so a layer that resolves to empty does not leave a
+    /// dangling separator.
+    pub async fn resolve_session_system_prompt(
+        &self,
+        agent: &Agent,
+        project: &Project,
+        status: &StatusDefinition,
+    ) -> anyhow::Result<String> {
+        let system = self.resolve_optional_prompt(Some(SYSTEM_PROMPT_PATH)).await;
+        let agent_slice = self.resolve_agent_prompt(&agent.prompt_path).await?;
+        let project_slice = self
+            .resolve_optional_prompt(project.prompt_path.as_deref())
+            .await;
+        let status_slice = self
+            .resolve_optional_prompt(status.prompt_path.as_deref())
+            .await;
+
+        let joined = [system, agent_slice, project_slice, status_slice]
+            .into_iter()
+            .filter(|slice| !slice.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Ok(joined)
+    }
+
+    /// None-tolerant variant of [`Self::resolve_agent_prompt`] used for the
+    /// system / project / status slices. A `None` path, an empty path, a
+    /// missing document, or a store error all collapse to an empty slice
+    /// (logged at `info`) — these layers are augmentations and must never
+    /// hard-fail a session spawn.
+    async fn resolve_optional_prompt(&self, prompt_path: Option<&str>) -> String {
+        let Some(path) = prompt_path else {
+            return String::new();
+        };
+        if path.is_empty() {
+            return String::new();
+        }
+        let query = SearchDocumentsQuery::new(None, Some(path.to_string()), Some(true), None);
+        let documents = match self.list_documents(&query).await {
+            Ok(docs) => docs,
+            Err(err) => {
+                info!(path = %path, error = %err, "prompt layer document query failed; treating as empty slice");
+                return String::new();
+            }
+        };
+        let Some((_, versioned)) = documents.into_iter().next() else {
+            info!(path = %path, "prompt layer document not found; treating as empty slice");
+            return String::new();
+        };
+        versioned.item.body_markdown.trim_end().to_string()
     }
 
     /// Fetch the prompt text for an agent from the document store.
@@ -238,7 +304,12 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
+    use crate::domain::documents::Document;
     use crate::test_utils::test_state;
+    use hydra_common::api::v1::projects::{
+        IconKey, Project, ProjectKey, StatusDefinition, StatusKey,
+    };
+    use hydra_common::api::v1::users::Username;
 
     fn sample_agent(name: &str) -> Agent {
         Agent::new(
@@ -251,6 +322,155 @@ mod tests {
             false,
             Vec::new(),
         )
+    }
+
+    fn status_def_with_prompt(key: &str, prompt_path: Option<&str>) -> StatusDefinition {
+        let mut def = StatusDefinition::new(
+            StatusKey::try_new(key).unwrap(),
+            key.to_string(),
+            IconKey::try_new("circle").unwrap(),
+            "#abcdef".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        def.prompt_path = prompt_path.map(str::to_string);
+        def
+    }
+
+    fn project_with_prompt(prompt_path: Option<&str>) -> Project {
+        let mut proj = Project::new(
+            ProjectKey::try_new("eng").unwrap(),
+            "Engineering".to_string(),
+            vec![status_def_with_prompt("open", None)],
+            StatusKey::try_new("open").unwrap(),
+            Username::try_new("system").unwrap(),
+            false,
+        );
+        proj.prompt_path = prompt_path.map(str::to_string);
+        proj
+    }
+
+    async fn seed_document(state: &crate::app::AppState, path: &str, body: &str) {
+        let doc = Document {
+            title: path.to_string(),
+            body_markdown: body.to_string(),
+            path: Some(path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(doc, ActorRef::test())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn resolve_session_system_prompt_joins_all_four_layers_in_order() {
+        let state = test_state();
+        let agent = sample_agent("swe");
+        state
+            .create_agent(agent.clone(), ActorRef::test())
+            .await
+            .unwrap();
+        seed_document(&state, SYSTEM_PROMPT_PATH, "SYSTEM").await;
+        seed_document(&state, &agent.prompt_path, "AGENT").await;
+        seed_document(&state, "/projects/eng/prompt.md", "PROJECT").await;
+        seed_document(&state, "/projects/eng/statuses/open.md", "STATUS").await;
+
+        let project = project_with_prompt(Some("/projects/eng/prompt.md"));
+        let status = status_def_with_prompt("open", Some("/projects/eng/statuses/open.md"));
+
+        let joined = state
+            .resolve_session_system_prompt(&agent, &project, &status)
+            .await
+            .unwrap();
+        assert_eq!(joined, "SYSTEM\n\nAGENT\n\nPROJECT\n\nSTATUS");
+    }
+
+    #[tokio::test]
+    async fn resolve_session_system_prompt_skips_none_layers_without_dangling_separators() {
+        let state = test_state();
+        let agent = sample_agent("swe");
+        state
+            .create_agent(agent.clone(), ActorRef::test())
+            .await
+            .unwrap();
+        // No system / project / status docs seeded; the only document present
+        // is the agent prompt, so the resolver must emit just that slice with
+        // no leading or trailing blank-line gaps.
+        seed_document(&state, &agent.prompt_path, "AGENT").await;
+
+        let project = project_with_prompt(None);
+        let status = status_def_with_prompt("open", None);
+
+        let joined = state
+            .resolve_session_system_prompt(&agent, &project, &status)
+            .await
+            .unwrap();
+        assert_eq!(joined, "AGENT");
+    }
+
+    #[tokio::test]
+    async fn resolve_session_system_prompt_treats_missing_optional_doc_as_empty_slice() {
+        let state = test_state();
+        let agent = sample_agent("swe");
+        state
+            .create_agent(agent.clone(), ActorRef::test())
+            .await
+            .unwrap();
+        seed_document(&state, &agent.prompt_path, "AGENT").await;
+        // Project & status point at paths that don't exist in the doc store.
+        // The resolver must silently degrade to empty slices.
+        let project = project_with_prompt(Some("/projects/eng/prompt.md"));
+        let status = status_def_with_prompt("open", Some("/projects/eng/statuses/open.md"));
+
+        let joined = state
+            .resolve_session_system_prompt(&agent, &project, &status)
+            .await
+            .unwrap();
+        assert_eq!(joined, "AGENT");
+    }
+
+    #[tokio::test]
+    async fn resolve_session_system_prompt_hard_fails_on_missing_agent_prompt() {
+        let state = test_state();
+        let agent = sample_agent("swe");
+        state
+            .create_agent(agent.clone(), ActorRef::test())
+            .await
+            .unwrap();
+        // Intentionally do not seed the agent's prompt document.
+        let project = project_with_prompt(None);
+        let status = status_def_with_prompt("open", None);
+
+        let err = state
+            .resolve_session_system_prompt(&agent, &project, &status)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("no document found at path"),
+            "expected missing-doc error from agent layer; got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_session_system_prompt_hard_fails_on_empty_agent_prompt_path() {
+        let state = test_state();
+        let mut agent = sample_agent("swe");
+        agent.prompt_path = String::new();
+        let project = project_with_prompt(None);
+        let status = status_def_with_prompt("open", None);
+
+        let err = state
+            .resolve_session_system_prompt(&agent, &project, &status)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("prompt_path is empty"),
+            "expected empty-prompt-path error from agent layer; got: {err}"
+        );
     }
 
     #[tokio::test]

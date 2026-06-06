@@ -243,6 +243,11 @@ async fn spawn_session(
         None
     };
 
+    // `spawned_from: None` is the signal the server uses to fall through to
+    // the no-project sentinel in the four-level prompt resolver
+    // ([[d-rzreslz]]): conversation sessions are not associated with any
+    // issue or project, so `system_prompt` is system + agent only — the
+    // project and status layers both contribute empty slices.
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id: conversation_id.clone(),
