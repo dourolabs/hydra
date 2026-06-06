@@ -2,6 +2,7 @@
 import type { AgentConfig } from "./AgentConfig";
 import type { IssueId } from "./IssueId";
 import type { MountSpec } from "./MountSpec";
+import type { ProxyTarget } from "./ProxyTarget";
 import type { SessionId } from "./SessionId";
 import type { SessionMode } from "./SessionMode";
 import type { Status } from "./Status";
@@ -45,4 +46,10 @@ export type Session = {
    * `None` until the worker submits a `Complete` status with usage data.
    */
   usage?: TokenUsage | null;
+  /**
+   * Ports the worker has advertised as HTTP targets for the interactive
+   * dev preview. Edited via `hydra worker proxy {start,stop}` and read by
+   * the proxy reach path (PR 2). Default empty.
+   */
+  proxy_targets?: Array<ProxyTarget>;
 };

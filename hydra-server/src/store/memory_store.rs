@@ -13,7 +13,7 @@ use crate::domain::{
     actors::{Actor, ActorRef},
     agents::Agent,
     documents::Document,
-    issues::{Issue, IssueDependency, IssueStatus, IssueType},
+    issues::{Issue, IssueDependency, IssueType},
     labels::Label,
     patches::Patch,
     secrets::SecretRef,
@@ -24,7 +24,7 @@ use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::Project;
+use hydra_common::api::v1::projects::{Project, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
@@ -276,8 +276,8 @@ impl MemoryStore {
         let include_deleted = query.include_deleted.unwrap_or(false);
         let ids_filter = &query.ids;
         let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
-        let status_filter: Vec<IssueStatus> =
-            query.status.iter().copied().map(Into::into).collect();
+        let status_filter: &[StatusKey] = &query.status;
+        let project_filter = query.project_id.as_ref();
         let search_term = query
             .q
             .as_ref()
@@ -313,9 +313,16 @@ impl MemoryStore {
                 }
             }
 
+            if let Some(expected_project) = project_filter {
+                match latest.item.project_id.as_ref() {
+                    Some(actual) if actual == expected_project => {}
+                    _ => return None,
+                }
+            }
+
             if !issue_matches(
                 issue_type_filter,
-                &status_filter,
+                status_filter,
                 search_term.as_deref(),
                 assignee_filter,
                 issue_id,
@@ -2692,7 +2699,7 @@ impl Store for MemoryStore {
 /// Helper function to check if an issue matches the provided filter criteria.
 fn issue_matches(
     issue_type_filter: Option<IssueType>,
-    status_filter: &[IssueStatus],
+    status_filter: &[StatusKey],
     search_term: Option<&str>,
     assignee_filter: Option<&hydra_common::principal::Principal>,
     issue_id: &IssueId,
@@ -2704,11 +2711,7 @@ fn issue_matches(
         }
     }
 
-    if !status_filter.is_empty()
-        && !status_filter
-            .iter()
-            .any(|s| s.as_str() == issue.status.as_str())
-    {
+    if !status_filter.is_empty() && !status_filter.iter().any(|s| s == &issue.status) {
         return false;
     }
 
@@ -5609,7 +5612,7 @@ mod tests {
         // Filter by open status
         let query = SearchIssuesQuery::new(
             None,
-            vec![hydra_common::api::v1::issues::IssueStatus::Open],
+            vec![IssueStatus::Open.as_status_key()],
             None,
             None,
             None,
@@ -5621,7 +5624,7 @@ mod tests {
         // Filter by closed status
         let query = SearchIssuesQuery::new(
             None,
-            vec![hydra_common::api::v1::issues::IssueStatus::Closed],
+            vec![IssueStatus::Closed.as_status_key()],
             None,
             None,
             None,
@@ -5629,6 +5632,58 @@ mod tests {
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, closed_issue_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_per_project_status_key_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+
+        let mut inbox_issue = sample_issue(vec![]);
+        inbox_issue.status = StatusKey::try_new("inbox").unwrap();
+        let (inbox_id, _) = store
+            .add_issue(inbox_issue, &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.status = vec![StatusKey::try_new("inbox").unwrap()];
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, inbox_id);
+    }
+
+    #[tokio::test]
+    async fn list_issues_filters_by_project_id_memory() {
+        let store = MemoryStore::new();
+
+        let project_a = ProjectId::new();
+        let project_b = ProjectId::new();
+
+        let mut issue_a = sample_issue(vec![]);
+        issue_a.project_id = Some(project_a.clone());
+        let (id_a, _) = store.add_issue(issue_a, &ActorRef::test()).await.unwrap();
+
+        let mut issue_b = sample_issue(vec![]);
+        issue_b.project_id = Some(project_b);
+        store.add_issue(issue_b, &ActorRef::test()).await.unwrap();
+
+        // Unscoped issue must not match a project_id filter.
+        store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut query = SearchIssuesQuery::default();
+        query.project_id = Some(project_a);
+        let issues = store.list_issues(&query).await.unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].0, id_a);
     }
 
     #[tokio::test]
@@ -7512,7 +7567,7 @@ mod tests {
         // Count only closed
         let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            vec![hydra_common::api::v1::issues::IssueStatus::Closed],
+            vec![IssueStatus::Closed.as_status_key()],
             None,
             None,
             None,
