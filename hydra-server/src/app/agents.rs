@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use super::app_state::AppState;
 
 /// Doc-store path for the shared system-prompt slice that every named-agent
-/// session inherits. Designed by [[d-rzreslz]] §4: a singleton document edited
+/// session inherits. Designed by [[d-rzreslz]]: a singleton document edited
 /// the same way as today's agent prompts; missing or empty content
 /// contributes an empty slice rather than failing the spawn.
 pub const SYSTEM_PROMPT_PATH: &str = "/agents/system_prompt.md";

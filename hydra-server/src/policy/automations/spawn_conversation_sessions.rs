@@ -245,7 +245,7 @@ async fn spawn_session(
 
     // `spawned_from: None` is the signal the server uses to fall through to
     // the no-project sentinel in the four-level prompt resolver
-    // ([[d-rzreslz]] §4): conversation sessions are not associated with any
+    // ([[d-rzreslz]]): conversation sessions are not associated with any
     // issue or project, so `system_prompt` is system + agent only — the
     // project and status layers both contribute empty slices.
     let request = CreateSessionRequest {
