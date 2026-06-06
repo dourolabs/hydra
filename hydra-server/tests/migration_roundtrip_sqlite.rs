@@ -477,6 +477,14 @@ async fn assert_schema_invariants(pool: &SqlitePool) -> Result<()> {
         bail!("expected `tasks_v2.proxy_targets` to be nullable after rollforward");
     }
 
+    // Column added by 20260606010000_add_projects_prompt_path.sql.
+    if !column_exists(pool, "projects", "prompt_path").await? {
+        bail!("expected `projects.prompt_path` column to exist after rollforward");
+    }
+    if !column_is_nullable(pool, "projects", "prompt_path").await? {
+        bail!("expected `projects.prompt_path` to be nullable after rollforward");
+    }
+
     // Indexes added by the three migrations under test. Listed verbatim so
     // a future rename without a baseline bump fails this assertion loud.
     for index in [
@@ -613,11 +621,14 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
         }
     ])
     .to_string();
+    // Include `prompt_path` so the post-rollforward schema's added column
+    // is exercised on the smoke INSERT — see
+    // `20260606010000_add_projects_prompt_path.sql`.
     sqlx::query(
         "INSERT INTO projects \
            (id, version_number, key, name, default_status_key, statuses, \
-            creator, deleted, actor, is_latest) \
-         VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 0, NULL, 1)",
+            creator, deleted, actor, prompt_path, is_latest) \
+         VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7, 1)",
     )
     .bind(project_id)
     .bind("smoke")
@@ -625,6 +636,7 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
     .bind("todo")
     .bind(&project_statuses)
     .bind("alice")
+    .bind("/projects/smoke/prompt.md")
     .execute(pool)
     .await
     .context("insert smoke project row")?;
@@ -650,6 +662,12 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
         bail!(
             "smoke project: expected 1 status; got {}",
             fetched_project.item.statuses.len()
+        );
+    }
+    if fetched_project.item.prompt_path.as_deref() != Some("/projects/smoke/prompt.md") {
+        bail!(
+            "smoke project: expected prompt_path='/projects/smoke/prompt.md'; got {:?}",
+            fetched_project.item.prompt_path
         );
     }
 

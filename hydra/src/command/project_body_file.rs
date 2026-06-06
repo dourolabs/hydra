@@ -152,4 +152,69 @@ default_status_key: backlog
         let body = load_body_file(file.path()).unwrap();
         assert_eq!(body.statuses, vec![def]);
     }
+
+    /// Regression test for [[i-voxdzsyb]]. The four-level prompt resolver
+    /// depends on the per-status `prompt_path` field surviving the
+    /// fixture-file → wire path. Without this assertion a future
+    /// `serde(skip_deserializing)` accident on `StatusDefinition::prompt_path`
+    /// would silently drop the seeded value and spawned engineering-v2
+    /// sessions would lose their status slice.
+    #[test]
+    fn load_body_file_preserves_per_status_prompt_path() {
+        let file = write_body(
+            r##"
+statuses:
+  - key: backlog
+    label: Backlog
+    icon: list
+    color: "#9b59b6"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+    prompt_path: /projects/engineering-v2/statuses/backlog.md
+  - key: in-review
+    label: In review
+    icon: eye
+    color: "#f1c40f"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+    prompt_path: /projects/engineering-v2/statuses/in-review.md
+default_status_key: backlog
+"##,
+        );
+        let body = load_body_file(file.path()).unwrap();
+        assert_eq!(body.statuses.len(), 2);
+        assert_eq!(
+            body.statuses[0].prompt_path.as_deref(),
+            Some("/projects/engineering-v2/statuses/backlog.md"),
+        );
+        assert_eq!(
+            body.statuses[1].prompt_path.as_deref(),
+            Some("/projects/engineering-v2/statuses/in-review.md"),
+        );
+    }
+
+    /// Per-status `prompt_path` is optional — fixtures that omit it
+    /// (e.g. terminal statuses like `pending-release`) must continue to
+    /// parse and round-trip to `None`.
+    #[test]
+    fn load_body_file_treats_missing_prompt_path_as_none() {
+        let file = write_body(
+            r##"
+statuses:
+  - key: pending-release
+    label: Pending release
+    icon: package
+    color: "#2ecc71"
+    unblocks_parents: true
+    unblocks_dependents: true
+    cascades_to_children: false
+default_status_key: pending-release
+"##,
+        );
+        let body = load_body_file(file.path()).unwrap();
+        assert_eq!(body.statuses.len(), 1);
+        assert!(body.statuses[0].prompt_path.is_none());
+    }
 }

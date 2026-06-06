@@ -1350,8 +1350,8 @@ impl PostgresStoreV2 {
 
         let query = format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+             (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, prompt_path) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -1363,6 +1363,7 @@ impl PostgresStoreV2 {
             .bind(project.creator.as_str())
             .bind(project.deleted)
             .bind(actor)
+            .bind(project.prompt_path.as_deref())
             .execute(executor)
             .await
             .map_err(|err| {
@@ -1390,14 +1391,16 @@ impl PostgresStoreV2 {
                     "invalid default_status_key stored for project: {e}"
                 ))
             })?;
-        Ok(Project::new(
+        let mut project = Project::new(
             key,
             row.name.clone(),
             statuses,
             default_status_key,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
             row.deleted,
-        ))
+        );
+        project.prompt_path = row.prompt_path.clone();
+        Ok(project)
     }
 
     async fn insert_conversation_in_tx<'e, E>(
@@ -1709,6 +1712,8 @@ struct ProjectRow {
     updated_at: DateTime<Utc>,
     #[sqlx(default)]
     creation_time: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    prompt_path: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3838,7 +3843,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Project>, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
             "SELECT id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, created_at, updated_at, \
-             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time \
+             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
+             prompt_path \
              FROM {TABLE_PROJECTS} \
              WHERE id = $1 \
              ORDER BY version_number DESC \
@@ -3884,7 +3890,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.key, p.name, p.default_status_key, p.statuses, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
-             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time \
+             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
+             p.prompt_path \
              FROM {TABLE_PROJECTS} p \
              WHERE p.is_latest = true"
         );
@@ -10308,6 +10315,55 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 1, "exactly one is_latest row per project id");
+    }
+
+    /// The four-level prompt resolver depends on `Project.prompt_path`
+    /// surviving a round trip through the store. Prior to the
+    /// `add_projects_prompt_path` migration the column was missing, so
+    /// the CLI's `projects update --prompt-path ...` set the field on
+    /// the wire payload but `row_to_project` rebuilt the `Project` via
+    /// `Project::new()` (which hard-codes `None`), and spawned sessions
+    /// saw only the agent slice.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn project_prompt_path_round_trips_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let mut project = sample_project_pg();
+        project.prompt_path = Some("/projects/engineering/prompt.md".to_string());
+        let (id, _) = store
+            .add_project(project.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.prompt_path.as_deref(),
+            Some("/projects/engineering/prompt.md"),
+            "create-time prompt_path must survive the round trip"
+        );
+
+        let mut next = fetched.item.clone();
+        next.prompt_path = Some("/projects/engineering/prompt-v2.md".to_string());
+        store
+            .update_project(&id, next, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let after_update = store.get_project(&id, false).await.unwrap();
+        assert_eq!(
+            after_update.item.prompt_path.as_deref(),
+            Some("/projects/engineering/prompt-v2.md"),
+        );
+
+        let listed = store.list_projects(false).await.unwrap();
+        let entry = listed
+            .into_iter()
+            .find(|(pid, _)| pid == &id)
+            .expect("project missing from list");
+        assert_eq!(
+            entry.1.item.prompt_path.as_deref(),
+            Some("/projects/engineering/prompt-v2.md"),
+        );
     }
 
     /// Migration must add `project_id` to existing `issues_v2` rows

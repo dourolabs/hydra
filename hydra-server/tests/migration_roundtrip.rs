@@ -267,6 +267,14 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         }
     }
 
+    // Column added by 20260606010000_add_projects_prompt_path.sql.
+    if !column_exists(pool, "projects", "prompt_path").await? {
+        bail!("expected metis.projects.prompt_path column to exist after rollforward");
+    }
+    if !column_is_nullable(pool, "projects", "prompt_path").await? {
+        bail!("expected metis.projects.prompt_path to be nullable after rollforward");
+    }
+
     Ok(())
 }
 
@@ -1635,13 +1643,17 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
             "cascades_to_children": false
         }
     ]);
+    // Include `prompt_path` so the new column added by
+    // 20260606010000_add_projects_prompt_path.sql is exercised by the
+    // seed INSERT and the Store::get_project read back below.
     sqlx::query(
         "INSERT INTO metis.projects \
-         (id, version_number, key, name, default_status_key, statuses, creator) \
-         VALUES ($1, 1, 'roundtrip', 'Roundtrip', 'open', $2, 'jayantk')",
+         (id, version_number, key, name, default_status_key, statuses, creator, prompt_path) \
+         VALUES ($1, 1, 'roundtrip', 'Roundtrip', 'open', $2, 'jayantk', $3)",
     )
     .bind(project_id.as_ref())
     .bind(&statuses_json)
+    .bind("/projects/roundtrip/prompt.md")
     .execute(pool)
     .await
     .context("seed metis.projects row for round-trip assertion")?;
@@ -1662,6 +1674,7 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
         default_status_key,
         statuses,
         creator,
+        prompt_path,
         ..
     } = &fetched.item;
     if key != &ProjectKey::try_new("roundtrip").unwrap() {
@@ -1679,6 +1692,11 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
         bail!(
             "project {project_id}: expected creator='jayantk'; got {:?}",
             creator.as_str()
+        );
+    }
+    if prompt_path.as_deref() != Some("/projects/roundtrip/prompt.md") {
+        bail!(
+            "project {project_id}: expected prompt_path='/projects/roundtrip/prompt.md'; got {prompt_path:?}"
         );
     }
     let Some(status) = statuses.first() else {
