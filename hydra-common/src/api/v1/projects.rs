@@ -180,6 +180,10 @@ pub struct StatusDefinition {
     /// dispatcher skips anyway).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_path: Option<String>,
+    /// When `true`, ready issues that land in this status spawn a
+    /// conversation instead of a headless session.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interactive: bool,
 }
 
 impl StatusDefinition {
@@ -204,6 +208,7 @@ impl StatusDefinition {
             cascades_to_children,
             on_enter,
             prompt_path: None,
+            interactive: false,
         }
     }
 }
@@ -595,6 +600,64 @@ mod tests {
         assert_eq!(
             parsed.prompt_path.as_deref(),
             Some("/projects/default/prompt.md")
+        );
+    }
+
+    #[test]
+    fn status_definition_omits_interactive_when_false() {
+        let def = status("open", "Open");
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(
+            !json.contains("interactive"),
+            "interactive should be skipped when false; got {json}"
+        );
+    }
+
+    #[test]
+    fn status_definition_round_trips_interactive_true() {
+        let mut def = status("open", "Open");
+        def.interactive = true;
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"interactive\":true"));
+        let parsed: StatusDefinition = serde_json::from_str(&json).unwrap();
+        assert!(parsed.interactive);
+    }
+
+    #[test]
+    fn status_definition_defaults_interactive_when_field_absent() {
+        // Older payloads (pre-PR1) have no `interactive`; deserialize to `false`.
+        let legacy = serde_json::json!({
+            "key": "open",
+            "label": "Open",
+            "icon": "circle",
+            "color": "#abcdef",
+            "unblocks_parents": false,
+            "unblocks_dependents": false,
+            "cascades_to_children": false,
+        });
+        let parsed: StatusDefinition = serde_json::from_value(legacy).unwrap();
+        assert!(!parsed.interactive);
+    }
+
+    #[test]
+    fn status_definition_round_trips_interactive_false_drops_field() {
+        // Explicit `interactive: false` on the wire must re-serialize without the field.
+        let wire = serde_json::json!({
+            "key": "open",
+            "label": "Open",
+            "icon": "circle",
+            "color": "#abcdef",
+            "unblocks_parents": false,
+            "unblocks_dependents": false,
+            "cascades_to_children": false,
+            "interactive": false,
+        });
+        let parsed: StatusDefinition = serde_json::from_value(wire).unwrap();
+        assert!(!parsed.interactive);
+        let reserialized = serde_json::to_string(&parsed).unwrap();
+        assert!(
+            !reserialized.contains("interactive"),
+            "skip_serializing_if should drop `interactive: false`; got {reserialized}"
         );
     }
 

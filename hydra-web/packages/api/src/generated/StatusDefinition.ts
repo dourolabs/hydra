@@ -24,4 +24,9 @@ export type StatusDefinition = {
    * dispatcher skips anyway).
    */
   prompt_path?: string | null;
+  /**
+   * When `true`, ready issues that land in this status spawn a
+   * conversation instead of a headless session.
+   */
+  interactive?: boolean;
 };
