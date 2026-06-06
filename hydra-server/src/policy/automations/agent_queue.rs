@@ -2993,10 +2993,8 @@ mod tests {
             "conversation agent_name should be agent-a"
         );
 
-        // The interactive branch does NOT also create a headless session.
-        // (PR 3's SpawnConversationSessionsAutomation will spawn one
-        // asynchronously when the ConversationCreated event lands; the
-        // AgentQueue path itself goes through `create_conversation` only.)
+        // The interactive branch goes through `create_conversation` only;
+        // it does NOT also create a headless session itself.
         let task_state_after = agent_task_state(&handles.state, "agent-a").await?;
         assert!(
             !task_state_after.existing_issue_ids.contains(&issue_id),
@@ -3279,10 +3277,9 @@ mod tests {
     /// match. The interactive path additionally carries
     /// `HYDRA_CONVERSATION_ID` in env_vars and runs in `SessionMode::
     /// Interactive`; both paths inherit `spawned_from = Some(issue_id)`
-    /// and carry `HYDRA_ISSUE_ID`. This is the §4 "Uniformity invariants"
-    /// floor: the surrounding routing pipeline (patches, child-of edges,
-    /// merge policy) is keyed off these fields, so equal session
-    /// content => equal downstream behaviour.
+    /// and carry `HYDRA_ISSUE_ID`. The surrounding routing pipeline
+    /// (patches, child-of edges, merge policy) is keyed off these
+    /// fields, so equal session content => equal downstream behaviour.
     #[tokio::test]
     async fn paired_mode_session_shapes_match_across_branches() -> anyhow::Result<()> {
         use crate::app::test_helpers::{poll_until, start_test_automation_runner};

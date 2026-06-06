@@ -9,8 +9,6 @@
 //! the issue via `spawned_from` is closed through the existing
 //! `AppState::close_conversation` path so the worker can shut down cleanly
 //! instead of dangling.
-//!
-//! See `[[d-ulhrefm]]` §4 "Lifecycle" and §8 PR 4.
 
 use async_trait::async_trait;
 
