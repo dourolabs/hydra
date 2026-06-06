@@ -11,6 +11,7 @@ import type {
   SessionVersionRecord,
   ListSessionsResponse,
   ListSessionVersionsResponse,
+  ListProxyTargetsResponse,
   SessionSummaryRecord,
   SessionSummary,
   KillSessionResponse,
@@ -21,6 +22,8 @@ import type {
   MountItem,
   AgentConfig,
   AgentSpec,
+  ProxyTarget,
+  UpsertProxyTargetRequest,
 } from "@hydra/api";
 
 // `Session` lost its top-level `prompt` / `interactive` / `model` fields in
@@ -503,6 +506,76 @@ export function createSessionRoutes(store: Store): Hono {
     );
     const resp: ListSessionVersionsResponse = { versions };
     return c.json(resp);
+  });
+
+  // GET /v1/sessions/:id/proxy-targets — returns the worker-advertised
+  // ports for this session (`hydra worker proxy start --port <N>`).
+  app.get("/v1/sessions/:id/proxy-targets", (c) => {
+    const id = c.req.param("id");
+    const entry = store.get<Session>(COLLECTION, id);
+    if (!entry) {
+      return c.json({ error: `session '${id}' not found` }, 404);
+    }
+    const resp: ListProxyTargetsResponse = {
+      targets: entry.data.proxy_targets ?? [],
+    };
+    return c.json(resp);
+  });
+
+  // POST /v1/sessions/:id/proxy-targets — worker-only on the real server.
+  // The mock accepts the call so test fixtures (and the e2e flow that
+  // simulates a worker advertising a port) can drive the UI without a real
+  // worker token.
+  app.post("/v1/sessions/:id/proxy-targets", async (c) => {
+    const id = c.req.param("id");
+    const entry = store.get<Session>(COLLECTION, id);
+    if (!entry) {
+      return c.json({ error: `session '${id}' not found` }, 404);
+    }
+    const body = await c.req.json<UpsertProxyTargetRequest>();
+    const existing = entry.data.proxy_targets ?? [];
+    const filtered = existing.filter((t) => t.port !== body.port);
+    const next: ProxyTarget = {
+      port: body.port,
+      ready_path: body.ready_path,
+    };
+    const updated: Session = {
+      ...entry.data,
+      proxy_targets: [...filtered, next],
+    };
+    store.update<Session>(COLLECTION, id, updated, SSE_PREFIX);
+    return c.body(null, 204);
+  });
+
+  // DELETE /v1/sessions/:id/proxy-targets/:port
+  app.delete("/v1/sessions/:id/proxy-targets/:port", (c) => {
+    const id = c.req.param("id");
+    const port = Number(c.req.param("port"));
+    const entry = store.get<Session>(COLLECTION, id);
+    if (!entry) {
+      return c.json({ error: `session '${id}' not found` }, 404);
+    }
+    const existing = entry.data.proxy_targets ?? [];
+    const updated: Session = {
+      ...entry.data,
+      proxy_targets: existing.filter((t) => t.port !== port),
+    };
+    store.update<Session>(COLLECTION, id, updated, SSE_PREFIX);
+    return c.body(null, 204);
+  });
+
+  // POST /v1/sessions/:id/proxy-auth — cookie-mint. The real server signs
+  // and sets `Set-Cookie: hydra_proxy_<short>=…; Domain=.proxy.<host>;…`.
+  // The mock is content to return 204 without a cookie: e2e tests assert
+  // the call lands, not that the cookie is honored (the proxy router
+  // itself is not exercised in the SPA mock environment).
+  app.post("/v1/sessions/:id/proxy-auth", (c) => {
+    const id = c.req.param("id");
+    const entry = store.get<Session>(COLLECTION, id);
+    if (!entry) {
+      return c.json({ error: `session '${id}' not found` }, 404);
+    }
+    return c.body(null, 204);
   });
 
   return app;

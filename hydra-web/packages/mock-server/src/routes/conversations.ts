@@ -210,6 +210,37 @@ export function createConversationRoutes(store: Store): Hono {
     return c.json(null);
   });
 
+  // POST /v1/conversations/:id/proxy-auth — cookie-mint scoped to the
+  // conversation's currently-active session. The real server signs and
+  // returns 409 when the conversation is idle (no active session); the mock
+  // mirrors that path by resolving to the latest session and returning 409 if
+  // none exists.
+  app.post("/v1/conversations/:id/proxy-auth", (c) => {
+    const id = c.req.param("id");
+    const entry = store.get<Conversation>(COLLECTION, id);
+    if (!entry) {
+      return c.json({ error: `conversation '${id}' not found` }, 404);
+    }
+    if (entry.data.status === "idle") {
+      return c.json(
+        {
+          error: `conversation '${id}' has no active session; send a message to resume`,
+        },
+        409,
+      );
+    }
+    const sessionId = latestSessionForConversation(store, id);
+    if (!sessionId) {
+      return c.json(
+        {
+          error: `conversation '${id}' has no active session; send a message to resume`,
+        },
+        409,
+      );
+    }
+    return c.body(null, 204);
+  });
+
   // POST /v1/conversations/:id/close
   app.post("/v1/conversations/:id/close", (c) => {
     const id = c.req.param("id");

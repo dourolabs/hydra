@@ -2,11 +2,18 @@ import { useState } from "react";
 import type { Conversation } from "@hydra/api";
 import { ChatMetadataTab } from "./ChatMetadataTab";
 import { ChatRelatedTab } from "./ChatRelatedTab";
+import { ProxyTab } from "./ProxyTab";
+import { useConversationProxyStatus } from "../../hooks/useConversationProxyStatus";
 import styles from "./ChatRightPanel.module.css";
 
-export type ChatRightPanelTabKey = "related" | "details";
+export type ChatRightPanelTabKey = "related" | "proxy" | "details";
 
-const TABS: { key: ChatRightPanelTabKey; label: string }[] = [
+interface TabDef {
+  key: ChatRightPanelTabKey;
+  label: string;
+}
+
+const BASE_TABS: TabDef[] = [
   { key: "related", label: "Related" },
   { key: "details", label: "Details" },
 ];
@@ -26,7 +33,23 @@ export function ChatRightPanel({
 }: ChatRightPanelProps) {
   const [internalTab, setInternalTab] = useState<ChatRightPanelTabKey>("related");
   const isControlled = activeTabKey !== undefined;
-  const activeTab = isControlled ? activeTabKey : internalTab;
+  const requestedTab = isControlled ? activeTabKey : internalTab;
+
+  // The Proxy tab only exists when the conversation's active session has
+  // advertised one or more proxy targets. Hiding it (rather than disabling)
+  // keeps the right-rail clean for the common case where no dev preview is
+  // running.
+  const proxyStatus = useConversationProxyStatus(conversation.conversation_id);
+  const proxyAvailable = proxyStatus.targets.length > 0;
+
+  const tabs: TabDef[] = proxyAvailable
+    ? [BASE_TABS[0], { key: "proxy", label: "Proxy" }, BASE_TABS[1]]
+    : BASE_TABS;
+
+  // If the proxy tab disappears while it was active, fall back to `related`
+  // without losing the user's place.
+  const activeTab: ChatRightPanelTabKey =
+    requestedTab === "proxy" && !proxyAvailable ? "related" : requestedTab;
 
   const handleTabClick = (key: ChatRightPanelTabKey) => {
     if (!isControlled) setInternalTab(key);
@@ -36,7 +59,7 @@ export function ChatRightPanel({
   return (
     <aside className={styles.wrapper} data-mobile-active={dataMobileActive}>
       <div className={styles.tabs} role="tablist">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -53,6 +76,9 @@ export function ChatRightPanel({
       <div className={styles.body}>
         {activeTab === "related" && (
           <ChatRelatedTab conversationId={conversation.conversation_id} />
+        )}
+        {activeTab === "proxy" && proxyAvailable && (
+          <ProxyTab conversationId={conversation.conversation_id} />
         )}
         {activeTab === "details" && <ChatMetadataTab conversation={conversation} />}
       </div>

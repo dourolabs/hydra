@@ -70,6 +70,14 @@ vi.mock("../../features/chat/useChatReferencedArtifacts", () => ({
 // ChatRelatedTab also hydrates issue child statuses for progress bars; stub
 // it here so this layout test doesn't need the @tanstack/react-query mock to
 // expose useQuery.
+vi.mock("../../hooks/useConversationProxyStatus", () => ({
+  useConversationProxyStatus: () => ({
+    targets: [],
+    sessionId: null,
+    isLoading: false,
+  }),
+}));
+
 vi.mock("../../features/dashboard/usePageIssueTrees", () => ({
   usePageIssueTrees: () => ({
     treeDataMap: new Map(),

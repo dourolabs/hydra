@@ -14,17 +14,20 @@ import { ChatInput } from "./ChatInput";
 import { clearConversationDraft } from "./useConversationDraft";
 import { ChatRightPanel, type ChatRightPanelTabKey } from "./ChatRightPanel";
 import { MobileTabBar, type MobileTabBarItem } from "../../components/MobileTabBar";
+import { useConversationProxyStatus } from "../../hooks/useConversationProxyStatus";
 import { ApiError, apiClient } from "../../api/client";
 import { useBreadcrumbs } from "../../layout/useBreadcrumbs";
 import styles from "./ExistingChatPage.module.css";
 
 type MobileTabKey = "chat" | ChatRightPanelTabKey;
 
-const MOBILE_TABS: MobileTabBarItem[] = [
+const BASE_MOBILE_TABS: MobileTabBarItem[] = [
   { key: "chat", label: "Chat" },
   { key: "related", label: "Related" },
   { key: "details", label: "Details" },
 ];
+
+const PROXY_MOBILE_TAB: MobileTabBarItem = { key: "proxy", label: "Proxy" };
 
 export function ExistingChatPage({ conversationId }: { conversationId: string }) {
   const navigate = useNavigate();
@@ -35,6 +38,11 @@ export function ExistingChatPage({ conversationId }: { conversationId: string })
 
   const [mobileTab, setMobileTab] = useState<MobileTabKey>("chat");
   const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTabKey>("related");
+  // Hoisted here so the mobile tab bar and the right panel agree on whether
+  // the Proxy tab is visible. The hook returns cached data — calling it in
+  // ChatRightPanel too is cheap.
+  const proxyStatus = useConversationProxyStatus(conversationId);
+  const proxyAvailable = proxyStatus.targets.length > 0;
   // Local optimistic events live outside the query cache so they layer on
   // top of the SessionEvent transcript. Entries are reconciled away in the
   // `events` merge below as soon as their server-side counterpart lands in
@@ -127,6 +135,7 @@ export function ExistingChatPage({ conversationId }: { conversationId: string })
         setMobileTab("chat");
         return;
       case "related":
+      case "proxy":
       case "details":
         setMobileTab(key);
         setRightPanelTab(key);
@@ -169,12 +178,21 @@ export function ExistingChatPage({ conversationId }: { conversationId: string })
   const chatPaneActive = mobileTab === "chat";
   const activity = deriveActivitySteps(events, conversation.status);
 
+  // Inserted as the 3rd mobile tab (between Related and Details) when the
+  // active session has advertised any proxy targets — same hide-when-empty
+  // rule as the desktop right-panel tab.
+  const mobileTabs: MobileTabBarItem[] = proxyAvailable
+    ? [BASE_MOBILE_TABS[0], BASE_MOBILE_TABS[1], PROXY_MOBILE_TAB, BASE_MOBILE_TABS[2]]
+    : BASE_MOBILE_TABS;
+  const activeMobileTab: MobileTabKey =
+    mobileTab === "proxy" && !proxyAvailable ? "chat" : mobileTab;
+
   return (
     <div className={styles.chatLayout}>
       <MobileTabBar
         className={styles.mobileTabBar}
-        tabs={MOBILE_TABS}
-        activeKey={mobileTab}
+        tabs={mobileTabs}
+        activeKey={activeMobileTab}
         onChange={handleMobileTabChange}
         testIdPrefix="chat-mobile-tab-"
       />

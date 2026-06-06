@@ -1,0 +1,153 @@
+.proxyTab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.spinnerWrapper {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.empty {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--s-failed);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-2);
+  min-width: 0;
+}
+
+.rowHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.port {
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  font-weight: 500;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-1);
+  white-space: nowrap;
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--s-neutral);
+  flex-shrink: 0;
+}
+
+.statusBadge[data-status="starting"] .statusDot {
+  background: var(--s-progress);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-progress) 18%, transparent);
+  animation: hydra-pulse 1.8s ease-in-out infinite;
+}
+
+.statusBadge[data-status="ready"] .statusDot {
+  background: var(--s-closed);
+}
+
+.statusBadge[data-status="idle"] .statusDot {
+  background: var(--s-conv-idle);
+}
+
+.statusBadge[data-status="unavailable"] .statusDot {
+  background: var(--s-failed);
+}
+
+.readyPath {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-xs);
+  min-width: 0;
+}
+
+.readyPathLabel {
+  color: var(--fg-2);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.readyPathValue {
+  font-family: var(--f-mono);
+  color: var(--fg-0);
+  word-break: break-all;
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.idleNote {
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+  font-style: italic;
+}
+
+.copyButton {
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+.copyButton:hover {
+  color: var(--fg-0);
+}
