@@ -18,7 +18,7 @@ Verify the full user → chat → one-shot trigger → issue → graph-edge path
 
    > Please create a one-shot trigger that fires roughly 45 seconds from now and creates an issue titled `E2E one-shot trigger smoke <RUN_ID>` (description: "Verification target for the triggers-one-shot-via-chat e2e scenario"; assignee: `users/swe`; status: `open`; repository: `dourolabs/hydra-test-fixture`; issue type: `task`). Reply with just the new trigger id and the scheduled fire time when done.
 
-4. Wait up to 60s for the assistant reply. Parse the reply for a `t-…` trigger id; record both the trigger id and the scheduled fire time (`scheduled_at`) returned by the chat agent. If no `t-…` id appears within 60s, treat this run as `skipped` (see Failure Modes below), not `failed`.
+4. Wait up to 60s for the assistant reply. Parse the reply for a `t-…` trigger id; record both the trigger id and the scheduled fire time (`scheduled_at`) returned by the chat agent.
 5. Verify via the dashboard that the trigger exists: navigate to `/triggers/<trigger-id>` and assert:
    - The schedule renders as a `Once { at }` value roughly 45s in the future (within a small slack window from `scheduled_at`).
    - The single action is `CreateIssue` and the rendered title contains `<RUN_ID>`.
@@ -49,7 +49,7 @@ Verify the full user → chat → one-shot trigger → issue → graph-edge path
 
 Report these explicitly so a failing run produces an actionable finding rather than a bare "timeout":
 
-- **No `t-…` id in chat reply within 60s** → the chat agent does not know about triggers yet (its prompt/allowlist gate is not met). Treat the run as `skipped`, not `failed`, and note which gate is missing.
+- **No `t-…` id in chat reply within 60s** → the chat agent failed to create the trigger. Capture the assistant reply verbatim; this is a regression in the chat-agent prompt or allowlist.
 - **Trigger detail page errors or shows the schedule incorrectly** → frontend regression on PR 7 [[p-xvosxrnb]]. Capture the page state.
 - **Issue never appears within 90s** → the `ScheduledTriggerWorker` is not ticking or `Action::run` errored. Capture the server logs at `/tmp/hydra-e2e/server.log`.
 - **Actor on the create event is `ActorRef::Authenticated { … }` instead of `ActorRef::Trigger { … }`** → the worker is attributing writes wrong; PR 5 [[p-fnpbknnu]] regression.

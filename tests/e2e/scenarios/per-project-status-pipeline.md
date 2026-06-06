@@ -13,7 +13,7 @@
 
 **Estimated duration:** ~30 minutes
 
-**Activated under [[i-bhaxdizc]]** after all six implementation PRs of [[i-ctfcvyru]] ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) merged. On a fresh single-player instance bootstrapped by `tests/e2e/run.sh`, the runner-side seeding wires up the `engineering-v2` Project and its prompts automatically; the Step 1 skip-if pre-check remains as belt-and-suspenders for test instances where the seeding has not yet been wired up.
+**Activated under [[i-bhaxdizc]]** after all six implementation PRs of [[i-ctfcvyru]] ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) merged. On a fresh single-player instance bootstrapped by `tests/e2e/run.sh`, the runner-side seeding wires up the `engineering-v2` Project and its prompts automatically. Step 1 below confirms the seeding landed; a missing project is a runner regression, not a skip.
 
 ## Description
 
@@ -21,7 +21,7 @@ Exercises the per-project status workflow designed in [[d-druoexk]] end-to-end t
 
 Covers both the **custom inbox/backlog/release pipeline** (design [[d-druoexk]] §4 "End-to-end use cases" — custom inbox/backlog/release pipeline) and the **same-issue review hand-off** (design [[d-druoexk]] §4 "End-to-end use cases" — same-issue review hand-off), exercising `apply_status_on_enter` automation (design [[d-druoexk]] §4 "Spawn dispatch and on_enter automation") and the unified readiness rule (design [[d-druoexk]] §4 "Dependencies, readiness, cascade") in one pass.
 
-This scenario was authored ahead of implementation and lived under `scenarios/planned/` until [[i-bhaxdizc]] promoted it. The Step 1 skip-if pre-check below remains as belt-and-suspenders for test instances where the per-project-statuses feature has shipped but the runner-side `engineering-v2` seeding has not yet been wired up.
+This scenario was authored ahead of implementation and lived under `scenarios/planned/` until [[i-bhaxdizc]] promoted it. Step 1 below is a hard pre-check that the runner-side `engineering-v2` seeding landed; if the project is missing, treat the run as failed (not skipped).
 
 ## Setup
 
@@ -64,11 +64,10 @@ Prompts deliberately stay focused on the per-status delta. Cross-cutting agent b
 
 All interactions go through the dashboard at `http://localhost:8080` per the suite's convention. Steps use Playwright MCP for navigation, clicks, and assertions.
 
-### Step 1 — Pre-check (skip-if)
+### Step 1 — Pre-check
 
 1. Navigate to `http://localhost:8080/projects/engineering-v2`.
-2. If the page returns a 404, redirects to a "not found" view, or otherwise indicates the per-project-statuses feature has not shipped (e.g. the route is unknown to the router), **mark this scenario `skipped` and exit**. A skip is a **pass**, not a failure.
-3. If the Project editor page renders with the six statuses listed above, continue.
+2. Confirm the Project editor page renders with the six statuses listed above. If it does not (404, redirect to a "not found" view, or the route is unknown to the router), treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
 
 ### Step 2 — Test bundle A: Status UI surfaces
 

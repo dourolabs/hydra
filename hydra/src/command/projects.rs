@@ -476,6 +476,35 @@ default_status_key: open
     }
 
     #[test]
+    fn load_body_file_parses_yaml_with_principal_tag_form() {
+        let file = write_body(
+            r##"
+statuses:
+  - key: backlog
+    label: Backlog
+    icon: list
+    color: "#9b59b6"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+    on_enter:
+      assign_to: !Agent { name: pm }
+default_status_key: backlog
+"##,
+        );
+        let body = load_body_file(file.path()).unwrap();
+        let on_enter = body.statuses[0]
+            .on_enter
+            .as_ref()
+            .expect("on_enter present");
+        let assignee = on_enter.assign_to.as_ref().expect("assign_to present");
+        assert!(matches!(
+            assignee,
+            hydra_common::principal::Principal::Agent { name } if name.as_str() == "pm"
+        ));
+    }
+
+    #[test]
     fn load_body_file_rejects_empty() {
         let file = write_body("");
         let err = load_body_file(file.path()).unwrap_err();
