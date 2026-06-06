@@ -33,6 +33,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@issues:navigate-tabs` — User can navigate between Related, Activity, and Details tabs in the issue right panel
 - `@issues:filter-related-chat-narrows` — Issues list FilterBar can add a Related chat chip and pick a seeded conversation; the listIssues request goes out with `ids=` containing only `i-`-prefixed ids (no `d-`/`p-` leakage from chat→artifact `refers-to` edges) and the rendered rows are exactly the issues the seed says that conversation refers to. URL persists `?relatedChat=<id>` and reload rehydrates the chip + narrowed list.
 - `@issues:filter-related-chat-no-flash` — Changing a rehydrated Related chat chip's selection (adding a second value) keeps the previous narrowed rows rendered until the new resolution lands: with the swap's `/v1/relations` call held by a test intercept, the rows container never empties to zero and neither the "Loading issues…" skeleton nor the empty state appears. Releasing the held call swaps in the new union of rows.
+- `@issues:interactive-conversation` — When an issue has a spawned conversation (`Conversation.spawned_from == issueId`), the issue header surfaces a deep-link to `/chat/<conversation_id>`: labeled "Open Conversation" for `active`, "Resume Conversation" for `idle`, and absent for `closed`. The Related tab's Conversations subsection lists every linked conversation (live + historical) via `listConversations({ spawned_from })`. The target conversation's header in turn renders an "originated from [[issue_id]]" link back to the issue.
 
 ## Labels
 
@@ -45,6 +46,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@projects:create` — User can create a project with custom statuses from `/projects`; the new project lands in the list and is reachable at `/projects/<key>`.
 - `@projects:badge` — Status badge on the issue list reflects the project's `StatusDefinition` (label, icon, color) by reading `issue.resolved_status` straight from the API; the frontend performs no per-status resolution.
 - `@projects:status-modal-options` — Status-update modal shows project-defined options for a project-scoped issue (fetched from `/v1/projects/:id/statuses`) and falls back to `DefaultProject` options for project-less issues (fetched from `/v1/projects/default/statuses`).
+- `@projects:interactive-status` — Project editor exposes an "Interactive" checkbox alongside the existing status flags (`unblocks_parents`, `unblocks_dependents`, `cascades_to_children`). Toggling it on round-trips through the upsert request, and statuses with `interactive: true` render a small "interactive" annotation chip next to the status label in any `<StatusChip>` view.
 
 ## Patches
 

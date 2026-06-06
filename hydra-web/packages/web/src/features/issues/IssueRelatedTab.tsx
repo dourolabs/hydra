@@ -6,12 +6,14 @@ import { apiClient } from "../../api/client";
 import { useIssue } from "./useIssue";
 import { useIssuePatches } from "../patches/useIssuePatches";
 import { useIssueDocuments } from "./useIssueDocuments";
+import { useConversations } from "../chat/useConversations";
 import { topologicalSort } from "./topologicalSort";
 import { RelatedSection, RelatedEmpty } from "../related/RelatedSection";
 import {
   IssueRailRow,
   PatchRailRow,
   DocumentRailRow,
+  ChatRailRow,
 } from "../related/RailRow";
 import { usePageIssueTrees } from "../dashboard/usePageIssueTrees";
 import styles from "./IssueRelatedTab.module.css";
@@ -98,6 +100,18 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
   const { data: documents, isLoading: documentsLoading, error: documentsError } =
     useIssueDocuments(issueId);
 
+  // All conversations spawned from this issue, live and historical. The
+  // server-side `spawned_from` filter narrows to this issue; status is
+  // unconstrained so closed rows still surface in the rail.
+  const {
+    data: spawnedConversations,
+    isLoading: conversationsLoading,
+    error: conversationsError,
+  } = useConversations(
+    { spawned_from: issueId, include_deleted: false },
+    { enabled: !!issueId },
+  );
+
   const parentIdSet = useMemo(() => new Set(parentIds), [parentIds]);
   const childIdSet = useMemo(() => new Set(childIds), [childIds]);
 
@@ -129,7 +143,8 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
     (allRelatedIds.length > 0 && relatedIssuesQuery.isLoading) ||
     (allRelatedIds.length > 0 && sessionsQuery.isLoading) ||
     patchesLoading ||
-    documentsLoading;
+    documentsLoading ||
+    conversationsLoading;
 
   const error =
     childRelationsQuery.error ??
@@ -137,7 +152,10 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
     sessionsQuery.error ??
     patchesError ??
     documentsError ??
+    conversationsError ??
     null;
+
+  const conversations = spawnedConversations ?? [];
 
   if (isLoading) {
     return (
@@ -200,6 +218,21 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
           <div className={styles.list}>
             {patches.map((record) => (
               <PatchRailRow key={record.patch_id} record={record} />
+            ))}
+          </div>
+        )}
+      </RelatedSection>
+
+      <RelatedSection title="Conversations" count={conversations.length}>
+        {conversations.length === 0 ? (
+          <RelatedEmpty>No conversations linked to this issue.</RelatedEmpty>
+        ) : (
+          <div className={styles.list} data-testid="issue-related-conversations">
+            {conversations.map((conversation) => (
+              <ChatRailRow
+                key={conversation.conversation_id}
+                conversation={conversation}
+              />
             ))}
           </div>
         )}

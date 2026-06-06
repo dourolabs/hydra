@@ -230,6 +230,25 @@
   white-space: nowrap;
 }
 
+.openConversation {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--acc);
+  background: var(--bg-1);
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.openConversation:hover {
+  border-color: var(--acc);
+  color: var(--acc-bright);
+}
+
 /* ── Responsive ── */
 @media (max-width: 1024px) {
   .detail {

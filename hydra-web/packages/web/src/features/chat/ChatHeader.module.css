@@ -51,6 +51,17 @@
   padding: 0 8px;
 }
 
+.originatedLink {
+  color: var(--acc);
+  text-decoration: none;
+  font-family: var(--f-mono);
+}
+
+.originatedLink:hover {
+  color: var(--acc-bright);
+  text-decoration: underline;
+}
+
 @media (max-width: 768px) {
   .header {
     padding: 14px 16px;

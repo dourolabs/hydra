@@ -5,6 +5,7 @@ import { Markdown } from "../../components/Markdown";
 import type { IssueVersionRecord } from "@hydra/api";
 import { principalAvatarKind, principalDisplayName } from "../principal/formatPrincipal";
 import { StatusChip } from "../projects/StatusChip";
+import { useConversations } from "../chat/useConversations";
 import { useIssue } from "./useIssue";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
@@ -60,6 +61,18 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const { data: sessions } = useSessionsByIssue(issueId);
   const { durationText, isRunning } = useSessionDuration(sessions);
 
+  // Live (non-closed) spawned conversation for this issue, if any. The
+  // server-side filter narrows to this issue; we then pick the first
+  // Active/Idle row to drive the header affordance.
+  const { data: spawnedConversations } = useConversations(
+    { spawned_from: issueId, include_deleted: false },
+    { enabled: !!issueId },
+  );
+  const liveConversation = useMemo(
+    () => spawnedConversations?.find((c) => c.status !== "closed") ?? null,
+    [spawnedConversations],
+  );
+
   const blockedOnIds = useMemo(
     () => issue.dependencies.filter((d) => d.type === "blocked-on").map((d) => d.issue_id),
     [issue.dependencies],
@@ -108,6 +121,18 @@ export function IssueDetail({ record }: IssueDetailProps) {
             {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
             <div className={styles.headActions}>
               {isRunning && <span className={styles.sessionTimer}>{durationText}</span>}
+              {liveConversation && (
+                <Link
+                  to={`/chat/${liveConversation.conversation_id}`}
+                  data-testid="issue-open-conversation"
+                  data-conversation-status={liveConversation.status}
+                  className={styles.openConversation}
+                >
+                  {liveConversation.status === "idle"
+                    ? "Resume Conversation"
+                    : "Open Conversation"}
+                </Link>
+              )}
               <Button variant="secondary" size="sm" onClick={() => setFeedbackModalOpen(true)}>
                 Give feedback
               </Button>

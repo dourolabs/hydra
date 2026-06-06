@@ -114,6 +114,7 @@ export function createConversationRoutes(store: Store): Hono {
     const q = c.req.query("q");
     const status = c.req.query("status") as ConversationStatus | undefined;
     const creator = c.req.query("creator");
+    const spawnedFrom = c.req.query("spawned_from");
     const limitParam = c.req.query("limit");
 
     const items = store.list<Conversation>(COLLECTION, includeDeleted);
@@ -136,6 +137,9 @@ export function createConversationRoutes(store: Store): Hono {
     }
     if (creator) {
       filtered = filtered.filter(({ entry }) => entry.data.creator === creator);
+    }
+    if (spawnedFrom) {
+      filtered = filtered.filter(({ entry }) => entry.data.spawned_from === spawnedFrom);
     }
 
     if (limitParam !== undefined && limitParam !== null) {
