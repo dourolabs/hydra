@@ -7,6 +7,7 @@ pub mod graph;
 pub mod issues;
 pub mod output;
 pub mod patches;
+pub mod project_body_file;
 pub mod projects;
 pub mod repos;
 pub mod sessions;
