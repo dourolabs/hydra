@@ -336,8 +336,19 @@
       "description": "Add dark mode support\n\nImplement a dark mode theme that users can toggle from their profile settings. Should respect the OS-level preference by default.\n\n## Requirements\n- Toggle in user profile settings\n- Respect `prefers-color-scheme` media query\n- Persist preference in localStorage\n- Smooth transition animation between themes\n- All components must support both themes",
       "creator": "dev-user",
       "progress": "",
-      "status": "open",
+      "status": "inbox",
       "assignee": null,
+      "project_id": "j-engv2",
+      "resolved_status": {
+        "key": "inbox",
+        "label": "Inbox",
+        "icon": "inbox",
+        "color": "#6b7280",
+        "unblocks_parents": false,
+        "unblocks_dependents": false,
+        "cascades_to_children": false,
+        "prompt_path": null
+      },
       "dependencies": [],
       "patches": []
     },
@@ -478,8 +489,20 @@
       "description": "Merge: Rate limiter middleware\n\nMerge the rate limiter middleware patch after addressing review feedback.",
       "creator": "alice",
       "progress": "",
-      "status": "in-progress",
+      "status": "in-development",
       "assignee": { "Agent": { "name": "swe" } },
+      "project_id": "j-engv2",
+      "resolved_status": {
+        "key": "in-development",
+        "label": "In development",
+        "icon": "code",
+        "color": "#3b82f6",
+        "unblocks_parents": false,
+        "unblocks_dependents": false,
+        "cascades_to_children": false,
+        "on_enter": { "assign_to": { "Agent": { "name": "swe" } }, "attach_form": null },
+        "prompt_path": "/projects/engineering-v2/statuses/in-development.md"
+      },
       "dependencies": [{ "type": "blocked-on", "issue_id": "i-seed00006" }],
       "patches": ["p-seed00003"]
     },
@@ -681,10 +704,21 @@
       "description": "Deploy GraphQL federation gateway\n\nSet up Apollo Federation v2 gateway with subgraphs for users, issues, sessions, and patches. Incremental migration from REST.",
       "creator": "alice",
       "progress": "Gateway deployed. Users and Issues subgraphs live. Sessions subgraph in progress.",
-      "status": "in-progress",
+      "status": "pending-release",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
         "repo_name": "acme/api-gateway"
+      },
+      "project_id": "j-engv2",
+      "resolved_status": {
+        "key": "pending-release",
+        "label": "Pending release",
+        "icon": "rocket",
+        "color": "#10b981",
+        "unblocks_parents": true,
+        "unblocks_dependents": true,
+        "cascades_to_children": false,
+        "prompt_path": null
       },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
       "patches": ["p-seed00004"]
@@ -695,8 +729,23 @@
       "description": "Review: SSE memory leak fix\n\nReview the fix for the SSE broadcaster memory leak. Verify the AbortSignal cleanup approach and check the new metrics endpoint.",
       "creator": "swe",
       "progress": "Agent reviewing patch p-seed00006. Checking cleanup logic.",
-      "status": "in-progress",
+      "status": "in-review",
       "assignee": { "Agent": { "name": "reviewer" } },
+      "project_id": "j-engv2",
+      "resolved_status": {
+        "key": "in-review",
+        "label": "In review",
+        "icon": "eye",
+        "color": "#8b5cf6",
+        "unblocks_parents": false,
+        "unblocks_dependents": false,
+        "cascades_to_children": false,
+        "on_enter": {
+          "assign_to": { "Agent": { "name": "reviewer" } },
+          "attach_form": "/forms/review.yaml"
+        },
+        "prompt_path": "/projects/engineering-v2/statuses/in-review.md"
+      },
       "dependencies": [],
       "patches": ["p-seed00006"]
     },
@@ -706,8 +755,20 @@
       "description": "Add webhook delivery system\n\nImplement a webhook delivery system so external integrations can receive real-time notifications about events.",
       "creator": "alice",
       "progress": "",
-      "status": "open",
+      "status": "backlog",
       "assignee": null,
+      "project_id": "j-engv2",
+      "resolved_status": {
+        "key": "backlog",
+        "label": "Backlog",
+        "icon": "list",
+        "color": "#94a3b8",
+        "unblocks_parents": false,
+        "unblocks_dependents": false,
+        "cascades_to_children": false,
+        "on_enter": { "assign_to": { "Agent": { "name": "pm" } }, "attach_form": null },
+        "prompt_path": "/projects/engineering-v2/statuses/backlog.md"
+      },
       "dependencies": [],
       "patches": []
     },
@@ -808,10 +869,21 @@
       "description": "Benchmark refresh queue performance under load\n\nRun load tests against the new mutex-guarded refresh queue at 1k, 5k, and 10k concurrent callers. Compare wall-clock token-acquisition latency and IdP call volume against the pre-mutex baseline.",
       "creator": "swe",
       "progress": "",
-      "status": "open",
+      "status": "pending",
       "assignee": null,
       "session_settings": {
         "repo_name": "acme/web-app"
+      },
+      "project_id": "j-engv2",
+      "resolved_status": {
+        "key": "pending",
+        "label": "Pending",
+        "icon": "clock",
+        "color": "#f59e0b",
+        "unblocks_parents": false,
+        "unblocks_dependents": false,
+        "cascades_to_children": false,
+        "prompt_path": null
       },
       "dependencies": [
         { "type": "child-of", "issue_id": "i-seed00020" },
@@ -2071,6 +2143,46 @@
       "title": "Per-project issue statuses rollout plan",
       "body_markdown": "# Per-project issue statuses rollout plan\n\nThe per-project issue-status design lets each project declare its own status taxonomy (e.g. `triage`, `in-review`, `shipped`) on top of the platform-wide `open` / `in-progress` / `closed` set. This doc tracks the rollout.\n\n## Phases\n\n1. Add `project_statuses` column to the issue table (migration only, no API change).\n2. Surface custom statuses on the issue detail rail.\n3. Filter chips on the issue list page.\n4. Bulk re-statusing tools for migrations between schemas.",
       "path": "/designs/per-project-issue-statuses-implementation-rollout-and-migration.md"
+    },
+    "d-sys-prompt": {
+      "title": "System prompt",
+      "body_markdown": "You are a Hydra agent. The sections below cover the generic Hydra-usage boilerplate every named agent inherits: tools, environment, document-store sync, reference conventions, feedback handling, the required first step, and session-lifecycle rules.\n\n## Tools\n\n`hydra issues`, `hydra patches`, `hydra documents`. Run `hydra <command> --help` for syntax.\n\n## Environment\n\nYour issue id is in `$HYDRA_ISSUE_ID`. (Conversation-bound agents use `$HYDRA_CONVERSATION_ID` instead.)\n\n## Document store\n\nDocuments are synced to `$HYDRA_DOCUMENTS_DIR` before your session starts. Prefer standard filesystem tools for reads and writes. If you edit files there you MUST push them back with `hydra documents push`.\n\n## Referencing Hydra objects\n\nUse double-bracket form: `[[i-abcd12]]`, `[[p-xxxxxx]]`, `[[d-yyyyyy]]`.\n\n## Required first step\n\nRun `hydra graph log \"$HYDRA_ISSUE_ID | scope\" --since -7d --verbosity 2` to stream object-level updates across your issue and its connected sub-graph.\n\n## Session lifecycle\n\nMultiple agents may pick up an issue, so leave enough info in the issue tracker (progress field, status) for the next agent to continue. NEVER poll, sleep-loop, or repeatedly check child status.",
+      "path": "/agents/system_prompt.md"
+    },
+    "d-proj-default-prompt": {
+      "title": "Default project prompt",
+      "body_markdown": "## Project workflow: Default\n\nThis is the default Hydra workflow for issues that don't belong to a bespoke project. It reproduces the original PM-triages / SWE-implements / reviewer-reviews / merger-merges pipeline.\n\n### Roles and routing\n\n- **PM** agents triage `open` issues, investigate, and dispatch SWE-assigned children via the `child-of` dependency type.\n- **SWE** agents implement on `in-progress` issues and create child `review-request` issues to hand patches to the reviewer.\n- **Reviewer** agents pick up the `review-request` child, scan the patch, post a verdict on the review-request issue, and close themselves.\n- **Merger** agents merge approved patches once review gating clears.\n\n### Status progression\n\n`open` → `in-progress` → `closed`. `dropped` and `failed` are terminal states reached when work is cancelled or hits a blocker. Terminal statuses do not spawn agent sessions.",
+      "path": "/projects/default/prompt.md"
+    },
+    "d-proj-default-open": {
+      "title": "Default project: open status prompt",
+      "body_markdown": "## Status: open\n\nA new issue, not yet picked up. The action depends on which agent the spawn dispatcher routed onto it.\n\n### If you are PM\n\nYou are triaging this issue. Gather context with `hydra graph log`, list playbooks and repos, and clone implicated repos.\n\n**Task breakdown.** Produce 1–6 tasks, each one PR-sized. Each task description must include: goal and user-visible outcome, scope (in / out), key files to touch, acceptance criteria and required tests, and dependencies.\n\nCreate tasks via `hydra issues create` with `--deps child-of:$HYDRA_ISSUE_ID`. Assign to `swe` unless the issue specifies a different assignee.\n\n### If you are SWE\n\nSet status to `in-progress` and proceed — the `in-progress` status prompt covers the active-work commands.\n\n### If you are reviewer\n\nThis is a `review-request` issue assigned to you. Read the attached patch, post a verdict via `hydra patches review`, then close the review-request issue.",
+      "path": "/projects/default/statuses/open.md"
+    },
+    "d-proj-default-inprog": {
+      "title": "Default project: in-progress status prompt",
+      "body_markdown": "## Status: in-progress\n\nThe issue is being actively worked. SWE is the usual occupant; the action depends on whether the issue already has patches.\n\n### Implementation work — no patches yet\n\n1. Implement the change. You are already on a branch for this issue — commit your changes there.\n2. Submit via `hydra patches create`, assigning to the issue's `creator`.\n\n### Implementation work — patches exist\n\n- **Merged**: task may be done. Create follow-ups as independent items.\n- **ChangesRequested**: address comments, then reopen with `hydra patches update <PATCH_ID> --status Open`.\n- **Open with approved review**: merge with `hydra patches merge <patch-id>`.\n- **Closed**: rework the patch and resubmit a new one.\n\n### Handling `merge_blocked` errors\n\nDispatch on `blocked_at_layer`. For `reviews`: file review-request issues. For `mergers`: file ONE merge-request issue and end the session.\n\nOnce all needed changes are merged and follow-ups are complete, set status to `closed`.",
+      "path": "/projects/default/statuses/in-progress.md"
+    },
+    "d-proj-engv2-prompt": {
+      "title": "engineering-v2 project prompt",
+      "body_markdown": "## Project workflow: engineering-v2\n\nA columnar pipeline that routes work through six declared statuses: `inbox` → `backlog` → `in-development` → `in-review` → `pending-release`. `pending` is a holding state outside the main flow.\n\n### Roles and routing\n\nEach non-terminal status carries an `on_enter` automation that reassigns the issue to a specific agent when the issue transitions into it:\n\n- `backlog` → `pm` (triage and breakdown)\n- `in-development` → `swe` (implementation; may produce one or more patches)\n- `in-review` → `reviewer` (form-driven review via `/forms/review.yaml`; verdict flips back to `in-development` or forward to `pending-release`)\n\n### Same-issue review hand-off\n\nUnlike the default pipeline, **no child `review-request` issue is created**. SWE transitions the same issue from `in-development` to `in-review`, and reviewer picks up the same issue id. This keeps activity, patches, and progress notes on one timeline.\n\n### Dependency semantics\n\n- `pending-release` is terminal for dependency semantics (`unblocks_parents = unblocks_dependents = true`) but does **not** cascade to children.\n- No status has `cascades_to_children = true`.",
+      "path": "/projects/engineering-v2/prompt.md"
+    },
+    "d-proj-engv2-backlog": {
+      "title": "engineering-v2: backlog status prompt",
+      "body_markdown": "## Status: backlog\n\nA freshly triaged issue waiting for breakdown. The `on_enter` automation reassigned the issue to `pm` — that's you.\n\n### Your job\n\n1. Read the issue description and check `hydra graph log` for related work.\n2. Decide if the issue needs breakdown into child tasks, or can be picked up directly as a single PR.\n3. If breaking down, file children via `hydra issues create ... --deps child-of:$HYDRA_ISSUE_ID --project engineering-v2`. Children default to `inbox`, then move to `backlog` for triage.\n4. If picking up directly, transition to `in-development` — the `on_enter` automation routes the issue to `swe`.\n\nDo not file a separate `review-request` child later; in `engineering-v2` review handoff happens via the same-issue `in-development` → `in-review` transition.",
+      "path": "/projects/engineering-v2/statuses/backlog.md"
+    },
+    "d-proj-engv2-indev": {
+      "title": "engineering-v2: in-development status prompt",
+      "body_markdown": "## Status: in-development\n\nActive implementation work. The `on_enter` automation reassigned this issue to `swe` — that's you.\n\n### Your job\n\n1. Implement the change on this issue's branch.\n2. Submit patches via `hydra patches create`, assigning to the issue's `creator`.\n3. Once the patch is up for review, transition the issue from `in-development` → `in-review`. The `on_enter` automation reassigns to `reviewer` and attaches `/forms/review.yaml`.\n4. **Do not** file a separate `review-request` child — the same-issue review hand-off is the engineering-v2 convention.\n\nIf the reviewer flips the issue back to `in-development` (request_changes), read `issue.feedback`, address the comments, and transition forward to `in-review` again.",
+      "path": "/projects/engineering-v2/statuses/in-development.md"
+    },
+    "d-proj-engv2-inrev": {
+      "title": "engineering-v2: in-review status prompt",
+      "body_markdown": "## Status: in-review\n\nAn implementation is ready for review. The `on_enter` automation attached `/forms/review.yaml` and reassigned to `reviewer` — that's you.\n\n### Your job\n\n1. Read the latest patches on the issue via `hydra patches list --issue $HYDRA_ISSUE_ID`.\n2. Check the diff for correctness, security, style, and test coverage.\n3. Submit the attached form via `hydra issues submit-form`. The form action emits one of two effects:\n   - `request_changes`: `Effect::UpdateIssue { status: \"in-development\", set_feedback_from: \"review_comment\" }` — flips status back and populates `issue.feedback` for SWE.\n   - `approve`: `Effect::UpdateIssue { status: \"pending-release\" }` — terminal-for-dependencies status.\n\nDo not close this issue manually; the form action drives the transition.",
+      "path": "/projects/engineering-v2/statuses/in-review.md"
     }
   },
   "repositories": {
@@ -2866,6 +2978,83 @@
       "creator": "bob",
       "last_fired_at": null,
       "last_updated_at": "2026-05-20T17:30:00.000Z"
+    }
+  },
+  "projects": {
+    "j-engv2": {
+      "key": "engineering-v2",
+      "name": "Engineering v2",
+      "default_status_key": "inbox",
+      "creator": "alice",
+      "prompt_path": "/projects/engineering-v2/prompt.md",
+      "statuses": [
+        {
+          "key": "inbox",
+          "label": "Inbox",
+          "icon": "inbox",
+          "color": "#6b7280",
+          "unblocks_parents": false,
+          "unblocks_dependents": false,
+          "cascades_to_children": false,
+          "prompt_path": null
+        },
+        {
+          "key": "backlog",
+          "label": "Backlog",
+          "icon": "list",
+          "color": "#94a3b8",
+          "unblocks_parents": false,
+          "unblocks_dependents": false,
+          "cascades_to_children": false,
+          "on_enter": { "assign_to": { "Agent": { "name": "pm" } }, "attach_form": null },
+          "prompt_path": "/projects/engineering-v2/statuses/backlog.md"
+        },
+        {
+          "key": "pending",
+          "label": "Pending",
+          "icon": "clock",
+          "color": "#f59e0b",
+          "unblocks_parents": false,
+          "unblocks_dependents": false,
+          "cascades_to_children": false,
+          "prompt_path": null
+        },
+        {
+          "key": "in-development",
+          "label": "In development",
+          "icon": "code",
+          "color": "#3b82f6",
+          "unblocks_parents": false,
+          "unblocks_dependents": false,
+          "cascades_to_children": false,
+          "on_enter": { "assign_to": { "Agent": { "name": "swe" } }, "attach_form": null },
+          "prompt_path": "/projects/engineering-v2/statuses/in-development.md"
+        },
+        {
+          "key": "in-review",
+          "label": "In review",
+          "icon": "eye",
+          "color": "#8b5cf6",
+          "unblocks_parents": false,
+          "unblocks_dependents": false,
+          "cascades_to_children": false,
+          "on_enter": {
+            "assign_to": { "Agent": { "name": "reviewer" } },
+            "attach_form": "/forms/review.yaml"
+          },
+          "prompt_path": "/projects/engineering-v2/statuses/in-review.md"
+        },
+        {
+          "key": "pending-release",
+          "label": "Pending release",
+          "icon": "rocket",
+          "color": "#10b981",
+          "unblocks_parents": true,
+          "unblocks_dependents": true,
+          "cascades_to_children": false,
+          "prompt_path": null
+        }
+      ]
     }
   },
   "relations": [
