@@ -59,6 +59,7 @@ import type { VersionResponse } from "./generated/VersionResponse";
 import type { Conversation } from "./generated/Conversation";
 import type { ConversationSummary } from "./generated/ConversationSummary";
 import type { CreateConversationRequest } from "./generated/CreateConversationRequest";
+import type { ListProxyTargetsResponse } from "./generated/ListProxyTargetsResponse";
 import type { SendMessageRequest } from "./generated/SendMessageRequest";
 import type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
 import type { SessionEvent } from "./generated/SessionEvent";
@@ -245,6 +246,55 @@ export class HydraApiClient {
    */
   getSessionEvents(sessionId: string): Promise<SessionEvent[]> {
     return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/events`);
+  }
+
+  /** GET /v1/sessions/:sessionId/proxy-targets */
+  listProxyTargets(sessionId: string): Promise<ListProxyTargetsResponse> {
+    return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/proxy-targets`);
+  }
+
+  /**
+   * POST /v1/sessions/:sessionId/proxy-auth
+   *
+   * Mints the proxy cookie bound to this session. The cookie is set on the
+   * response (`Set-Cookie`); it is HttpOnly so the browser will attach it to
+   * subsequent `<port>-<sessionId>.proxy.<host>` requests but JS cannot read
+   * it. The server returns 204 with no body.
+   */
+  async mintSessionProxyAuth(sessionId: string): Promise<void> {
+    await this.postNoContent(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/proxy-auth`,
+    );
+  }
+
+  /**
+   * POST /v1/conversations/:conversationId/proxy-auth
+   *
+   * Same as `mintSessionProxyAuth` but scoped to the conversation's
+   * currently-active session. Returns 409 if the conversation has no active
+   * session — the UI surfaces "send a message to resume" in that case.
+   */
+  async mintConversationProxyAuth(conversationId: string): Promise<void> {
+    await this.postNoContent(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/proxy-auth`,
+    );
+  }
+
+  /**
+   * POST that expects a 204 (No Content) response — used for endpoints whose
+   * effect lives in headers (e.g. `Set-Cookie` on the proxy-mint endpoints).
+   * Avoids the `request<T>` helper's `response.json()` call which fails on a
+   * truly-empty body.
+   */
+  private async postNoContent(path: string): Promise<void> {
+    const url = `${this.baseUrl}${path}`;
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw await ApiError.fromResponse(response);
+    }
   }
 
   // ---------------------------------------------------------------------------

@@ -337,6 +337,52 @@ describe("useSSE chatRelated cache invalidation", () => {
     expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
   });
 
+  it("invalidates ['proxyTargets', session_id] on session_updated so the ProxyTab live-updates when a worker advertises a port mid-conversation", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_updated", {
+        entity_type: "session",
+        entity_id: "s-proxy",
+        version: 2,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: makeSessionRecord("s-proxy", "i-1"),
+      });
+    });
+
+    // The Proxy tab keys its read on ["proxyTargets", activeSessionId]. Without
+    // this invalidation, advertising a port mid-session leaves the cache stale
+    // until the user navigates away and back (refetchOnMount: "always").
+    expect(wasInvalidated(invalidateSpy, ["proxyTargets", "s-proxy"])).toBe(
+      true,
+    );
+  });
+
+  it("routes session_updated through the SessionSummaryRecord arm even when the mock-server uses the plural entity_type 'sessions'", () => {
+    // The mock-server emits entity_type = collection name (`sessions`, plural);
+    // the real server emits `session` (singular). The dispatch must accept
+    // both — otherwise mock-driven e2e tests silently lose every session
+    // mutation event.
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_updated", {
+        entity_type: "sessions",
+        entity_id: "s-plural",
+        version: 2,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: makeSessionRecord("s-plural", "i-1"),
+      });
+    });
+
+    expect(wasInvalidated(invalidateSpy, ["session", "s-plural"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["proxyTargets", "s-plural"])).toBe(
+      true,
+    );
+  });
+
   it("invalidates ['sessions', 'active'] on session_updated without spawned_from (else branch)", () => {
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
