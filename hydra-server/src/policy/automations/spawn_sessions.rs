@@ -125,8 +125,17 @@ impl Automation for SpawnSessionsAutomation {
             .map(|q| q.agent.clone());
 
         // Scan all non-deleted issues for spawn readiness on every event.
-        // This ensures that when a child issue transitions to a terminal state,
-        // the parent issue is also evaluated for readiness.
+        //
+        // This is the readiness-gate fan-out: when an issue's status changes,
+        // every parent (`child-of` reverse edge) and every dependent
+        // (`blocked-on` reverse edge) is re-evaluated through
+        // `agent_queue::spawn_for_issue -> AppState::is_issue_ready`. The
+        // scan also covers the parent-create-before-children race — a child
+        // filed after the parent's session is running re-runs the parent's
+        // eligibility check on every subsequent event, so once the running
+        // session ends, the parent's NEXT spawn attempt is gated by the new
+        // child's `unblocks_parents` status.
+        //
         // Don't filter by status; agent_queue::spawn_for_issue uses
         // is_issue_ready/resolve_status to skip terminal issues, so the
         // upstream filter would just re-encode legacy enum semantics here.
@@ -302,7 +311,9 @@ mod tests {
     use crate::config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES};
     use crate::domain::agents::Agent;
     use crate::domain::documents::Document;
-    use crate::domain::issues::{Issue, IssueStatus, IssueType, SessionSettings};
+    use crate::domain::issues::{
+        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
+    };
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::store::Status;
@@ -1136,6 +1147,428 @@ mod tests {
             sessions.len(),
             1,
             "expected spawn_sessions to spawn for a custom-status (backlog) issue"
+        );
+
+        Ok(())
+    }
+
+    /// Build a project with three statuses:
+    ///   - `in-development`: non-terminal (no unblocks_* flags)
+    ///   - `in-review`: non-terminal but `unblocks_dependents=false`
+    ///   - `pending-release`: terminal-ish — both `unblocks_parents=true`
+    ///     and `unblocks_dependents=true`. Used as the "gate-clearing" status
+    ///     in the readiness-gate tests below.
+    async fn make_gated_project(
+        handles: &test_utils::TestStateHandles,
+    ) -> anyhow::Result<hydra_common::ProjectId> {
+        use hydra_common::api::v1::projects::{
+            IconKey, Project, ProjectKey, StatusDefinition, StatusKey,
+        };
+
+        let statuses = vec![
+            StatusDefinition::new(
+                StatusKey::try_new("in-development").unwrap(),
+                "In development".to_string(),
+                IconKey::try_new("circle").unwrap(),
+                "#abcdef".parse().unwrap(),
+                false,
+                false,
+                false,
+                None,
+            ),
+            StatusDefinition::new(
+                StatusKey::try_new("in-review").unwrap(),
+                "In review".to_string(),
+                IconKey::try_new("circle").unwrap(),
+                "#abcdef".parse().unwrap(),
+                false,
+                false,
+                false,
+                None,
+            ),
+            StatusDefinition::new(
+                StatusKey::try_new("pending-release").unwrap(),
+                "Pending release".to_string(),
+                IconKey::try_new("circle").unwrap(),
+                "#abcdef".parse().unwrap(),
+                true,
+                true,
+                false,
+                None,
+            ),
+        ];
+        let project = Project::new(
+            ProjectKey::try_new("engineering-v2").unwrap(),
+            "Engineering v2".to_string(),
+            statuses,
+            StatusKey::try_new("in-development").unwrap(),
+            hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
+            false,
+        );
+        let (project_id, _) = handles
+            .store
+            .add_project(project, &ActorRef::test())
+            .await?;
+        Ok(project_id)
+    }
+
+    fn make_gated_issue(
+        agent_name: &str,
+        repo_name: &RepoName,
+        project_id: &hydra_common::ProjectId,
+        status: &str,
+        dependencies: Vec<IssueDependency>,
+    ) -> Issue {
+        use hydra_common::api::v1::projects::StatusKey;
+        let mut issue = Issue::new(
+            IssueType::Task,
+            "Gated".to_string(),
+            "Run agent".to_string(),
+            Username::from("worker"),
+            String::new(),
+            StatusKey::try_new(status).unwrap(),
+            Some(hydra_common::principal::Principal::Agent {
+                name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
+                    .expect("test agent name should validate"),
+            }),
+            Some(SessionSettings {
+                repo_name: Some(repo_name.clone()),
+                image: Some("agent-image".to_string()),
+                ..SessionSettings::default()
+            }),
+            dependencies,
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        issue.project_id = Some(project_id.clone());
+        issue
+    }
+
+    fn issue_updated_event(
+        issue_id: hydra_common::IssueId,
+        old_issue: Issue,
+        new_issue: Issue,
+    ) -> ServerEvent {
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(old_issue),
+            new: new_issue,
+            actor: ActorRef::test(),
+        });
+        ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id,
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        }
+    }
+
+    /// Parent gate: a parent at a non-terminal status with a child at
+    /// a non-`unblocks_parents` status MUST NOT spawn a (next) session.
+    /// Transitioning the child to a status with `unblocks_parents=true`
+    /// re-opens the gate.
+    #[tokio::test]
+    async fn parent_gate_blocks_spawn_until_child_unblocks() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
+        let agent_name = "swe";
+
+        register_agent(&handles, agent_name).await?;
+        add_repository(&handles.state, repo_name.clone(), repository()).await?;
+        let project_id = make_gated_project(&handles).await?;
+
+        let parent = make_gated_issue(
+            agent_name,
+            &repo_name,
+            &project_id,
+            "in-development",
+            Vec::new(),
+        );
+        let (parent_id, _) = handles
+            .store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await?;
+
+        // Child created with `child-of: parent_id` at `in-development`
+        // (unblocks_parents=false). The parent's gate must now be closed.
+        let child = make_gated_issue(
+            agent_name,
+            &repo_name,
+            &project_id,
+            "in-development",
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (child_id, _) = handles
+            .store
+            .add_issue(child.clone(), &ActorRef::test())
+            .await?;
+
+        // Fire IssueCreated for the CHILD — the parent must be re-checked
+        // (fan-out) and must NOT spawn, because the child's status leaves
+        // `unblocks_parents=false`.
+        let event = issue_created_event(child_id.clone(), child.clone());
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let sessions_after_child = handles.state.list_sessions().await?;
+        // The child itself spawns (it has no gating deps), but the parent
+        // must NOT have a session.
+        let parent_sessions = handles.state.get_sessions_for_issue(&parent_id).await?;
+        assert!(
+            parent_sessions.is_empty(),
+            "parent must not spawn while child gate is closed; got {} session(s): {:?}",
+            parent_sessions.len(),
+            parent_sessions,
+        );
+        // Child should have spawned a session.
+        let child_sessions: Vec<_> = sessions_after_child
+            .iter()
+            .filter(|sid| {
+                // env-var lookup is via get_session
+                let id_str = sid.to_string();
+                let _ = id_str;
+                true
+            })
+            .collect();
+        assert_eq!(
+            child_sessions.len(),
+            1,
+            "child must spawn (no gating deps); got {child_sessions:?}"
+        );
+
+        // Now transition the child to `pending-release` (unblocks_parents=true)
+        // and fire an IssueUpdated for the CHILD. The parent must now spawn.
+        let mut updated_child = child.clone();
+        updated_child.status =
+            hydra_common::api::v1::projects::StatusKey::try_new("pending-release").unwrap();
+        handles
+            .store
+            .update_issue(&child_id, updated_child.clone(), &ActorRef::test())
+            .await?;
+        let event = issue_updated_event(child_id.clone(), child, updated_child);
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let parent_sessions = handles.state.get_sessions_for_issue(&parent_id).await?;
+        assert_eq!(
+            parent_sessions.len(),
+            1,
+            "parent must spawn after child status transitions to unblocks_parents=true",
+        );
+
+        Ok(())
+    }
+
+    /// Dependent gate: an issue with a `blocked-on` dep on a blocker whose
+    /// resolved status has `unblocks_dependents=false` MUST NOT spawn.
+    /// Transitioning the blocker to a status with `unblocks_dependents=true`
+    /// must re-open the gate.
+    #[tokio::test]
+    async fn dependent_gate_blocks_spawn_until_blocker_unblocks() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
+        let agent_name = "swe";
+
+        register_agent(&handles, agent_name).await?;
+        add_repository(&handles.state, repo_name.clone(), repository()).await?;
+        let project_id = make_gated_project(&handles).await?;
+
+        // Seed a blocker already sitting at `in-review` with
+        // unblocks_dependents=false. We bypass spawning for the blocker
+        // by skipping spawn_sessions until after the dependent is wired up.
+        let blocker =
+            make_gated_issue(agent_name, &repo_name, &project_id, "in-review", Vec::new());
+        let (blocker_id, _) = handles
+            .store
+            .add_issue(blocker.clone(), &ActorRef::test())
+            .await?;
+
+        let dependent = make_gated_issue(
+            agent_name,
+            &repo_name,
+            &project_id,
+            "in-development",
+            vec![IssueDependency::new(
+                IssueDependencyType::BlockedOn,
+                blocker_id.clone(),
+            )],
+        );
+        let (dependent_id, _) = handles
+            .store
+            .add_issue(dependent.clone(), &ActorRef::test())
+            .await?;
+
+        // Fire IssueCreated for the DEPENDENT. The dependent's session
+        // MUST NOT spawn because its blocker has unblocks_dependents=false.
+        let event = issue_created_event(dependent_id.clone(), dependent.clone());
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let dependent_sessions = handles.state.get_sessions_for_issue(&dependent_id).await?;
+        assert!(
+            dependent_sessions.is_empty(),
+            "dependent must not spawn while blocker gate is closed; got {} session(s)",
+            dependent_sessions.len(),
+        );
+
+        // Transition the blocker to `pending-release` (unblocks_dependents=true)
+        // and fire IssueUpdated for the BLOCKER. The dependent must now
+        // be re-checked (fan-out across the blocked-on edge) and spawn.
+        let mut updated_blocker = blocker.clone();
+        updated_blocker.status =
+            hydra_common::api::v1::projects::StatusKey::try_new("pending-release").unwrap();
+        handles
+            .store
+            .update_issue(&blocker_id, updated_blocker.clone(), &ActorRef::test())
+            .await?;
+        let event = issue_updated_event(blocker_id.clone(), blocker, updated_blocker);
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let dependent_sessions = handles.state.get_sessions_for_issue(&dependent_id).await?;
+        assert_eq!(
+            dependent_sessions.len(),
+            1,
+            "dependent must spawn after blocker transitions to unblocks_dependents=true",
+        );
+
+        Ok(())
+    }
+
+    /// Parent-create-before-children race: a parent created without children
+    /// legitimately spawns its first session. Adding a non-`unblocks_parents`
+    /// child later must NOT kill the running session, but must close the gate
+    /// so the parent's NEXT spawn attempt (after the session completes) is
+    /// refused.
+    #[tokio::test]
+    async fn parent_running_session_survives_late_child_but_next_spawn_is_gated()
+    -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let repo_name = RepoName::from_str("dourolabs/hydra")?;
+        let agent_name = "swe";
+
+        register_agent(&handles, agent_name).await?;
+        add_repository(&handles.state, repo_name.clone(), repository()).await?;
+        let project_id = make_gated_project(&handles).await?;
+
+        // Parent created with no children — its first spawn is legitimate.
+        let parent = make_gated_issue(
+            agent_name,
+            &repo_name,
+            &project_id,
+            "in-development",
+            Vec::new(),
+        );
+        let (parent_id, _) = handles
+            .store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await?;
+
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let event = issue_created_event(parent_id.clone(), parent.clone());
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let parent_sessions = handles.state.get_sessions_for_issue(&parent_id).await?;
+        assert_eq!(
+            parent_sessions.len(),
+            1,
+            "parent's first session must spawn at creation time (no children)",
+        );
+        let parent_session_id = parent_sessions[0].clone();
+
+        // File a child later with unblocks_parents=false.
+        let child = make_gated_issue(
+            agent_name,
+            &repo_name,
+            &project_id,
+            "in-development",
+            vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )],
+        );
+        let (_child_id, _) = handles
+            .store
+            .add_issue(child.clone(), &ActorRef::test())
+            .await?;
+
+        // The parent's running session must NOT be killed; the automation
+        // never tears down sessions. (Sanity: spawn_sessions has no kill path.)
+        let session = handles.state.get_session(&parent_session_id).await?;
+        assert!(
+            matches!(
+                session.status,
+                Status::Created | Status::Pending | Status::Running
+            ),
+            "parent's running session must survive late child creation; status = {:?}",
+            session.status,
+        );
+
+        // Now complete the parent's session. With max_simultaneous default,
+        // the parent's NEXT eligibility check should run on the next event.
+        let mut completed = session.clone();
+        completed.status = Status::Complete;
+        handles
+            .store
+            .update_session(&parent_session_id, completed, &ActorRef::test())
+            .await?;
+
+        // Update the parent's status to something distinct so the
+        // spawn-attempt tracker doesn't trip on "same status, attempts
+        // exhausted." Use `in-review` (still non-terminal, unblocks_*=false).
+        let mut updated_parent = parent.clone();
+        updated_parent.status =
+            hydra_common::api::v1::projects::StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&parent_id, updated_parent.clone(), &ActorRef::test())
+            .await?;
+
+        // Fire any subsequent event (use the parent's update). The parent's
+        // next spawn attempt must be refused because the child gate is
+        // closed.
+        let event = issue_updated_event(parent_id.clone(), parent, updated_parent);
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        let parent_sessions = handles.state.get_sessions_for_issue(&parent_id).await?;
+        assert_eq!(
+            parent_sessions.len(),
+            1,
+            "parent's NEXT session must be gated by the late-arriving child; \
+             expected only the original session ({parent_session_id}), got {parent_sessions:?}",
         );
 
         Ok(())

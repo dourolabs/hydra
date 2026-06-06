@@ -6349,6 +6349,62 @@ mod tests {
         );
     }
 
+    /// Cross-store parity (memory_store, sqlite_store, postgres_v2):
+    /// `get_issue_blocked_on(blocker_id)` returns the dependents of the
+    /// blocker, both at create time and after rewiring the dep to a
+    /// different blocker. The readiness-gate fan-out in
+    /// `spawn_sessions` relies on this reverse-edge lookup to re-check
+    /// every dependent when a blocker's status changes.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn issue_blocked_on_reverse_lookup_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+
+        let (blocker, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (dependent, _) = store
+            .add_issue(
+                sample_issue(vec![IssueDependency::new(
+                    IssueDependencyType::BlockedOn,
+                    blocker.clone(),
+                )]),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let dependents = store.get_issue_blocked_on(&blocker).await.unwrap();
+        assert_eq!(dependents, vec![dependent.clone()]);
+
+        let (new_blocker, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut updated = sample_issue(vec![IssueDependency::new(
+            IssueDependencyType::BlockedOn,
+            new_blocker.clone(),
+        )]);
+        updated.patches = Vec::new();
+        store
+            .update_issue(&dependent, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        assert!(
+            store
+                .get_issue_blocked_on(&blocker)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store.get_issue_blocked_on(&new_blocker).await.unwrap(),
+            vec![dependent]
+        );
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn issue_round_trips_assignee_principal_user_v2(pool: PgStorePool) {
