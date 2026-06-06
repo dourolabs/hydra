@@ -3,7 +3,7 @@ import type { Conversation } from "@hydra/api";
 import { ChatMetadataTab } from "./ChatMetadataTab";
 import { ChatRelatedTab } from "./ChatRelatedTab";
 import { ProxyTab } from "./ProxyTab";
-import { useConversationProxyStatus } from "../../hooks/useConversationProxyStatus";
+import { useConversationProxyTargets } from "../../hooks/useConversationProxyStatus";
 import styles from "./ChatRightPanel.module.css";
 
 export type ChatRightPanelTabKey = "related" | "proxy" | "details";
@@ -38,9 +38,12 @@ export function ChatRightPanel({
   // The Proxy tab only exists when the conversation's active session has
   // advertised one or more proxy targets. Hiding it (rather than disabling)
   // keeps the right-rail clean for the common case where no dev preview is
-  // running.
-  const proxyStatus = useConversationProxyStatus(conversation.conversation_id);
-  const proxyAvailable = proxyStatus.targets.length > 0;
+  // running. Use the targets-only hook here — the full status hook (with HEAD
+  // probes) is mounted exactly once inside `ProxyTab`.
+  const { targets: proxyTargets } = useConversationProxyTargets(
+    conversation.conversation_id,
+  );
+  const proxyAvailable = proxyTargets.length > 0;
 
   const tabs: TabDef[] = proxyAvailable
     ? [BASE_TABS[0], { key: "proxy", label: "Proxy" }, BASE_TABS[1]]

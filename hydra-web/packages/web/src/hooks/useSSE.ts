@@ -261,11 +261,28 @@ export function useSSE(): SSEConnectionState {
         // only invalidate the conventional per-session state key so that
         // future hooks pick the update up automatically.
         queryClient.invalidateQueries({ queryKey: ["sessionState", entity_id] });
-      } else if (entity_type === "session") {
+      } else if (
+        entity_type === "session" ||
+        eventType === "session_created" ||
+        eventType === "session_updated"
+      ) {
+        // Real server emits `entity_type = "session"` (singular). The mock
+        // server emits the collection name `"sessions"` (plural), so fall
+        // back to the event type — same shape used by the patch / document
+        // / label / conversation branches below. The session_event and
+        // session_state branches above intercept their own event types
+        // first, so this fallback only catches `session_created` /
+        // `session_updated`.
         const record = entity as unknown as SessionSummaryRecord;
         const spawnedFrom = record.session?.spawned_from;
 
         queryClient.invalidateQueries({ queryKey: ["session", entity_id] });
+        // Per-session `proxy_targets` is keyed on session_id. A worker
+        // advertising a port mid-conversation emits `session_updated`; the
+        // chat page's ProxyTab won't render the new target until this cache
+        // is refreshed (the hook's `refetchOnMount: "always"` only triggers
+        // on navigate-back, which would otherwise be the only refresh path).
+        queryClient.invalidateQueries({ queryKey: ["proxyTargets", entity_id] });
 
         if (spawnedFrom) {
           upsertInList(queryClient, ["sessions", spawnedFrom], sessionList, wrapSessions, sessionRecordId, entity_id, record);

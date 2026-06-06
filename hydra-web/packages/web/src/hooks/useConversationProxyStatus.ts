@@ -20,24 +20,31 @@ export interface ProxyTargetWithStatus extends ProxyTarget {
   status: ProxyStatus;
 }
 
-export interface ConversationProxyStatus {
+export interface ConversationProxyTargets {
   /**
-   * Per-target status, in `Session.proxy_targets` order. Empty when the
-   * conversation has no active session or no advertised targets — the tab
-   * surfaces accordingly.
+   * The advertised targets for the conversation's active session, in
+   * `Session.proxy_targets` order. Empty when the conversation has no active
+   * session or no advertised targets — the tab is hidden accordingly.
    */
-  targets: ProxyTargetWithStatus[];
+  targets: readonly ProxyTarget[];
   /**
    * The session id whose `proxy_targets` are being surfaced. `null` when the
-   * conversation has no session yet (fresh conversation pre-message) or when
-   * the sessions list is still loading. The session-id is needed by the
-   * "copy direct-session URL" affordance.
+   * conversation has no session yet (fresh conversation pre-message) or while
+   * the sessions list is still loading.
    */
   sessionId: string | null;
   /**
-   * `true` while at least one underlying query is in-flight; the tab can
-   * surface a spinner.
+   * `true` while at least one underlying query is in-flight.
    */
+  isLoading: boolean;
+}
+
+export interface ConversationProxyStatus {
+  /**
+   * Per-target status, in `Session.proxy_targets` order.
+   */
+  targets: ProxyTargetWithStatus[];
+  sessionId: string | null;
   isLoading: boolean;
 }
 
@@ -157,26 +164,16 @@ function useTargetProbes(
 }
 
 /**
- * Live status for the proxy targets advertised on a conversation's currently
- * active session.
- *
- * Combines three signals:
- *   1. Conversation status (`idle` overrides everything else with the
- *      "send a message to resume" copy).
- *   2. The active session's `proxy_targets` list (refetched on every chat-page
- *      mount, same cadence as the transcript).
- *   3. A periodic HEAD against each `<port>-<conv-id>.proxy.<host>{ready_path}`
- *      URL to distinguish "dev server is up" from "advertised but unreachable."
+ * Cheap read-only view of the advertised proxy targets for a conversation's
+ * active session. Use this at *gate sites* (tab-bar / right-panel) that only
+ * need to know whether the Proxy tab should appear — calling
+ * `useConversationProxyStatus` from those sites would spin up an extra HEAD
+ * probe interval per mount, multiplying network traffic. The full status
+ * hook is mounted exactly once, inside `ProxyTab`.
  */
-export function useConversationProxyStatus(
+export function useConversationProxyTargets(
   conversationId: string,
-): ConversationProxyStatus {
-  const conversationQuery = useQuery({
-    queryKey: ["conversation", conversationId],
-    queryFn: () => apiClient.getConversation(conversationId),
-    enabled: !!conversationId,
-  });
-
+): ConversationProxyTargets {
   const sessionsQuery = useQuery({
     queryKey: ["sessionsByConversation", conversationId],
     queryFn: () =>
@@ -206,14 +203,45 @@ export function useConversationProxyStatus(
     refetchOnMount: "always",
   });
 
-  const isVisible = useDocumentVisible();
-  const isIdle = conversationQuery.data?.status === "idle";
-  const probesPaused = !isVisible || isIdle;
-
   const targets = useMemo(
     () => proxyTargetsQuery.data?.targets ?? [],
     [proxyTargetsQuery.data],
   );
+
+  return {
+    targets,
+    sessionId: activeSessionId,
+    isLoading: sessionsQuery.isLoading || proxyTargetsQuery.isLoading,
+  };
+}
+
+/**
+ * Live status for the proxy targets advertised on a conversation's currently
+ * active session. Mounts a periodic HEAD probe per target so each row can
+ * render a `starting | ready | unavailable` badge.
+ *
+ * Only the consumer that actually renders the badges — `ProxyTab` — should
+ * call this hook. Gate sites that only need `targets.length > 0` must use
+ * `useConversationProxyTargets` instead; otherwise the probe interval is
+ * mounted once per call (React-Query dedupes the *queries*, but not the
+ * `setInterval` that lives inside `useTargetProbes`).
+ */
+export function useConversationProxyStatus(
+  conversationId: string,
+): ConversationProxyStatus {
+  const conversationQuery = useQuery({
+    queryKey: ["conversation", conversationId],
+    queryFn: () => apiClient.getConversation(conversationId),
+    enabled: !!conversationId,
+  });
+
+  const { targets, sessionId, isLoading: targetsLoading } =
+    useConversationProxyTargets(conversationId);
+
+  const isVisible = useDocumentVisible();
+  const isIdle = conversationQuery.data?.status === "idle";
+  const probesPaused = !isVisible || isIdle;
+
   const probeStatuses = useTargetProbes(targets, conversationId, probesPaused);
 
   const targetsWithStatus = useMemo<ProxyTargetWithStatus[]>(() => {
@@ -230,10 +258,7 @@ export function useConversationProxyStatus(
 
   return {
     targets: targetsWithStatus,
-    sessionId: activeSessionId,
-    isLoading:
-      conversationQuery.isLoading ||
-      sessionsQuery.isLoading ||
-      proxyTargetsQuery.isLoading,
+    sessionId,
+    isLoading: conversationQuery.isLoading || targetsLoading,
   };
 }

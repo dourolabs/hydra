@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/auth";
 
 // `@chat:proxy-tab` exercises the right-panel Proxy tab in `ChatRightPanel`:
@@ -19,6 +20,27 @@ import { test, expect } from "../fixtures/auth";
 const SEED_CONVERSATION_ID = "c-seed00001"; // dev-user's active conversation
 const SEED_SESSION_ID = "t-seed00016";
 
+/**
+ * Shim the `useSSE` `["proxyTargets", session_id]` invalidation by driving
+ * `queryClient.invalidateQueries` directly through the dev-only
+ * `window.__hydraQueryClient` export. Mirrors the
+ * `invalidateSessionEvents` helper in `chat-activity-status.spec.ts`. SSE
+ * delivery through vite's dev proxy is unreliable; the useSSE handler
+ * itself is unit-tested.
+ */
+async function invalidateProxyTargets(page: Page, sessionId: string): Promise<void> {
+  await page.evaluate((sid) => {
+    const qc = (
+      window as unknown as {
+        __hydraQueryClient?: {
+          invalidateQueries: (opts: { queryKey: unknown[] }) => Promise<void>;
+        };
+      }
+    ).__hydraQueryClient;
+    qc?.invalidateQueries({ queryKey: ["proxyTargets", sid] });
+  }, sessionId);
+}
+
 test.describe("Proxy tab @chat:proxy-tab", () => {
   test("is hidden when the conversation's session has no proxy targets @chat:proxy-tab", async ({
     authenticatedPage: page,
@@ -36,21 +58,6 @@ test.describe("Proxy tab @chat:proxy-tab", () => {
   test("appears with a ready status row and a working Open-in-new-tab affordance once a target is advertised @chat:proxy-tab", async ({
     authenticatedPage: page,
   }) => {
-    // Worker advertises port 3000 on the active session. The mock server
-    // exposes the worker-only endpoint without auth so the test driver can
-    // call it directly; see routes/sessions.ts.
-    const advertiseRes = await page.request.post(
-      `http://localhost:8080/v1/sessions/${SEED_SESSION_ID}/proxy-targets`,
-      {
-        headers: {
-          Authorization: "Bearer dev-token-12345",
-          "Content-Type": "application/json",
-        },
-        data: { port: 3000, ready_path: "/" },
-      },
-    );
-    expect(advertiseRes.status()).toBe(204);
-
     // Stub the HEAD probe so the status flips to `ready` deterministically
     // — the real cross-origin fetch would fail DNS in the test env.
     await page.route(/3000-c-seed00001\./, (route) => {
@@ -68,6 +75,33 @@ test.describe("Proxy tab @chat:proxy-tab", () => {
 
     await page.goto(`/chat/${SEED_CONVERSATION_ID}`);
     await expect(page.getByTestId("chat-pane")).toBeVisible();
+
+    // Sanity: with no targets yet advertised, the tab is hidden — this is the
+    // pre-condition for the live-update path below.
+    await expect(page.getByTestId("chat-rail-tab-proxy")).toHaveCount(0);
+
+    // Worker advertises port 3000 on the active session AFTER the page has
+    // mounted, so the live-update path is exercised rather than the
+    // initial-mount `refetchOnMount: "always"` fallback. In prod, the mock
+    // server's `session_updated` SSE notification would drive `useSSE` to
+    // invalidate `["proxyTargets", session_id]`. SSE delivery is unreliable
+    // through the dev `vite` proxy (see chat-activity-status.spec.ts for the
+    // same workaround), so we shim the invalidation via the dev-only
+    // `window.__hydraQueryClient` export. The useSSE → invalidate handler
+    // itself is covered by unit tests; this e2e covers the downstream
+    // query-refetch → ProxyTab-appears path.
+    const advertiseRes = await page.request.post(
+      `http://localhost:8080/v1/sessions/${SEED_SESSION_ID}/proxy-targets`,
+      {
+        headers: {
+          Authorization: "Bearer dev-token-12345",
+          "Content-Type": "application/json",
+        },
+        data: { port: 3000, ready_path: "/" },
+      },
+    );
+    expect(advertiseRes.status()).toBe(204);
+    await invalidateProxyTargets(page, SEED_SESSION_ID);
 
     // Proxy tab appears in the right-rail tabs.
     const proxyTabButton = page.getByTestId("chat-rail-tab-proxy");

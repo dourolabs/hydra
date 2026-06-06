@@ -14,7 +14,7 @@ import { ChatInput } from "./ChatInput";
 import { clearConversationDraft } from "./useConversationDraft";
 import { ChatRightPanel, type ChatRightPanelTabKey } from "./ChatRightPanel";
 import { MobileTabBar, type MobileTabBarItem } from "../../components/MobileTabBar";
-import { useConversationProxyStatus } from "../../hooks/useConversationProxyStatus";
+import { useConversationProxyTargets } from "../../hooks/useConversationProxyStatus";
 import { ApiError, apiClient } from "../../api/client";
 import { useBreadcrumbs } from "../../layout/useBreadcrumbs";
 import styles from "./ExistingChatPage.module.css";
@@ -39,10 +39,12 @@ export function ExistingChatPage({ conversationId }: { conversationId: string })
   const [mobileTab, setMobileTab] = useState<MobileTabKey>("chat");
   const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTabKey>("related");
   // Hoisted here so the mobile tab bar and the right panel agree on whether
-  // the Proxy tab is visible. The hook returns cached data — calling it in
-  // ChatRightPanel too is cheap.
-  const proxyStatus = useConversationProxyStatus(conversationId);
-  const proxyAvailable = proxyStatus.targets.length > 0;
+  // the Proxy tab is visible. Use the targets-only hook — it only reads from
+  // React-Query, no HEAD probe interval, so calling it from this gate site
+  // and from `ChatRightPanel` in addition to `ProxyTab` does not multiply
+  // network traffic.
+  const { targets: proxyTargets } = useConversationProxyTargets(conversationId);
+  const proxyAvailable = proxyTargets.length > 0;
   // Local optimistic events live outside the query cache so they layer on
   // top of the SessionEvent transcript. Entries are reconciled away in the
   // `events` merge below as soon as their server-side counterpart lands in

@@ -76,6 +76,11 @@ vi.mock("../../hooks/useConversationProxyStatus", () => ({
     sessionId: null,
     isLoading: false,
   }),
+  useConversationProxyTargets: () => ({
+    targets: [],
+    sessionId: null,
+    isLoading: false,
+  }),
 }));
 
 vi.mock("../../features/dashboard/usePageIssueTrees", () => ({
