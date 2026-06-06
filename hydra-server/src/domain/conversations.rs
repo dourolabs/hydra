@@ -1,8 +1,8 @@
 use super::issues::SessionSettings;
 use super::users::Username;
-use hydra_common::ConversationId;
 use hydra_common::api::v1 as api;
 use hydra_common::api::v1::agents::AgentName;
+use hydra_common::{ConversationId, IssueId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +23,8 @@ pub struct Conversation {
     pub creator: Username,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
     pub session_settings: SessionSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
     #[serde(default)]
     pub deleted: bool,
 }
@@ -58,6 +60,7 @@ impl From<api::conversations::Conversation> for Conversation {
             status: value.status.into(),
             creator: value.creator.into(),
             session_settings: value.session_settings.into(),
+            spawned_from: value.spawned_from,
             deleted: false,
         }
     }
@@ -78,6 +81,7 @@ impl Conversation {
             self.status.into(),
             self.creator.clone().into(),
             self.session_settings.clone().into(),
+            self.spawned_from.clone(),
             created_at,
             updated_at,
         )

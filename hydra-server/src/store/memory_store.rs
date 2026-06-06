@@ -1714,6 +1714,7 @@ impl ReadOnlyStore for MemoryStore {
         let status_filter = query
             .status
             .map(crate::domain::conversations::ConversationStatus::from);
+        let spawned_from_filter = query.spawned_from.as_ref();
 
         let items: Vec<(ConversationId, Versioned<Conversation>)> = self
             .conversations
@@ -1736,6 +1737,12 @@ impl ReadOnlyStore for MemoryStore {
 
                 if let Some(creator) = &creator_filter {
                     if !conv.creator.as_ref().eq_ignore_ascii_case(creator) {
+                        return None;
+                    }
+                }
+
+                if let Some(expected) = spawned_from_filter {
+                    if conv.spawned_from.as_ref() != Some(expected) {
                         return None;
                     }
                 }
@@ -8068,6 +8075,7 @@ mod tests {
             status: ConversationStatus::Active,
             creator: Username::from("alice"),
             session_settings: Default::default(),
+            spawned_from: None,
             deleted: false,
         }
     }
@@ -8262,6 +8270,62 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1.item.status, ConversationStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn conversation_round_trips_spawned_from() {
+        use hydra_common::IssueId;
+        use std::str::FromStr;
+        let store = MemoryStore::new();
+        let issue_id = IssueId::from_str("i-spawnz").unwrap();
+        let mut conv = sample_conversation();
+        conv.spawned_from = Some(issue_id.clone());
+        let (id, _) = store
+            .add_conversation(conv.clone(), &test_actor())
+            .await
+            .unwrap();
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_eq!(fetched.item.spawned_from, Some(issue_id));
+    }
+
+    #[tokio::test]
+    async fn list_conversations_filters_by_spawned_from() {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::conversations::SearchConversationsQuery;
+        use std::str::FromStr;
+
+        let store = MemoryStore::new();
+        let issue_a = IssueId::from_str("i-aaaaaa").unwrap();
+        let issue_b = IssueId::from_str("i-bbbbbb").unwrap();
+
+        let mut conv_a = sample_conversation();
+        conv_a.spawned_from = Some(issue_a.clone());
+        store.add_conversation(conv_a, &test_actor()).await.unwrap();
+
+        let mut conv_b = sample_conversation();
+        conv_b.spawned_from = Some(issue_b.clone());
+        store.add_conversation(conv_b, &test_actor()).await.unwrap();
+
+        store
+            .add_conversation(sample_conversation(), &test_actor())
+            .await
+            .unwrap();
+
+        let results = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3, "no filter should return all");
+
+        let results = store
+            .list_conversations(&SearchConversationsQuery {
+                spawned_from: Some(issue_a.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.spawned_from, Some(issue_a));
     }
 
     #[tokio::test]

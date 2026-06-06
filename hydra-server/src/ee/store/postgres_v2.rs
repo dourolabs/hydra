@@ -1432,8 +1432,8 @@ impl PostgresStoreV2 {
 
         let query = format!(
             "INSERT INTO {TABLE_CONVERSATIONS_V2} \
-             (id, version_number, title, agent_name, session_settings, status, creator, deleted, actor) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+             (id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -1441,6 +1441,12 @@ impl PostgresStoreV2 {
             .bind(&conversation.title)
             .bind(conversation.agent_name.as_ref().map(|n| n.as_str()))
             .bind(&session_settings_json)
+            .bind(
+                conversation
+                    .spawned_from
+                    .as_ref()
+                    .map(|i| i.as_ref().to_string()),
+            )
             .bind(status_str)
             .bind(conversation.creator.as_str())
             .bind(conversation.deleted)
@@ -1483,12 +1489,22 @@ impl PostgresStoreV2 {
                 StoreError::Internal(format!("invalid agent_name in conversation row: {e}"))
             })?;
 
+        let spawned_from = row
+            .spawned_from
+            .as_deref()
+            .map(|s| s.parse::<hydra_common::IssueId>())
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("invalid spawned_from in conversation row: {e}"))
+            })?;
+
         Ok(Conversation {
             title: row.title.clone(),
             agent_name,
             status,
             creator: Username::from(row.creator.as_str()),
             session_settings,
+            spawned_from,
             deleted: row.deleted,
         })
     }
@@ -1667,6 +1683,7 @@ struct ConversationRow {
     title: Option<String>,
     agent_name: Option<String>,
     session_settings: Value,
+    spawned_from: Option<String>,
     status: String,
     creator: String,
     deleted: bool,
@@ -4185,7 +4202,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} \
              WHERE id = $1 \
@@ -4223,7 +4240,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
-            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, \
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, c.spawned_from, \
              c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at, \
              (SELECT MIN(c2.created_at) FROM {TABLE_CONVERSATIONS_V2} c2 WHERE c2.id = c.id) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} c \
@@ -4265,6 +4282,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 ));
                 bindings.push(format!("%{term}%"));
             }
+        }
+
+        if let Some(ref spawned_from) = query.spawned_from {
+            predicates.push(format!("spawned_from = ${}", bindings.len() + 1));
+            bindings.push(spawned_from.as_ref().to_string());
         }
 
         apply_pagination_sql_pg(
@@ -4317,7 +4339,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &ConversationId,
     ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, agent_name, session_settings, status, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} \
              WHERE id = $1 \
@@ -8993,6 +9015,7 @@ mod tests {
                 memory_limit: Some("4Gi".to_string()),
                 secrets: Some(vec!["conv-secret".to_string()]),
             },
+            spawned_from: None,
             deleted: false,
         };
         let (conv_id, version) = store
@@ -9026,6 +9049,7 @@ mod tests {
             status: ConversationStatus::Idle,
             creator: conv.creator.clone(),
             session_settings: Default::default(),
+            spawned_from: None,
             deleted: false,
         };
         let v2 = store
@@ -9055,6 +9079,7 @@ mod tests {
             status: updated_conv.status,
             creator: updated_conv.creator.clone(),
             session_settings: Default::default(),
+            spawned_from: None,
             deleted: true,
         };
         store
@@ -9077,6 +9102,69 @@ mod tests {
             .unwrap();
         let ids_after: Vec<_> = list_after.iter().map(|(id, _)| id.clone()).collect();
         assert!(!ids_after.contains(&conv_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn conversation_round_trips_spawned_from_v2(pool: PgStorePool) {
+        use hydra_common::IssueId;
+        use std::str::FromStr;
+        let store = PostgresStoreV2::new(pool);
+        let issue_id = IssueId::from_str("i-spawnz").unwrap();
+        let mut conv = sample_conversation("alice");
+        conv.spawned_from = Some(issue_id.clone());
+        let (id, _) = store
+            .add_conversation(conv, &ActorRef::test())
+            .await
+            .unwrap();
+        let fetched = store.get_conversation(&id, false).await.unwrap();
+        assert_eq!(fetched.item.spawned_from, Some(issue_id));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_conversations_filters_by_spawned_from_v2(pool: PgStorePool) {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::conversations::SearchConversationsQuery;
+        use std::str::FromStr;
+        let store = PostgresStoreV2::new(pool);
+        let issue_a = IssueId::from_str("i-aaaaaa").unwrap();
+        let issue_b = IssueId::from_str("i-bbbbbb").unwrap();
+
+        let mut conv_a = sample_conversation("alice");
+        conv_a.spawned_from = Some(issue_a.clone());
+        store
+            .add_conversation(conv_a, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut conv_b = sample_conversation("alice");
+        conv_b.spawned_from = Some(issue_b.clone());
+        store
+            .add_conversation(conv_b, &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .add_conversation(sample_conversation("alice"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let all = store
+            .list_conversations(&SearchConversationsQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+
+        let results = store
+            .list_conversations(&SearchConversationsQuery {
+                spawned_from: Some(issue_a.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.item.spawned_from, Some(issue_a));
     }
 
     async fn insert_dummy_latest_sessions(store: &PostgresStoreV2, start: usize, count: usize) {
@@ -9251,6 +9339,7 @@ mod tests {
             status: crate::domain::conversations::ConversationStatus::Active,
             creator: Username::from(creator),
             session_settings: Default::default(),
+            spawned_from: None,
             deleted: false,
         }
     }

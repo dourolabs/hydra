@@ -106,6 +106,7 @@ pub async fn run(
                 status: status.map(Into::into),
                 creator,
                 include_deleted: if include_deleted { Some(true) } else { None },
+                spawned_from: None,
                 limit: Some(limit),
                 cursor: None,
             };

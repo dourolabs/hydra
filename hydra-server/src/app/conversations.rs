@@ -9,7 +9,7 @@ use crate::{
     store::StoreError,
 };
 use hydra_common::{
-    ConversationId, Versioned,
+    ConversationId, IssueId, Versioned,
     api::v1::{agents::AgentName, sessions as api_sessions, sessions::SearchSessionsQuery},
 };
 use std::time::Duration;
@@ -74,6 +74,7 @@ impl AppState {
         message: Option<String>,
         agent_name: Option<AgentName>,
         session_settings: crate::domain::issues::SessionSettings,
+        spawned_from: Option<IssueId>,
         actor_ref: ActorRef,
         creator: Username,
     ) -> Result<(ConversationId, Versioned<Conversation>), CreateConversationError> {
@@ -110,6 +111,7 @@ impl AppState {
             status: ConversationStatus::Active,
             creator: creator.clone(),
             session_settings,
+            spawned_from,
             deleted: false,
         };
 
@@ -742,6 +744,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -768,6 +771,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -797,6 +801,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -839,6 +844,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -861,6 +867,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -891,6 +898,7 @@ mod tests {
                 None,
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -940,6 +948,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1016,6 +1025,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1114,6 +1124,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1178,6 +1189,7 @@ mod tests {
                 Some("hello".to_string()),
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1206,6 +1218,7 @@ mod tests {
                 Some("hello".to_string()),
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1231,6 +1244,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1270,6 +1284,7 @@ mod tests {
                 None,
                 None,
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1309,6 +1324,7 @@ mod tests {
                 Some("hello".to_string()),
                 Some(hydra_common::api::v1::agents::AgentName::try_new("does-not-exist").unwrap()),
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1363,6 +1379,7 @@ mod tests {
                 Some("hello".to_string()),
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 settings,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1392,6 +1409,7 @@ mod tests {
                 Some("hello".to_string()),
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1420,6 +1438,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1473,6 +1492,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1566,6 +1586,7 @@ mod tests {
                 None,
                 None,
                 SessionSettings::default(),
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )

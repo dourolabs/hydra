@@ -2317,6 +2317,7 @@ async fn create_interactive_session_with_settings(
                 status: ConversationStatus::Active,
                 creator: Username::from("creator"),
                 session_settings: crate::domain::issues::SessionSettings::default(),
+                spawned_from: None,
                 deleted: false,
             },
             &ActorRef::test(),
