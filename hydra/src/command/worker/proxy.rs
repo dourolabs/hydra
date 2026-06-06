@@ -1,7 +1,7 @@
 use crate::client::HydraClientInterface;
 use crate::command::output::CommandContext;
 use crate::output_writer::write_stdout;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::Subcommand;
 use hydra_common::{
     constants::ENV_HYDRA_ID,
@@ -9,21 +9,15 @@ use hydra_common::{
     SessionId,
 };
 
-/// Inside a worker container the session id is exposed via `HYDRA_ID`.
-/// The worker CLI reads it implicitly so the agent doesn't have to thread
-/// the id through on every invocation.
-fn session_id_from_env() -> Result<SessionId> {
-    let raw = std::env::var(ENV_HYDRA_ID)
-        .with_context(|| format!("{ENV_HYDRA_ID} must be set inside the worker container"))?;
-    raw.parse::<SessionId>()
-        .map_err(|err| anyhow!("invalid session id in {ENV_HYDRA_ID}: {err}"))
-}
-
 #[derive(Subcommand)]
 pub enum ProxyCommand {
     /// Advertise that a server is listening on `--port`. Idempotent; calling
     /// `start` again with the same port replaces `--ready-path`.
     Start {
+        /// Session id. Defaults to the worker container's `HYDRA_ID`.
+        #[arg(long = "session-id", value_name = "ID", env = ENV_HYDRA_ID)]
+        session_id: SessionId,
+
         /// TCP port the server is listening on inside the worker container.
         #[arg(long = "port", value_name = "PORT")]
         port: u16,
@@ -36,12 +30,20 @@ pub enum ProxyCommand {
     },
     /// Remove a previously advertised proxy target by port. Idempotent.
     Stop {
+        /// Session id. Defaults to the worker container's `HYDRA_ID`.
+        #[arg(long = "session-id", value_name = "ID", env = ENV_HYDRA_ID)]
+        session_id: SessionId,
+
         /// TCP port that was previously passed to `start`.
         #[arg(long = "port", value_name = "PORT")]
         port: u16,
     },
     /// List the proxy targets currently advertised on this session.
-    List,
+    List {
+        /// Session id. Defaults to the worker container's `HYDRA_ID`.
+        #[arg(long = "session-id", value_name = "ID", env = ENV_HYDRA_ID)]
+        session_id: SessionId,
+    },
 }
 
 pub async fn run(
@@ -49,9 +51,12 @@ pub async fn run(
     command: ProxyCommand,
     _context: &CommandContext,
 ) -> Result<()> {
-    let session_id = session_id_from_env()?;
     match command {
-        ProxyCommand::Start { port, ready_path } => {
+        ProxyCommand::Start {
+            session_id,
+            port,
+            ready_path,
+        } => {
             client
                 .upsert_proxy_target(&session_id, &UpsertProxyTargetRequest { port, ready_path })
                 .await
@@ -61,7 +66,7 @@ pub async fn run(
             ))?;
             Ok(())
         }
-        ProxyCommand::Stop { port } => {
+        ProxyCommand::Stop { session_id, port } => {
             client
                 .delete_proxy_target(&session_id, port)
                 .await
@@ -71,7 +76,7 @@ pub async fn run(
             ))?;
             Ok(())
         }
-        ProxyCommand::List => {
+        ProxyCommand::List { session_id } => {
             let response = client
                 .list_proxy_targets(&session_id)
                 .await

@@ -64,29 +64,14 @@ pub async fn upsert_proxy_target(
     require_worker_for_session(&actor, &session_id)?;
     let actor_ref = ActorRef::from(&actor);
 
-    let mut session = state
-        .get_session(&session_id)
-        .await
-        .map_err(|err| map_load_error(&session_id, err))?;
-
-    let new = ProxyTarget {
+    let target = ProxyTarget {
         port: payload.port,
         ready_path: payload.ready_path,
     };
-    match session
-        .proxy_targets
-        .iter_mut()
-        .find(|t| t.port == new.port)
-    {
-        Some(existing) => *existing = new,
-        None => session.proxy_targets.push(new),
-    }
-
     state
-        .store
-        .update_session_with_actor(&session_id, session, actor_ref)
+        .upsert_proxy_target(&session_id, target, actor_ref)
         .await
-        .map_err(|err| map_update_error(&session_id, err))?;
+        .map_err(|err| map_store_error(&session_id, err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -108,23 +93,10 @@ pub async fn delete_proxy_target(
     require_worker_for_session(&actor, &session_id)?;
     let actor_ref = ActorRef::from(&actor);
 
-    let mut session = state
-        .get_session(&session_id)
-        .await
-        .map_err(|err| map_load_error(&session_id, err))?;
-
-    let before = session.proxy_targets.len();
-    session.proxy_targets.retain(|t| t.port != port);
-    if session.proxy_targets.len() == before {
-        // No change: nothing to persist. Idempotent.
-        return Ok(StatusCode::NO_CONTENT);
-    }
-
     state
-        .store
-        .update_session_with_actor(&session_id, session, actor_ref)
+        .remove_proxy_target(&session_id, port, actor_ref)
         .await
-        .map_err(|err| map_update_error(&session_id, err))?;
+        .map_err(|err| map_store_error(&session_id, err))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -141,7 +113,14 @@ fn map_load_error(session_id: &SessionId, err: StoreError) -> ApiError {
     }
 }
 
-fn map_update_error(session_id: &SessionId, err: StoreError) -> ApiError {
-    error!(%session_id, error = %err, "failed to persist proxy_targets update");
-    ApiError::internal(format!("Failed to update session '{session_id}': {err}"))
+fn map_store_error(session_id: &SessionId, err: StoreError) -> ApiError {
+    match err {
+        StoreError::SessionNotFound(_) => {
+            ApiError::not_found(format!("session '{session_id}' not found"))
+        }
+        other => {
+            error!(%session_id, error = %other, "failed to persist proxy_targets update");
+            ApiError::internal(format!("Failed to update session '{session_id}': {other}"))
+        }
+    }
 }

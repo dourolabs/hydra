@@ -1,11 +1,14 @@
 //! Integration tests for `/v1/sessions/:session_id/proxy-targets`.
 //!
-//! These cover:
+//! Runs against the default sqlite-backed test harness. Store-level
+//! round-trip on the Postgres v2 backend is covered separately by
+//! `postgres_v2::tests::task_serialization_round_trip_v2` (ignored by
+//! default, run in CI with `--ignored`).
+//!
+//! These tests cover:
 //! - Round-trip: a worker-scoped POST followed by GET returns the same
-//!   `ProxyTarget`. The same store impl powers both the sqlite and
-//!   Postgres v2 backends (the postgres test variant ignored by default
-//!   lives next to the sqlite store; this test pins the route-level
-//!   behaviour on the default-backed test harness).
+//!   `ProxyTarget`. Re-posting the same port replaces `ready_path`;
+//!   DELETE on a non-existent port is a no-op.
 //! - Worker-auth gating: a worker authenticated for session `A` may not
 //!   POST against session `B`'s `/proxy-targets` — the server returns
 //!   `403`.

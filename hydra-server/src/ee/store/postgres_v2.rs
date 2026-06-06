@@ -5952,6 +5952,16 @@ mod tests {
             cache_read_input_tokens: 89,
             cache_creation_input_tokens: 10,
         });
+        session.proxy_targets = vec![
+            hydra_common::api::v1::sessions::ProxyTarget {
+                port: 3000,
+                ready_path: Some("/ready".to_string()),
+            },
+            hydra_common::api::v1::sessions::ProxyTarget {
+                port: 5173,
+                ready_path: None,
+            },
+        ];
         session
     }
 
