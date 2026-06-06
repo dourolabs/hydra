@@ -16,6 +16,23 @@ use std::path::{Component, Path, PathBuf};
 /// Stored as a JSON object to remain flexible as the MCP config schema evolves.
 pub type McpConfig = Value;
 
+/// A TCP port the worker has advertised as serving an HTTP target the user
+/// (or the platform's reverse proxy) can reach. Recorded on the session via
+/// `hydra worker proxy start --port <N>` and removed via
+/// `hydra worker proxy stop  --port <N>`.
+///
+/// `ready_path`, when set, is the path the proxy should `GET` to confirm the
+/// server inside the worker is actually serving requests before forwarding
+/// user traffic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct ProxyTarget {
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_path: Option<String>,
+}
+
 /// Aggregated token totals reported by the worker at the end of a session run.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -206,6 +223,11 @@ pub struct Session {
     /// `None` until the worker submits a `Complete` status with usage data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
+    /// Ports the worker has advertised as HTTP targets for the interactive
+    /// dev preview. Edited via `hydra worker proxy {start,stop}` and read by
+    /// the proxy reach path (PR 2). Default empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proxy_targets: Vec<ProxyTarget>,
 }
 
 impl Session {
@@ -250,6 +272,7 @@ impl Session {
             start_time,
             end_time,
             usage: None,
+            proxy_targets: Vec::new(),
         }
     }
 
@@ -921,6 +944,24 @@ impl KillSessionResponse {
     pub fn new(session_id: SessionId, status: String) -> Self {
         Self { session_id, status }
     }
+}
+
+/// Body for `POST /v1/sessions/<sid>/proxy-targets`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct UpsertProxyTargetRequest {
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_path: Option<String>,
+}
+
+/// Body for `GET /v1/sessions/<sid>/proxy-targets`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct ListProxyTargetsResponse {
+    pub targets: Vec<ProxyTarget>,
 }
 
 /// Which restore path produced a [`SessionEvent::Resumed`] event.

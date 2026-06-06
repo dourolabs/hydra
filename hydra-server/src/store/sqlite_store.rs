@@ -441,6 +441,8 @@ struct TaskRow {
     mode: String,
     #[sqlx(default)]
     resumed_from: Option<String>,
+    #[sqlx(default)]
+    proxy_targets: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1540,6 +1542,13 @@ impl SqliteStore {
             .resumed_from
             .as_ref()
             .map(|s| s.as_ref().to_string());
+        let proxy_targets_json = if session.proxy_targets.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&session.proxy_targets).map_err(|e| {
+                StoreError::Internal(format!("failed to serialize proxy_targets: {e}"))
+            })?)
+        };
         let status_str = super::status_to_db_str(session.status);
         let creation_time_str = session.creation_time.map(|t| t.to_rfc3339());
         let start_time_str = session.start_time.map(|t| t.to_rfc3339());
@@ -1561,8 +1570,8 @@ impl SqliteStore {
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, created_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, created_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1589,14 +1598,15 @@ impl SqliteStore {
             .bind(&agent_config_json)
             .bind(&mode_json)
             .bind(resumed_from_str.as_deref())
+            .bind(proxy_targets_json.as_deref())
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, is_latest)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, 1)"
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets, is_latest)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, 1)"
                 )
             )
             .bind(id.as_ref())
@@ -1622,6 +1632,7 @@ impl SqliteStore {
             .bind(&agent_config_json)
             .bind(&mode_json)
             .bind(resumed_from_str.as_deref())
+            .bind(proxy_targets_json.as_deref())
             .execute(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
@@ -1719,6 +1730,16 @@ impl SqliteStore {
                     .map_err(|e| StoreError::Internal(format!("invalid resumed_from: {e}")))
             })
             .transpose()?;
+        let proxy_targets = row
+            .proxy_targets
+            .as_deref()
+            .map(|s| {
+                serde_json::from_str(s).map_err(|e| {
+                    StoreError::Internal(format!("failed to deserialize proxy_targets: {e}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         Ok(Session {
             creator,
@@ -1740,6 +1761,7 @@ impl SqliteStore {
             start_time,
             end_time,
             usage,
+            proxy_targets,
         })
     }
 
@@ -3304,7 +3326,7 @@ impl ReadOnlyStore for SqliteStore {
             &format!(
                 "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at,
                  creation_time, start_time, end_time, conversation_id, usage,
-                 mount_spec, agent_config, mode, resumed_from
+                 mount_spec, agent_config, mode, resumed_from, proxy_targets
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number DESC
@@ -3330,7 +3352,7 @@ impl ReadOnlyStore for SqliteStore {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
                 "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, conversation_id, usage,
-                 mount_spec, agent_config, mode, resumed_from
+                 mount_spec, agent_config, mode, resumed_from, proxy_targets
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
                  ORDER BY version_number"
@@ -3365,7 +3387,7 @@ impl ReadOnlyStore for SqliteStore {
         let mut sql = format!(
             "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
              t.creation_time, t.start_time, t.end_time, t.conversation_id, t.usage, \
-             t.mount_spec, t.agent_config, t.mode, t.resumed_from \
+             t.mount_spec, t.agent_config, t.mode, t.resumed_from, t.proxy_targets \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_sqlite(query);
@@ -3444,7 +3466,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from \
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",
@@ -11739,6 +11761,40 @@ mod tests {
         assert_eq!(mode["conversation_id"], conv_id.as_ref());
         // `idle_timeout_secs` is omitted when None (server applies default).
         assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
+    }
+
+    #[tokio::test]
+    async fn proxy_targets_round_trip_through_sqlite_store() {
+        use hydra_common::api::v1::sessions::ProxyTarget;
+        let store = create_test_store().await;
+        let mut session = spawn_task();
+        session.proxy_targets = vec![ProxyTarget {
+            port: 3000,
+            ready_path: Some("/ready".to_string()),
+        }];
+        let (sid, _) = store
+            .add_session(session, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let loaded = store.get_session(&sid, false).await.unwrap();
+        assert_eq!(loaded.item.proxy_targets.len(), 1);
+        assert_eq!(loaded.item.proxy_targets[0].port, 3000);
+        assert_eq!(
+            loaded.item.proxy_targets[0].ready_path.as_deref(),
+            Some("/ready")
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_targets_empty_round_trips_as_null_through_sqlite_store() {
+        let store = create_test_store().await;
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        let loaded = store.get_session(&sid, false).await.unwrap();
+        assert!(loaded.item.proxy_targets.is_empty());
     }
 
     #[tokio::test]

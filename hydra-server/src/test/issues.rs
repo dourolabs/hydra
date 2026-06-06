@@ -2018,6 +2018,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
             start_time: None,
             end_time: None,
             usage: None,
+            proxy_targets: Vec::new(),
         }
     };
 

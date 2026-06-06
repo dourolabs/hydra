@@ -52,9 +52,9 @@ use hydra_common::{
     },
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{
-        CreateSessionRequest, CreateSessionResponse, KillSessionResponse,
+        CreateSessionRequest, CreateSessionResponse, KillSessionResponse, ListProxyTargetsResponse,
         ListSessionVersionsResponse, ListSessionsResponse, SearchSessionsQuery,
-        SessionVersionRecord, WorkerContext,
+        SessionVersionRecord, UpsertProxyTargetRequest, WorkerContext,
     },
     triggers::{
         ListTriggerVersionsResponse, ListTriggersResponse, SearchTriggersQuery,
@@ -231,6 +231,13 @@ pub trait HydraClientInterface: Send + Sync {
     ) -> Result<SetSessionStatusResponse>;
 
     async fn get_session_context(&self, job_id: &SessionId) -> Result<WorkerContext>;
+    async fn list_proxy_targets(&self, session_id: &SessionId) -> Result<ListProxyTargetsResponse>;
+    async fn upsert_proxy_target(
+        &self,
+        session_id: &SessionId,
+        request: &UpsertProxyTargetRequest,
+    ) -> Result<()>;
+    async fn delete_proxy_target(&self, session_id: &SessionId, port: u16) -> Result<()>;
     async fn list_session_versions(
         &self,
         job_id: &SessionId,
@@ -888,6 +895,67 @@ impl HydraClient {
             .json::<WorkerContext>()
             .await
             .context("failed to decode session context response")
+    }
+
+    /// Call `GET /v1/sessions/:session_id/proxy-targets` to list the proxy
+    /// targets the worker has advertised on a session.
+    pub async fn list_proxy_targets(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<ListProxyTargetsResponse> {
+        let path = format!("/v1/sessions/{session_id}/proxy-targets");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.get(url))
+            .send()
+            .await
+            .context("failed to request proxy targets")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while listing proxy targets",
+            )
+            .await?;
+        response
+            .json::<ListProxyTargetsResponse>()
+            .await
+            .context("failed to decode proxy targets response")
+    }
+
+    /// Call `POST /v1/sessions/:session_id/proxy-targets` to add (or replace
+    /// when `port` already exists) a proxy target on the session. Idempotent.
+    pub async fn upsert_proxy_target(
+        &self,
+        session_id: &SessionId,
+        request: &UpsertProxyTargetRequest,
+    ) -> Result<()> {
+        let path = format!("/v1/sessions/{session_id}/proxy-targets");
+        let url = self.endpoint(&path)?;
+        self.authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit upsert proxy target request")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while adding a proxy target",
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Call `DELETE /v1/sessions/:session_id/proxy-targets/:port` to remove a
+    /// proxy target from the session. Idempotent — removing an absent port
+    /// is a no-op.
+    pub async fn delete_proxy_target(&self, session_id: &SessionId, port: u16) -> Result<()> {
+        let path = format!("/v1/sessions/{session_id}/proxy-targets/{port}");
+        let url = self.endpoint(&path)?;
+        self.authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete proxy target request")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while removing a proxy target",
+            )
+            .await?;
+        Ok(())
     }
 
     /// Call `POST /v1/issues` to create a new issue.
@@ -2651,6 +2719,22 @@ impl HydraClientInterface for HydraClient {
 
     async fn get_session_context(&self, job_id: &SessionId) -> Result<WorkerContext> {
         HydraClient::get_session_context(self, job_id).await
+    }
+
+    async fn list_proxy_targets(&self, session_id: &SessionId) -> Result<ListProxyTargetsResponse> {
+        HydraClient::list_proxy_targets(self, session_id).await
+    }
+
+    async fn upsert_proxy_target(
+        &self,
+        session_id: &SessionId,
+        request: &UpsertProxyTargetRequest,
+    ) -> Result<()> {
+        HydraClient::upsert_proxy_target(self, session_id, request).await
+    }
+
+    async fn delete_proxy_target(&self, session_id: &SessionId, port: u16) -> Result<()> {
+        HydraClient::delete_proxy_target(self, session_id, port).await
     }
 
     async fn list_session_versions(

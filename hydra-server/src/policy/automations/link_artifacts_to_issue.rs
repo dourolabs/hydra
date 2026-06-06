@@ -218,6 +218,7 @@ mod tests {
             start_time: None,
             end_time: None,
             usage: None,
+            proxy_targets: Vec::new(),
         }
     }
 

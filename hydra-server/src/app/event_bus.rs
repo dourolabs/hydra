@@ -2286,6 +2286,7 @@ mod tests {
             start_time: None,
             end_time: None,
             usage: None,
+            proxy_targets: Vec::new(),
         }
     }
 
@@ -2995,6 +2996,7 @@ mod tests {
             start_time: None,
             end_time: None,
             usage: None,
+            proxy_targets: Vec::new(),
         };
         let (sid, _) = store
             .add_session_with_actor(session, chrono::Utc::now(), ActorRef::test())
