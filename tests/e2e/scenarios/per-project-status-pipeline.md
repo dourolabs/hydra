@@ -9,7 +9,7 @@
 - P0 scenarios (`basic-issue-lifecycle`, `dashboard-navigation`) and `pm-agent-breakdown` completed.
 - Per-project-statuses feature ([[i-ctfcvyru]] / [[d-druoexk]]) has shipped on the server under test.
 - Four-level prompt design ([[d-rzreslz]] / [[i-psuvqpqx]]) has shipped on the server under test (project- and status-level prompt slices concatenate into spawned sessions' `system_prompt`).
-- One Project named `engineering-v2` created with the six statuses defined in the **Setup** section below, and the four prompt documents (project prompt + the three non-terminal status prompts) pushed to the doc store.
+- One Project named `engineering-v2` created with the seven statuses defined in the **Setup** section below, and the five prompt documents (project prompt + the four non-terminal status prompts) pushed to the doc store.
 
 **Estimated duration:** ~30 minutes
 
@@ -31,29 +31,32 @@ The runner-side wiring needed to seed the configuration below is implemented by 
 
 `default_status_key = "inbox"`. Statuses (in display order):
 
-| key | unblocks_parents | unblocks_dependents | cascades_to_children | on_enter |
-|---|---|---|---|---|
-| `inbox` | false | false | false | None |
-| `backlog` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "pm" }), attach_form: None }` |
-| `pending` | false | false | false | None |
-| `in-development` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "swe" }), attach_form: None }` |
-| `in-review` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "reviewer" }), attach_form: Some("/forms/review.yaml") }` |
-| `pending-release` | true | true | false | None |
+| key | unblocks_parents | unblocks_dependents | cascades_to_children | interactive | on_enter |
+|---|---|---|---|---|---|
+| `inbox` | false | false | false | false | None |
+| `backlog` | false | false | false | false | `{ assign_to: Some(Principal::Agent { name: "pm" }), attach_form: None }` |
+| `pending` | false | false | false | false | None |
+| `in-development` | false | false | false | false | `{ assign_to: Some(Principal::Agent { name: "swe" }), attach_form: None }` |
+| `pair-development` | false | false | false | true | `{ assign_to: Some(Principal::Agent { name: "swe" }), attach_form: None }` |
+| `in-review` | false | false | false | false | `{ assign_to: Some(Principal::Agent { name: "reviewer" }), attach_form: Some("/forms/review.yaml") }` |
+| `pending-release` | true | true | false | false | None |
 
 Notes:
 - `pending` exists as a holding state filed into directly by **Test bundle A** (Status UI surfaces); it has no automation.
+- `pair-development` is the interactive variant of `in-development`: it carries `interactive: true` from [[d-ulhrefm]], so `AgentQueue` mints a `Conversation` (with `spawned_from = <issue_id>` and `greet_user: true`) instead of a headless `swe` session when a ready issue lands here. The `interactive-issue-mode` scenario ([[i-nuuyrbwl]]) drives this column; this scenario only asserts UI surfaces for it (Bundle A).
 - `pending-release` is terminal for dependency semantics (`unblocks_parents` and `unblocks_dependents` both true) but does **not** cascade to children (`cascades_to_children = false`), per design [[d-druoexk]] §4 "Dependencies, readiness, cascade".
 - The status table format above mirrors the design's §4 "Default-project synthesis" table so the seeding spec stays aligned with how Hydra's built-in default project is described.
 
 ### Project + status prompts
 
-The four-level prompt resolver concatenates project- and status-level prompt slices onto each spawned session's `system_prompt`. The scenario depends on the following four documents being present in the doc store (the runner pushes them from the fixture files listed below):
+The four-level prompt resolver concatenates project- and status-level prompt slices onto each spawned session's `system_prompt`. The scenario depends on the following five documents being present in the doc store (the runner pushes them from the fixture files listed below):
 
 | doc-store path | fixture file | encodes |
 |---|---|---|
 | `/projects/engineering-v2/prompt.md` | `tests/e2e/fixtures/projects/engineering-v2/prompt.md` | workflow narration — "this project routes work through `inbox → backlog → in-development → in-review → pending-release`, with `pending` as a holding state; reviews happen on the **same issue** via the form attached to `in-review`, not via child `review-request` issues; `apply_status_on_enter` routes assignment automatically; agents transition the issue by setting `--status <next>` on the same id." |
 | `/projects/engineering-v2/statuses/backlog.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/backlog.md` | **`pm` delta** — when filing child issues, set their `project_id` to `engineering-v2` and let the project's `default_status_key` (`inbox`) apply; move this issue forward (to `pending` or `in-development`) when the breakdown is complete. |
 | `/projects/engineering-v2/statuses/in-development.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/in-development.md` | **`swe` delta** — when the PR is ready, transition the **same** issue from `in-development` to `in-review` (do NOT file a child `review-request` issue — this project uses same-issue review hand-off); if a review brings the issue back to `in-development` with `feedback` populated, address the feedback and re-transition to `in-review`. |
+| `/projects/engineering-v2/statuses/pair-development.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/pair-development.md` | **`swe` delta (interactive variant)** — same patch-and-handoff workflow as `in-development`, but the agent runs inside a spawned `Conversation` (`spawned_from = <issue_id>`, `greet_user: true`) instead of a headless session. Drives the `interactive-issue-mode` scenario ([[i-nuuyrbwl]]). |
 | `/projects/engineering-v2/statuses/in-review.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/in-review.md` | **`reviewer` delta** — read the patch, decide a verdict, and submit the attached `/forms/review.yaml`: `request_changes` (transitions back to `in-development` and writes the form's `review_comment` field into `issue.feedback` via `Effect::UpdateIssue { set_feedback_from: Some("review_comment") }`) or `approve` (transitions to `pending-release`); do NOT file a child review-request — the form action drives both verdict and status transition. |
 
 The project's `prompt_path` references `/projects/engineering-v2/prompt.md`; each non-terminal status's `prompt_path` (set in the project body) references its `/projects/engineering-v2/statuses/<key>.md` slice. Terminal statuses (`pending-release`, plus `inbox` and `pending` which carry no automation) have no `prompt_path` — the spawn dispatcher skips them anyway, so an empty slice is correct.
@@ -67,11 +70,11 @@ All interactions go through the dashboard at `http://localhost:8080` per the sui
 ### Step 1 — Pre-check
 
 1. Navigate to `http://localhost:8080/projects/engineering-v2`.
-2. Confirm the Project editor page renders with the six statuses listed above. If it does not (404, redirect to a "not found" view, or the route is unknown to the router), treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
+2. Confirm the Project editor page renders with the seven statuses listed above. If it does not (404, redirect to a "not found" view, or the route is unknown to the router), treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
 
 ### Step 2 — Test bundle A: Status UI surfaces
 
-For each of the six statuses (`inbox`, `backlog`, `pending`, `in-development`, `in-review`, `pending-release`), file one issue directly into that status:
+For each of the seven statuses (`inbox`, `backlog`, `pending`, `in-development`, `pair-development`, `in-review`, `pending-release`), file one issue directly into that status:
 
 1. Navigate to `/issues?project=engineering-v2`.
 2. Click the "Create issue" button. In the new-issue form, set:
@@ -84,9 +87,9 @@ For each of the six statuses (`inbox`, `backlog`, `pending`, `in-development`, `
 For each issue filed above, assert:
 
 - **List page.** Navigate to `/issues?project=engineering-v2`. The issue's status column renders the project's declared `label`, `icon`, and `color` for that status — **not** the legacy hardcoded mapping from `statusMapping.ts` (which is deleted by [[i-ctfcvyru]] PR 5 per design §4 "Frontend display"). Apply the status filter chip for that status; confirm the issue is included when its status is selected and excluded when a different status is selected.
-- **Detail page.** Open the issue. The status badge renders with the same `label` / `icon` / `color` as on the list. Open the transition control; confirm the dropdown lists all six statuses in the project's defined order (`inbox`, `backlog`, `pending`, `in-development`, `in-review`, `pending-release`).
+- **Detail page.** Open the issue. The status badge renders with the same `label` / `icon` / `color` as on the list. Open the transition control; confirm the dropdown lists all seven statuses in the project's defined order (`inbox`, `backlog`, `pending`, `in-development`, `pair-development`, `in-review`, `pending-release`). The `pair-development` row carries the project editor's "interactive" annotation chip alongside its label.
 - **Related-items panels.** If the issue is referenced from any related-items panel (e.g. a parent's child list, a blocked-by panel on a dependent), the badge appearance there matches the list and detail views.
-- **Filter dropdowns.** From any page that exposes a status filter dropdown (Issues list, Sessions filtered by issue status, etc.) when the project filter is set to `engineering-v2`, confirm all six statuses appear as filter options.
+- **Filter dropdowns.** From any page that exposes a status filter dropdown (Issues list, Sessions filtered by issue status, etc.) when the project filter is set to `engineering-v2`, confirm all seven statuses appear as filter options.
 
 ### Step 3 — Test bundle B: End-to-end columnar flow
 
@@ -152,8 +155,8 @@ This bundle validates the unified readiness rule from design [[d-druoexk]] §4 "
 ## Expected Results
 
 **Bundle A — Status UI surfaces:**
-- Status badges on list, detail, related-items panels, and filter dropdowns all render the project's declared `label` / `icon` / `color` for each of the six statuses. None of the legacy hardcoded enum strings (`open`, `in-progress`, `closed`, `dropped`, `failed`) appears anywhere when the project filter is `engineering-v2`.
-- The transition dropdown lists all six statuses in the project's defined order.
+- Status badges on list, detail, related-items panels, and filter dropdowns all render the project's declared `label` / `icon` / `color` for each of the seven statuses. None of the legacy hardcoded enum strings (`open`, `in-progress`, `closed`, `dropped`, `failed`) appears anywhere when the project filter is `engineering-v2`.
+- The transition dropdown lists all seven statuses in the project's defined order; `pair-development` carries the "interactive" annotation chip.
 - The status filter on the issues list correctly includes / excludes issues per their status.
 
 **Bundle B — End-to-end columnar flow:**

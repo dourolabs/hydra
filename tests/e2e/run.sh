@@ -278,10 +278,14 @@ push_engineering_v2_prompt \
   "/projects/engineering-v2/statuses/in-development.md" \
   "Status prompt — engineering-v2 / in-development"
 push_engineering_v2_prompt \
+  "${ENGINEERING_V2_FIXTURES_DIR}/statuses/pair-development.md" \
+  "/projects/engineering-v2/statuses/pair-development.md" \
+  "Status prompt — engineering-v2 / pair-development"
+push_engineering_v2_prompt \
   "${ENGINEERING_V2_FIXTURES_DIR}/statuses/in-review.md" \
   "/projects/engineering-v2/statuses/in-review.md" \
   "Status prompt — engineering-v2 / in-review"
-echo "    Pushed 4 prompt documents."
+echo "    Pushed 5 prompt documents."
 
 # --------------------------------------------------------------------------
 # 6e. Push the review form referenced by engineering-v2's in-review on_enter.
