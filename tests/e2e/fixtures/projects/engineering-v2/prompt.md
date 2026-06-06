@@ -1,6 +1,6 @@
 ## Project workflow: engineering-v2
 
-This project routes work through `inbox → backlog → in-development → in-review → pending-release`. `pending` is a holding state, and `dropped` / `failed` are terminals.
+This project routes work through `inbox → backlog → in-development → in-review → pending-release`. `pending` is a holding state.
 
 ### Routing
 
