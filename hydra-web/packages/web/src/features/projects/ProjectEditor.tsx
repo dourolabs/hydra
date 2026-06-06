@@ -461,6 +461,15 @@ function StatusEditor({
           />
           Cascades to children
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={status.interactive ?? false}
+            onChange={(e) => onChange({ interactive: e.target.checked })}
+            data-testid={`status-editor-interactive-${index}`}
+          />
+          Interactive
+        </label>
       </div>
 
       <div className={styles.onEnter}>

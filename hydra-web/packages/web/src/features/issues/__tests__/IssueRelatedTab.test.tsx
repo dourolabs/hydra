@@ -15,12 +15,14 @@ import type {
 const mockListRelations = vi.fn();
 const mockListIssues = vi.fn();
 const mockListSessions = vi.fn();
+const mockListConversations = vi.fn();
 
 vi.mock("../../../api/client", () => ({
   apiClient: {
     listRelations: (...args: unknown[]) => mockListRelations(...args),
     listIssues: (...args: unknown[]) => mockListIssues(...args),
     listSessions: (...args: unknown[]) => mockListSessions(...args),
+    listConversations: (...args: unknown[]) => mockListConversations(...args),
   },
 }));
 
@@ -90,6 +92,15 @@ vi.mock("../../related/RailRow", () => ({
         {record.document.title ?? record.document.path ?? record.document_id}
       </a>
       {record.document.path && <span>{record.document.path}</span>}
+    </div>
+  ),
+  ChatRailRow: ({
+    conversation,
+  }: {
+    conversation: { conversation_id: string; title: string | null };
+  }) => (
+    <div data-testid={`item-row-chat-${conversation.conversation_id}`}>
+      {conversation.title ?? conversation.conversation_id}
     </div>
   ),
 }));
@@ -230,6 +241,8 @@ function resetState() {
   mockListRelations.mockReset();
   mockListIssues.mockReset();
   mockListSessions.mockReset();
+  mockListConversations.mockReset();
+  mockListConversations.mockResolvedValue([]);
   mockCurrentIssue = undefined;
   mockPatches = [];
   mockDocuments = [];
@@ -251,7 +264,7 @@ describe("IssueRelatedTab", () => {
     mockCurrentIssue = makeIssueVersion("i-target");
   });
 
-  it("renders the four section titles in order: Parents, Children, Patches, Documents", async () => {
+  it("renders the section titles in order: Parents, Children, Patches, Conversations, Documents", async () => {
     const { container, findByText } = render(<IssueRelatedTab issueId="i-target" />, {
       wrapper: makeWrapper(),
     });
@@ -259,7 +272,13 @@ describe("IssueRelatedTab", () => {
     const headings = Array.from(container.querySelectorAll("h3")).map(
       (h) => h.textContent?.replace(/\(\d+\)$/, "").trim(),
     );
-    expect(headings).toEqual(["Parents", "Children", "Patches", "Documents"]);
+    expect(headings).toEqual([
+      "Parents",
+      "Children",
+      "Patches",
+      "Conversations",
+      "Documents",
+    ]);
   });
 
   it("shows empty-state copy in each section when there is nothing", async () => {

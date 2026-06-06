@@ -30,6 +30,15 @@ export function StatusChip({
           </span>
         )}
         <span className={styles.label}>{definition.label}</span>
+        {definition.interactive && (
+          <span
+            className={styles.interactiveTag}
+            data-testid="status-interactive-tag"
+            title="Ready issues in this status spawn an interactive conversation"
+          >
+            interactive
+          </span>
+        )}
       </span>
     );
   }

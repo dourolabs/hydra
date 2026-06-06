@@ -2374,6 +2374,36 @@
       "creator": "alice",
       "created_at": "2026-04-01T09:00:00.000Z",
       "updated_at": "2026-04-01T10:15:00.000Z"
+    },
+    "c-seed00008": {
+      "conversation_id": "c-seed00008",
+      "title": "Interactive triage for realtime collab platform",
+      "agent_name": "swe",
+      "status": "active",
+      "creator": "dev-user",
+      "spawned_from": "i-seed00001",
+      "created_at": "2026-05-14T12:00:00.000Z",
+      "updated_at": "2026-05-14T12:30:00.000Z"
+    },
+    "c-seed00009": {
+      "conversation_id": "c-seed00009",
+      "title": "Earlier triage attempt (closed)",
+      "agent_name": "swe",
+      "status": "closed",
+      "creator": "dev-user",
+      "spawned_from": "i-seed00001",
+      "created_at": "2026-05-12T09:00:00.000Z",
+      "updated_at": "2026-05-12T10:30:00.000Z"
+    },
+    "c-seed00010": {
+      "conversation_id": "c-seed00010",
+      "title": "Realtime presence design exploration",
+      "agent_name": "swe",
+      "status": "idle",
+      "creator": "dev-user",
+      "spawned_from": "i-seed00006",
+      "created_at": "2026-05-15T09:00:00.000Z",
+      "updated_at": "2026-05-15T10:30:00.000Z"
     }
   },
   "session_events": {
