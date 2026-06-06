@@ -93,4 +93,3 @@ pub(crate) fn build_set_cookie_response(
     );
     Ok(response)
 }
-

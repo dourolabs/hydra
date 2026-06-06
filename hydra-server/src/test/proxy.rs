@@ -252,7 +252,9 @@ async fn proxy_rejects_cookie_holder_without_read_access() {
     // is valid; the target/session match. Only the read-access check
     // (creator-of-session) trips.
     let payload = ProxyCookiePayload {
-        actor_id: ActorId::User(hydra_common::api::v1::users::Username::from("not-the-creator")),
+        actor_id: ActorId::User(hydra_common::api::v1::users::Username::from(
+            "not-the-creator",
+        )),
         target: target.clone(),
         session_id_at_mint: session_id.clone(),
         exp: chrono::Utc::now().timestamp() + DEFAULT_COOKIE_TTL_SECS,
@@ -469,16 +471,12 @@ async fn proxy_streams_chunked_response_body() {
     use futures::stream::{self, StreamExt as _};
 
     let app: Router = Router::new().fallback(any(|| async {
-        let chunks: Vec<Result<&'static [u8], std::io::Error>> = vec![
-            Ok(b"chunk-1\n"),
-            Ok(b"chunk-2\n"),
-            Ok(b"chunk-3\n"),
-        ];
-        let body_stream =
-            stream::iter(chunks).then(|item| async move {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                item
-            });
+        let chunks: Vec<Result<&'static [u8], std::io::Error>> =
+            vec![Ok(b"chunk-1\n"), Ok(b"chunk-2\n"), Ok(b"chunk-3\n")];
+        let body_stream = stream::iter(chunks).then(|item| async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            item
+        });
         AxumBody::from_stream(body_stream)
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

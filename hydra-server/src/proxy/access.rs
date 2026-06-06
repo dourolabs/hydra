@@ -64,8 +64,7 @@ pub async fn has_read_access(
                 conversation_id, ..
             } = &session.mode
             {
-                if let Ok(versioned) =
-                    state.store().get_conversation(conversation_id, false).await
+                if let Ok(versioned) = state.store().get_conversation(conversation_id, false).await
                 {
                     return versioned.item.creator.as_str() == principal;
                 }
