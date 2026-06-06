@@ -10,13 +10,11 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * resolved server-side from the agent definition; historical rows
  * loaded through the legacy backfill path leave it `None`.
  *
- * Phase 2 of the actor-system overhaul
- * (`/designs/actor-system-overhaul.md` §3.4) retypes `agent_name`
- * from `Option<String>` to `Option<AgentName>` so the
- * agent-vs-adhoc discriminant on a session is a validated type, not
- * a free string. Historic rows with a malformed `agent_name` will
- * fail to deserialize loudly — that's the design's intended Phase-2
- * backfill story.
+ * `agent_name` is typed as `Option<AgentName>` so the agent-vs-adhoc
+ * discriminant on a session is a validated type, not a free string:
+ * `Some(name)` is agent-spawned, `None` is ad-hoc. Historic rows with a
+ * malformed `agent_name` fail to deserialize loudly rather than silently
+ * passing through.
  */
 export type AgentConfig = {
   agent_name?: AgentName | null;

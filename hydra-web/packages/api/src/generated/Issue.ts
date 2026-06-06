@@ -32,9 +32,11 @@ export type Issue = {
   project_id?: ProjectId | null;
   /**
    * Server-computed status definition (display props + dependency
-   * flags) — never stored, always populated on responses, omitted on
-   * create/update requests. See `/designs/per-project-issue-statuses.md`
-   * §4 "Frontend display".
+   * flags) for [`Self::status`], resolved against the issue's project's
+   * status list. Never stored: always populated on responses so
+   * frontends don't need a second round trip to render the status
+   * chip, and omitted on create / update requests (the server
+   * re-resolves from [`Self::status`]).
    */
   resolved_status?: StatusDefinition | null;
   assignee?: Principal | null;

@@ -12,9 +12,9 @@ import type { MergeCheckOk } from "./MergeCheckOk";
  *
  * HTTP status: `200` for [`MergeCheckResponse::Ok`], `422` for
  * [`MergeCheckResponse::Blocked`]. The 422 (Unprocessable Entity) choice
- * is locked in by the `IntoResponse` impl and is documented in
- * `/designs/merge-time-constraints.md` §4.3 / §4.5 — it is NOT 400
- * (request well-formed) and NOT 403 (actor authorisation is only one of
- * two layers).
+ * is locked in by the `IntoResponse` impl: the request itself is
+ * syntactically well-formed (so not 400) and actor authorisation is only
+ * one of two layers the policy evaluates (so not 403) — the merge is
+ * blocked because the policy is unsatisfied.
  */
 export type MergeCheckResponse = MergeCheckOk | MergeBlockedError;

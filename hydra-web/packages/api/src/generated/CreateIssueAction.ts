@@ -7,8 +7,8 @@ import type { SessionSettings } from "./SessionSettings";
  * Create an issue when the parent trigger fires.
  *
  * `title`, `description`, and `assignee` are template strings rendered
- * through `hydra-server/src/domain/triggers.rs::render`. `assignee` is
- * parsed as a `Principal` after rendering.
+ * through [`render`]. `assignee` is parsed as a `Principal` after
+ * rendering.
  */
 export type CreateIssueAction = {
   type: IssueType;

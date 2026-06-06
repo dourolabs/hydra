@@ -6,8 +6,7 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Append-only log of model-context events for a session. The transcript the
  * model "sees" is the projection of this log onto `UserMessage` and
- * `AssistantMessage` variants in insertion order. See
- * `/designs/sessions-orthogonality-redesign.md` §3.2.
+ * `AssistantMessage` variants in insertion order.
  */
 export type SessionEvent =
   | { type: "user_message"; content: string; timestamp: string }

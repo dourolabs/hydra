@@ -11,8 +11,9 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * Carries everything the worker needs to set up its execution
  * environment, plus enough metadata (`session_id`, `mode_kind`) to drive
  * the websocket lifecycle. Anything the model itself sees (system
- * prompt, transcript, resume blob) travels over the relay websocket —
- * see `designs/sessions-worker-run-interface.md` §1.2.
+ * prompt, transcript, resume blob) is intentionally absent here and
+ * arrives over the relay websocket instead, so the worker has a single
+ * channel for all model-input data.
  */
 export type WorkerContext = {
   session_id: SessionId;

@@ -12,8 +12,7 @@ import type { Username } from "./Username";
  * Mirrors [`Patch`] field-for-field, except `reviews` is
  * `Vec<UpsertReviewRequest>` — clients never specify review authors
  * on the inbound side (server-stamped from the authenticated actor;
- * see [`UpsertReviewRequest`] and Phase 5b of
- * `/designs/actor-system-overhaul.md` §6).
+ * see [`UpsertReviewRequest`]).
  */
 export type UpsertPatch = {
   title: string;

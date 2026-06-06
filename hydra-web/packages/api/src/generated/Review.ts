@@ -4,24 +4,17 @@ import type { Principal } from "./Principal";
 /**
  * A review recorded against a patch.
  *
- * Phase 5b of `/designs/actor-system-overhaul.md` (§4.3) re-types
- * `author` from a bare string to the shared [`Principal`], so
- * reviews are attributed to the same typed party form the rest of
- * the system uses. On the inbound wire, clients use
- * [`UpsertReviewRequest`] (no author) and the server stamps the
- * author from the authenticated actor (§6); the [`Review`] type
+ * `author` is the shared typed [`Principal`] (user / agent /
+ * external), so reviews are attributed to the same typed party
+ * form the rest of the system uses. On the inbound wire, clients
+ * use [`UpsertReviewRequest`] (no author) and the server stamps
+ * the author from the authenticated actor; the [`Review`] type
  * here is the canonical/response shape.
  *
- * The deserializer is back-compat with the pre-Phase-5b wire shape:
- * a bare-string `author` is rewritten in flight via
- * [`Principal::parse_legacy_assignee`]. This keeps clients running
- * through the soft-cutover window — including when reading rows the
- * server's row migration has not yet touched.
- *
- * Each bare-string hit emits a `tracing::warn!` on the
- * `review_author_legacy_decode` target so we can release-soak the
- * fallback and confirm zero stale-client traffic before deleting it
- * (design §8.2, §11 row 7).
+ * Bare-string `author` is accepted and rewritten via
+ * [`Principal::parse_legacy_assignee`]; each hit emits a
+ * `tracing::warn!` on the `review_author_legacy_decode` target so the
+ * fallback can be release-soaked before deletion.
  */
 export type Review = {
   contents: string;

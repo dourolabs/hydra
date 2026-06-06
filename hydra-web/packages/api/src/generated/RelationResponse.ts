@@ -4,8 +4,8 @@ import type { HydraId } from "./HydraId";
 /**
  * A single relation in the response.
  *
- * Note: intentionally omits `source_kind` and `target_kind` per the design
- * document; both are inferable from the prefixes of the source/target IDs.
+ * Note: intentionally omits `source_kind` and `target_kind`; both are
+ * inferable from the prefixes of the source/target IDs.
  */
 export type RelationResponse = {
   source_id: HydraId;

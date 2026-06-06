@@ -6,9 +6,11 @@ import type { StatusDefinition } from "./StatusDefinition";
  * `GET /v1/projects/default/statuses`. Returned as an ordered list
  * matching the project's declaration order.
  */
-export type ProjectStatusesResponse = { statuses: Array<StatusDefinition>, 
-/**
- * The project's `default_status_key`. Included so a status-picker
- * modal can pre-select the right entry without a second request.
- */
-default_status_key: string, };
+export type ProjectStatusesResponse = {
+  statuses: Array<StatusDefinition>;
+  /**
+   * The project's `default_status_key`. Included so a status-picker
+   * modal can pre-select the right entry without a second request.
+   */
+  default_status_key: string;
+};

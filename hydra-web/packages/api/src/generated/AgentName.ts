@@ -3,12 +3,11 @@
 /**
  * A validated agent name (e.g. `pm`, `swe`, `reviewer`).
  *
- * Introduced in the actor-system overhaul
- * (`/designs/actor-system-overhaul.md`, §3.1) as the typed counterpart
- * to free-string agent names. `AgentName` is the carrier for
+ * Newtype around `String` that rejects empty, whitespace-containing, and
+ * slash-containing values via [`AgentName::try_new`] (and its hand-rolled
+ * `Deserialize`). Used as the validated carrier for
  * [`crate::actor_ref::ActorId::Agent`] and
- * [`crate::principal::Principal::Agent`]. In Phase 1 it is introduced
- * as a separate newtype; Phase 2 will retype `AgentConfig.name` from
- * `Option<String>` to `Option<AgentName>`.
+ * [`crate::principal::Principal::Agent`], and as the type of
+ * `AgentConfig.agent_name`.
  */
 export type AgentName = string;
