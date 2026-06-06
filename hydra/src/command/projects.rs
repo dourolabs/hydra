@@ -2,29 +2,20 @@ use crate::{
     client::HydraClientInterface,
     command::{
         output::{render, CommandContext, ProjectRecords, ProjectStatuses, ResolvedOutputFormat},
+        project_body_file::load_body_file,
         utils::resolve_username,
     },
     output_writer::write_stdout,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::api::v1::projects::{
     Project, ProjectIdOrDefault, ProjectKey, ProjectRecord, StatusKey, UpsertProjectRequest,
     UpsertProjectResponse,
 };
 use hydra_common::ProjectId;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
-
-/// Body file payload for `projects create` / `projects update`. Describes a
-/// project's status list and its `default_status_key`. The CLI fills in the
-/// `key`, `name`, and `creator` fields on top of this.
-#[derive(Debug, serde::Deserialize)]
-struct ProjectBodyFile {
-    #[serde(default)]
-    statuses: Vec<hydra_common::api::v1::projects::StatusDefinition>,
-    default_status_key: StatusKey,
-}
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectsCommand {
@@ -336,20 +327,6 @@ fn apply_prompt_path_arg(arg: Option<String>, current: Option<String>) -> Option
     }
 }
 
-fn load_body_file(path: &Path) -> Result<ProjectBodyFile> {
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read project body file '{}'", path.display()))?;
-    let trimmed = contents.trim();
-    if trimmed.is_empty() {
-        bail!("project body file '{}' is empty", path.display());
-    }
-    if let Ok(body) = serde_json::from_str::<ProjectBodyFile>(trimmed) {
-        return Ok(body);
-    }
-    serde_yaml_ng::from_str::<ProjectBodyFile>(trimmed)
-        .with_context(|| format!("failed to parse project body file '{}'", path.display()))
-}
-
 fn write_delete_summary<W: std::io::Write>(
     format: ResolvedOutputFormat,
     response: &UpsertProjectResponse,
@@ -421,102 +398,6 @@ impl ProjectRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hydra_common::api::v1::projects::{IconKey, StatusDefinition};
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    fn write_body(content: &str) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        file
-    }
-
-    #[test]
-    fn load_body_file_parses_json() {
-        let file = write_body(
-            r##"{
-                "statuses": [
-                    {
-                        "key": "open",
-                        "label": "Open",
-                        "icon": "circle",
-                        "color": "#abcdef",
-                        "unblocks_parents": false,
-                        "unblocks_dependents": false,
-                        "cascades_to_children": false
-                    }
-                ],
-                "default_status_key": "open"
-            }"##,
-        );
-        let body = load_body_file(file.path()).unwrap();
-        assert_eq!(body.statuses.len(), 1);
-        assert_eq!(body.statuses[0].key, StatusKey::try_new("open").unwrap());
-        assert_eq!(body.default_status_key, StatusKey::try_new("open").unwrap());
-    }
-
-    #[test]
-    fn load_body_file_parses_yaml() {
-        let file = write_body(
-            r##"
-statuses:
-  - key: open
-    label: Open
-    icon: circle
-    color: "#abcdef"
-    unblocks_parents: false
-    unblocks_dependents: false
-    cascades_to_children: false
-default_status_key: open
-"##,
-        );
-        let body = load_body_file(file.path()).unwrap();
-        assert_eq!(body.statuses.len(), 1);
-        assert_eq!(body.default_status_key, StatusKey::try_new("open").unwrap());
-    }
-
-    #[test]
-    fn load_body_file_parses_yaml_with_principal_tag_form() {
-        let file = write_body(
-            r##"
-statuses:
-  - key: backlog
-    label: Backlog
-    icon: list
-    color: "#9b59b6"
-    unblocks_parents: false
-    unblocks_dependents: false
-    cascades_to_children: false
-    on_enter:
-      assign_to: !Agent { name: pm }
-default_status_key: backlog
-"##,
-        );
-        let body = load_body_file(file.path()).unwrap();
-        let on_enter = body.statuses[0]
-            .on_enter
-            .as_ref()
-            .expect("on_enter present");
-        let assignee = on_enter.assign_to.as_ref().expect("assign_to present");
-        assert!(matches!(
-            assignee,
-            hydra_common::principal::Principal::Agent { name } if name.as_str() == "pm"
-        ));
-    }
-
-    #[test]
-    fn load_body_file_rejects_empty() {
-        let file = write_body("");
-        let err = load_body_file(file.path()).unwrap_err();
-        assert!(err.to_string().contains("is empty"));
-    }
-
-    #[test]
-    fn load_body_file_rejects_malformed() {
-        let file = write_body("{not valid");
-        let err = load_body_file(file.path()).unwrap_err();
-        assert!(err.to_string().contains("failed to parse"), "got: {err:?}");
-    }
 
     #[test]
     fn project_ref_parses_id() {
@@ -570,26 +451,5 @@ default_status_key: backlog
             apply_prompt_path_arg(Some("/b".into()), None),
             Some("/b".into())
         );
-    }
-
-    #[test]
-    fn status_definition_roundtrips_through_body_file() {
-        let def = StatusDefinition::new(
-            StatusKey::try_new("inbox").unwrap(),
-            "Inbox".into(),
-            IconKey::try_new("inbox").unwrap(),
-            "#ffaa00".parse().unwrap(),
-            false,
-            false,
-            false,
-            None,
-        );
-        let json = format!(
-            r#"{{ "statuses": [{}], "default_status_key": "inbox" }}"#,
-            serde_json::to_string(&def).unwrap()
-        );
-        let file = write_body(&json);
-        let body = load_body_file(file.path()).unwrap();
-        assert_eq!(body.statuses, vec![def]);
     }
 }
