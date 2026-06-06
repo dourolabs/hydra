@@ -2560,7 +2560,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, form, form_response, feedback,
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, form, form_response, feedback, project_id,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
@@ -2606,7 +2606,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, form, form_response, feedback, NULL AS creation_time
+            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, form, form_response, feedback, project_id, NULL AS creation_time
              FROM {TABLE_ISSUES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -2652,7 +2652,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
         let subquery = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, i.status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback, i.project_id,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              WHERE i.is_latest = 1"
@@ -12791,6 +12791,61 @@ mod tests {
             project_id.is_none(),
             "legacy rows must default project_id to NULL"
         );
+    }
+
+    /// Regression: every `issues_v2` SELECT must include `project_id` so a
+    /// project-bound issue's `project_id` round-trips through `get_issue`,
+    /// `list_issues`, and `get_issue_versions`. Before [[i-xnkrrggk]] the
+    /// three SQLite SELECTs omitted the column and sqlx's `#[sqlx(default)]`
+    /// silently coerced it to `None`, so `resolve_status` fell back to the
+    /// synthesized default project and any custom status key blew up as
+    /// `UnknownStatus` → HTTP 500.
+    #[tokio::test]
+    async fn project_bound_issue_project_id_round_trips_sqlite() {
+        let store = create_test_store().await;
+        let (project_id, _) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut issue = sample_issue(Vec::new());
+        issue.project_id = Some(project_id.clone());
+        issue.status = hydra_common::api::v1::projects::StatusKey::try_new("backlog").unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.project_id.as_ref(),
+            Some(&project_id),
+            "get_issue must preserve project_id"
+        );
+
+        let listed = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        let found = listed
+            .iter()
+            .find(|(id, _)| id == &issue_id)
+            .expect("list_issues must return the project-bound issue");
+        assert_eq!(
+            found.1.item.project_id.as_ref(),
+            Some(&project_id),
+            "list_issues must preserve project_id"
+        );
+
+        let versions = store.get_issue_versions(&issue_id).await.unwrap();
+        assert!(
+            !versions.is_empty(),
+            "get_issue_versions must return at least one row"
+        );
+        for v in &versions {
+            assert_eq!(
+                v.item.project_id.as_ref(),
+                Some(&project_id),
+                "get_issue_versions must preserve project_id on every version"
+            );
+        }
     }
 
     #[tokio::test]
