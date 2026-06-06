@@ -224,6 +224,22 @@ impl Automation for SpawnSessionsAutomation {
                             "spawned session"
                         );
                     }
+                    Ok(SpawnResult::SpawnedConversation(conversation_id)) => {
+                        // Interactive branch: a Conversation is created in
+                        // place of a headless session. The companion session
+                        // is materialized asynchronously by
+                        // `SpawnConversationSessionsAutomation`; capacity is
+                        // still consumed here so a queue full of interactive
+                        // issues can't run away.
+                        remaining_capacity -= 1;
+                        tracing::info!(
+                            automation = AUTOMATION_NAME,
+                            agent = queue.agent.name,
+                            conversation_id = %conversation_id,
+                            event = ?ctx.event.summary(),
+                            "spawned conversation"
+                        );
+                    }
                     Ok(SpawnResult::RetriesExhausted {
                         issue_id: exhausted_issue_id,
                         max_tries,

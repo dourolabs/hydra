@@ -1,6 +1,7 @@
 pub(crate) mod agent_queue;
 pub mod apply_status_on_enter;
 pub mod cascade_issue_status;
+pub mod close_conversations_on_interactive_exit;
 pub mod kill_tasks_on_failure;
 pub mod link_artifacts_to_issue;
 pub mod link_conversation_to_artifacts;
@@ -10,6 +11,7 @@ pub mod start_created_sessions;
 
 pub use apply_status_on_enter::ApplyStatusOnEnterAutomation;
 pub use cascade_issue_status::CascadeIssueStatusAutomation;
+pub use close_conversations_on_interactive_exit::CloseConversationsOnInteractiveExitAutomation;
 pub use kill_tasks_on_failure::KillTasksOnFailureAutomation;
 pub use link_artifacts_to_issue::LinkArtifactsToIssueAutomation;
 pub use link_conversation_to_artifacts::LinkConversationToArtifactsAutomation;

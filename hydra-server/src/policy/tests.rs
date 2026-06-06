@@ -776,7 +776,7 @@ fn default_config_enables_all_builtin_policies() {
     let engine = crate::app::AppState::build_policy_engine(None);
 
     assert_eq!(engine.restriction_count(), 6);
-    assert_eq!(engine.automation_count(), 9);
+    assert_eq!(engine.automation_count(), 10);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
@@ -798,13 +798,14 @@ fn default_config_enables_all_builtin_policies() {
                 PolicyEntry::Name("link_conversation_to_artifacts".to_string()),
                 PolicyEntry::Name("spawn_sessions".to_string()),
                 PolicyEntry::Name("spawn_conversation_sessions".to_string()),
+                PolicyEntry::Name("close_conversations_on_interactive_exit".to_string()),
                 PolicyEntry::Name("start_created_sessions".to_string()),
             ],
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
     assert_eq!(explicit_engine.restriction_count(), 6);
-    assert_eq!(explicit_engine.automation_count(), 9);
+    assert_eq!(explicit_engine.automation_count(), 10);
 }
 
 /// Test 2: Disabling a specific restriction allows the previously-blocked

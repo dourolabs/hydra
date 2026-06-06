@@ -201,6 +201,11 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("spawn_conversation_sessions", |params| {
         Ok(Box::new(SpawnConversationSessionsAutomation::new(params)?))
     });
+    registry.register_automation("close_conversations_on_interactive_exit", |params| {
+        Ok(Box::new(
+            CloseConversationsOnInteractiveExitAutomation::new(params)?,
+        ))
+    });
     registry.register_automation("start_created_sessions", |params| {
         Ok(Box::new(StartCreatedSessionsAutomation::new(params)?))
     });
