@@ -68,6 +68,23 @@ import { FooHeader } from "../features/foo/FooHeader";
 export function FooPage() { return <FooHeader foo={foo} />; }
 ```
 
+## Parameters with multiple value spaces must be split
+
+When you're adding a query param, a function argument, or a request-body field
+that could accept "either form A or form B" (e.g. a URL token that's either a
+canonical id or a human-friendly key/slug), split it into two named
+parameters with non-overlapping value spaces. Disambiguation by string-prefix
+or content sniffing is the anti-pattern — see
+["Parameter forms must be mutually exclusive by construction"](../architecture/api-wire-contract.md#parameter-forms-must-be-mutually-exclusive-by-construction)
+for the rule and the silent-failure mode it prevents.
+
+`HydraApiClient` already follows this — request types carry distinct named
+fields for distinct value spaces. URL/query strings on the SPA side (e.g. the
+Issues-list filter URL in `features/issues/filterUrlSync.ts`) follow the same
+rule: a single `?project=` param accepts only `j-`-prefixed ids; a separate
+`?project_key=` carries the slug form and is resolved to an id before any
+server call.
+
 ## See also
 
 - [style.md](./style.md) — theme tokens, CSS Modules, HMR rule.

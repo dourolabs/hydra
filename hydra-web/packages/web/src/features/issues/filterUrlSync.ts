@@ -37,6 +37,19 @@ const FILTER_URL_PARAM_KEYS = new Set(FILTER_URL_PARAMS.map((spec) => spec.id));
 
 export const SEARCH_URL_PARAM = "q";
 
+/**
+ * Transient URL param: the human-friendly project slug. Resolved to a
+ * canonical `j-`-prefixed id at the page level and replaced with `?project=`
+ * on the next URL write — see `resolveProjectFromUrl` below. Listed here so
+ * `filtersToUrl` strips it when it rewrites the URL.
+ *
+ * Kept separate from `?project=` (which accepts only `j-`-prefixed ids) so
+ * each parameter has a single, unambiguous value space; see
+ * `docs/architecture/api-wire-contract.md` ("Parameter forms must be mutually
+ * exclusive by construction").
+ */
+export const PROJECT_KEY_URL_PARAM = "project_key";
+
 function parseValues(raw: string, singleSelect: boolean): string[] {
   if (singleSelect) return [raw];
   return raw
@@ -88,6 +101,9 @@ export function filtersToUrl(
   for (const spec of FILTER_URL_PARAMS) {
     next.delete(spec.id);
   }
+  // `project_key` is a transient resolution input; once the URL is rewritten
+  // from filter state, the canonical `?project=j-<id>` carries the meaning.
+  next.delete(PROJECT_KEY_URL_PARAM);
   // Once the FilterBar takes over filter state, the legacy `selected=`
   // shortcut would conflict with the explicit params we're writing.
   next.delete("selected");
@@ -99,35 +115,100 @@ export function filtersToUrl(
   return next;
 }
 
-export type ProjectKeyResolution =
+export type ProjectUrlResolution =
   | { outcome: "unchanged"; filters: Filter[] }
   | { outcome: "pending"; filters: Filter[] }
   | { outcome: "resolved"; filters: Filter[] }
-  | { outcome: "missing"; filters: Filter[]; missingKey: string };
+  | { outcome: "missing"; filters: Filter[]; missingKey: string }
+  | { outcome: "invalid"; filters: Filter[]; invalidValue: string };
+
+function dropProjectFilter(filters: Filter[]): Filter[] {
+  return filters.filter((f) => f.id !== "project");
+}
+
+function setProjectFilter(filters: Filter[], projectId: string): Filter[] {
+  const others = filters.filter((f) => f.id !== "project");
+  return [
+    ...others,
+    { _uid: "url:project", id: "project", op: "in", values: [projectId] },
+  ];
+}
 
 /**
- * Resolve a `?project=<key>` URL token to its canonical `j-<id>` form.
+ * Validate `?project=` and resolve `?project_key=` for the Issues-list URL.
  *
- * The backend `ProjectId` validator only accepts `j-`-prefixed ids; a pasted
- * URL like `?project=engineering-v2` would otherwise 400 `listIssues` and
- * produce an empty list with the project pill reset. The picker writes the
- * id form already, so this handler only kicks in when the project value
- * arrives as a bare key (no `j-` prefix).
+ * Two URL params share the project-selection job, with disjoint value spaces:
+ *
+ *   - `?project=<j-id>` — the canonical form. Accepts ONLY `j-`-prefixed
+ *     project ids; anything else is rejected with `outcome: "invalid"`.
+ *   - `?project_key=<slug>` — the human-friendly form. Accepts ONLY non-`j-`
+ *     slugs; a `j-`-prefixed value here is `outcome: "invalid"`. When the
+ *     slug matches a known project, the returned filters carry the resolved
+ *     `j-<id>` and the page rewrites the URL to the canonical `?project=`
+ *     form on the next render.
+ *
+ * Splitting the parameter (instead of letting one accept both forms with
+ * string-prefix disambiguation) is required by the wire-contract rule —
+ * see `docs/architecture/api-wire-contract.md` ("Parameter forms must be
+ * mutually exclusive by construction"). Each parameter has a single value
+ * space, so a future project key shaped like `j-…` can't silently flip the
+ * URL's meaning.
+ *
+ * Precedence when both URL params are present: `?project_key=` wins, because
+ * the steady-state URL never contains both (the page rewrites `?project_key=`
+ * away once resolved).
  *
  * Outcomes:
- *   - `unchanged` — no project filter present, or already `j-`-prefixed.
- *   - `pending` — non-`j-` value, but the projects list hasn't loaded yet.
- *                 Caller should hold off any server query that would
- *                 otherwise send the unresolved value.
- *   - `resolved` — a project with `project.key === <raw>` was found; the
- *                  returned filters replace the value with `j-<id>`.
- *   - `missing` — projects loaded but no project matches the key. The
- *                  project filter is dropped from the returned filters.
+ *   - `unchanged` — no project params, or `?project=j-<id>` only.
+ *   - `pending` — `?project_key=<slug>` is set but the projects list has
+ *                 not loaded yet. Caller should hold off any server query
+ *                 that would otherwise emit a stale project filter.
+ *   - `resolved` — `?project_key=<slug>` matched a known project; the
+ *                  returned filters carry the canonical `j-<id>`.
+ *   - `missing` — `?project_key=<slug>` did not match any project; project
+ *                  filter is dropped, `missingKey` carries the bad slug for
+ *                  a toast.
+ *   - `invalid` — `?project=<value>` was not `j-`-prefixed, OR
+ *                  `?project_key=<value>` was `j-`-prefixed. Project filter
+ *                  is dropped, `invalidValue` carries the bad token for a
+ *                  toast. The page-level URL rewrite clears the bad param.
  */
-export function resolveProjectKeyFilter(
+export function resolveProjectFromUrl(
   filters: Filter[],
+  searchParams: URLSearchParams,
   projects: ProjectRecord[] | undefined,
-): ProjectKeyResolution {
+): ProjectUrlResolution {
+  const rawKey = searchParams.get(PROJECT_KEY_URL_PARAM);
+  if (rawKey) {
+    // `?project_key=` owns the project selection when present.
+    if (rawKey.startsWith("j-")) {
+      // Value-space violation: ids belong in `?project=`. Drop the project
+      // filter entirely — we deliberately don't try to fall back to a
+      // co-present `?project=` because the user's URL is malformed and we
+      // want the toast to be the only signal.
+      return {
+        outcome: "invalid",
+        filters: dropProjectFilter(filters),
+        invalidValue: rawKey,
+      };
+    }
+    if (!projects) {
+      return { outcome: "pending", filters };
+    }
+    const match = projects.find((p) => p.project.key === rawKey);
+    if (match) {
+      return {
+        outcome: "resolved",
+        filters: setProjectFilter(filters, match.project_id),
+      };
+    }
+    return {
+      outcome: "missing",
+      filters: dropProjectFilter(filters),
+      missingKey: rawKey,
+    };
+  }
+  // No `?project_key=`. Validate the `?project=` value space.
   const projectFilter = filters.find((f) => f.id === "project");
   if (!projectFilter || projectFilter.values.length === 0) {
     return { outcome: "unchanged", filters };
@@ -136,22 +217,10 @@ export function resolveProjectKeyFilter(
   if (raw.startsWith("j-")) {
     return { outcome: "unchanged", filters };
   }
-  if (!projects) {
-    return { outcome: "pending", filters };
-  }
-  const match = projects.find((p) => p.project.key === raw);
-  if (match) {
-    return {
-      outcome: "resolved",
-      filters: filters.map((f) =>
-        f.id === "project" ? { ...f, values: [match.project_id] } : f,
-      ),
-    };
-  }
   return {
-    outcome: "missing",
-    filters: filters.filter((f) => f.id !== "project"),
-    missingKey: raw,
+    outcome: "invalid",
+    filters: dropProjectFilter(filters),
+    invalidValue: raw,
   };
 }
 
