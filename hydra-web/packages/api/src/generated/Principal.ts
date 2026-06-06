@@ -29,12 +29,9 @@ import type { Username } from "./Username";
  * **Path form** (canonical, used in URLs, CLI args, and indexed DB
  * columns): `users/<x>` / `agents/<x>` / `external/<system>/<username>`.
  *
- * Phase 5a of `/designs/actor-system-overhaul.md` unifies this with the
- * merge-policy principal: `crate::api::v1::repositories::Principal`
- * (the old bare-string wire enum) is gone, replaced by an `AssigneeRef`
- * wrapper that stores `Principal` for its static case. The Phase 1
- * `rename = "ActorPrincipal"` workaround is dropped here so the shared
- * type takes back ownership of `Principal.ts`.
+ * This is also the merge-policy principal: [`crate::api::v1::repositories::AssigneeRef`]
+ * wraps a `Principal` for its `Static` case, and `Principal.ts` is
+ * generated from this type.
  */
 export type Principal =
   | { User: { name: Username } }

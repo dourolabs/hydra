@@ -7,8 +7,9 @@
  * - **`User(Username)`** — a human user.
  * - **`Agent(AgentName)`** — first-class named agent (e.g. `pm`, `swe`).
  * - **`Adhoc(SessionId)`** — a session created outside the agent
- *   system. Canonical path is `adhoc/<session-id>` (clarification C2
- *   in `/designs/actor-system-overhaul.md` — *not* `sessions/`).
+ *   system. Canonical path is `adhoc/<session-id>`; `sessions/<id>`
+ *   was considered and rejected so the path namespace matches the
+ *   variant name.
  * - **`External { system, username }`** — an identity that lives in an
  *   external system (e.g. GitHub) and has no corresponding Hydra user.
  */

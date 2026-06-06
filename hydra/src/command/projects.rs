@@ -41,6 +41,17 @@ pub enum ProjectsCommand {
     /// List the status definitions for a project. Pass `default` for the
     /// synthesized default project's statuses.
     Statuses(StatusesProjectArgs),
+    /// Operate on a single status within a project.
+    Status {
+        #[command(subcommand)]
+        command: StatusCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StatusCommand {
+    /// Update fields on a single status within a project.
+    Update(UpdateStatusArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -87,6 +98,31 @@ pub struct UpdateProjectArgs {
     /// and `default_status_key`). Defaults to the existing body.
     #[arg(long = "body-file", value_name = "PATH")]
     pub body_file: Option<PathBuf>,
+
+    /// Doc-store path for the project-layer prompt slice. Omit to leave
+    /// the existing value unchanged; pass `--prompt-path ""` to clear it.
+    /// Non-empty values should be absolute doc-store paths starting with
+    /// `/` (the server is authoritative).
+    #[arg(long = "prompt-path", value_name = "PATH")]
+    pub prompt_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct UpdateStatusArgs {
+    /// Project id whose status is being updated.
+    #[arg(value_name = "PROJECT_ID")]
+    pub project_id: ProjectId,
+
+    /// Status key (within the project) to update.
+    #[arg(value_name = "STATUS_KEY")]
+    pub status_key: StatusKey,
+
+    /// Doc-store path for this status's prompt slice. Omit to leave the
+    /// existing value unchanged; pass `--prompt-path ""` to clear it.
+    /// Non-empty values should be absolute doc-store paths starting with
+    /// `/` (the server is authoritative).
+    #[arg(long = "prompt-path", value_name = "PATH")]
+    pub prompt_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -170,6 +206,16 @@ pub async fn run(
                 &mut buffer,
             )?;
         }
+        ProjectsCommand::Status { command } => match command {
+            StatusCommand::Update(args) => {
+                let record = update_status(client, args).await?;
+                render(
+                    ProjectRecords(&[record]),
+                    context.output_format,
+                    &mut buffer,
+                )?;
+            }
+        },
     }
     write_stdout(&buffer)?;
     Ok(())
@@ -220,7 +266,9 @@ async fn update_project(
         )
     };
 
-    let project = Project::new(
+    let prompt_path = apply_prompt_path_arg(args.prompt_path, current.project.prompt_path.clone());
+
+    let mut project = Project::new(
         args.key.unwrap_or(current.project.key),
         args.name.unwrap_or(current.project.name),
         statuses,
@@ -228,6 +276,7 @@ async fn update_project(
         current.project.creator,
         current.project.deleted,
     );
+    project.prompt_path = prompt_path;
 
     let request = UpsertProjectRequest::new(project.clone());
     let response = client
@@ -239,6 +288,52 @@ async fn update_project(
         response.version,
         project,
     ))
+}
+
+async fn update_status(
+    client: &dyn HydraClientInterface,
+    args: UpdateStatusArgs,
+) -> Result<ProjectRecord> {
+    let current = client
+        .get_project(&args.project_id)
+        .await
+        .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
+
+    let mut project = current.project.clone();
+    let status = project
+        .statuses
+        .iter_mut()
+        .find(|s| s.key == args.status_key)
+        .with_context(|| {
+            format!(
+                "project '{}' has no status with key '{}'",
+                args.project_id, args.status_key
+            )
+        })?;
+
+    status.prompt_path = apply_prompt_path_arg(args.prompt_path, status.prompt_path.clone());
+
+    let request = UpsertProjectRequest::new(project.clone());
+    let response = client
+        .update_project(&args.project_id, &request)
+        .await
+        .with_context(|| format!("failed to update project '{}'", args.project_id))?;
+    Ok(ProjectRecord::new(
+        response.project_id,
+        response.version,
+        project,
+    ))
+}
+
+/// Map a `--prompt-path` CLI value onto the resulting `Option<String>`:
+/// absent (`None`) keeps the existing value, an explicit empty string
+/// clears it to `None`, and a non-empty string sets it.
+fn apply_prompt_path_arg(arg: Option<String>, current: Option<String>) -> Option<String> {
+    match arg {
+        None => current,
+        Some(value) if value.is_empty() => None,
+        Some(value) => Some(value),
+    }
 }
 
 fn load_body_file(path: &Path) -> Result<ProjectBodyFile> {
@@ -416,6 +511,36 @@ default_status_key: open
     fn project_ref_rejects_invalid_token() {
         let err = ProjectRef::from_str("Bad Value!").unwrap_err();
         assert!(err.contains("neither a valid project id nor a valid project key"));
+    }
+
+    #[test]
+    fn apply_prompt_path_arg_none_keeps_current() {
+        assert_eq!(
+            apply_prompt_path_arg(None, Some("/a".into())),
+            Some("/a".into())
+        );
+        assert_eq!(apply_prompt_path_arg(None, None), None);
+    }
+
+    #[test]
+    fn apply_prompt_path_arg_empty_clears() {
+        assert_eq!(
+            apply_prompt_path_arg(Some("".into()), Some("/a".into())),
+            None
+        );
+        assert_eq!(apply_prompt_path_arg(Some("".into()), None), None);
+    }
+
+    #[test]
+    fn apply_prompt_path_arg_some_overrides() {
+        assert_eq!(
+            apply_prompt_path_arg(Some("/b".into()), Some("/a".into())),
+            Some("/b".into())
+        );
+        assert_eq!(
+            apply_prompt_path_arg(Some("/b".into()), None),
+            Some("/b".into())
+        );
     }
 
     #[test]

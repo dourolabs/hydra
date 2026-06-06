@@ -4,9 +4,12 @@ import type { TriggerSchedule } from "./TriggerSchedule";
 import type { Username } from "./Username";
 
 /**
- * API shape for a scheduled trigger.
- *
- * See `/designs/triggered-actions.md` §4.3.
+ * API shape for a scheduled trigger: a [`Schedule`] (cron or one-shot)
+ * plus an ordered list of [`Action`]s to run on each fire. `creator`
+ * owns the trigger; `last_fired_at` is the persisted slot the scheduler
+ * already serviced, updated in-place after each tick so a restart never
+ * double-fires the same slot and never replays slots whose scheduled
+ * time elapsed during downtime.
  */
 export type Trigger = {
   enabled: boolean;

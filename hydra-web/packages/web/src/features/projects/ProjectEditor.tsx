@@ -39,6 +39,7 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
   const isEdit = !!projectId;
   const [key, setKey] = useState(initial?.key ?? "");
   const [name, setName] = useState(initial?.name ?? "");
+  const [promptPath, setPromptPath] = useState(initial?.prompt_path ?? "");
   const [statuses, setStatuses] = useState<StatusDefinition[]>(
     initial?.statuses ?? defaultNewStatuses(),
   );
@@ -52,12 +53,10 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     [statuses],
   );
 
-  const formError = useMemo(() => validate(key, name, statuses, defaultStatusKey), [
-    key,
-    name,
-    statuses,
-    defaultStatusKey,
-  ]);
+  const formError = useMemo(
+    () => validate(key, name, statuses, defaultStatusKey, promptPath),
+    [key, name, statuses, defaultStatusKey, promptPath],
+  );
 
   const mutation = useMutation({
     mutationFn: async (req: UpsertProjectRequest) => {
@@ -123,16 +122,28 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       addToast(formError, "error");
       return;
     }
+    const trimmedPromptPath = promptPath.trim();
     const project: Project = {
       key: key.trim(),
       name: name.trim(),
-      statuses,
+      statuses: statuses.map(normalizeStatusForSubmit),
       default_status_key: defaultStatusKey,
       creator,
       deleted: false,
+      prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
     };
     mutation.mutate({ project });
-  }, [formError, key, name, statuses, defaultStatusKey, creator, mutation, addToast]);
+  }, [
+    formError,
+    key,
+    name,
+    promptPath,
+    statuses,
+    defaultStatusKey,
+    creator,
+    mutation,
+    addToast,
+  ]);
 
   const updateStatus = useCallback(
     (index: number, patch: Partial<StatusDefinition>) => {
@@ -202,6 +213,15 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
           value={defaultStatusKey}
           onChange={(e) => setDefaultStatusKey(e.target.value)}
           data-testid="project-editor-default-status"
+        />
+      </div>
+      <div className={styles.row}>
+        <label className={styles.label}>Prompt path</label>
+        <Input
+          value={promptPath}
+          onChange={(e) => setPromptPath(e.target.value)}
+          placeholder="/projects/<key>/prompt.md"
+          data-testid="project-editor-prompt-path"
         />
       </div>
 
@@ -504,6 +524,14 @@ function StatusEditor({
           placeholder="/forms/review.yaml"
         />
       </div>
+
+      <Input
+        label="Prompt path"
+        value={status.prompt_path ?? ""}
+        onChange={(e) => onChange({ prompt_path: e.target.value })}
+        placeholder="/projects/<key>/statuses/<status-key>.md"
+        data-testid={`status-editor-prompt-path-${index}`}
+      />
     </div>
   );
 }
@@ -513,6 +541,7 @@ function validate(
   name: string,
   statuses: StatusDefinition[],
   defaultStatusKey: string,
+  promptPath: string,
 ): string | null {
   if (!key.trim()) return "Project key is required";
   if (!/^[a-z0-9-]+$/.test(key.trim())) {
@@ -520,6 +549,10 @@ function validate(
   }
   if (!name.trim()) return "Project name is required";
   if (statuses.length === 0) return "At least one status is required";
+
+  if (!isPromptPathValid(promptPath)) {
+    return "Project prompt path must be a doc-store path starting with '/'";
+  }
 
   const seen = new Set<string>();
   for (const s of statuses) {
@@ -529,11 +562,29 @@ function validate(
     }
     if (seen.has(s.key)) return `Duplicate status key '${s.key}'`;
     seen.add(s.key);
+    if (!isPromptPathValid(s.prompt_path ?? "")) {
+      return `Status '${s.key}' prompt path must be a doc-store path starting with '/'`;
+    }
   }
   if (!seen.has(defaultStatusKey)) {
     return `Default status '${defaultStatusKey}' must reference a declared status`;
   }
   return null;
+}
+
+// Light client-side check — empty values clear the field; non-empty
+// values must look like a doc-store path. The server is authoritative.
+function isPromptPathValid(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  return trimmed.startsWith("/");
+}
+
+// Convert the editor's `prompt_path: ""` placeholder back to `null`
+// before sending the project to the server.
+function normalizeStatusForSubmit(status: StatusDefinition): StatusDefinition {
+  const trimmed = status.prompt_path?.trim() ?? "";
+  return { ...status, prompt_path: trimmed ? trimmed : null };
 }
 
 function blankStatus(index: number): StatusDefinition {
@@ -546,6 +597,7 @@ function blankStatus(index: number): StatusDefinition {
     unblocks_dependents: false,
     cascades_to_children: false,
     on_enter: null,
+    prompt_path: null,
   };
 }
 
@@ -560,6 +612,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       unblocks_dependents: false,
       cascades_to_children: false,
       on_enter: null,
+      prompt_path: null,
     },
     {
       key: "in-progress",
@@ -570,6 +623,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       unblocks_dependents: false,
       cascades_to_children: false,
       on_enter: null,
+      prompt_path: null,
     },
     {
       key: "closed",
@@ -580,6 +634,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       unblocks_dependents: true,
       cascades_to_children: false,
       on_enter: null,
+      prompt_path: null,
     },
   ];
 }

@@ -3,12 +3,12 @@
 /**
  * Request-side review payload (`POST` / `PUT /v1/patches`).
  *
- * Per Phase 5b of `/designs/actor-system-overhaul.md` (§6), the
- * author of a review is server-derived from the authenticated actor
- * for newly-submitted reviews; existing reviews keep their stored
- * author across patch upserts (matched by `(contents, is_approved,
- * submitted_at)`). Clients therefore never specify a review author
- * on the inbound side — this struct intentionally omits the field.
+ * The author of a review is server-derived from the authenticated
+ * actor for newly-submitted reviews; existing reviews keep their
+ * stored author across patch upserts (matched by `(contents,
+ * is_approved, submitted_at)`). Clients therefore never specify a
+ * review author on the inbound side — this struct intentionally
+ * omits the field.
  */
 export type UpsertReviewRequest = {
   contents: string;

@@ -6,8 +6,7 @@ import type { Username } from "./Username";
 
 /**
  * A project owns an ordered list of [`StatusDefinition`]s plus an explicit
- * [`Self::default_status_key`] for new issues. See
- * `/designs/per-project-issue-statuses.md` §4.
+ * [`Self::default_status_key`] for new issues.
  */
 export type Project = {
   key: ProjectKey;
@@ -16,4 +15,10 @@ export type Project = {
   default_status_key: StatusKey;
   creator: Username;
   deleted?: boolean;
+  /**
+   * Doc-store path for the project-layer prompt slice that gets
+   * concatenated into a session's `system_prompt` at create-time.
+   * `None` contributes an empty slice.
+   */
+  prompt_path?: string | null;
 };

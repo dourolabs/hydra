@@ -4,4 +4,4 @@ import type { Project } from "./Project";
 /**
  * Request body for `POST /v1/projects` and `PUT /v1/projects/:id`.
  */
-export type UpsertProjectRequest = { project: Project, };
+export type UpsertProjectRequest = { project: Project };

@@ -4,10 +4,9 @@
  * A validated identifier for an external identity provider
  * (e.g. `github`).
  *
- * Open string by design (clarification C4 in
- * `/designs/actor-system-overhaul.md`): we do not enumerate a closed
- * set. Known systems get UI affordances (icon, label), but any
- * well-formed identifier is accepted on the wire so new integrations
- * don't require an enum change.
+ * Open string by design: we do not enumerate a closed set. Known
+ * systems get UI affordances (icon, label), but any well-formed
+ * identifier is accepted on the wire so new integrations don't
+ * require an enum change.
  */
 export type ExternalSystem = string;

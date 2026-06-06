@@ -17,4 +17,11 @@ export type StatusDefinition = {
   unblocks_dependents: boolean;
   cascades_to_children: boolean;
   on_enter?: StatusOnEnter | null;
+  /**
+   * Doc-store path for the per-status prompt slice that gets concatenated
+   * into a session's `system_prompt` at create-time. `None` contributes
+   * an empty slice (typical for terminal statuses, which the spawn
+   * dispatcher skips anyway).
+   */
+  prompt_path?: string | null;
 };

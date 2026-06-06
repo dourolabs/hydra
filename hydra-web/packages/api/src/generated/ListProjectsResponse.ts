@@ -4,4 +4,4 @@ import type { ProjectRecord } from "./ProjectRecord";
 /**
  * Response body for `GET /v1/projects`.
  */
-export type ListProjectsResponse = { projects: Array<ProjectRecord>, };
+export type ListProjectsResponse = { projects: Array<ProjectRecord> };

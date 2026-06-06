@@ -3,13 +3,10 @@
 /**
  * A reference to a merge-policy principal — either a static
  * [`Principal`](crate::Principal) (user / agent / external) or a
- * [`DynamicRef`] resolved at merge-attempt time.
- *
- * Phase 5a of `/designs/actor-system-overhaul.md` replaces this file's old
- * `Principal { User(Username), Dynamic(DynamicRef) }` enum with this
- * wrapper so the static side reuses the shared [`Principal`] (gaining
- * `Agent` / `External` variants, closing the "User-can-hide-agent"
- * footgun documented in §4.2).
+ * [`DynamicRef`] resolved at merge-attempt time. The static side is
+ * the shared typed [`Principal`], so `Agent` and `External` are
+ * first-class variants and cannot be collapsed to a same-named user
+ * (the "User-can-hide-agent" footgun a bare-string enum would have).
  *
  * **Wire form** is a single string, kept YAML-friendly:
  *
@@ -18,9 +15,9 @@
  * - `"external/github/x"`  → `Static(Principal::External { .. })`
  * - `"@patch.creator"`     → `Dynamic(DynamicRef::PatchCreator)`
  *
- * For backwards compatibility with pre-Phase-5a configs (and existing
- * stored merge_policy JSON blobs), a bare username with no `/` or `@`
- * also deserialises as `Static(Principal::User { name })` — the
+ * For backwards compatibility with stored `merge_policy` JSON blobs
+ * and legacy configs, a bare username with no `/` or `@` also
+ * deserialises as `Static(Principal::User { name })` — the
  * deserialiser is intentionally lenient so we do not need a JSON-blob
  * migration over the `repositories` table.
  */

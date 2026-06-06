@@ -3,11 +3,12 @@ import type { DocumentPath } from "./DocumentPath";
 import type { Principal } from "./Principal";
 
 /**
- * Automation rule fired when an issue's status transitions into a status
- * declaring `on_enter`. See `/designs/per-project-issue-statuses.md` §4
- * "Spawn dispatch and on_enter automation".
- *
- * PR 1/6 carries the wire type only; the automation that consumes it
- * lands in PR 4.
+ * Automation fired the moment an issue transitions INTO a status whose
+ * [`StatusDefinition::on_enter`] is `Some`: when `assign_to` is set,
+ * `issue.assignee` is replaced with that [`Principal`] (agent assignees
+ * then flow through the existing assignee-driven spawn dispatcher); when
+ * `attach_form` is set, `issue.form` is replaced wholesale with that
+ * form (an issue holds at most one form at a time). `None` on either
+ * field leaves the corresponding field untouched.
  */
 export type StatusOnEnter = { assign_to?: Principal | null; attach_form?: DocumentPath | null };

@@ -18,8 +18,9 @@ export type Session = {
   resumed_from?: SessionId | null;
   agent_config: AgentConfig;
   /**
-   * Server-supplied mount layout. Mandatory per design §1.2 / §1.3 — no
-   * serde default; deserialization fails loudly if the field is missing.
+   * Server-supplied mount layout. Mandatory: no serde default;
+   * deserialization fails loudly if the field is missing, so client
+   * requests can't silently fall back to an empty layout.
    */
   mount_spec: MountSpec;
   image?: string | null;
@@ -28,8 +29,8 @@ export type Session = {
   memory_limit?: string | null;
   secrets?: Array<string> | null;
   /**
-   * Mandatory per design §1.2 — no serde default; deserialization
-   * fails loudly if the field is missing.
+   * Mandatory: no serde default; deserialization fails loudly if the
+   * field is missing rather than picking an arbitrary mode.
    */
   mode: SessionMode;
   status: Status;
