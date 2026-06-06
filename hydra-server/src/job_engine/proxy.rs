@@ -193,14 +193,24 @@ pub enum ProxyStreamError {
     Upstream(String),
 }
 
+/// Opaque drop-guard moved into the `on_upgrade` pump task so its `Drop`
+/// runs when the WS pump exits rather than when the route handler returns.
+/// The proxy's per-target concurrency permit rides through here so an
+/// upgraded socket counts against the target's in-flight slot for as long
+/// as it stays open. `Any` is the principal trait (auto-traits alone
+/// don't form a valid object type); the caller never downcasts.
+pub type WsPumpGuard = Box<dyn std::any::Any + Send>;
+
 /// Open a WebSocket upgrade to `ws://<host>:<port><path>` and relay frames
 /// between it and the axum-side client `WebSocket`. The `upgrade.on_upgrade`
-/// closure handles the bidirectional pump in a background task.
+/// closure handles the bidirectional pump in a background task; `pump_guard`
+/// is moved into that task so its `Drop` runs when the pump exits.
 pub async fn proxy_ws_to_upstream(
     host: &str,
     port: u16,
     path_and_query: &str,
     upgrade: WebSocketUpgrade,
+    pump_guard: WsPumpGuard,
 ) -> Result<Response<Body>, ProxyError> {
     let target_url = format!("ws://{host}:{port}{path_and_query}");
 
@@ -214,6 +224,7 @@ pub async fn proxy_ws_to_upstream(
         .map_err(|e| ProxyError::Transport(format!("upstream WS connect: {e}")))?;
 
     Ok(upgrade.on_upgrade(move |client_ws| async move {
+        let _pump_guard = pump_guard;
         pump_ws_frames(client_ws, upstream).await;
     }))
 }

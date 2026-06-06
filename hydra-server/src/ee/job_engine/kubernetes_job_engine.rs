@@ -24,7 +24,7 @@ use tracing::{error, info};
 
 use crate::domain::actors::Actor;
 use crate::job_engine::{
-    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId, WsPumpGuard,
     proxy_http_to_upstream, proxy_ws_to_upstream,
 };
 use axum::body::Body;
@@ -820,9 +820,10 @@ impl JobEngine for KubernetesJobEngine {
         session_id: &SessionId,
         port: u16,
         upgrade: WebSocketUpgrade,
+        pump_guard: WsPumpGuard,
     ) -> Result<Response<Body>, ProxyError> {
         let host = self.resolve_pod_ip(session_id).await?;
-        proxy_ws_to_upstream(&host, port, "/", upgrade).await
+        proxy_ws_to_upstream(&host, port, "/", upgrade, pump_guard).await
     }
 }
 

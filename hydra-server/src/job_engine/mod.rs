@@ -16,7 +16,7 @@ pub use crate::ee::job_engine::KubernetesJobEngine;
 pub use hydra_common::SessionId;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use local_job_engine::LocalJobEngine;
-pub use proxy::{ProxyError, proxy_http_to_upstream, proxy_ws_to_upstream};
+pub use proxy::{ProxyError, WsPumpGuard, proxy_http_to_upstream, proxy_ws_to_upstream};
 
 /// Represents the lifecycle state of a Hydra job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,10 +210,17 @@ pub trait JobEngine: Send + Sync {
     /// upgrade handshake; the implementation is responsible for spawning
     /// the bidirectional pump that relays frames between the client
     /// `WebSocket` and the upstream WebSocket.
+    ///
+    /// `pump_guard` is moved into the spawned pump task so its `Drop`
+    /// runs when the pump exits, not when this method returns. Callers
+    /// pass the per-target concurrency permit through here so a long-
+    /// lived WS upgrade continues to hold its slot for the lifetime of
+    /// the upgraded socket.
     async fn proxy_ws(
         &self,
         session_id: &SessionId,
         port: u16,
         upgrade: WebSocketUpgrade,
+        pump_guard: WsPumpGuard,
     ) -> Result<Response<Body>, ProxyError>;
 }
