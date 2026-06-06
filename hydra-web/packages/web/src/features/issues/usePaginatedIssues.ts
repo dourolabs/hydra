@@ -18,6 +18,7 @@ export interface IssueFilters {
   labels?: string | null;
   q?: string | null;
   ids?: string | null;
+  project_id?: string | null;
 }
 
 function buildQuery(
@@ -27,13 +28,16 @@ function buildQuery(
   const query: Partial<SearchIssuesQuery> = {
     limit: PAGE_SIZE,
   };
-  if (filters.status) query.status = filters.status as SearchIssuesQuery["status"];
+  // `SearchIssuesQuery.status` is now `string` (StatusKey) on the wire after
+  // backend [[i-dlcqjubx]]; no cast required.
+  if (filters.status) query.status = filters.status;
   if (filters.type) query.issue_type = filters.type as SearchIssuesQuery["issue_type"];
   if (filters.creator) query.creator = filters.creator;
   if (filters.assignee) query.assignee = filters.assignee;
   if (filters.labels) query.labels = filters.labels;
   if (filters.q) query.q = filters.q;
   if (filters.ids) query.ids = filters.ids;
+  if (filters.project_id) query.project_id = filters.project_id;
   if (cursor) query.cursor = cursor;
   return query;
 }
@@ -212,13 +216,14 @@ export function useIssueCount(filters: IssueFilters, enabled = true) {
         limit: 0,
         count: true,
       };
-      if (filters.status) query.status = filters.status as SearchIssuesQuery["status"];
+      if (filters.status) query.status = filters.status;
       if (filters.type) query.issue_type = filters.type as SearchIssuesQuery["issue_type"];
       if (filters.creator) query.creator = filters.creator;
       if (filters.assignee) query.assignee = filters.assignee;
       if (filters.labels) query.labels = filters.labels;
       if (filters.q) query.q = filters.q;
       if (filters.ids) query.ids = filters.ids;
+      if (filters.project_id) query.project_id = filters.project_id;
       const resp = await apiClient.listIssues(query);
       return Number(resp.total_count ?? 0);
     },

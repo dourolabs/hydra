@@ -1,36 +1,23 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Icons, TypeChip, type BadgeStatus } from "@hydra/ui";
+import { Icons, TypeChip } from "@hydra/ui";
 import type {
-  IssueStatus,
   IssueSummaryRecord,
   IssueType,
+  StatusDefinition,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import type { Filter, FilterDefinitions, FilterOption } from "../filters";
 import { useUserOptions } from "../filters/options/userOptions";
-import { statusOptions } from "../filters/options/statusOptions";
+import {
+  useProjects,
+  useProjectStatuses,
+} from "../projects/useProjects";
+import { StatusChip } from "../projects/StatusChip";
 import {
   relationOptionsFromEntities,
   type RelationEntity,
 } from "../filters/options/relationOptions";
-
-const ISSUE_STATUS_TONES: Record<IssueStatus, BadgeStatus> = {
-  open: "open",
-  "in-progress": "in-progress",
-  closed: "issue-closed",
-  failed: "failed",
-  dropped: "dropped",
-  unknown: "unknown",
-};
-
-const ISSUE_STATUS_DISPLAY_ORDER: IssueStatus[] = [
-  "open",
-  "in-progress",
-  "failed",
-  "closed",
-  "dropped",
-];
 
 const ISSUE_TYPE_OPTIONS: { value: IssueType; label: string }[] = [
   { value: "task", label: "Task" },
@@ -41,12 +28,17 @@ const ISSUE_TYPE_OPTIONS: { value: IssueType; label: string }[] = [
   { value: "review-request", label: "Review request" },
 ];
 
-function buildStatusOptions(): FilterOption[] {
-  const tones: Record<string, BadgeStatus> = {};
-  for (const status of ISSUE_STATUS_DISPLAY_ORDER) {
-    tones[status] = ISSUE_STATUS_TONES[status];
-  }
-  return statusOptions(tones);
+function buildStatusOptions(statuses: StatusDefinition[]): FilterOption[] {
+  return statuses.map((s) => ({
+    value: s.key,
+    label: s.label,
+    // The StatusChip badge tone is driven by the project's declared
+    // `color` / `icon`, so the chip and row both render the project's
+    // declared display props rather than the hardcoded `BadgeStatus`
+    // palette used by the legacy 5-enum dropdown.
+    chip: <StatusChip definition={s} />,
+    render: <StatusChip definition={s} />,
+  }));
 }
 
 function buildTypeOptions(): FilterOption[] {
@@ -91,11 +83,15 @@ export interface UseIssueFiltersOptions {
  *
  * Every entry maps to a server-side query param:
  *   - `status` / `type`        → `?status=` / `?issue_type=` on listIssues.
+ *   - `project`                → `?project_id=` on listIssues. Also
+ *                                re-scopes the `status` option list to that
+ *                                project's declared StatusKeys via
+ *                                `useProjectStatuses(project_id)`.
  *   - `creator` / `assignee`   → `?creator=` / `?assignee=` on listIssues.
  *   - relation filters          → `/v1/relations` lookup → `ids=` on
  *                                listIssues. See `useRelationFilteredIssueIds`.
  *
- * `status` / `type` / `creator` / `assignee` are `singleSelect: true` because
+ * `status` / `project` / `type` / `creator` / `assignee` are `singleSelect: true` because
  * the backing server param accepts a single value. Relations stay
  * multi-select; their resolver unions related issue ids across the selected
  * entities. `not_in` is unsupported server-side for every entry, so each
@@ -117,6 +113,16 @@ export function useIssueFilters(
 ): FilterDefinitions<IssueSummaryRecord> {
   const { filters = [], addMenuOpen = false } = options;
   const userOpts = useUserOptions();
+  const { data: projects } = useProjects();
+
+  // The current project filter (single-select) re-scopes the Status filter
+  // dropdown to that project's declared statuses. Falls back to the
+  // synthesized DefaultProject (legacy 5-enum list) when no project is set.
+  const projectFilter = filters.find((f) => f.id === "project");
+  const currentProjectFilterId = projectFilter?.values[0] ?? null;
+  const { data: projectStatusesResp } = useProjectStatuses(
+    currentProjectFilterId,
+  );
 
   const needPatch =
     addMenuOpen || filters.some((f) => f.id === "relatedPatch");
@@ -194,6 +200,23 @@ export function useIssueFilters(
     [issueListQuery.data],
   );
 
+  const projectOptions = useMemo<FilterOption[]>(
+    () =>
+      (projects ?? []).map((p) => ({
+        value: p.project_id,
+        label: p.project.key,
+        sub: p.project.name,
+        chip: <span>{p.project.key}</span>,
+        render: <span>{p.project.key}</span>,
+      })),
+    [projects],
+  );
+
+  const statusOpts = useMemo<FilterOption[]>(
+    () => buildStatusOptions(projectStatusesResp?.statuses ?? []),
+    [projectStatusesResp],
+  );
+
   return useMemo<FilterDefinitions<IssueSummaryRecord>>(() => {
     return {
       status: {
@@ -202,9 +225,22 @@ export function useIssueFilters(
         group: "properties",
         kind: "enum",
         singleSelect: true,
-        options: buildStatusOptions(),
+        options: statusOpts,
         apply: (rec, filter) =>
           valueIncludes(rec.issue.status, filter.values),
+      },
+      project: {
+        label: "Project",
+        icon: Icons.IconFilter,
+        group: "properties",
+        kind: "enum",
+        singleSelect: true,
+        options: projectOptions,
+        // Server-side filtering — `apply` is unused but matches the relation
+        // filter convention of `() => false` so a stray client-side
+        // `applyFilters(...)` call doesn't silently treat every row as a
+        // match.
+        apply: () => false,
       },
       type: {
         label: "Type",
@@ -297,6 +333,8 @@ export function useIssueFilters(
     };
   }, [
     userOpts,
+    statusOpts,
+    projectOptions,
     conversationEntities,
     patchEntities,
     sessionEntities,
