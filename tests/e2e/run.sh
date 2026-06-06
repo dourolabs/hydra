@@ -35,6 +35,7 @@ CONFIG_PATH="/tmp/hydra-e2e/test-config.yaml"
 MERGE_POLICY_FILE="${SCRIPT_DIR}/config/merge-policy.yaml"
 ENGINEERING_V2_FIXTURES_DIR="${SCRIPT_DIR}/fixtures/projects/engineering-v2"
 ENGINEERING_V2_PROJECT_FILE="${ENGINEERING_V2_FIXTURES_DIR}/project.yaml"
+REVIEW_FORM_FIXTURE="${SCRIPT_DIR}/fixtures/forms/review.yaml"
 # MUST match `server_hostname` in test-config.yaml so the CLI's saved-token lookup hits.
 SERVER_URL="http://127.0.0.1:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
@@ -281,6 +282,23 @@ push_engineering_v2_prompt \
   "/projects/engineering-v2/statuses/in-review.md" \
   "Status prompt — engineering-v2 / in-review"
 echo "    Pushed 4 prompt documents."
+
+# --------------------------------------------------------------------------
+# 6e. Push the review form referenced by engineering-v2's in-review on_enter.
+#     Without this doc the apply_status_on_enter automation logs a warning
+#     and skips the form attach (but still reassigns to the reviewer).
+# --------------------------------------------------------------------------
+if [[ ! -f "${REVIEW_FORM_FIXTURE}" ]]; then
+  echo "ERROR: review form fixture not found at ${REVIEW_FORM_FIXTURE}" >&2
+  exit 1
+fi
+echo "==> Pushing /forms/review.yaml..."
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  documents create \
+    --title "Review form" \
+    --path "/forms/review.yaml" \
+    --body-file "${REVIEW_FORM_FIXTURE}" >/dev/null
+echo "    Pushed review form."
 
 # --------------------------------------------------------------------------
 # Detach the server and exit cleanly. The server keeps running in the

@@ -3,13 +3,19 @@
 //! parser rejects fails `cargo test` instead of slipping through to the e2e
 //! tester as a downstream scenario skip.
 //!
-//! Today every YAML/JSON fixture under `tests/e2e/fixtures/` is a project
-//! body file (consumed by `hydra projects create --body-file`). The walk is
-//! deliberately broad (`**/*.yaml`, `**/*.yml`, `**/*.json`) so a newly
-//! added fixture is covered automatically; if a future fixture targets a
-//! different parser entry point, dispatch on path here.
+//! Fixture kinds are dispatched by path:
+//! * `fixtures/forms/*.yaml` → parsed as `hydra_common::api::v1::form::Form`
+//!   (the same wire format the `apply_status_on_enter` automation loads
+//!   from the document store).
+//! * everything else → parsed as a project body file (consumed by
+//!   `hydra projects create --body-file`).
+//!
+//! The walk is deliberately broad (`**/*.yaml`, `**/*.yml`, `**/*.json`)
+//! so a newly added fixture is covered automatically; if a future fixture
+//! targets yet another parser entry point, extend the dispatch below.
 
 use hydra::command::project_body_file::load_body_file;
+use hydra_common::api::v1::form::Form;
 use std::path::{Path, PathBuf};
 
 const STRUCTURED_EXTS: &[&str] = &["yaml", "yml", "json"];
@@ -34,11 +40,15 @@ fn e2e_fixtures_round_trip_through_body_file_parser() {
 
     let mut failures = Vec::new();
     for path in &paths {
-        if let Err(err) = load_body_file(path) {
-            failures.push(format!(
-                "fixture {} failed to parse: {err:?}",
-                path.display(),
-            ));
+        let result = if is_form_fixture(path, &fixtures_root) {
+            parse_form_fixture(path)
+        } else {
+            load_body_file(path)
+                .map(|_| ())
+                .map_err(|e| format!("{e:?}"))
+        };
+        if let Err(err) = result {
+            failures.push(format!("fixture {} failed to parse: {err}", path.display()));
         }
     }
     assert!(
@@ -48,6 +58,23 @@ fn e2e_fixtures_round_trip_through_body_file_parser() {
         paths.len(),
         failures.join("\n"),
     );
+}
+
+/// Fixtures under `tests/e2e/fixtures/forms/` mirror documents pushed to
+/// the `/forms/*` paths in the store at runtime — parse them with the
+/// same `Form` schema that `apply_status_on_enter` uses.
+fn is_form_fixture(path: &Path, fixtures_root: &Path) -> bool {
+    path.strip_prefix(fixtures_root)
+        .map(|rel| rel.starts_with("forms"))
+        .unwrap_or(false)
+}
+
+fn parse_form_fixture(path: &Path) -> Result<(), String> {
+    let body = std::fs::read_to_string(path).map_err(|e| format!("read failed: {e}"))?;
+    let form: Form = serde_yaml_ng::from_str(&body).map_err(|e| format!("not valid YAML: {e}"))?;
+    form.validate_field_keys()
+        .map_err(|e| format!("invalid fields: {e}"))?;
+    Ok(())
 }
 
 fn repo_root() -> PathBuf {
