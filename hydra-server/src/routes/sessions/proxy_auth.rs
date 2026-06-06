@@ -8,7 +8,6 @@
 
 use crate::app::AppState;
 use crate::domain::actors::Actor;
-use crate::domain::sessions::SessionMode;
 use crate::proxy::cookie::{
     DEFAULT_COOKIE_TTL_SECS, ProxyCookiePayload, ProxyTargetId, cookie_name, mint,
 };
@@ -19,7 +18,6 @@ use axum::{
     http::{HeaderValue, StatusCode, header::SET_COOKIE},
     response::{IntoResponse, Response},
 };
-use hydra_common::actor_ref::ActorId;
 use hydra_common::api::v1::ApiError;
 use tracing::{error, info};
 
@@ -50,26 +48,12 @@ pub async fn mint_session_proxy_auth(
     // interactive sessions). The proxy gives the actor live reach into a
     // running dev process, so the same authority required to read the
     // conversation transcript governs the proxy.
-    let actor_principal = actor_principal_name(&actor);
-    let session_creator = session.creator.as_str();
-    let is_session_creator = actor_principal == session_creator;
-    let is_conversation_creator = match &session.mode {
-        SessionMode::Interactive {
-            conversation_id, ..
-        } => match state.store().get_conversation(conversation_id, false).await {
-            Ok(versioned) => actor_principal == versioned.item.creator.as_str(),
-            Err(_) => false,
-        },
-        SessionMode::Headless => false,
-    };
-
-    if !is_session_creator && !is_conversation_creator {
+    let target = ProxyTargetId::Session(session_id.clone());
+    if !crate::proxy::access::has_read_access(&state, &actor.actor_id, &target, &session).await {
         return Err(ApiError::forbidden(
             "actor does not have read access to this session".to_string(),
         ));
     }
-
-    let target = ProxyTargetId::Session(session_id.clone());
     // For a session-id direct target, session_id_at_mint == the target
     // session itself. The proxy router's session-id-at-mint check is
     // trivially satisfied as long as the session is still alive.
@@ -110,14 +94,3 @@ pub(crate) fn build_set_cookie_response(
     Ok(response)
 }
 
-pub(crate) fn actor_principal_name(actor: &Actor) -> &str {
-    // Sessions store the creator as a `Username`. Map back to a string for
-    // the comparison; agent/external/adhoc actors are not creators of any
-    // human-visible session, so they fail the equality check naturally.
-    match &actor.actor_id {
-        ActorId::User(u) => u.as_str(),
-        ActorId::Agent(a) => a.as_str(),
-        ActorId::Adhoc(s) => s.as_ref(),
-        ActorId::External { username, .. } => username.as_str(),
-    }
-}

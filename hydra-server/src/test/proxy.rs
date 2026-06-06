@@ -237,6 +237,79 @@ async fn proxy_rejects_request_without_cookie() {
 }
 
 #[tokio::test]
+async fn proxy_rejects_cookie_holder_without_read_access() {
+    // Per-request read-access re-check: even with a valid signed cookie
+    // and a matching session_id_at_mint, a cookie whose `actor_id` is
+    // NOT the session's creator (and not the owning conversation's
+    // creator) must be rejected. This is the "actor was rotated out of
+    // the conversation" scenario — open tabs lose reach at the next
+    // request, not at cookie expiry.
+    let upstream_port = spawn_echo_server().await;
+    let (server, session_id) = spawn_proxy_server_with_session(upstream_port, 32).await;
+    let target = ProxyTargetId::Session(session_id.clone());
+
+    // Mint a cookie binding a different user as the actor. The signature
+    // is valid; the target/session match. Only the read-access check
+    // (creator-of-session) trips.
+    let payload = ProxyCookiePayload {
+        actor_id: ActorId::User(hydra_common::api::v1::users::Username::from("not-the-creator")),
+        target: target.clone(),
+        session_id_at_mint: session_id.clone(),
+        exp: chrono::Utc::now().timestamp() + DEFAULT_COOKIE_TTL_SECS,
+    };
+    let cookie_value = mint_cookie(&test_secret_manager(), &payload).expect("mint");
+    let cookie_header = format!("{}={cookie_value}", cookie_name(&target));
+    let host = proxy_host_label(upstream_port, &target);
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/", server.base_url()))
+        .header(header::HOST, &host)
+        .header(header::COOKIE, cookie_header)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), 401);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-security-policy")
+            .and_then(|v| v.to_str().ok()),
+        Some("frame-ancestors 'none'")
+    );
+}
+
+#[tokio::test]
+async fn proxy_rejects_cookie_with_non_user_actor() {
+    // The mint-time helper rejects non-User actors (Agent/Adhoc/External)
+    // at the type level by returning `None` from `user_principal`. The
+    // proxy router must do the same on the cookie payload so a forged or
+    // malformed cookie with `ActorId::Adhoc(...)` can't bypass the
+    // creator-match gate.
+    let upstream_port = spawn_echo_server().await;
+    let (server, session_id) = spawn_proxy_server_with_session(upstream_port, 32).await;
+    let target = ProxyTargetId::Session(session_id.clone());
+
+    let payload = ProxyCookiePayload {
+        actor_id: ActorId::Adhoc(SessionId::new()),
+        target: target.clone(),
+        session_id_at_mint: session_id.clone(),
+        exp: chrono::Utc::now().timestamp() + DEFAULT_COOKIE_TTL_SECS,
+    };
+    let cookie_value = mint_cookie(&test_secret_manager(), &payload).expect("mint");
+    let cookie_header = format!("{}={cookie_value}", cookie_name(&target));
+    let host = proxy_host_label(upstream_port, &target);
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/", server.base_url()))
+        .header(header::HOST, &host)
+        .header(header::COOKIE, cookie_header)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
 async fn proxy_rejects_wrong_session_id_at_mint() {
     let upstream_port = spawn_echo_server().await;
     let (server, session_id) = spawn_proxy_server_with_session(upstream_port, 32).await;
@@ -383,6 +456,55 @@ async fn proxy_concurrency_cap_returns_503() {
         503,
         "second concurrent request should be rejected with 503"
     );
+}
+
+#[tokio::test]
+async fn proxy_streams_chunked_response_body() {
+    // Verifies the response body is streamed (not buffered to completion)
+    // so SSE / HMR style responses arrive at the client incrementally.
+    // The upstream emits a chunk every 50ms and finishes after 200ms; the
+    // proxy must hand each chunk to the client without buffering until
+    // the upstream closes.
+    use axum::body::Body as AxumBody;
+    use futures::stream::{self, StreamExt as _};
+
+    let app: Router = Router::new().fallback(any(|| async {
+        let chunks: Vec<Result<&'static [u8], std::io::Error>> = vec![
+            Ok(b"chunk-1\n"),
+            Ok(b"chunk-2\n"),
+            Ok(b"chunk-3\n"),
+        ];
+        let body_stream =
+            stream::iter(chunks).then(|item| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                item
+            });
+        AxumBody::from_stream(body_stream)
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+
+    let (server, session_id) = spawn_proxy_server_with_session(upstream_port, 32).await;
+    let target = ProxyTargetId::Session(session_id.clone());
+    let cookie_value = mint_test_cookie(&target, &session_id);
+    let cookie_header = format!("{}={cookie_value}", cookie_name(&target));
+    let host = proxy_host_label(upstream_port, &target);
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/", server.base_url()))
+        .header(header::HOST, &host)
+        .header(header::COOKIE, cookie_header)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), 200);
+    let body = response.text().await.expect("body");
+    assert!(body.contains("chunk-1"));
+    assert!(body.contains("chunk-2"));
+    assert!(body.contains("chunk-3"));
 }
 
 #[tokio::test]

@@ -22,6 +22,7 @@ use tracing::{debug, info, warn};
 use crate::{
     app::AppState,
     proxy::{
+        access,
         cookie::{self, ProxyCookiePayload, ProxyTargetId},
         host::{HostParseError, parse as parse_host},
     },
@@ -121,6 +122,22 @@ async fn handle(
     let now = chrono::Utc::now().timestamp();
     cookie::validate(&payload, &parsed.target, &resolved_session_id, now)
         .map_err(|e| ProxyRejection::unauthorized(format!("proxy cookie rejected: {e}")))?;
+
+    // Re-check read access on every proxy request (not just at cookie
+    // mint). Revoking a principal's membership — removing them from the
+    // owning conversation, deleting their session, leaking the cookie to
+    // an actor with a different `ActorId` — invalidates open tabs at the
+    // next request rather than waiting for cookie expiry.
+    if !access::has_read_access(&state, &payload.actor_id, &parsed.target, &session).await {
+        warn!(
+            actor = %payload.actor_id,
+            target = %parsed.target,
+            "proxy cookie holder no longer has read access; rejecting"
+        );
+        return Err(ProxyRejection::unauthorized(
+            "actor no longer has read access to the proxy target".to_string(),
+        ));
+    }
 
     // Per-target concurrency cap. We hold the permit for the lifetime of
     // this request via the `_permit` binding — both HTTP and WS requests

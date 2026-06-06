@@ -9,8 +9,9 @@
 
 use crate::app::AppState;
 use crate::domain::actors::Actor;
+use crate::proxy::access::user_principal;
 use crate::proxy::cookie::{DEFAULT_COOKIE_TTL_SECS, ProxyCookiePayload, ProxyTargetId};
-use crate::routes::sessions::proxy_auth::{actor_principal_name, build_set_cookie_response};
+use crate::routes::sessions::proxy_auth::build_set_cookie_response;
 use crate::store::StoreError;
 use axum::{Extension, extract::State, response::Response};
 use hydra_common::api::v1::ApiError;
@@ -39,7 +40,13 @@ pub async fn mint_conversation_proxy_auth(
             }
         })?;
 
-    if actor_principal_name(&actor) != versioned.item.creator.as_str() {
+    // `versioned.item.creator` is `domain::users::Username`, distinct from
+    // the `hydra_common::users::Username` carried by `ActorId::User`. Compare
+    // via `as_str()` so the two wrap-the-same-string types line up.
+    let creator_match = user_principal(&actor.actor_id)
+        .map(|u| u.as_str() == versioned.item.creator.as_str())
+        .unwrap_or(false);
+    if !creator_match {
         return Err(ApiError::forbidden(
             "actor does not have read access to this conversation".to_string(),
         ));

@@ -6,6 +6,8 @@
 //! here. The helpers don't know about sessions, ports, or auth — they just
 //! relay bytes.
 
+use std::sync::OnceLock;
+
 use axum::body::Body;
 use axum::extract::ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade};
 use axum::http::{Request, Response, StatusCode};
@@ -29,13 +31,44 @@ pub enum ProxyError {
     Unsupported(String),
 }
 
-/// Forward an HTTP request to `http://<host>:<port>`, returning the upstream
-/// response as-is. The caller has already stripped any request headers that
-/// must not leak (e.g. `Cookie`, `Authorization`).
+/// Request-body cap. Buffered up-front (in contrast to the response, which
+/// streams) because reqwest needs `Content-Length` figured out and most
+/// dev-server request bodies are small. 16 MiB is well above any HMR-style
+/// or JSON-API call — agents pushing larger payloads should hit the
+/// dev-server directly, not through the proxy.
+const MAX_PROXY_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+
+/// Hard cap on response body bytes we'll relay through the proxy. The
+/// response is streamed (so this doesn't buffer), but a runaway upstream
+/// can still saturate the proxy's network and disk; cut it off rather
+/// than relay an unbounded byte count. 256 MiB covers any reasonable
+/// dev-server asset response with significant headroom.
+const MAX_PROXY_RESPONSE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Long-lived `reqwest::Client` shared across every proxy_http call.
+/// Building a new client per call (the prior shape) rebuilt the TLS
+/// config, connection pool, and DNS resolver each time — for an HMR
+/// loop hitting the proxy hundreds of times per page that compounds
+/// into noticeable latency and resource churn. One client, all calls.
+fn shared_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("default reqwest::Client::builder should succeed")
+    })
+}
+
+/// Forward an HTTP request to `http://<host>:<port>`, streaming the
+/// upstream response back to the client. The caller has already
+/// stripped any request headers that must not leak (e.g. `Cookie`,
+/// `Authorization`).
 ///
-/// Uses `reqwest` (which we already depend on for outbound HTTP) so we don't
-/// pull in another HTTP client. The connection is short-lived and not pooled
-/// across calls — the proxy router caps concurrency at its own layer.
+/// Response body is streamed via `bytes_stream() + Body::from_stream`,
+/// so SSE / chunked responses arrive at the client as they arrive at
+/// the proxy rather than being buffered to completion. A 256 MiB total
+/// cap protects against pathological upstreams.
 pub async fn proxy_http_to_upstream(
     host: &str,
     port: u16,
@@ -54,19 +87,11 @@ pub async fn proxy_http_to_upstream(
         .unwrap_or("/");
     let target_url = format!("http://{host}:{port}{path_and_query}");
 
-    // 16 MiB is comfortably above any reasonable dev-server response body
-    // (HMR diffs, JSON, image responses); higher limits invite OOM if a
-    // misbehaving upstream returns multi-GiB. Picking a cap is judgment;
-    // 16 MiB matches what we use elsewhere for bulk-document handling.
-    const MAX_PROXY_BODY_BYTES: usize = 16 * 1024 * 1024;
-    let body_bytes = to_bytes(body, MAX_PROXY_BODY_BYTES)
+    let body_bytes = to_bytes(body, MAX_PROXY_REQUEST_BYTES)
         .await
         .map_err(|e| ProxyError::Transport(format!("read request body: {e}")))?;
 
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| ProxyError::Transport(format!("build client: {e}")))?;
+    let client = shared_client();
 
     let mut builder = client.request(parts.method.clone(), &target_url);
     for (name, value) in parts.headers.iter() {
@@ -96,10 +121,6 @@ pub async fn proxy_http_to_upstream(
 
     let status = upstream.status();
     let headers = upstream.headers().clone();
-    let body_bytes = upstream
-        .bytes()
-        .await
-        .map_err(|e| ProxyError::Transport(format!("upstream body: {e}")))?;
 
     let mut response = Response::builder().status(
         StatusCode::from_u16(status.as_u16())
@@ -108,9 +129,13 @@ pub async fn proxy_http_to_upstream(
     if let Some(headers_mut) = response.headers_mut() {
         for (name, value) in headers.iter() {
             // Drop hop-by-hop headers that don't make sense to re-emit.
+            // `content-length` is also dropped because we're streaming —
+            // hyper will re-encode with `transfer-encoding: chunked` so
+            // a stale `content-length` would mismatch the framing.
             if matches!(
                 name.as_str(),
                 "connection"
+                    | "content-length"
                     | "keep-alive"
                     | "proxy-authenticate"
                     | "proxy-authorization"
@@ -125,9 +150,47 @@ pub async fn proxy_http_to_upstream(
         }
     }
 
+    let capped = capped_response_stream(upstream.bytes_stream(), MAX_PROXY_RESPONSE_BYTES);
     response
-        .body(Body::from(body_bytes))
+        .body(Body::from_stream(capped))
         .map_err(|e| ProxyError::Transport(format!("build response: {e}")))
+}
+
+/// Wrap a byte stream so it emits an error once `cap` total bytes have
+/// flowed through. axum surfaces the stream error as a broken response
+/// to the client; the upstream connection is dropped at the same time
+/// because `bytes_stream`'s `Drop` aborts the inner reqwest request.
+fn capped_response_stream<S>(
+    stream: S,
+    cap: u64,
+) -> impl futures::Stream<Item = Result<bytes::Bytes, ProxyStreamError>> + Send + 'static
+where
+    S: futures::Stream<Item = reqwest::Result<bytes::Bytes>> + Send + 'static,
+{
+    use futures::StreamExt;
+    let mut sent: u64 = 0;
+    stream.map(move |chunk| match chunk {
+        Ok(bytes) => {
+            sent = sent.saturating_add(bytes.len() as u64);
+            if sent > cap {
+                Err(ProxyStreamError::CapExceeded { cap })
+            } else {
+                Ok(bytes)
+            }
+        }
+        Err(e) => Err(ProxyStreamError::Upstream(e.to_string())),
+    })
+}
+
+/// Streamed-body error surfaced inside the response stream so axum can
+/// terminate the response cleanly. The byte cap is fatal to the
+/// in-flight response only — subsequent requests are independent.
+#[derive(Debug, thiserror::Error)]
+pub enum ProxyStreamError {
+    #[error("proxy response exceeded {cap} bytes")]
+    CapExceeded { cap: u64 },
+    #[error("upstream stream error: {0}")]
+    Upstream(String),
 }
 
 /// Open a WebSocket upgrade to `ws://<host>:<port><path>` and relay frames
@@ -157,7 +220,7 @@ pub async fn proxy_ws_to_upstream(
 
 /// Bidirectional frame pump between an axum `WebSocket` and a
 /// `tokio_tungstenite::WebSocketStream`. Exits when either side closes.
-pub async fn pump_ws_frames(
+async fn pump_ws_frames(
     client_ws: WebSocket,
     upstream: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,

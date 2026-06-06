@@ -135,21 +135,20 @@ pub fn validate(
 /// Cookie name for a given target. Includes a short hash of the target id
 /// so a browser can hold simultaneous grants for multiple targets without
 /// collision: `hydra_proxy_<short>`.
+///
+/// Hex encoding (rather than base64url) keeps every output character a
+/// legal cookie-name char without any post-hoc scrubbing, so the
+/// substitution-induced collisions of the prior `-`/`_` → `0` rewrite
+/// can't happen.
 pub fn cookie_name(target: &ProxyTargetId) -> String {
     let mut hasher = Sha256::new();
     hasher.update(target.as_label().as_bytes());
     let digest = hasher.finalize();
-    let short = URL_SAFE_NO_PAD.encode(&digest[..6]);
-    // Replace base64url chars that are technically valid in cookie names but
-    // visually confusing.
-    let sanitized: String = short
-        .chars()
-        .map(|c| match c {
-            '-' | '_' => '0',
-            other => other,
-        })
-        .collect();
-    format!("hydra_proxy_{sanitized}")
+    let mut short = String::with_capacity(16);
+    for byte in &digest[..8] {
+        std::fmt::Write::write_fmt(&mut short, format_args!("{byte:02x}")).unwrap();
+    }
+    format!("hydra_proxy_{short}")
 }
 
 #[cfg(test)]

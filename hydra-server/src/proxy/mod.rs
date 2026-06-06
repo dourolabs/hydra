@@ -2,6 +2,7 @@
 //! labels, mints + validates per-target cookies, and dispatches to
 //! `JobEngine::proxy_http`/`proxy_ws`.
 
+pub mod access;
 pub mod cookie;
 pub mod host;
 pub mod state;
