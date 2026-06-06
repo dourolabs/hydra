@@ -5610,25 +5610,14 @@ mod tests {
             .unwrap();
 
         // Filter by open status
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![IssueStatus::Open.into()],
-            None,
-            None,
-            None,
-        );
+        let query = SearchIssuesQuery::new(None, vec![IssueStatus::Open.into()], None, None, None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, open_issue_id);
 
         // Filter by closed status
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![IssueStatus::Closed.into()],
-            None,
-            None,
-            None,
-        );
+        let query =
+            SearchIssuesQuery::new(None, vec![IssueStatus::Closed.into()], None, None, None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, closed_issue_id);

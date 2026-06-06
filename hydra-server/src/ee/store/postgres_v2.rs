@@ -8208,13 +8208,8 @@ mod tests {
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
 
         // Count only closed
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![IssueStatus::Closed.into()],
-            None,
-            None,
-            None,
-        );
+        let query =
+            SearchIssuesQuery::new(None, vec![IssueStatus::Closed.into()], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
     }
 
@@ -8442,7 +8437,10 @@ mod tests {
         // The first issue (ids[0]) should reflect the latest update.
         let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
         assert_eq!(first.1.item.progress, "v3 progress");
-        assert_eq!(first.1.item.status, StatusKey::from(IssueStatus::InProgress));
+        assert_eq!(
+            first.1.item.status,
+            StatusKey::from(IssueStatus::InProgress)
+        );
         assert_eq!(first.1.version, 3);
 
         // Paginate with limit=2 and verify we get 2 results, then use cursor
@@ -8459,13 +8457,8 @@ mod tests {
         assert_eq!(store.count_issues(&count_query).await.unwrap(), 3);
 
         // Filter by status=InProgress should return only the updated issue.
-        let query = SearchIssuesQuery::new(
-            None,
-            vec![IssueStatus::InProgress.into()],
-            None,
-            None,
-            None,
-        );
+        let query =
+            SearchIssuesQuery::new(None, vec![IssueStatus::InProgress.into()], None, None, None);
         let filtered = store.list_issues(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, ids[0]);

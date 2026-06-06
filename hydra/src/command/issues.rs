@@ -3058,10 +3058,8 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_issues_passes_status_key_filter() {
-        // CLI passes `--status inbox,triage` straight through to the
-        // wire `?status=inbox,triage` query — confirms that per-project
-        // status keys reach the server intact (previously they were
-        // silently coerced to `IssueStatus::Unknown` and dropped).
+        // Comma-separated status keys pass through to the wire
+        // `?status=inbox,triage` query unchanged.
         let server = MockServer::start();
         let client = hydra_client(&server);
         let issues_response = ListIssuesResponse::new(vec![]);
