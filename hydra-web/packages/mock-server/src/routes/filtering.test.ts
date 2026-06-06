@@ -194,6 +194,137 @@ describe("Issue list filtering", () => {
     const data = await listIssues({ ids: "i-1,i-2" });
     expect(data.issues).toHaveLength(2);
   });
+
+  // Parity with the backend `?status=` filter ([[p-urywauam]]): per-project
+  // StatusKey strings (e.g. `inbox`) must pass through unchanged, not be
+  // silently coerced to the legacy five-enum domain.
+  it("filters by per-project status key (e.g. inbox)", async () => {
+    store.create("issues", "i-1", makeIssue({ status: "inbox" }), "issue");
+    store.create("issues", "i-2", makeIssue({ status: "open" }), "issue");
+    store.create("issues", "i-3", makeIssue({ status: "inbox" }), "issue");
+    const data = await listIssues({ status: "inbox" });
+    expect(data.issues).toHaveLength(2);
+    expect(
+      data.issues.every((i: { issue: { status: string } }) => i.issue.status === "inbox"),
+    ).toBe(true);
+  });
+
+  it("filters by multi-value status (OR-union)", async () => {
+    store.create("issues", "i-1", makeIssue({ status: "open" }), "issue");
+    store.create("issues", "i-2", makeIssue({ status: "in-progress" }), "issue");
+    store.create("issues", "i-3", makeIssue({ status: "closed" }), "issue");
+    store.create("issues", "i-4", makeIssue({ status: "dropped" }), "issue");
+    const data = await listIssues({ status: "open,in-progress" });
+    expect(data.issues).toHaveLength(2);
+    const statuses = data.issues
+      .map((i: { issue: { status: string } }) => i.issue.status)
+      .sort();
+    expect(statuses).toEqual(["in-progress", "open"]);
+  });
+
+  it("trims whitespace in CSV status entries", async () => {
+    store.create("issues", "i-1", makeIssue({ status: "open" }), "issue");
+    store.create("issues", "i-2", makeIssue({ status: "in-progress" }), "issue");
+    store.create("issues", "i-3", makeIssue({ status: "closed" }), "issue");
+    const data = await listIssues({ status: "open, in-progress" });
+    expect(data.issues).toHaveLength(2);
+  });
+
+  it("filters by project_id and excludes issues without a project_id", async () => {
+    store.create(
+      "issues",
+      "i-1",
+      makeIssue({ project_id: "engineering-v2" }),
+      "issue",
+    );
+    store.create(
+      "issues",
+      "i-2",
+      makeIssue({ project_id: "design" }),
+      "issue",
+    );
+    // No project_id set — must NOT match a non-empty project_id filter.
+    store.create("issues", "i-3", makeIssue(), "issue");
+    store.create(
+      "issues",
+      "i-4",
+      makeIssue({ project_id: "engineering-v2" }),
+      "issue",
+    );
+    const data = await listIssues({ project_id: "engineering-v2" });
+    expect(data.issues).toHaveLength(2);
+    expect(
+      data.issues.every(
+        (i: { issue: { project_id: string } }) => i.issue.project_id === "engineering-v2",
+      ),
+    ).toBe(true);
+  });
+
+  it("AND-composes multi-status, project_id, and assignee", async () => {
+    store.create(
+      "issues",
+      "i-1",
+      makeIssue({
+        status: "inbox",
+        project_id: "engineering-v2",
+        assignee: { User: { name: "alice" } },
+      }),
+      "issue",
+    );
+    store.create(
+      "issues",
+      "i-2",
+      makeIssue({
+        status: "open",
+        project_id: "engineering-v2",
+        assignee: { User: { name: "alice" } },
+      }),
+      "issue",
+    );
+    // Wrong assignee — filtered out by assignee.
+    store.create(
+      "issues",
+      "i-3",
+      makeIssue({
+        status: "open",
+        project_id: "engineering-v2",
+        assignee: { User: { name: "bob" } },
+      }),
+      "issue",
+    );
+    // Wrong project — filtered out by project_id.
+    store.create(
+      "issues",
+      "i-4",
+      makeIssue({
+        status: "open",
+        project_id: "design",
+        assignee: { User: { name: "alice" } },
+      }),
+      "issue",
+    );
+    // Wrong status — filtered out by status.
+    store.create(
+      "issues",
+      "i-5",
+      makeIssue({
+        status: "closed",
+        project_id: "engineering-v2",
+        assignee: { User: { name: "alice" } },
+      }),
+      "issue",
+    );
+    const data = await listIssues({
+      status: "inbox,open",
+      project_id: "engineering-v2",
+      assignee: "users/alice",
+    });
+    expect(data.issues).toHaveLength(2);
+    const returnedIds = data.issues
+      .map((i: { issue_id: string }) => i.issue_id)
+      .sort();
+    expect(returnedIds).toEqual(["i-1", "i-2"]);
+  });
 });
 
 describe("Patch list filtering", () => {

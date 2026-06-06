@@ -46,6 +46,7 @@ function toSummaryRecord(
     description: issue.description.split("\n")[0].slice(0, 200),
     creator: issue.creator,
     status: issue.status,
+    project_id: issue.project_id,
     assignee: issue.assignee,
     progress: (issue.progress ?? "").slice(0, 200),
     dependencies: issue.dependencies,
@@ -135,6 +136,7 @@ export function createIssueRoutes(store: Store): Hono {
     const ids = c.req.query("ids");
     const issueType = c.req.query("issue_type");
     const status = c.req.query("status");
+    const projectId = c.req.query("project_id");
     const assignee = c.req.query("assignee");
     const creator = c.req.query("creator");
     const q = c.req.query("q");
@@ -169,7 +171,21 @@ export function createIssueRoutes(store: Store): Hono {
       filtered = filtered.filter(({ entry }) => entry.data.type === issueType);
     }
     if (status) {
-      filtered = filtered.filter(({ entry }) => entry.data.status === status);
+      // Parity with the backend `?status=` filter (see [[p-urywauam]]):
+      // CSV of `StatusKey` strings, OR-matched. Any string is a valid
+      // StatusKey (per-project keys like `inbox`/`triage`, not just the
+      // five legacy enum values). Trim entries and drop empties; if all
+      // entries are empty after trimming, treat as no status filter.
+      const statuses = status
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (statuses.length > 0) {
+        filtered = filtered.filter(({ entry }) => statuses.includes(entry.data.status));
+      }
+    }
+    if (projectId) {
+      filtered = filtered.filter(({ entry }) => entry.data.project_id === projectId);
     }
     if (assignee) {
       // Phase 4b: query param `assignee` is the canonical path form
