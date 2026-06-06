@@ -1915,6 +1915,299 @@ mod tests {
         assert_eq!(session.resolved_prompt(), "CHAT AGENT BODY");
     }
 
+    /// Regression test for [[i-voxdzsyb]]. A session spawned on an issue
+    /// whose `project_id` points at an engineering-v2-style project must
+    /// concatenate the project + status prompt slices onto
+    /// `agent_config.system_prompt`. Prior to the
+    /// `add_projects_prompt_path` migration the project-level
+    /// `prompt_path` was silently dropped by the store, so the spawned
+    /// session saw only the agent slice.
+    #[tokio::test]
+    async fn slice_prompts_reach_engineering_v2_sessions_backlog() {
+        use crate::domain::agents::Agent;
+        use crate::domain::documents::Document;
+        use hydra_common::api::v1::projects::{
+            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+        };
+        use hydra_common::api::v1::sessions::{
+            AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+        };
+
+        let state = state_with_default_model("default-model");
+
+        // ---- Seed the agent + its prompt doc.
+        let agent_name = "pm";
+        let agent_prompt_path = format!("/agents/{agent_name}/prompt.md");
+        let agent = Agent::new(
+            agent_name.to_string(),
+            agent_prompt_path.clone(),
+            None,
+            1,
+            1,
+            false,
+            false,
+            vec![],
+        );
+        state.store.add_agent(agent).await.unwrap();
+        let agent_doc = Document {
+            title: agent_name.to_string(),
+            body_markdown: "PM AGENT BODY".to_string(),
+            path: Some(agent_prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(agent_doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        // ---- Seed the engineering-v2-style project. Both the project
+        // and the `backlog` status declare a doc-store `prompt_path`.
+        let project_prompt_path = "/projects/engineering-v2/prompt.md";
+        let backlog_prompt_path = "/projects/engineering-v2/statuses/backlog.md";
+        let backlog_status = {
+            let mut def = StatusDefinition::new(
+                StatusKey::try_new("backlog").unwrap(),
+                "Backlog".to_string(),
+                IconKey::try_new("list").unwrap(),
+                "#9b59b6".parse().unwrap(),
+                false,
+                false,
+                false,
+                None,
+            );
+            def.prompt_path = Some(backlog_prompt_path.to_string());
+            def
+        };
+        let mut project = ApiProject::new(
+            ProjectKey::try_new("engineering-v2").unwrap(),
+            "Engineering v2".to_string(),
+            vec![backlog_status],
+            StatusKey::try_new("backlog").unwrap(),
+            hydra_common::api::v1::users::Username::from("alice"),
+            false,
+        );
+        project.prompt_path = Some(project_prompt_path.to_string());
+        let (project_id, _) = state
+            .store
+            .add_project(project, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // ---- Seed the project + status prompt docs.
+        let project_doc = Document {
+            title: "engineering-v2 project prompt".to_string(),
+            body_markdown: "PROJECT SLICE — engineering-v2".to_string(),
+            path: Some(project_prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(project_doc, ActorRef::test())
+            .await
+            .unwrap();
+        let backlog_doc = Document {
+            title: "engineering-v2 backlog prompt".to_string(),
+            body_markdown: "STATUS SLICE — backlog (engineering-v2)".to_string(),
+            path: Some(backlog_prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(backlog_doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        // ---- Seed the issue, bound to the project at the `backlog` status.
+        let mut issue = issue_with_status("v2 backlog issue", IssueStatus::Open, vec![]);
+        issue.project_id = Some(project_id);
+        issue.status = StatusKey::try_new("backlog").unwrap();
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        // ---- Spawn the session and read back the resolved system prompt.
+        let agent_name_typed =
+            hydra_common::api::v1::agents::AgentName::try_new(agent_name).unwrap();
+        let request = CreateSessionRequest {
+            mode: SessionMode::Headless,
+            agent_config: AgentSpec::Named {
+                name: agent_name_typed,
+            },
+            model: None,
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: Some(issue_id),
+            resumed_from: None,
+        };
+        let (session_id, _) = state
+            .create_session(request, ActorRef::test(), Username::from("creator"))
+            .await
+            .unwrap();
+        let session = state.get_session(&session_id).await.unwrap();
+        let prompt = session.resolved_prompt();
+        assert!(
+            prompt.contains("PM AGENT BODY"),
+            "expected agent slice in system_prompt; got {prompt:?}"
+        );
+        assert!(
+            prompt.contains("PROJECT SLICE — engineering-v2"),
+            "expected project slice in system_prompt; got {prompt:?}"
+        );
+        assert!(
+            prompt.contains("STATUS SLICE — backlog (engineering-v2)"),
+            "expected backlog status slice in system_prompt; got {prompt:?}"
+        );
+    }
+
+    /// Same as [`slice_prompts_reach_engineering_v2_sessions_backlog`] but
+    /// with an issue at the `in-review` status. Confirms the resolver
+    /// picks the right status slice when the issue's status changes —
+    /// guards against a regression where the resolver hard-codes a
+    /// status key.
+    #[tokio::test]
+    async fn slice_prompts_reach_engineering_v2_sessions_in_review() {
+        use crate::domain::agents::Agent;
+        use crate::domain::documents::Document;
+        use hydra_common::api::v1::projects::{
+            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+        };
+        use hydra_common::api::v1::sessions::{
+            AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+        };
+
+        let state = state_with_default_model("default-model");
+        let agent_name = "reviewer";
+        let agent_prompt_path = format!("/agents/{agent_name}/prompt.md");
+        let agent = Agent::new(
+            agent_name.to_string(),
+            agent_prompt_path.clone(),
+            None,
+            1,
+            1,
+            false,
+            false,
+            vec![],
+        );
+        state.store.add_agent(agent).await.unwrap();
+        let agent_doc = Document {
+            title: agent_name.to_string(),
+            body_markdown: "REVIEWER AGENT BODY".to_string(),
+            path: Some(agent_prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(agent_doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        let project_prompt_path = "/projects/engineering-v2/prompt.md";
+        let in_review_prompt_path = "/projects/engineering-v2/statuses/in-review.md";
+        let in_review_status = {
+            let mut def = StatusDefinition::new(
+                StatusKey::try_new("in-review").unwrap(),
+                "In review".to_string(),
+                IconKey::try_new("eye").unwrap(),
+                "#f1c40f".parse().unwrap(),
+                false,
+                false,
+                false,
+                None,
+            );
+            def.prompt_path = Some(in_review_prompt_path.to_string());
+            def
+        };
+        let mut project = ApiProject::new(
+            ProjectKey::try_new("engineering-v2").unwrap(),
+            "Engineering v2".to_string(),
+            vec![in_review_status],
+            StatusKey::try_new("in-review").unwrap(),
+            hydra_common::api::v1::users::Username::from("alice"),
+            false,
+        );
+        project.prompt_path = Some(project_prompt_path.to_string());
+        let (project_id, _) = state
+            .store
+            .add_project(project, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let project_doc = Document {
+            title: "engineering-v2 project prompt".to_string(),
+            body_markdown: "PROJECT SLICE — engineering-v2".to_string(),
+            path: Some(project_prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(project_doc, ActorRef::test())
+            .await
+            .unwrap();
+        let in_review_doc = Document {
+            title: "engineering-v2 in-review prompt".to_string(),
+            body_markdown: "STATUS SLICE — same-issue review hand-off".to_string(),
+            path: Some(in_review_prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(in_review_doc, ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut issue = issue_with_status("v2 in-review issue", IssueStatus::Open, vec![]);
+        issue.project_id = Some(project_id);
+        issue.status = StatusKey::try_new("in-review").unwrap();
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        let agent_name_typed =
+            hydra_common::api::v1::agents::AgentName::try_new(agent_name).unwrap();
+        let request = CreateSessionRequest {
+            mode: SessionMode::Headless,
+            agent_config: AgentSpec::Named {
+                name: agent_name_typed,
+            },
+            model: None,
+            mount_spec: MountSpec::default(),
+            image: None,
+            env_vars: std::collections::HashMap::new(),
+            cpu_limit: None,
+            memory_limit: None,
+            secrets: None,
+            spawned_from: Some(issue_id),
+            resumed_from: None,
+        };
+        let (session_id, _) = state
+            .create_session(request, ActorRef::test(), Username::from("creator"))
+            .await
+            .unwrap();
+        let session = state.get_session(&session_id).await.unwrap();
+        let prompt = session.resolved_prompt();
+        assert!(
+            prompt.contains("REVIEWER AGENT BODY"),
+            "expected agent slice in system_prompt; got {prompt:?}"
+        );
+        assert!(
+            prompt.contains("PROJECT SLICE — engineering-v2"),
+            "expected project slice in system_prompt; got {prompt:?}"
+        );
+        assert!(
+            prompt.contains("same-issue review hand-off"),
+            "expected in-review status slice in system_prompt; got {prompt:?}"
+        );
+    }
+
     #[test]
     fn apply_session_settings_defaults_sets_model() {
         let state = state_with_default_model("gpt-4o");

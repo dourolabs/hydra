@@ -272,6 +272,8 @@ struct ProjectRow {
     updated_at: String,
     #[sqlx(default)]
     creation_time: Option<String>,
+    #[sqlx(default)]
+    prompt_path: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1067,14 +1069,16 @@ impl SqliteStore {
                     "invalid default_status_key stored for project: {e}"
                 ))
             })?;
-        Ok(Project::new(
+        let mut project = Project::new(
             key,
             row.name.clone(),
             statuses,
             default_status_key,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
             row.deleted,
-        ))
+        );
+        project.prompt_path = row.prompt_path.clone();
+        Ok(project)
     }
 
     async fn insert_project_in_tx<'e, E>(
@@ -1095,8 +1099,8 @@ impl SqliteStore {
         })?;
 
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
+            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, prompt_path, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
         ))
         .bind(id.as_ref())
         .bind(version_number)
@@ -1107,6 +1111,7 @@ impl SqliteStore {
         .bind(project.creator.as_str())
         .bind(project.deleted)
         .bind(actor)
+        .bind(project.prompt_path.as_deref())
         .execute(executor)
         .await
         .map_err(|err| {
@@ -4061,7 +4066,8 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Versioned<Project>, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
             "SELECT id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, created_at, updated_at,
-             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = ?1) AS creation_time
+             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = ?1) AS creation_time,
+             prompt_path
              FROM {TABLE_PROJECTS}
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -4108,7 +4114,8 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.key, p.name, p.default_status_key, p.statuses, p.creator, p.deleted, p.actor, p.created_at, p.updated_at,
-             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time
+             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time,
+             p.prompt_path
              FROM {TABLE_PROJECTS} p
              WHERE p.is_latest = 1"
         );
@@ -12925,6 +12932,59 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(count, 1, "exactly one is_latest row per project id");
+    }
+
+    /// The four-level prompt resolver depends on `Project.prompt_path`
+    /// surviving a round trip through the store. Prior to the
+    /// `add_projects_prompt_path` migration the column was missing, so
+    /// the CLI's `projects update --prompt-path ...` set the field in the
+    /// `UpsertProjectRequest` payload but `row_to_project` rebuilt the
+    /// `Project` via `Project::new()` (which hard-codes `None`), and
+    /// spawned sessions saw only the agent slice.
+    #[tokio::test]
+    async fn project_prompt_path_round_trips_sqlite() {
+        let store = create_test_store().await;
+        let mut project = sample_project();
+        project.prompt_path = Some("/projects/engineering/prompt.md".to_string());
+        let (id, _) = store
+            .add_project(project.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.prompt_path.as_deref(),
+            Some("/projects/engineering/prompt.md"),
+            "create-time prompt_path must survive the round trip"
+        );
+
+        // `projects update` first reads the project, mutates the field, and
+        // writes the full record back. Verify the same path with a
+        // mid-life update.
+        let mut next = fetched.item.clone();
+        next.prompt_path = Some("/projects/engineering/prompt-v2.md".to_string());
+        store
+            .update_project(&id, next, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let after_update = store.get_project(&id, false).await.unwrap();
+        assert_eq!(
+            after_update.item.prompt_path.as_deref(),
+            Some("/projects/engineering/prompt-v2.md"),
+        );
+
+        // `list_projects` must include the column too — the issues page
+        // reads the cached list to show project slice content.
+        let listed = store.list_projects(false).await.unwrap();
+        let entry = listed
+            .into_iter()
+            .find(|(pid, _)| pid == &id)
+            .expect("project missing from list");
+        assert_eq!(
+            entry.1.item.prompt_path.as_deref(),
+            Some("/projects/engineering/prompt-v2.md"),
+        );
     }
 
     /// The migration must add `project_id` to existing `issues_v2` rows

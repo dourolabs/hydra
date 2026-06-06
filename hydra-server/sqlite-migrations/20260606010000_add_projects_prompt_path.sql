@@ -1,0 +1,11 @@
+-- Add a nullable `prompt_path` column on `projects` so the project-layer
+-- slice of the four-level prompt resolver (see [[d-rzreslz]]) actually
+-- round-trips through the store. Without this column the doc-store path
+-- the CLI sets via `hydra projects update --prompt-path` was silently
+-- dropped by the existing INSERT and `Project::new()`-based read path,
+-- so spawned sessions saw only the agent slice in `system_prompt`.
+--
+-- Default NULL so existing rows continue to resolve to an empty slice
+-- (the no-project sentinel behavior already covered in
+-- `resolve_session_system_prompt`).
+ALTER TABLE projects ADD COLUMN prompt_path TEXT DEFAULT NULL;
