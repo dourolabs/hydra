@@ -181,8 +181,7 @@ pub struct StatusDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_path: Option<String>,
     /// When `true`, ready issues that land in this status spawn a
-    /// conversation instead of a headless session. Defaults to `false`;
-    /// no consumer reads it yet — wired in a later PR.
+    /// conversation instead of a headless session.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interactive: bool,
 }

@@ -26,8 +26,7 @@ export type StatusDefinition = {
   prompt_path?: string | null;
   /**
    * When `true`, ready issues that land in this status spawn a
-   * conversation instead of a headless session. Defaults to `false`;
-   * no consumer reads it yet — wired in a later PR.
+   * conversation instead of a headless session.
    */
   interactive?: boolean;
 };

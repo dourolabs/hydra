@@ -255,9 +255,9 @@ mod tests {
         assert!(status.prompt_path.is_none());
     }
 
-    /// PR 1 of [[d-ulhrefm]] adds an additive `interactive` flag. The
-    /// default project's statuses must all leave it `false` — no
-    /// behavior change at this layer.
+    /// The default project's statuses must all leave `interactive` false —
+    /// flipping any of them would silently change spawn behavior for the
+    /// built-in statuses.
     #[test]
     fn default_project_has_interactive_false_for_every_status() {
         for status in &default_project().statuses {
