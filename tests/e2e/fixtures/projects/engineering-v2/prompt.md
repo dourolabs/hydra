@@ -1,16 +1,17 @@
 ## Project workflow: engineering-v2
 
-This project routes work through `inbox → backlog → in-development → in-review → pending-release`. `pending` is a holding state.
+This project routes work through `inbox → backlog → in-development → in-review → pending-release`. `pending` is a holding state. `pair-development` is the interactive variant of `in-development`: same `swe` assignment and same downstream review chain, but the spawn dispatcher mints a `Conversation` (with `spawned_from = <issue_id>` and `greet_user: true`) instead of a headless session because the status definition carries `interactive: true`.
 
 ### Routing
 
 `apply_status_on_enter` automation reassigns the issue whenever it transitions into a status that declares an `on_enter` rule:
 
 - `backlog` reassigns to `pm`.
-- `in-development` reassigns to `swe`.
+- `in-development` reassigns to `swe` and spawns a headless session.
+- `pair-development` reassigns to `swe` but spawns a conversation (interactive); when an issue exits this status into any non-interactive status, `close_conversations_on_interactive_exit` closes the linked conversation.
 - `in-review` reassigns to `reviewer` and attaches the `/forms/review.yaml` review form.
 
-The assignee-driven spawn dispatcher then spawns the corresponding session.
+The assignee-driven spawn dispatcher then spawns the corresponding session (or, for interactive statuses, conversation).
 
 ### Review hand-off
 
