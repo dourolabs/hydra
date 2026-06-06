@@ -115,35 +115,39 @@ For each issue filed above, assert:
 
 ### Step 4 — Test bundle C: Dependency semantics
 
-This bundle validates the unified readiness rule from design [[d-druoexk]] §4 "Dependencies, readiness, cascade" against `unblocks_parents` and `unblocks_dependents` flags.
+This bundle validates the unified readiness rule from design [[d-druoexk]] §4 "Dependencies, readiness, cascade" against `unblocks_parents` and `unblocks_dependents` flags. To make the gate check deterministic, each sub-bundle wires up the full dep graph in a non-spawning status (`inbox`) first, then triggers the gate by transitioning the parent / dependent into a status whose `on_enter` would otherwise auto-spawn (`in-development`).
 
 **Parent / child setup (`unblocks_parents`):**
 
-1. File a **parent** issue in `engineering-v2` directly into `in-development`:
+1. File a **parent** issue in `engineering-v2` at `inbox` (no `on_enter`, no spawn):
    - Title: `Parent — unblocks_parents semantics check`
    - Repository: `dourolabs/hydra-test-fixture`
    - Project: `engineering-v2`
-   - Status: `in-development`
+   - Status: `inbox`
 2. File **Child A** as `child-of: <parent-id>` in `engineering-v2`, status `pending-release` (`unblocks_parents=true`).
-3. File **Child B** as `child-of: <parent-id>` in `engineering-v2`, status `in-review` (`unblocks_parents=false`).
-4. On the parent's detail page, in the child-list panel, confirm:
+3. File **Child B** as `child-of: <parent-id>` in `engineering-v2`, status `in-review` (`unblocks_parents=false`). (A reviewer session may spawn for Child B itself — that's expected and unrelated to the parent gate.)
+4. On the parent's detail page, in the child-list panel, confirm both Child A and Child B are listed as children.
+5. Transition the parent from `inbox` to `in-development` via the detail-page transition control. Because the parent's `in-development` `on_enter` runs the assignee re-routing AND the gate check now sees both children, assert:
+   - The parent's status is `in-development`.
    - Child A is shown as satisfying the parent's "child done" gate (its status's `unblocks_parents=true` flag visible / inferred from the panel).
    - Child B is shown as outstanding.
-   - The parent is **not ready** (no agent spawns; readiness indicator absent on the parent).
-5. Transition Child B to `pending-release` via its detail-page transition control. Reload the parent. Confirm:
+   - The parent is **not ready** — no `swe` session spawns (visible on the Sessions page filtered by this issue id).
+6. Transition Child B from `in-review` to `pending-release` via its detail-page transition control. Reload the parent. Confirm:
    - Child B is now shown as satisfying the gate.
-   - The parent is now **ready** (its `in-development` `on_enter` reassigns to `swe`, which spawns).
+   - The parent is now **ready** and a `swe` session spawns within the dispatcher tick (via `apply_status_on_enter`).
 
 **Dependent / blocker setup (`unblocks_dependents`):**
 
-6. File a **blocker** issue in `engineering-v2` directly into `in-review` (`unblocks_dependents=false`).
-7. File a **dependent** issue in `engineering-v2` directly into `in-development` with `blocked-on: <blocker-id>`.
-8. On the dependent's detail page, in the blocked-by panel, confirm:
-   - The blocker is shown as outstanding.
-   - The dependent is **not ready** (no `swe` spawn even though its own status would otherwise route to `swe`).
-9. Transition the blocker to `pending-release`. Reload the dependent. Confirm:
-   - The blocker is now shown as satisfying the dependency.
-   - The dependent is now **ready** and `swe` is spawned via `apply_status_on_enter`.
+7. File a **blocker** issue in `engineering-v2` directly into `in-review` (`unblocks_dependents=false`). (A reviewer session may spawn for the blocker itself — expected.)
+8. File a **dependent** issue in `engineering-v2` at `inbox` (no spawn) with `blocked-on: <blocker-id>`.
+9. On the dependent's detail page, in the blocked-by panel, confirm the blocker is listed.
+10. Transition the dependent from `inbox` to `in-development` via the detail-page transition control. Assert:
+    - The dependent's status is `in-development`.
+    - The blocker is shown as outstanding.
+    - The dependent is **not ready** — no `swe` session spawns (even though its own status would otherwise route to `swe`).
+11. Transition the blocker from `in-review` to `pending-release`. Reload the dependent. Confirm:
+    - The blocker is now shown as satisfying the dependency.
+    - The dependent is now **ready** and a `swe` session spawns via `apply_status_on_enter`.
 
 ## Expected Results
 
@@ -160,6 +164,7 @@ This bundle validates the unified readiness rule from design [[d-druoexk]] §4 "
 - At least one patch is produced on `dourolabs/hydra-test-fixture` and visible on the patches page.
 
 **Bundle C — Dependency semantics:**
-- A parent's "child done" gate counts a child in `pending-release` (`unblocks_parents=true`) as satisfied and a child in `in-review` (`unblocks_parents=false`) as outstanding. The parent only becomes ready once **every** direct child is in an `unblocks_parents=true` status.
-- A dependent's "blocker done" gate counts a blocker in `pending-release` (`unblocks_dependents=true`) as satisfied and a blocker in `in-review` (`unblocks_dependents=false`) as outstanding. The dependent only becomes ready once **every** `blocked-on` dependency is in an `unblocks_dependents=true` status.
+- For both sub-bundles the dep graph is wired up while the parent / dependent sits in `inbox` (no `on_enter`, no spawn), so the subsequent transition into `in-development` is what triggers the readiness gate against the fully wired graph — there is no at-creation race against `on_enter` automation.
+- When the parent transitions into `in-development`, the "child done" gate counts a child in `pending-release` (`unblocks_parents=true`) as satisfied and a child in `in-review` (`unblocks_parents=false`) as outstanding. The parent stays in `in-development` with no `swe` spawn until **every** direct child is in an `unblocks_parents=true` status; promoting the outstanding child into `pending-release` causes the next dispatcher tick to spawn `swe` for the parent.
+- When the dependent transitions into `in-development`, the "blocker done" gate counts a blocker in `pending-release` (`unblocks_dependents=true`) as satisfied and a blocker in `in-review` (`unblocks_dependents=false`) as outstanding. The dependent stays in `in-development` with no `swe` spawn until **every** `blocked-on` dependency is in an `unblocks_dependents=true` status; promoting the outstanding blocker into `pending-release` causes the next dispatcher tick to spawn `swe` for the dependent.
 - Readiness changes are reflected in the dashboard's child-list and blocked-by panels and gate agent spawn correctly per the unified rule from design [[d-druoexk]] §4 "Dependencies, readiness, cascade".
