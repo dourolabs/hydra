@@ -21,6 +21,7 @@ pub mod context;
 pub mod kill;
 pub mod logs;
 pub mod mount_spec;
+pub mod proxy_auth;
 pub mod proxy_targets;
 pub mod relay;
 pub mod status;

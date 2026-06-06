@@ -23,7 +23,13 @@ use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 use crate::domain::actors::Actor;
-use crate::job_engine::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use crate::job_engine::{
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+    proxy_http_to_upstream, proxy_ws_to_upstream,
+};
+use axum::body::Body;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::http::{Request, Response};
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -792,6 +798,62 @@ impl JobEngine for KubernetesJobEngine {
             Err(JobEngineError::NotFound(_)) => self.kill_pods_by_hydra_id(hydra_id).await,
             Err(err) => Err(err),
         }
+    }
+
+    /// Resolve the pod's IP via the existing `hydra-id` label selector, then
+    /// HTTP-client directly to `http://<pod_ip>:<port>`. The cluster
+    /// guarantees `pod.status.pod_ip` is reachable from the hydra-server pod
+    /// when both sit in the same VPC, which is the same assumption that
+    /// backs `log_stream`.
+    async fn proxy_http(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        req: Request<Body>,
+    ) -> Result<Response<Body>, ProxyError> {
+        let host = self.resolve_pod_ip(session_id).await?;
+        proxy_http_to_upstream(&host, port, req).await
+    }
+
+    async fn proxy_ws(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        upgrade: WebSocketUpgrade,
+    ) -> Result<Response<Body>, ProxyError> {
+        let host = self.resolve_pod_ip(session_id).await?;
+        proxy_ws_to_upstream(&host, port, "/", upgrade).await
+    }
+}
+
+impl KubernetesJobEngine {
+    async fn resolve_pod_ip(&self, session_id: &SessionId) -> Result<String, ProxyError> {
+        let pod = find_kubernetes_pod_by_hydra_id_impl(&self.client, &self.namespace, session_id)
+            .await
+            .map_err(|err| match err {
+                JobEngineError::NotFound(_) => {
+                    ProxyError::Unreachable(format!("pod for session '{session_id}' not found"))
+                }
+                other => ProxyError::Transport(format!("k8s pod lookup: {other}")),
+            })?;
+
+        let pod_ip = pod
+            .status
+            .as_ref()
+            .and_then(|s| s.pod_ip.clone())
+            .ok_or_else(|| {
+                ProxyError::Unreachable(format!(
+                    "pod for session '{session_id}' has no IP address yet"
+                ))
+            })?;
+
+        if pod_ip.is_empty() {
+            return Err(ProxyError::Unreachable(format!(
+                "pod for session '{session_id}' has an empty pod IP"
+            )));
+        }
+
+        Ok(pod_ip)
     }
 }
 

@@ -1,5 +1,10 @@
-use crate::job_engine::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use crate::job_engine::{
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+};
 use async_trait::async_trait;
+use axum::body::Body;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::http::{Request, Response, StatusCode};
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use std::{
@@ -240,6 +245,33 @@ impl JobEngine for MockJobEngine {
             }
             _ => Err(JobEngineError::MultipleFound(hydra_id.clone())),
         }
+    }
+
+    /// The mock engine has no real upstream; tests that exercise the proxy
+    /// path use `LocalJobEngine` against a stub server. Returning 200 OK
+    /// with an identifying body lets unit tests verify dispatch reached the
+    /// engine without spinning up a real server.
+    async fn proxy_http(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        _req: Request<Body>,
+    ) -> Result<Response<Body>, ProxyError> {
+        Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from(format!("mock proxy_http {session_id}:{port}")))
+            .expect("mock proxy_http response should build"))
+    }
+
+    async fn proxy_ws(
+        &self,
+        _session_id: &SessionId,
+        _port: u16,
+        _upgrade: WebSocketUpgrade,
+    ) -> Result<Response<Body>, ProxyError> {
+        Err(ProxyError::Unsupported(
+            "MockJobEngine does not implement proxy_ws".to_string(),
+        ))
     }
 }
 

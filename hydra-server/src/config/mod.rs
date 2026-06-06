@@ -333,6 +333,12 @@ pub struct HydraSection {
     pub namespace: String,
     #[serde(default)]
     pub server_hostname: String,
+    /// DNS suffix the proxy router accepts as the host label parent.
+    /// Hosts shaped `<port>-<id>.<this>` are routed to the proxy router;
+    /// everything else hits the main API. Defaults to `proxy.localhost`
+    /// so single-player operation does not require operator setup.
+    #[serde(default = "default_proxy_host")]
+    pub proxy_host: String,
     #[serde(rename = "HYDRA_SECRET_ENCRYPTION_KEY")]
     pub secret_encryption_key: String,
     #[serde(default)]
@@ -390,6 +396,7 @@ impl Default for HydraSection {
         Self {
             namespace: default_namespace(),
             server_hostname: String::new(),
+            proxy_host: default_proxy_host(),
             secret_encryption_key: base64::engine::general_purpose::STANDARD.encode([42u8; 32]),
             allowed_orgs: Vec::new(),
             openai_api_key: None,
@@ -757,6 +764,10 @@ fn default_sqlite_path() -> String {
 
 fn default_namespace() -> String {
     "default".to_string()
+}
+
+fn default_proxy_host() -> String {
+    "proxy.localhost".to_string()
 }
 
 pub const DEFAULT_AGENT_MAX_TRIES: i32 = 3;

@@ -18,9 +18,15 @@ use futures::{StreamExt, channel::mpsc};
 use hydra_common::constants::{ENV_HYDRA_ID, ENV_HYDRA_SERVER_URL, ENV_HYDRA_TOKEN};
 use tracing::{error, info, warn};
 
-use super::{BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, SessionId};
+use super::{
+    BindMount, HydraJob, JobEngine, JobEngineError, JobStatus, ProxyError, SessionId,
+    proxy_http_to_upstream, proxy_ws_to_upstream,
+};
 use crate::config::RegistryCredential;
 use crate::domain::actors::Actor;
+use axum::body::Body;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::http::{Request, Response};
 
 /// Metadata tracked in-memory for each container managed by this engine.
 struct ContainerInfo {
@@ -583,6 +589,75 @@ impl JobEngine for LocalDockerJobEngine {
         info!(hydra_id = %hydra_id, container_id = %container_id, "container killed and removed");
 
         Ok(())
+    }
+
+    /// Resolve the container's bridge-network IP via `docker inspect`, then
+    /// HTTP-client directly to `http://<container_ip>:<port>`. Hydra-server
+    /// shares the docker bridge in single-player mode so the IP is
+    /// reachable from this process.
+    async fn proxy_http(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        req: Request<Body>,
+    ) -> Result<Response<Body>, ProxyError> {
+        let host = self.resolve_container_ip(session_id).await?;
+        proxy_http_to_upstream(&host, port, req).await
+    }
+
+    async fn proxy_ws(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        upgrade: WebSocketUpgrade,
+    ) -> Result<Response<Body>, ProxyError> {
+        let host = self.resolve_container_ip(session_id).await?;
+        proxy_ws_to_upstream(&host, port, "/", upgrade).await
+    }
+}
+
+impl LocalDockerJobEngine {
+    async fn resolve_container_ip(&self, session_id: &SessionId) -> Result<String, ProxyError> {
+        let info = self.containers.get(session_id).ok_or_else(|| {
+            ProxyError::Unreachable(format!("session '{session_id}' has no container"))
+        })?;
+        let container_id = info.container_id.clone();
+        drop(info);
+
+        let inspect = self
+            .docker
+            .inspect_container(&container_id, None)
+            .await
+            .map_err(|e| ProxyError::Transport(format!("docker inspect: {e}")))?;
+
+        let network_settings = inspect.network_settings.ok_or_else(|| {
+            ProxyError::Unreachable(format!(
+                "container '{container_id}' has no network settings"
+            ))
+        })?;
+
+        if let Some(ip) = network_settings.ip_address.as_deref() {
+            if !ip.is_empty() {
+                return Ok(ip.to_string());
+            }
+        }
+
+        // Fall back to the first network's address — bridge isolation
+        // (compose, custom networks) populates `Networks.<name>.IPAddress`
+        // rather than the top-level `IPAddress` field.
+        if let Some(networks) = network_settings.networks {
+            for (_name, net) in networks {
+                if let Some(ip) = net.ip_address.as_deref() {
+                    if !ip.is_empty() {
+                        return Ok(ip.to_string());
+                    }
+                }
+            }
+        }
+
+        Err(ProxyError::Unreachable(format!(
+            "container '{container_id}' has no IP address (not running?)"
+        )))
     }
 }
 

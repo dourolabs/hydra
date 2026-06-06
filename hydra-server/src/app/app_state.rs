@@ -2,6 +2,7 @@ use crate::{
     config::AppConfig,
     domain::secrets::SecretManager,
     job_engine::JobEngine,
+    proxy::state::ProxyState,
     store::{ReadOnlyStore, Store},
 };
 use dashmap::DashMap;
@@ -91,6 +92,7 @@ pub struct AppState {
     pub secret_manager: Arc<SecretManager>,
     pub device_sessions: Arc<DashMap<String, DeviceSession>>,
     pub chat_relay_map: ChatRelayMap,
+    pub proxy_state: ProxyState,
 }
 
 impl AppState {
@@ -114,6 +116,7 @@ impl AppState {
             secret_manager,
             device_sessions: Arc::new(DashMap::new()),
             chat_relay_map: ChatRelayMap::new(),
+            proxy_state: ProxyState::default(),
         }
     }
 

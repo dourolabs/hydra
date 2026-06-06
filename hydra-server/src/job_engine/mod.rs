@@ -1,4 +1,7 @@
 use async_trait::async_trait;
+use axum::body::Body;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::http::{Request, Response};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -6,12 +9,14 @@ use crate::{domain::actors::Actor, store::StoreError};
 
 mod local_docker_job_engine;
 mod local_job_engine;
+pub mod proxy;
 
 #[cfg(feature = "kubernetes")]
 pub use crate::ee::job_engine::KubernetesJobEngine;
 pub use hydra_common::SessionId;
 pub use local_docker_job_engine::LocalDockerJobEngine;
 pub use local_job_engine::LocalJobEngine;
+pub use proxy::{ProxyError, proxy_http_to_upstream, proxy_ws_to_upstream};
 
 /// Represents the lifecycle state of a Hydra job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,4 +189,31 @@ pub trait JobEngine: Send + Sync {
     /// Implementations should delete the underlying job and any associated
     /// resources necessary to stop execution.
     async fn kill_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError>;
+
+    /// Proxy an HTTP request to `port` on the worker's container/pod/process.
+    ///
+    /// Implementations resolve the runtime-local address for the worker
+    /// (cluster pod IP / docker network IP / localhost), forward the request
+    /// body and headers, and return the upstream response as-is. The
+    /// caller is responsible for stripping any headers that must not leak
+    /// to the upstream (e.g. `Cookie`, `Authorization`) and for setting
+    /// any response headers that must apply at the proxy edge (e.g. CSP).
+    async fn proxy_http(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        req: Request<Body>,
+    ) -> Result<Response<Body>, ProxyError>;
+
+    /// Proxy a WebSocket upgrade to `port` on the worker's
+    /// container/pod/process. Returns the response that completes the
+    /// upgrade handshake; the implementation is responsible for spawning
+    /// the bidirectional pump that relays frames between the client
+    /// `WebSocket` and the upstream WebSocket.
+    async fn proxy_ws(
+        &self,
+        session_id: &SessionId,
+        port: u16,
+        upgrade: WebSocketUpgrade,
+    ) -> Result<Response<Body>, ProxyError>;
 }

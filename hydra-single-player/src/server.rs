@@ -857,6 +857,7 @@ fn render_server_config(
         hydra: HydraSection {
             namespace: "default".to_string(),
             server_hostname: "127.0.0.1:8080".to_string(),
+            proxy_host: "proxy.localhost".to_string(),
             secret_encryption_key: encryption_key.to_string(),
             allowed_orgs: Vec::new(),
             openai_api_key: api_keys.openai_api_key.clone(),
