@@ -50,6 +50,33 @@ Allowed: new fields (use `Option<T>` or `#[serde(default)]`), new enum variants 
 5. Add a wire-format shape test in `hydra-common` if the change introduces a new tag or representation — the JSON literals are *our* contract, not serde's.
 6. If the enum is a tagged union with payload-carrying variants, pair `#[non_exhaustive]` with the `<EnumName>Helper` + custom `Deserialize` pattern (see [`#[non_exhaustive]` on tagged-union enums](#non_exhaustive-on-tagged-union-enums) below). `#[serde(other)]` alone can't carry an `Unknown` fallback through an externally-tagged shape, and a payload-bearing variant can't be the catch-all.
 
+## Parameter forms must be mutually exclusive by construction
+
+A parameter — function argument, URL/query parameter, CLI argument, wire field — MAY accept multiple forms (multiple type shapes, multiple value spaces) **only when those forms are guaranteed to be mutually exclusive by construction**. "Guaranteed" means the system enforces non-overlap at the point where each form is produced: a parser that rejects the wrong shape, a creation-time validator that prevents the value spaces from ever colliding, a type system that makes the wrong value unrepresentable. It does NOT mean "in practice they don't collide today" or "convention says they're different."
+
+If you can't point to the enforcement, the parameter is ambiguous and **must be split into two parameters with distinct names**, each with a single value space.
+
+The failure mode this prevents is silent: a value that resolves to a different meaning than the caller intended. Convention-only disambiguation works until the day someone creates a project key shaped like `j-foo`, names a username `users/alice`, or files an issue id that parses as an integer; the parameter's interpretation flips and nothing fires. Enforcement-backed mutual exclusivity is unambiguous because the wrong-shape value cannot exist.
+
+```
+# wrong: ?project= accepts either `j-<id>` or a project key/slug, disambiguated
+# by string prefix. No creation-time check prevents a project key from being
+# shaped like `j-<id>`, so a future key collision would silently change URL
+# semantics.
+GET /issues?project=engineering-v2
+GET /issues?project=j-hidryk
+
+# correct: split into two URL params with non-overlapping value spaces.
+# `?project=` parses only `j-<id>`; `?project_key=` parses only slugs.
+# Each parameter has a single unambiguous interpretation.
+GET /issues?project=j-hidryk
+GET /issues?project_key=engineering-v2
+```
+
+The rule applies to every parameter context — Rust function signatures (`fn foo(arg: impl Into<IdOrKey>)` is the same anti-pattern), CLI args (`--project <ID-or-KEY>`), wire fields, and URL/query strings. When the language gives you a sum type, use it (`enum Identifier { Id(IssueId), Key(String) }` — the enum *is* the construction-time disambiguation, because each variant carries a single shape and the caller picks which one). When the language doesn't (HTTP query strings, CLI args), split the parameter.
+
+See [`docs/rust/style.md`](../rust/style.md) ("Identifiers") for the in-language application: take typed newtypes (`&IssueId`, `&RepoName`) over `&str`, so the value space is enforced at the type system rather than re-parsed at every call site. See [`docs/typescript/packages.md`](../typescript/packages.md) ("Never write a direct `fetch`") for the TypeScript application: the `HydraApiClient` request types carry distinct named fields for distinct value spaces; do not introduce a single field that switches meaning on its content.
+
 ## Conventions worth knowing
 
 - **New** wire enums should use `#[serde(rename_all = "kebab-case")]` (e.g. `IssueStatus` with `"in-progress"`). **Existing** wire formats are grandfathered — never change a live wire tag literal, since that breaks every existing client. Many older multi-word enums ship with `snake_case` for that reason (e.g. `task_status::TaskError`, `SessionMode`, `SessionEvent`, `MountItem`, `Bundle`, `relay::*`, and most of `merge_check::*` — `BlockedAtLayer` is `kebab-case`); leave their casing alone.

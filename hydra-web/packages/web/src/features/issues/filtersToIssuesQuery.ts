@@ -66,12 +66,11 @@ export function filtersToIssuesQuery({
         out.assignee = filter.values[0];
         break;
       case "project":
-        // The backend `ProjectId` validator only accepts `j-`-prefixed
-        // ids; a transiently unresolved project key (e.g. pasted
-        // `?project=engineering-v2` mid-resolution) would otherwise 400.
-        // The page-level resolver canonicalizes URL→state on the next
-        // render; we just need to avoid emitting the bad query in the
-        // meantime.
+        // The backend `ProjectId` validator only accepts `j-`-prefixed ids.
+        // Belt-and-braces guard for the transient window between
+        // `filtersFromUrl` reading a malformed `?project=<non-j>` and the
+        // page-level `resolveProjectFromUrl` useEffect dropping it: this
+        // skip keeps us from emitting a request the server would 400.
         if (filter.values[0].startsWith("j-")) {
           out.project_id = filter.values[0];
         }

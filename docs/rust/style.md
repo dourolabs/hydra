@@ -38,6 +38,14 @@ rather than raw `&str`. Parse at the boundary (DB rows, CLI input, JSON
 deserialization) and thread typed refs internally. See [[p-efmgbyhp]] for the
 canonical "parse at the DB-row boundary" example.
 
+Don't write a function (or CLI arg, or wire field) that accepts "either an id
+or a key/slug" and disambiguates by string prefix. That's the ambiguous-form
+anti-pattern — see ["Parameter forms must be mutually exclusive by
+construction"](../architecture/api-wire-contract.md#parameter-forms-must-be-mutually-exclusive-by-construction)
+in the wire-contract doc for the rule and the failure mode. Use an
+`enum Identifier { Id(IssueId), Key(StatusKey) }` to make the choice explicit
+at the call site, or split the parameter into two distinctly-named ones.
+
 ## Git operations: libgit2, not the shell
 
 CLI git operations go through the `git2` crate; do not shell out to the `git`

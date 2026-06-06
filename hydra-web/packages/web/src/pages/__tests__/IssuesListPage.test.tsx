@@ -675,14 +675,59 @@ describe("IssuesListPage relation-resolution loading persistence", () => {
   });
 });
 
-describe("IssuesListPage project key resolution", () => {
-  // The Issues-list URL accepts the picker-written id form (`?project=j-…`)
-  // OR a human-friendly project key (`?project=engineering-v2`). Pasted-URL
-  // sweep iter-2 [[i-bnntdrvr]] confirmed the key form would otherwise 400 the
-  // backend `project_id=` filter. These tests exercise the page-level
-  // resolver that canonicalizes URL → state → URL.
+describe("IssuesListPage project URL params", () => {
+  // The Issues-list URL splits the project-selection job across two URL
+  // params with disjoint value spaces:
+  //   - `?project=<j-id>` is the canonical id form.
+  //   - `?project_key=<slug>` is the human-friendly slug form, resolved to
+  //     a `j-`-prefixed id and rewritten to `?project=` on the next render.
+  // This split avoids the prior single-`?project=` parameter, where slug vs.
+  // id was disambiguated by string-prefix and could collide silently — see
+  // `docs/architecture/api-wire-contract.md` ("Parameter forms must be
+  // mutually exclusive by construction").
 
-  it("rewrites `?project=<key>` to `?project=j-<id>` after resolving the key", () => {
+  it("resolves ?project_key=<slug> and rewrites the URL to canonical ?project=j-<id>", () => {
+    projectsState.data = [
+      {
+        project_id: "j-hidryk",
+        project: { key: "engineering-v2", name: "Engineering v2" },
+      },
+    ];
+
+    const { getByTestId } = renderIssuesList("/?project_key=engineering-v2");
+
+    // URL canonicalized to the id form (server-applicable, copy-paste stable).
+    expect(getByTestId("location").textContent).toBe("/?project=j-hidryk");
+    // Server fetch sees the resolved id, not the raw slug.
+    expect(paginatedState.paginatedFilters).toEqual({
+      project_id: "j-hidryk",
+    });
+  });
+
+  it("drops the project filter and surfaces a toast for an unknown ?project_key=", () => {
+    projectsState.data = [
+      {
+        project_id: "j-hidryk",
+        project: { key: "engineering-v2", name: "Engineering v2" },
+      },
+    ];
+
+    const { getByTestId } = renderIssuesList("/?project_key=does-not-exist");
+
+    // Project filter stripped from the URL — no unresolved value lingers.
+    expect(getByTestId("location").textContent).toBe("/");
+    // Server never sees the unresolved slug (would 400 the backend).
+    expect(paginatedState.paginatedFilters).toEqual({});
+    expect(addToastMock).toHaveBeenCalledWith(
+      "Unknown project key: does-not-exist",
+      "error",
+    );
+  });
+
+  it("drops the project filter and toasts when ?project= is set to a non-`j-` value", () => {
+    // Pasted legacy-style URL: `?project=engineering-v2`. After the split,
+    // `?project=` accepts only `j-`-prefixed ids; the slug form belongs in
+    // `?project_key=`. The bad URL token is dropped + the user is told.
     projectsState.data = [
       {
         project_id: "j-hidryk",
@@ -692,17 +737,15 @@ describe("IssuesListPage project key resolution", () => {
 
     const { getByTestId } = renderIssuesList("/?project=engineering-v2");
 
-    // URL canonicalized to the id form (server-applicable, copy-paste stable).
-    expect(getByTestId("location").textContent).toBe(
-      "/?project=j-hidryk",
+    expect(getByTestId("location").textContent).toBe("/");
+    expect(paginatedState.paginatedFilters).toEqual({});
+    expect(addToastMock).toHaveBeenCalledWith(
+      "Invalid project URL parameter: engineering-v2",
+      "error",
     );
-    // Server fetch sees the resolved id, not the raw key.
-    expect(paginatedState.paginatedFilters).toEqual({
-      project_id: "j-hidryk",
-    });
   });
 
-  it("drops the project filter and surfaces a toast for an unknown key", () => {
+  it("drops + toasts when ?project_key= itself is `j-`-prefixed (wrong value space)", () => {
     projectsState.data = [
       {
         project_id: "j-hidryk",
@@ -710,19 +753,20 @@ describe("IssuesListPage project key resolution", () => {
       },
     ];
 
-    const { getByTestId } = renderIssuesList("/?project=does-not-exist");
+    const { getByTestId } = renderIssuesList("/?project_key=j-hidryk");
 
-    // Project filter stripped from the URL — no unresolved value lingers.
+    // `?project_key=` is the slug parameter — a `j-`-prefixed value here is
+    // a value-space violation, not silently re-routed to `?project=`. That's
+    // the whole point of the split: ambiguity surfaces as an error.
     expect(getByTestId("location").textContent).toBe("/");
-    // Server never sees the unresolved key (would 400 the backend).
     expect(paginatedState.paginatedFilters).toEqual({});
     expect(addToastMock).toHaveBeenCalledWith(
-      "Unknown project key: does-not-exist",
+      "Invalid project URL parameter: j-hidryk",
       "error",
     );
   });
 
-  it("passes a `j-`-prefixed `?project=` token through unchanged", () => {
+  it("passes a `j-`-prefixed ?project= token through unchanged", () => {
     projectsState.data = [
       {
         project_id: "j-hidryk",
@@ -733,16 +777,14 @@ describe("IssuesListPage project key resolution", () => {
     const { getByTestId } = renderIssuesList("/?project=j-hidryk");
 
     // No URL rewrite when the value already matches the canonical form.
-    expect(getByTestId("location").textContent).toBe(
-      "/?project=j-hidryk",
-    );
+    expect(getByTestId("location").textContent).toBe("/?project=j-hidryk");
     expect(paginatedState.paginatedFilters).toEqual({
       project_id: "j-hidryk",
     });
     expect(addToastMock).not.toHaveBeenCalled();
   });
 
-  it("resolves the project key before sending project+status to the server", () => {
+  it("resolves ?project_key= before sending project+status to the server", () => {
     projectsState.data = [
       {
         project_id: "j-hidryk",
@@ -751,10 +793,11 @@ describe("IssuesListPage project key resolution", () => {
     ];
 
     const { getByTestId } = renderIssuesList(
-      "/?project=engineering-v2&status=inbox",
+      "/?project_key=engineering-v2&status=inbox",
     );
 
-    // URL: project canonicalized; status passed through.
+    // URL: project canonicalized into the `?project=` slot; status passed
+    // through. `?project_key=` is gone — the rewrite consumed it.
     expect(getByTestId("location").textContent).toBe(
       "/?status=inbox&project=j-hidryk",
     );
@@ -765,18 +808,22 @@ describe("IssuesListPage project key resolution", () => {
     });
   });
 
-  it("holds off the project_id query param while the projects list is still loading", () => {
-    // Simulate the in-flight projects query: `data` is `undefined`.
+  it("holds off the server query while ?project_key= is still resolving", () => {
+    // Simulate the in-flight projects query: `data` is `undefined`. Without
+    // the gate, the first render would fire `listIssues` with no project
+    // filter and show every project's issues before the resolver settled.
     projectsState.data = undefined;
 
-    const { getByTestId } = renderIssuesList("/?project=engineering-v2");
+    const { getByTestId } = renderIssuesList("/?project_key=engineering-v2");
 
-    // No `project_id=engineering-v2` ever reaches the server (would 400).
-    // `filtersToIssuesQuery` drops non-`j-`-prefixed project values; the URL
-    // is left as the user pasted it, awaiting the projects list to resolve.
+    // `filtersToIssuesQuery` never sees the slug — it lives on URL only,
+    // not in filter state. The server filters are an empty record (the
+    // `enabled` gate, asserted via the URL still showing `?project_key=`,
+    // is what suppresses the no-op query from actually firing).
     expect(paginatedState.paginatedFilters).toEqual({});
+    // URL left as the user pasted it, awaiting the projects list to resolve.
     expect(getByTestId("location").textContent).toBe(
-      "/?project=engineering-v2",
+      "/?project_key=engineering-v2",
     );
   });
 });
