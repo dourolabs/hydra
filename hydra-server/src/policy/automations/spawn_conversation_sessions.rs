@@ -9,7 +9,7 @@ use crate::policy::{Automation, AutomationError, EventFilter};
 use hydra_common::ConversationId;
 use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::sessions::{AgentSpec, CreateSessionRequest, SessionMode};
-use hydra_common::constants::ENV_HYDRA_CONVERSATION_ID;
+use hydra_common::constants::{ENV_HYDRA_CONVERSATION_ID, ENV_HYDRA_ISSUE_ID};
 
 const AUTOMATION_NAME: &str = "spawn_conversation_sessions";
 
@@ -233,6 +233,14 @@ async fn spawn_session(
         ENV_HYDRA_CONVERSATION_ID.to_string(),
         conversation_id.to_string(),
     );
+    // Mirror `AgentQueue::build_task`'s `HYDRA_ISSUE_ID` stamp for the
+    // issue-backed branch: when the conversation carries `spawned_from`,
+    // the spawned agent needs the issue id to call `hydra issues get`
+    // before the user types anything. Legacy `/chat` conversations
+    // (`spawned_from = None`) keep only the conversation-id env var.
+    if let Some(issue_id) = conversation.spawned_from.as_ref() {
+        env_vars.insert(ENV_HYDRA_ISSUE_ID.to_string(), issue_id.to_string());
+    }
 
     // On the resume path, look up the most-recently-created prior session for
     // this conversation so we can carry the lineage edge directly through
@@ -243,16 +251,24 @@ async fn spawn_session(
         None
     };
 
-    // `spawned_from: None` is the signal the server uses to fall through to
-    // the no-project sentinel in the four-level prompt resolver
-    // ([[d-rzreslz]]): conversation sessions are not associated with any
-    // issue or project, so `system_prompt` is system + agent only — the
-    // project and status layers both contribute empty slices.
+    // Two shapes:
+    //
+    // - `spawned_from: None` (legacy `/chat`): the server falls through to
+    //   the no-project sentinel in the four-level prompt resolver
+    //   ([[d-rzreslz]]) and `greet_user` stays `false` so the human types
+    //   first.
+    // - `spawned_from: Some(issue_id)` (interactive issue conversations):
+    //   the server resolves the four-tier system prompt for the issue's
+    //   `(project, status)` pair, and `greet_user: true` makes the relay
+    //   emit `FirstMessage { agent_prompt, user_message: "" }` on `Ready`
+    //   so the agent reads the prompt before any human turn arrives.
+    let spawned_from = conversation.spawned_from.clone();
+    let greet_user = spawned_from.is_some();
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id: conversation_id.clone(),
             idle_timeout_secs: None,
-            greet_user: false,
+            greet_user,
         },
         agent_config: AgentSpec::Named { name: agent_name },
         model: conversation_settings.model.clone(),
@@ -262,7 +278,7 @@ async fn spawn_session(
         cpu_limit: conversation_settings.cpu_limit.clone(),
         memory_limit: conversation_settings.memory_limit.clone(),
         secrets: conversation_settings.secrets.clone(),
-        spawned_from: None,
+        spawned_from,
         resumed_from: prior_session_id.clone(),
     };
 
@@ -1271,5 +1287,239 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after.item.status, ConversationStatus::Active);
+    }
+
+    /// Helper: pull the single spawned session for `conversation_id`.
+    async fn spawned_session(
+        state: &AppState,
+        conversation_id: &ConversationId,
+    ) -> crate::store::Session {
+        let sessions = state
+            .list_sessions_with_query(&SearchSessionsQuery::default())
+            .await
+            .unwrap();
+        sessions
+            .into_iter()
+            .find(|(_, s)| s.item.conversation_id() == Some(conversation_id))
+            .map(|(_, s)| s.item)
+            .expect("expected a session for the conversation")
+    }
+
+    /// When the source conversation carries `spawned_from = Some(issue_id)`,
+    /// the spawned session inherits the issue-link lineage, opts into the
+    /// agent-first `greet_user` envelope, and gets `HYDRA_ISSUE_ID` stamped
+    /// in env vars alongside the existing `HYDRA_CONVERSATION_ID`. This is
+    /// the shape `AgentQueue` will produce in PR 4 for interactive issues.
+    #[tokio::test]
+    async fn spawn_with_spawned_from_some_inherits_issue_link_greet_and_env_var() {
+        use crate::app::test_helpers::issue_with_status;
+        use crate::domain::issues::IssueStatus;
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "prompt", false).await;
+
+        let issue = issue_with_status("backed conversation", IssueStatus::Open, vec![]);
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut conversation = make_conversation(Some("swe"));
+        conversation.spawned_from = Some(issue_id.clone());
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let session = spawned_session(&state, &conversation_id).await;
+        assert_eq!(
+            session.spawned_from,
+            Some(issue_id.clone()),
+            "spawned session must inherit the issue lineage from the conversation"
+        );
+        assert!(
+            session.mode.greet_user(),
+            "spawned_from = Some(_) must mint greet_user = true so the agent reads the \
+             system prompt before any human turn"
+        );
+        assert_eq!(
+            session.env_vars.get(ENV_HYDRA_ISSUE_ID),
+            Some(&issue_id.to_string()),
+            "spawned session must carry HYDRA_ISSUE_ID so `hydra issues get` works \
+             without env injection by the worker"
+        );
+        // Legacy conversation-id env var still present.
+        assert_eq!(
+            session.env_vars.get(ENV_HYDRA_CONVERSATION_ID),
+            Some(&conversation_id.to_string())
+        );
+    }
+
+    /// Legacy `/chat` conversations (`spawned_from = None`) keep their
+    /// existing shape: no issue lineage, no `greet_user`, no
+    /// `HYDRA_ISSUE_ID` env var — only `HYDRA_CONVERSATION_ID`.
+    #[tokio::test]
+    async fn spawn_with_spawned_from_none_keeps_legacy_shape() {
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "prompt", false).await;
+
+        let conversation = make_conversation(Some("swe"));
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let session = spawned_session(&state, &conversation_id).await;
+        assert_eq!(session.spawned_from, None);
+        assert!(
+            !session.mode.greet_user(),
+            "legacy /chat shape must keep greet_user = false so the human types first"
+        );
+        assert!(
+            !session.env_vars.contains_key(ENV_HYDRA_ISSUE_ID),
+            "legacy /chat shape must not leak HYDRA_ISSUE_ID; got env_vars = {:?}",
+            session.env_vars
+        );
+        assert_eq!(
+            session.env_vars.get(ENV_HYDRA_CONVERSATION_ID),
+            Some(&conversation_id.to_string())
+        );
+    }
+
+    /// When the conversation's `spawned_from` points at an issue bound to a
+    /// project + status with their own `prompt_path` docs, the spawned
+    /// session's `agent_config.system_prompt` must be the four-tier
+    /// resolver output for that `(project, status)` pair — same as the
+    /// headless path through `AgentQueue::build_task`.
+    ///
+    /// This is the "FirstMessage envelope" assertion: combined with
+    /// `greet_user = true` (asserted above), the relay's
+    /// `greet_user`-branch in `routes/sessions/relay.rs` emits
+    /// `FirstMessage { agent_prompt: <system_prompt>, user_message: "" }`
+    /// on `Ready`. That second leg is covered by case (d) of the existing
+    /// FirstMessage matrix in `chat_lifecycle.rs`
+    /// (`first_message_fresh_interactive_greet_user_true_emits_with_empty_user_message`),
+    /// so we don't re-drive the WS handshake here — we just verify the
+    /// `agent_prompt` source field has the expected layered shape.
+    #[tokio::test]
+    async fn spawn_with_spawned_from_some_resolves_four_tier_system_prompt() {
+        use crate::app::test_helpers::issue_with_status;
+        use crate::domain::issues::IssueStatus;
+        use hydra_common::api::v1::projects::{
+            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+        };
+
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "AGENT BODY", false).await;
+
+        let project_prompt_path = "/projects/engineering-v2/prompt.md";
+        let backlog_prompt_path = "/projects/engineering-v2/statuses/backlog.md";
+
+        let backlog_status = {
+            let mut def = StatusDefinition::new(
+                StatusKey::try_new("backlog").unwrap(),
+                "Backlog".to_string(),
+                IconKey::try_new("list").unwrap(),
+                "#9b59b6".parse().unwrap(),
+                false,
+                false,
+                false,
+                None,
+            );
+            def.prompt_path = Some(backlog_prompt_path.to_string());
+            def
+        };
+        let mut project = ApiProject::new(
+            ProjectKey::try_new("engineering-v2").unwrap(),
+            "Engineering v2".to_string(),
+            vec![backlog_status],
+            StatusKey::try_new("backlog").unwrap(),
+            hydra_common::api::v1::users::Username::from("alice"),
+            false,
+        );
+        project.prompt_path = Some(project_prompt_path.to_string());
+        let (project_id, _) = state
+            .store
+            .add_project(project, &ActorRef::test())
+            .await
+            .unwrap();
+
+        for (path, body) in [
+            (project_prompt_path, "PROJECT SLICE"),
+            (backlog_prompt_path, "STATUS SLICE — backlog"),
+        ] {
+            let doc = Document {
+                title: path.to_string(),
+                body_markdown: body.to_string(),
+                path: Some(path.parse().unwrap()),
+                deleted: false,
+            };
+            state
+                .store
+                .add_document_with_actor(doc, ActorRef::test())
+                .await
+                .unwrap();
+        }
+
+        let mut issue = issue_with_status("v2 backlog issue", IssueStatus::Open, vec![]);
+        issue.project_id = Some(project_id);
+        issue.status = StatusKey::try_new("backlog").unwrap();
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut conversation = make_conversation(Some("swe"));
+        conversation.spawned_from = Some(issue_id);
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let session = spawned_session(&state, &conversation_id).await;
+        let prompt = session.resolved_prompt();
+        assert!(
+            prompt.contains("AGENT BODY"),
+            "expected agent slice in system_prompt; got {prompt:?}"
+        );
+        assert!(
+            prompt.contains("PROJECT SLICE"),
+            "expected project slice in system_prompt; got {prompt:?}"
+        );
+        assert!(
+            prompt.contains("STATUS SLICE — backlog"),
+            "expected status slice in system_prompt; got {prompt:?}"
+        );
     }
 }
