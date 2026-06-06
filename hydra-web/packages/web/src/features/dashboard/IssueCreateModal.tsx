@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
-import type { IssueType, LabelRecord, Principal } from "@hydra/api";
+import type { IssueType, LabelRecord, Principal, StatusKey } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useFormDraft } from "../../hooks/useFormDraft";
@@ -15,10 +15,21 @@ import { useFormModal } from "../../hooks/useFormModal";
 import { useAuth } from "../auth/useAuth";
 import { actorDisplayName } from "../../api/auth";
 import { useLabels } from "../labels/useLabels";
+import { useProjects, useProjectStatuses } from "../projects/useProjects";
+import { StatusChip } from "../projects/StatusChip";
 import { LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
 import styles from "./IssueCreateModal.module.css";
 
-type PickerKey = "type" | "assignee" | "repo" | "labels" | null;
+type PickerKey =
+  | "type"
+  | "assignee"
+  | "repo"
+  | "labels"
+  | "project"
+  | "status"
+  | null;
+
+const LEGACY_DEFAULT_STATUS_KEY: StatusKey = "open";
 
 const ISSUE_TYPES: IssueType[] = ["task", "bug", "feature", "chore"];
 const LABEL_PILL_MAX_INLINE = 2;
@@ -60,6 +71,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
   const { user } = useAuth();
   const { data: repos } = useRepositories();
   const { data: labels } = useLabels();
+  const { data: projects } = useProjects();
   const currentUsername = user ? actorDisplayName(user.actor) : "";
 
   const [title, setTitle, clearTitleDraft] = useFormDraft(
@@ -89,6 +101,22 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     "hydra:draft:issue-create-modal:labelNames",
     [],
   );
+  // Empty string = unselected (= default project synthesized server-side).
+  const [projectId, setProjectId, clearProjectIdDraft] = useFormDraft(
+    "hydra:draft:issue-create-modal:projectId",
+    "",
+  );
+  // Empty string = pick the project's default_status_key when the picker
+  // resolves; if it's still empty at submit time we fall back to `"open"` so
+  // the wire body matches today's behavior for the unselected case.
+  const [status, setStatus, clearStatusDraft] = useFormDraft<StatusKey>(
+    "hydra:draft:issue-create-modal:status",
+    "",
+  );
+
+  // Status options follow the selected project (or DefaultProject when
+  // unselected). Same hook the IssueUpdateModal uses.
+  const { data: projectStatuses } = useProjectStatuses(projectId || null);
 
   const [picker, setPicker] = useState<PickerKey>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -126,12 +154,16 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     setAssignee("");
     setRepoName("");
     setLabelNames([]);
+    setProjectId("");
+    setStatus("");
     clearTitleDraft();
     clearDescriptionDraft();
     clearIssueTypeDraft();
     clearAssigneeDraft();
     clearRepoNameDraft();
     clearLabelNamesDraft();
+    clearProjectIdDraft();
+    clearStatusDraft();
   }, [
     setTitle,
     setDescription,
@@ -139,12 +171,16 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     setAssignee,
     setRepoName,
     setLabelNames,
+    setProjectId,
+    setStatus,
     clearTitleDraft,
     clearDescriptionDraft,
     clearIssueTypeDraft,
     clearAssigneeDraft,
     clearRepoNameDraft,
     clearLabelNamesDraft,
+    clearProjectIdDraft,
+    clearStatusDraft,
   ]);
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<
@@ -153,9 +189,11 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
       description: string;
       creator: string;
       type: IssueType;
+      status: StatusKey;
       assignee?: Principal;
       repoName?: string;
       labelNames?: string[];
+      projectId?: string;
     },
     { issue_id: string }
   >({
@@ -167,13 +205,14 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
           description: params.description,
           creator: params.creator,
           progress: "",
-          status: "open",
+          status: params.status,
           dependencies: [],
           patches: [],
           ...(params.assignee && { assignee: params.assignee }),
           ...(params.repoName && {
             session_settings: { repo_name: params.repoName },
           }),
+          ...(params.projectId && { project_id: params.projectId }),
         },
         session_id: null,
         ...(params.labelNames &&
@@ -193,14 +232,24 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     const desc = description.trim();
     if (!desc) return;
     const assigneePrincipal = parseAssigneePath(assignee);
+    // Submit-time fallback chain matches the picker's resolved value: an
+    // explicit pick wins; else the project's default_status_key (if loaded);
+    // else the legacy `"open"`. Keeps the wire body stable for any project
+    // whose status fetch hasn't resolved yet.
+    const submitStatus: StatusKey =
+      status ||
+      projectStatuses?.default_status_key ||
+      LEGACY_DEFAULT_STATUS_KEY;
     mutation.mutate({
       title: title.trim(),
       description: desc,
       creator: currentUsername,
       type: issueType,
+      status: submitStatus,
       ...(assigneePrincipal && { assignee: assigneePrincipal }),
       ...(repoName && { repoName }),
       ...(labelNames.length > 0 && { labelNames }),
+      ...(projectId && { projectId }),
     });
   }, [
     title,
@@ -210,6 +259,9 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     assignee,
     repoName,
     labelNames,
+    projectId,
+    status,
+    projectStatuses,
     mutation,
   ]);
 
@@ -253,6 +305,16 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
   if (!open) return null;
 
   const repoEntries = repos ?? [];
+  const projectEntries = projects ?? [];
+  const statusEntries = projectStatuses?.statuses ?? [];
+  const selectedProject = projectEntries.find(
+    (p) => p.project_id === projectId,
+  );
+  const selectedStatusDef = statusEntries.find(
+    (s) => s.key === (status || projectStatuses?.default_status_key),
+  );
+  const effectiveStatusKey =
+    status || projectStatuses?.default_status_key || LEGACY_DEFAULT_STATUS_KEY;
   const canSubmit = description.trim().length > 0 && !isPending;
 
   return (
@@ -403,6 +465,92 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
                 </>
               )}
             </Picker>
+
+            <div data-testid="issue-create-project-picker">
+              <Picker
+                label="Project"
+                open={picker === "project"}
+                onToggle={() => setPicker(picker === "project" ? null : "project")}
+                wide
+                value={
+                  selectedProject ? (
+                    <span className={styles.pillContent}>
+                      <code className={styles.pillCode}>
+                        {selectedProject.project.key}
+                      </code>
+                    </span>
+                  ) : (
+                    <span className={styles.pillEmpty}>Default</span>
+                  )
+                }
+              >
+                <PickerRow
+                  active={!projectId}
+                  onClick={() => {
+                    setProjectId("");
+                    // Reset the explicit status pick: the next render's
+                    // `useProjectStatuses(null)` will apply the default
+                    // project's default_status_key as the resolved value.
+                    setStatus("");
+                    setPicker(null);
+                  }}
+                >
+                  <span className={styles.pillEmpty}>Default</span>
+                  <span className={styles.popSpacer} />
+                </PickerRow>
+                {projectEntries.map((p) => (
+                  <PickerRow
+                    key={p.project_id}
+                    active={projectId === p.project_id}
+                    onClick={() => {
+                      setProjectId(p.project_id);
+                      // Reset to "" so the Status picker re-derives its
+                      // default from the newly-selected project's
+                      // default_status_key on the next render.
+                      setStatus("");
+                      setPicker(null);
+                    }}
+                  >
+                    <code className={styles.popCode}>{p.project.key}</code>
+                    <span className={styles.popSub}>{p.project.name}</span>
+                    <span className={styles.popSpacer} />
+                  </PickerRow>
+                ))}
+              </Picker>
+            </div>
+
+            <div data-testid="issue-create-status-picker">
+              <Picker
+                label="Status"
+                open={picker === "status"}
+                onToggle={() => setPicker(picker === "status" ? null : "status")}
+                wide
+                value={
+                  <StatusChip
+                    definition={selectedStatusDef ?? null}
+                    fallbackKey={effectiveStatusKey}
+                  />
+                }
+              >
+                {statusEntries.length === 0 ? (
+                  <div className={styles.popEmpty}>No statuses</div>
+                ) : (
+                  statusEntries.map((s) => (
+                    <PickerRow
+                      key={s.key}
+                      active={effectiveStatusKey === s.key}
+                      onClick={() => {
+                        setStatus(s.key);
+                        setPicker(null);
+                      }}
+                    >
+                      <StatusChip definition={s} />
+                      <span className={styles.popSpacer} />
+                    </PickerRow>
+                  ))
+                )}
+              </Picker>
+            </div>
 
             <Picker
               label="Repository"

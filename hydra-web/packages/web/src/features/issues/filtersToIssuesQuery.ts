@@ -65,6 +65,9 @@ export function filtersToIssuesQuery({
       case "assignee":
         out.assignee = filter.values[0];
         break;
+      case "project":
+        out.project_id = filter.values[0];
+        break;
       // Relation filters are resolved upstream into `extraIds`; no direct
       // mapping here.
       default:

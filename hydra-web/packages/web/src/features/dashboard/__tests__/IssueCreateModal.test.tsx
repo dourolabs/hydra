@@ -5,8 +5,21 @@ import type { ReactNode } from "react";
 
 // --- Mocks ---
 
+// Capture the mutationFn passed by useFormModal so tests can drive
+// handleSubmit → mutationFn directly and assert on the createIssue body.
+type CapturedMutation = { mutationFn?: (input: unknown) => Promise<unknown> };
+const capturedMutation: CapturedMutation = {};
+
 vi.mock("@tanstack/react-query", () => ({
-  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useMutation: (opts: { mutationFn?: (input: unknown) => Promise<unknown> }) => {
+    capturedMutation.mutationFn = opts.mutationFn;
+    return {
+      mutate: (input: unknown) => {
+        opts.mutationFn?.(input);
+      },
+      isPending: false,
+    };
+  },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }));
 
@@ -82,8 +95,35 @@ vi.mock("../../../hooks/useRepositories", () => ({
   useRepositories: () => ({ data: [] }),
 }));
 
+// `createIssue` is invoked through the mutation in handleSubmit. We capture
+// the body it receives so tests can assert `project_id` / `status` plumbing.
+const createIssueMock = vi.fn<(body: unknown) => Promise<{ issue_id: string }>>(
+  () => Promise.resolve({ issue_id: "i-new" }),
+);
 vi.mock("../../../api/client", () => ({
-  apiClient: { createIssue: vi.fn() },
+  apiClient: { createIssue: (body: unknown) => createIssueMock(body) },
+}));
+
+const useProjectsMock = vi.fn();
+const useProjectStatusesMock = vi.fn();
+vi.mock("../../projects/useProjects", () => ({
+  useProjects: () => useProjectsMock(),
+  useProjectStatuses: (projectId: string | null) =>
+    useProjectStatusesMock(projectId),
+}));
+
+vi.mock("../../projects/StatusChip", () => ({
+  StatusChip: ({
+    definition,
+    fallbackKey,
+  }: {
+    definition?: { key: string; label: string } | null;
+    fallbackKey?: string | null;
+  }) => (
+    <span data-testid={`status-chip-${definition?.key ?? fallbackKey ?? "empty"}`}>
+      {definition?.label ?? fallbackKey ?? ""}
+    </span>
+  ),
 }));
 
 vi.mock("../../toast/useToast", () => ({
@@ -138,9 +178,46 @@ function openAssigneePicker() {
   openPickerByLabel("Assignee");
 }
 
+const SEEDED_PROJECTS = [
+  {
+    project_id: "j-engv2",
+    version: 1,
+    project: {
+      key: "engineering-v2",
+      name: "Engineering v2",
+      statuses: [],
+      default_status_key: "inbox",
+      creator: "alice",
+    },
+  },
+];
+const ENG_V2_STATUSES = {
+  statuses: [
+    { key: "inbox", label: "Inbox", icon: "i", color: "#aaa" },
+    { key: "backlog", label: "Backlog", icon: "b", color: "#bbb" },
+    { key: "pending", label: "Pending", icon: "p", color: "#ccc" },
+  ],
+  default_status_key: "inbox",
+};
+const DEFAULT_STATUSES = {
+  statuses: [
+    { key: "open", label: "Open", icon: "o", color: "#111" },
+    { key: "in-progress", label: "In progress", icon: "i", color: "#222" },
+  ],
+  default_status_key: "open",
+};
+
 describe("IssueCreateModal", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    createIssueMock.mockClear();
+    capturedMutation.mutationFn = undefined;
+    useProjectsMock.mockReturnValue({ data: SEEDED_PROJECTS });
+    useProjectStatusesMock.mockImplementation((projectId: string | null) =>
+      projectId === "j-engv2"
+        ? { data: ENG_V2_STATUSES }
+        : { data: DEFAULT_STATUSES },
+    );
   });
 
   afterEach(() => {
@@ -305,5 +382,82 @@ describe("IssueCreateModal", () => {
     expect(
       (screen.getByPlaceholderText(DESC_PLACEHOLDER) as HTMLTextAreaElement).value,
     ).toBe("");
+  });
+
+  it("renders Project + Status picker testids alongside the existing pickers", () => {
+    render(
+      <IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />,
+    );
+    expect(screen.getByTestId("issue-create-project-picker")).toBeDefined();
+    expect(screen.getByTestId("issue-create-status-picker")).toBeDefined();
+  });
+
+  it("submits with no project_id and status=\"open\" when nothing is selected", () => {
+    render(
+      <IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
+      target: { value: "needs a fix" },
+    });
+    fireEvent.click(screen.getByText(/Create issue/));
+
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+    const body = createIssueMock.mock.calls[0][0] as {
+      issue: { status: string; project_id?: string };
+    };
+    expect(body.issue.status).toBe("open");
+    expect(body.issue.project_id).toBeUndefined();
+  });
+
+  it("submits project_id + chosen status when both pickers are set", () => {
+    render(
+      <IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
+      target: { value: "build the thing" },
+    });
+
+    // Pick engineering-v2 from the Project picker.
+    openPickerByLabel("Project");
+    fireEvent.click(screen.getByText("engineering-v2"));
+
+    // The Status picker should now expose engineering-v2's status list.
+    openPickerByLabel("Status");
+    // ENG_V2_STATUSES contains `backlog`; pick it.
+    const backlogChip = screen.getAllByTestId("status-chip-backlog")[0];
+    fireEvent.click(backlogChip);
+
+    fireEvent.click(screen.getByText(/Create issue/));
+
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+    const body = createIssueMock.mock.calls[0][0] as {
+      issue: { status: string; project_id?: string };
+    };
+    expect(body.issue.project_id).toBe("j-engv2");
+    expect(body.issue.status).toBe("backlog");
+  });
+
+  it("submits the project's default_status_key when the Status picker isn't touched", () => {
+    render(
+      <IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
+      target: { value: "fresh issue" },
+    });
+
+    openPickerByLabel("Project");
+    fireEvent.click(screen.getByText("engineering-v2"));
+
+    fireEvent.click(screen.getByText(/Create issue/));
+
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+    const body = createIssueMock.mock.calls[0][0] as {
+      issue: { status: string; project_id?: string };
+    };
+    expect(body.issue.project_id).toBe("j-engv2");
+    expect(body.issue.status).toBe("inbox");
   });
 });

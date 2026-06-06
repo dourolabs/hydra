@@ -25,6 +25,7 @@ export const FILTER_URL_PARAMS: IssueFilterUrlSpec[] = [
   { id: "type", singleSelect: true },
   { id: "creator", singleSelect: true },
   { id: "assignee", singleSelect: true },
+  { id: "project", singleSelect: true },
   { id: "relatedPatch", singleSelect: false },
   { id: "relatedChat", singleSelect: false },
   { id: "relatedSession", singleSelect: false },
