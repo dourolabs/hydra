@@ -33,6 +33,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CONFIG_TEMPLATE="${SCRIPT_DIR}/config/test-config.yaml"
 CONFIG_PATH="/tmp/hydra-e2e/test-config.yaml"
 MERGE_POLICY_FILE="${SCRIPT_DIR}/config/merge-policy.yaml"
+ENGINEERING_V2_FIXTURES_DIR="${SCRIPT_DIR}/fixtures/projects/engineering-v2"
+ENGINEERING_V2_PROJECT_FILE="${ENGINEERING_V2_FIXTURES_DIR}/project.yaml"
 # MUST match `server_hostname` in test-config.yaml so the CLI's saved-token lookup hits.
 SERVER_URL="http://127.0.0.1:8080"
 HYDRA_STATE_DIR="${HOME}/.hydra/server"
@@ -205,6 +207,80 @@ fi
 echo "==> Applying merge policy from ${MERGE_POLICY_FILE}..."
 env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos update dourolabs/hydra-test-fixture --merge-policy-file "${MERGE_POLICY_FILE}"
 echo "    Merge policy applied."
+
+# --------------------------------------------------------------------------
+# 6c. Seed the `engineering-v2` Project from the fixture YAML. The body file
+#     ships each non-terminal status's `prompt_path` inline; the project's
+#     own `prompt_path` is set in a follow-up `projects update` call below
+#     because `projects create` does not expose a `--prompt-path` flag.
+#
+#     Used by the `per-project-status-pipeline` e2e scenario; other
+#     scenarios ignore it.
+# --------------------------------------------------------------------------
+if [[ ! -f "${ENGINEERING_V2_PROJECT_FILE}" ]]; then
+  echo "ERROR: engineering-v2 project fixture not found at ${ENGINEERING_V2_PROJECT_FILE}" >&2
+  exit 1
+fi
+echo "==> Seeding engineering-v2 project from ${ENGINEERING_V2_PROJECT_FILE}..."
+CREATE_OUTPUT="$(env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  --output-format jsonl \
+  projects create \
+    --key engineering-v2 \
+    --name "Engineering v2" \
+    --body-file "${ENGINEERING_V2_PROJECT_FILE}")"
+ENGINEERING_V2_PROJECT_ID="$(printf '%s\n' "${CREATE_OUTPUT}" | sed -nE 's/.*"project_id":"([^"]+)".*/\1/p' | head -n1)"
+if [[ -z "${ENGINEERING_V2_PROJECT_ID}" ]]; then
+  echo "ERROR: failed to parse project_id from 'projects create' output:" >&2
+  printf '%s\n' "${CREATE_OUTPUT}" >&2
+  exit 1
+fi
+echo "    Project created with id ${ENGINEERING_V2_PROJECT_ID}."
+
+# Set the project-layer prompt_path. The four-level prompt resolver
+# concatenates this slice onto each spawned session's system_prompt.
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects update "${ENGINEERING_V2_PROJECT_ID}" \
+    --prompt-path "/projects/engineering-v2/prompt.md" >/dev/null
+echo "    Project prompt_path set."
+
+# --------------------------------------------------------------------------
+# 6d. Push the engineering-v2 prompt fixtures to the doc store. The project
+#     and statuses already reference these paths; the prompt resolver reads
+#     the doc bodies at session-spawn time.
+# --------------------------------------------------------------------------
+push_engineering_v2_prompt() {
+  local fixture="$1"
+  local doc_path="$2"
+  local title="$3"
+  if [[ ! -f "${fixture}" ]]; then
+    echo "ERROR: engineering-v2 prompt fixture not found at ${fixture}" >&2
+    exit 1
+  fi
+  env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+    documents create \
+      --title "${title}" \
+      --path "${doc_path}" \
+      --body-file "${fixture}" >/dev/null
+}
+
+echo "==> Pushing engineering-v2 prompt documents..."
+push_engineering_v2_prompt \
+  "${ENGINEERING_V2_FIXTURES_DIR}/prompt.md" \
+  "/projects/engineering-v2/prompt.md" \
+  "Project prompt — engineering-v2"
+push_engineering_v2_prompt \
+  "${ENGINEERING_V2_FIXTURES_DIR}/statuses/backlog.md" \
+  "/projects/engineering-v2/statuses/backlog.md" \
+  "Status prompt — engineering-v2 / backlog"
+push_engineering_v2_prompt \
+  "${ENGINEERING_V2_FIXTURES_DIR}/statuses/in-development.md" \
+  "/projects/engineering-v2/statuses/in-development.md" \
+  "Status prompt — engineering-v2 / in-development"
+push_engineering_v2_prompt \
+  "${ENGINEERING_V2_FIXTURES_DIR}/statuses/in-review.md" \
+  "/projects/engineering-v2/statuses/in-review.md" \
+  "Status prompt — engineering-v2 / in-review"
+echo "    Pushed 4 prompt documents."
 
 # --------------------------------------------------------------------------
 # Detach the server and exit cleanly. The server keeps running in the

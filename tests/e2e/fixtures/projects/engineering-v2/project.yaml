@@ -1,0 +1,60 @@
+statuses:
+  - key: inbox
+    label: Inbox
+    icon: inbox
+    color: "#607d8b"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+  - key: backlog
+    label: Backlog
+    icon: list
+    color: "#9b59b6"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+    on_enter:
+      assign_to:
+        Agent:
+          name: pm
+    prompt_path: /projects/engineering-v2/statuses/backlog.md
+  - key: pending
+    label: Pending
+    icon: clock
+    color: "#f39c12"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+  - key: in-development
+    label: In development
+    icon: code
+    color: "#3498db"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+    on_enter:
+      assign_to:
+        Agent:
+          name: swe
+    prompt_path: /projects/engineering-v2/statuses/in-development.md
+  - key: in-review
+    label: In review
+    icon: eye
+    color: "#f1c40f"
+    unblocks_parents: false
+    unblocks_dependents: false
+    cascades_to_children: false
+    on_enter:
+      assign_to:
+        Agent:
+          name: reviewer
+      attach_form: /forms/review.yaml
+    prompt_path: /projects/engineering-v2/statuses/in-review.md
+  - key: pending-release
+    label: Pending release
+    icon: package
+    color: "#2ecc71"
+    unblocks_parents: true
+    unblocks_dependents: true
+    cascades_to_children: false
+default_status_key: inbox

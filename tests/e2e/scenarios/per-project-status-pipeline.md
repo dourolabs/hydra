@@ -8,22 +8,24 @@
 - Test-fixture repository `dourolabs/hydra-test-fixture` registered (add-github-repo scenario passed).
 - P0 scenarios (`basic-issue-lifecycle`, `dashboard-navigation`) and `pm-agent-breakdown` completed.
 - Per-project-statuses feature ([[i-ctfcvyru]] / [[d-druoexk]]) has shipped on the server under test.
-- One Project named `engineering-v2` created with the six statuses defined in the **Setup** section below.
-- Three cloned agents `pm-v2`, `swe-v2`, `reviewer-v2` configured as active on `dourolabs/hydra-test-fixture` with the behavioral deltas defined in the **Setup** section below.
+- Four-level prompt design ([[d-rzreslz]] / [[i-psuvqpqx]]) has shipped on the server under test (project- and status-level prompt slices concatenate into spawned sessions' `system_prompt`).
+- One Project named `engineering-v2` created with the six statuses defined in the **Setup** section below, and the four prompt documents (project prompt + the three non-terminal status prompts) pushed to the doc store.
 
 **Estimated duration:** ~30 minutes
 
-**Activated under [[i-bhaxdizc]]** after all six implementation PRs of [[i-ctfcvyru]] ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) merged. The runner-side seeding (Project `engineering-v2` plus the three cloned agents — see **Setup** below) is tracked as a follow-up; until it lands on a given test instance, the Step 1 skip-if pre-check causes this scenario to self-skip (a pass, not a failure).
+**Activated under [[i-bhaxdizc]]** after all six implementation PRs of [[i-ctfcvyru]] ([[i-wnitrmch]], [[i-sxbbvtjq]], [[i-rlxcwaep]], [[i-nbcqsevh]], [[i-gulwytkr]], [[i-hpotgiuv]]) merged. On a fresh single-player instance bootstrapped by `tests/e2e/run.sh`, the runner-side seeding wires up the `engineering-v2` Project and its prompts automatically; the Step 1 skip-if pre-check remains as belt-and-suspenders for test instances where the seeding has not yet been wired up.
 
 ## Description
 
-Exercises the per-project status workflow designed in [[d-druoexk]] end-to-end through the dashboard. Covers both the **custom inbox/backlog/release pipeline** (design §4 "End-to-end use cases" — custom inbox/backlog/release pipeline) and the **same-issue review hand-off** (design §4 "End-to-end use cases" — same-issue review hand-off), exercising `apply_status_on_enter` automation (design §4 "Spawn dispatch and on_enter automation") and the unified readiness rule (design §4 "Dependencies, readiness, cascade") in one pass.
+Exercises the per-project status workflow designed in [[d-druoexk]] end-to-end through the dashboard, using the existing base `pm` / `swe` / `reviewer` agents. The behavioral deltas the scenario depends on — `pm` setting `project_id = engineering-v2` on child issues, `swe` doing same-issue review hand-off instead of filing a child `review-request`, and `reviewer` reviewing the same issue via the attached form — come from the **per-project + per-status prompt slices** introduced by the four-level prompt design ([[d-rzreslz]] / [[i-psuvqpqx]]), which concatenate onto each spawned session's `system_prompt`.
+
+Covers both the **custom inbox/backlog/release pipeline** (design [[d-druoexk]] §4 "End-to-end use cases" — custom inbox/backlog/release pipeline) and the **same-issue review hand-off** (design [[d-druoexk]] §4 "End-to-end use cases" — same-issue review hand-off), exercising `apply_status_on_enter` automation (design [[d-druoexk]] §4 "Spawn dispatch and on_enter automation") and the unified readiness rule (design [[d-druoexk]] §4 "Dependencies, readiness, cascade") in one pass.
 
 This scenario was authored ahead of implementation and lived under `scenarios/planned/` until [[i-bhaxdizc]] promoted it. The Step 1 skip-if pre-check below remains as belt-and-suspenders for test instances where the per-project-statuses feature has shipped but the runner-side `engineering-v2` seeding has not yet been wired up.
 
 ## Setup
 
-The runner-side wiring needed to seed the configuration below (e.g. extending `tests/e2e/run.sh`, adding `tests/e2e/config/projects.yaml`, and authoring the cloned-agent prompt files in the doc store) is **out of scope** for this scenario file and is tracked separately. Anyone wiring it up should lift the spec below verbatim.
+The runner-side wiring needed to seed the configuration below is implemented by `tests/e2e/run.sh` (the project YAML fixture and prompt documents live under `tests/e2e/fixtures/projects/engineering-v2/`). Anyone re-implementing the seeding on a different runner should lift the spec below verbatim.
 
 ### Project `engineering-v2`
 
@@ -32,28 +34,31 @@ The runner-side wiring needed to seed the configuration below (e.g. extending `t
 | key | unblocks_parents | unblocks_dependents | cascades_to_children | on_enter |
 |---|---|---|---|---|
 | `inbox` | false | false | false | None |
-| `backlog` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "pm-v2" }), attach_form: None }` |
+| `backlog` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "pm" }), attach_form: None }` |
 | `pending` | false | false | false | None |
-| `in-development` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "swe-v2" }), attach_form: None }` |
-| `in-review` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "reviewer-v2" }), attach_form: Some("/forms/review.yaml") }` |
+| `in-development` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "swe" }), attach_form: None }` |
+| `in-review` | false | false | false | `{ assign_to: Some(Principal::Agent { name: "reviewer" }), attach_form: Some("/forms/review.yaml") }` |
 | `pending-release` | true | true | false | None |
 
 Notes:
 - `pending` exists as a holding state filed into directly by **Test bundle A** (Status UI surfaces); it has no automation.
-- `pending-release` is terminal for dependency semantics (`unblocks_parents` and `unblocks_dependents` both true) but does **not** cascade to children (`cascades_to_children = false`), per design §4 "Dependencies, readiness, cascade".
+- `pending-release` is terminal for dependency semantics (`unblocks_parents` and `unblocks_dependents` both true) but does **not** cascade to children (`cascades_to_children = false`), per design [[d-druoexk]] §4 "Dependencies, readiness, cascade".
 - The status table format above mirrors the design's §4 "Default-project synthesis" table so the seeding spec stays aligned with how Hydra's built-in default project is described.
 
-### Cloned agents
+### Project + status prompts
 
-Each cloned agent is a clone of an existing base agent with the behavioral delta below. The actual prompt text (in the document store) is authored by the follow-up enablement task — this paper spec only declares the deltas.
+The four-level prompt resolver concatenates project- and status-level prompt slices onto each spawned session's `system_prompt`. The scenario depends on the following four documents being present in the doc store (the runner pushes them from the fixture files listed below):
 
-- **`pm-v2`** — clone of `pm`. **Delta:** when filing child issues, sets each child's `project_id` to `engineering-v2` and lets the project's `default_status_key` (`inbox`) apply. `apply_status_on_enter` then routes child issues through the pipeline. Otherwise identical to `pm`.
-- **`swe-v2`** — clone of `swe`. **Delta:** when done with a PR, instead of filing a child `review-request` issue, transitions the **same** issue from `in-development` → `in-review`. The `in-review.on_enter` rule reassigns to `reviewer-v2` automatically.
-- **`reviewer-v2`** — clone of `reviewer`. **Delta:** picks up the **same** issue that SWE just transitioned (no child issue), runs the review against the attached `/forms/review.yaml`, and submits one of:
-  - `request_changes` — form action emits `Effect::UpdateIssue { status: "in-development", set_feedback_from: Some("review_comment") }`.
-  - `approve` — form action emits `Effect::UpdateIssue { status: "pending-release", set_feedback_from: None }`.
+| doc-store path | fixture file | encodes |
+|---|---|---|
+| `/projects/engineering-v2/prompt.md` | `tests/e2e/fixtures/projects/engineering-v2/prompt.md` | workflow narration — "this project routes work through `inbox → backlog → in-development → in-review → pending-release`, with `pending` as a holding state; reviews happen on the **same issue** via the form attached to `in-review`, not via child `review-request` issues; `apply_status_on_enter` routes assignment automatically; agents transition the issue by setting `--status <next>` on the same id." |
+| `/projects/engineering-v2/statuses/backlog.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/backlog.md` | **`pm` delta** — when filing child issues, set their `project_id` to `engineering-v2` and let the project's `default_status_key` (`inbox`) apply; move this issue forward (to `pending` or `in-development`) when the breakdown is complete. |
+| `/projects/engineering-v2/statuses/in-development.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/in-development.md` | **`swe` delta** — when the PR is ready, transition the **same** issue from `in-development` to `in-review` (do NOT file a child `review-request` issue — this project uses same-issue review hand-off); if a review brings the issue back to `in-development` with `feedback` populated, address the feedback and re-transition to `in-review`. |
+| `/projects/engineering-v2/statuses/in-review.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/in-review.md` | **`reviewer` delta** — read the patch, decide a verdict, and submit the attached `/forms/review.yaml`: `request_changes` (transitions back to `in-development` and writes the form's `review_comment` field into `issue.feedback` via `Effect::UpdateIssue { set_feedback_from: Some("review_comment") }`) or `approve` (transitions to `pending-release`); do NOT file a child review-request — the form action drives both verdict and status transition. |
 
-All three cloned agents are configured as active on `dourolabs/hydra-test-fixture`.
+The project's `prompt_path` references `/projects/engineering-v2/prompt.md`; each non-terminal status's `prompt_path` (set in the project body) references its `/projects/engineering-v2/statuses/<key>.md` slice. Terminal statuses (`pending-release`, plus `inbox` and `pending` which carry no automation) have no `prompt_path` — the spawn dispatcher skips them anyway, so an empty slice is correct.
+
+Prompts deliberately stay focused on the per-status delta. Cross-cutting agent behavior (how to use `hydra` CLI, `[[id]]` linking, etc.) lives in the system prompt; role-level guidance (how SWE thinks about patches, how reviewer formats verdicts) lives in the agent prompt. These status prompts only add what's unique to `engineering-v2` at each status.
 
 ## Steps (via dashboard)
 
@@ -93,25 +98,25 @@ For each issue filed above, assert:
    - Project: `engineering-v2`
    - Status: default (`inbox`).
 2. Submit. Capture the issue id. This is the **single** id followed through every transition. **No child `review-request` issue may be created at any point during this bundle.**
-3. From the issue detail page's transition control, manually transition `inbox` → `backlog`. Confirm `apply_status_on_enter` reassigns the issue to `pm-v2` and a `pm-v2` session spawns (visible on the Sessions page and on the issue detail page's activity log).
-4. Wait for `pm-v2` to transition the issue to `in-development`. Confirm `swe-v2` is now the assignee (via `apply_status_on_enter`) and a `swe-v2` session spawns.
-5. Wait for `swe-v2` to (a) produce at least one patch on `dourolabs/hydra-test-fixture` (visible on the patches page filtered by this issue id) and (b) transition the **same** issue id to `in-review`. Confirm `reviewer-v2` is the assignee and the review form (`/forms/review.yaml`) is attached.
-6. Wait for `reviewer-v2` to submit the review form with `request_changes`. Confirm:
+3. From the issue detail page's transition control, manually transition `inbox` → `backlog`. Confirm `apply_status_on_enter` reassigns the issue to `pm` and a `pm` session spawns (visible on the Sessions page and on the issue detail page's activity log).
+4. Wait for `pm` to transition the issue to `in-development`. Confirm `swe` is now the assignee (via `apply_status_on_enter`) and a `swe` session spawns.
+5. Wait for `swe` to (a) produce at least one patch on `dourolabs/hydra-test-fixture` (visible on the patches page filtered by this issue id) and (b) transition the **same** issue id to `in-review`. Confirm `reviewer` is the assignee and the review form (`/forms/review.yaml`) is attached.
+6. Wait for `reviewer` to submit the review form with `request_changes`. Confirm:
    - The issue status flips back to `in-development`.
-   - The `issue.feedback` field is populated from the form's `review_comment` field (via `Effect::UpdateIssue { set_feedback_from: Some("review_comment") }` per design §4 "Spawn dispatch and on_enter automation").
-   - `swe-v2` is reassigned via `apply_status_on_enter` and a new `swe-v2` session spawns.
-7. Wait for `swe-v2` to address the feedback and transition the issue back to `in-review`.
-8. Wait for `reviewer-v2` to submit `approve`. Confirm the issue status transitions to `pending-release`.
+   - The `issue.feedback` field is populated from the form's `review_comment` field (via `Effect::UpdateIssue { set_feedback_from: Some("review_comment") }` per design [[d-druoexk]] §4 "Spawn dispatch and on_enter automation").
+   - `swe` is reassigned via `apply_status_on_enter` and a new `swe` session spawns.
+7. Wait for `swe` to address the feedback and transition the issue back to `in-review`.
+8. Wait for `reviewer` to submit `approve`. Confirm the issue status transitions to `pending-release`.
 
 **Invariants (assert on the issue detail page and Sessions page):**
 
 - The child-issue list on the test issue contains **no** child issue of type `review-request` (the same-issue review hand-off must not fall back to the child-issue pattern).
-- The Sessions page shows at least one `swe-v2` session and at least one `reviewer-v2` session associated with this issue id, with `reviewer-v2` sessions spawning after `swe-v2` sessions (sequence preserved across the request-changes round-trip).
+- The Sessions page shows at least one `swe` session and at least one `reviewer` session associated with this issue id, with `reviewer` sessions spawning after `swe` sessions (sequence preserved across the request-changes round-trip).
 - The patches page shows at least one patch for this issue with a non-empty diff.
 
 ### Step 4 — Test bundle C: Dependency semantics
 
-This bundle validates the unified readiness rule from design §4 "Dependencies, readiness, cascade" against `unblocks_parents` and `unblocks_dependents` flags.
+This bundle validates the unified readiness rule from design [[d-druoexk]] §4 "Dependencies, readiness, cascade" against `unblocks_parents` and `unblocks_dependents` flags.
 
 **Parent / child setup (`unblocks_parents`):**
 
@@ -128,7 +133,7 @@ This bundle validates the unified readiness rule from design §4 "Dependencies, 
    - The parent is **not ready** (no agent spawns; readiness indicator absent on the parent).
 5. Transition Child B to `pending-release` via its detail-page transition control. Reload the parent. Confirm:
    - Child B is now shown as satisfying the gate.
-   - The parent is now **ready** (its `in-development` `on_enter` reassigns to `swe-v2`, which spawns).
+   - The parent is now **ready** (its `in-development` `on_enter` reassigns to `swe`, which spawns).
 
 **Dependent / blocker setup (`unblocks_dependents`):**
 
@@ -136,10 +141,10 @@ This bundle validates the unified readiness rule from design §4 "Dependencies, 
 7. File a **dependent** issue in `engineering-v2` directly into `in-development` with `blocked-on: <blocker-id>`.
 8. On the dependent's detail page, in the blocked-by panel, confirm:
    - The blocker is shown as outstanding.
-   - The dependent is **not ready** (no `swe-v2` spawn even though its own status would otherwise route to `swe-v2`).
+   - The dependent is **not ready** (no `swe` spawn even though its own status would otherwise route to `swe`).
 9. Transition the blocker to `pending-release`. Reload the dependent. Confirm:
    - The blocker is now shown as satisfying the dependency.
-   - The dependent is now **ready** and `swe-v2` is spawned via `apply_status_on_enter`.
+   - The dependent is now **ready** and `swe` is spawned via `apply_status_on_enter`.
 
 ## Expected Results
 
@@ -150,12 +155,12 @@ This bundle validates the unified readiness rule from design §4 "Dependencies, 
 
 **Bundle B — End-to-end columnar flow:**
 - A single issue id traverses `inbox` → `backlog` → `in-development` → `in-review` → `in-development` (after `request_changes`) → `in-review` → `pending-release`.
-- At every transition into `backlog`, `in-development`, or `in-review`, `apply_status_on_enter` correctly reassigns to the configured agent (`pm-v2`, `swe-v2`, `reviewer-v2` respectively) and the assignee-driven spawn dispatcher spawns the corresponding session.
-- On `request_changes`, `issue.feedback` is populated from the form's `review_comment` field and the next `swe-v2` session sees the feedback in its context.
-- **No child `review-request` issue is created** at any point during this bundle. The Sessions page shows a coherent `swe-v2` → `reviewer-v2` → `swe-v2` → `reviewer-v2` sequence on the same issue id.
+- At every transition into `backlog`, `in-development`, or `in-review`, `apply_status_on_enter` correctly reassigns to the configured agent (`pm`, `swe`, `reviewer` respectively) and the assignee-driven spawn dispatcher spawns the corresponding session.
+- On `request_changes`, `issue.feedback` is populated from the form's `review_comment` field and the next `swe` session sees the feedback in its context.
+- **No child `review-request` issue is created** at any point during this bundle. The Sessions page shows a coherent `swe` → `reviewer` → `swe` → `reviewer` sequence on the same issue id.
 - At least one patch is produced on `dourolabs/hydra-test-fixture` and visible on the patches page.
 
 **Bundle C — Dependency semantics:**
 - A parent's "child done" gate counts a child in `pending-release` (`unblocks_parents=true`) as satisfied and a child in `in-review` (`unblocks_parents=false`) as outstanding. The parent only becomes ready once **every** direct child is in an `unblocks_parents=true` status.
 - A dependent's "blocker done" gate counts a blocker in `pending-release` (`unblocks_dependents=true`) as satisfied and a blocker in `in-review` (`unblocks_dependents=false`) as outstanding. The dependent only becomes ready once **every** `blocked-on` dependency is in an `unblocks_dependents=true` status.
-- Readiness changes are reflected in the dashboard's child-list and blocked-by panels and gate agent spawn correctly per the unified rule from design §4 "Dependencies, readiness, cascade".
+- Readiness changes are reflected in the dashboard's child-list and blocked-by panels and gate agent spawn correctly per the unified rule from design [[d-druoexk]] §4 "Dependencies, readiness, cascade".
