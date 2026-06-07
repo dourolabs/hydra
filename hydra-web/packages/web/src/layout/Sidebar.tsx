@@ -176,12 +176,6 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
       isActive: () => isAllIssuesActive,
     },
     {
-      to: "/triggers",
-      label: "Triggers",
-      testId: "sidebar-triggers",
-      icon: <Icons.IconTime />,
-    },
-    {
       to: "/patches",
       label: "Patches",
       testId: "sidebar-patches",
@@ -204,6 +198,12 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
       label: "Agents",
       testId: "sidebar-agents",
       icon: <Icons.IconAgent />,
+    },
+    {
+      to: "/triggers",
+      label: "Triggers",
+      testId: "sidebar-triggers",
+      icon: <Icons.IconTime />,
     },
     {
       to: "/projects",
