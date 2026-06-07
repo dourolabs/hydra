@@ -36,11 +36,11 @@ All dashboard interactions go through `http://localhost:8080` per the suite's co
 1. Navigate to `http://localhost:8080/projects/engineering-v2`.
 2. Confirm the Project editor page renders with the seven statuses defined in `per-project-status-pipeline.md`'s **Setup**. If it does not (404, redirect, or the project is missing), treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
 3. Confirm `pair-development` is present in the status list with the project editor's "interactive" annotation chip rendered next to its label (PR 5 frontend, [[i-lfwhatzq]]). Open its row and confirm the `interactive` toggle is on.
-4. From `/issues?project=engineering-v2`, open the "Create issue" form's status dropdown and confirm `pair-development` is listed with the same interactive chip rendered alongside its label.
+4. From `/issues?project_key=engineering-v2`, open the "Create issue" form's status dropdown and confirm `pair-development` is listed with the same interactive chip rendered alongside its label.
 
 ### Step 2 — Test bundle A: Interactive spawn and greet-user
 
-1. From `/issues?project=engineering-v2`, click "Create issue". Fill in:
+1. From `/issues?project_key=engineering-v2`, click "Create issue". Fill in:
    - Title: `Pair-mode improvement to the hydra-test-fixture repo`
    - Description: `Make any small, low-risk improvement to the dourolabs/hydra-test-fixture repo at your discretion — for example, a typo fix, a minor wording polish, a tiny docs improvement, or an obviously-harmless cleanup. Use your judgment to pick the change. The goal is to submit a PR with a trivial change, not to make any specific edit.` (identical to the description used by `per-project-status-pipeline.md` Bundle B and `basic-issue-lifecycle.md`).
    - Repository: `dourolabs/hydra-test-fixture`
@@ -78,7 +78,7 @@ All dashboard interactions go through `http://localhost:8080` per the suite's co
 
 This bundle independently validates the `close_conversations_on_interactive_exit` automation against the manual flip-out direction (the user moves an interactive issue back to a non-interactive status mid-flight, instead of the agent transitioning forward to `in-review`).
 
-1. From `/issues?project=engineering-v2`, file a second issue:
+1. From `/issues?project_key=engineering-v2`, file a second issue:
    - Title: `Pair-mode close-on-exit smoke`
    - Description: `Test fixture for the interactive-issue-mode close-on-exit assertion. Do not submit a patch — this issue exists to validate the conversation-close direction only.`
    - Repository: `dourolabs/hydra-test-fixture`
@@ -86,11 +86,18 @@ This bundle independently validates the `close_conversations_on_interactive_exit
    - Status: default (`inbox`).
 2. Capture the new issue id as `${ISSUE_ID_2}`. Transition `inbox` → `pair-development`.
 3. Within the dispatcher tick, capture the spawned conversation id as `${CONV_ID_2}` (read it off the issue header's "Open Conversation" link or the Related-tab Conversations subsection, as in Step 2.4 — `ConversationSummary` doesn't expose `spawned_from`, so the dashboard is the practical source). Confirm via `hydra conversations get ${CONV_ID_2}` that `spawned_from == ${ISSUE_ID_2}` and the status is `Active`.
-4. From the issue detail page, transition `${ISSUE_ID_2}` from `pair-development` to `pending` (a non-interactive status with no `on_enter` rule, so no follow-on spawn confounds the assertion). Within the next event-bus tick:
+4. Atomically flip `${ISSUE_ID_2}` out of `pair-development` and clear its assignee in a single CLI update:
+
+       hydra issues update ${ISSUE_ID_2} --status pending --clear-assignee
+
+   - **Why:** `pair-development.on_enter.assign_to: swe` carries over to `pending` (which has no `on_enter`), so the AgentQueue would otherwise dispatch a headless `swe` session in `pending` (per [[d-ulhrefm]] §5 "Lifecycle"). Clearing the assignee in the same atomic update prevents that confounder.
+
+   Within the next event-bus tick:
    - `hydra conversations get ${CONV_ID_2}` returns `status == Closed`.
    - The dashboard issue header no longer renders the "Open Conversation" affordance; the Related-tab Conversations subsection still lists `${CONV_ID_2}` with status `Closed`.
-   - No new `swe` session spawns (verifiable via `hydra sessions list --from ${ISSUE_ID_2}` showing only the original in-conversation session, no new headless one for `pending` — `pending` has no `on_enter`).
-5. Optional re-spawn check: transition `${ISSUE_ID_2}` from `pending` back to `pair-development`. Confirm a **new** conversation id `${CONV_ID_3}` is minted (distinct from `${CONV_ID_2}`) and the "Open Conversation" affordance reappears in the header pointing at `${CONV_ID_3}`. This validates [[d-ulhrefm]] §5 "Lifecycle" — re-entering an interactive status spawns a fresh conversation rather than reusing the closed one.
+   - `hydra issues get ${ISSUE_ID_2}` shows `assignee == null` after the update.
+   - `hydra sessions list --from ${ISSUE_ID_2}` shows ONLY the original in-conversation session — no new headless `swe` session is dispatched in `pending` (the assignee is cleared, so the readiness check has no matching agent).
+5. Optional re-spawn check: re-transition `${ISSUE_ID_2}` from `pending` back to `pair-development`. `pair-development`'s `on_enter.assign_to: agents/swe` re-sets the assignee; combined with `interactive: true` on the destination status, `AgentQueue` mints a fresh conversation `${CONV_ID_3}` (distinct id from `${CONV_ID_2}`) and the "Open Conversation" affordance re-appears in the header pointing at it. This validates [[d-ulhrefm]] §5 "Lifecycle" — re-entering an interactive status spawns a fresh conversation rather than reusing the closed one.
 6. Cleanup: transition `${ISSUE_ID_2}` to `pending-release` (terminal) to leave the fixture in a clean state. `${CONV_ID_3}` should also close via `close_conversations_on_interactive_exit` since `pending-release` is non-interactive.
 
 ## Expected Results
@@ -108,7 +115,7 @@ This bundle independently validates the `close_conversations_on_interactive_exit
 - A single issue's session list mixes one interactive `swe` session (`mode.type == "interactive"`, `mode.greet_user == true`, attached to `${CONV_ID}`) with one headless `reviewer` session (`mode.type == "headless"`) — the uniformity guarantee from [[d-ulhrefm]] §1 holds (patch and review semantics are mode-agnostic).
 
 **Bundle C — Close-on-exit via status flip-out:**
-- Transitioning `${ISSUE_ID_2}` from `pair-development` to `pending` (a non-interactive status with no `on_enter`) closes `${CONV_ID_2}` via `close_conversations_on_interactive_exit` and removes the "Open Conversation" affordance from the issue header.
+- Transitioning `${ISSUE_ID_2}` from `pair-development` to `pending` (the flip-out also clears the assignee, so no follow-on dispatch confounds) closes `${CONV_ID_2}` via `close_conversations_on_interactive_exit` and removes the "Open Conversation" affordance from the issue header.
 - Re-entering `pair-development` mints a **fresh** conversation `${CONV_ID_3}` (distinct id from `${CONV_ID_2}`); the closed conversation is not reused.
 - Final flip to `pending-release` closes `${CONV_ID_3}` cleanly. The audit trail on the Related tab still shows all spawned conversations (`${CONV_ID_2}` and `${CONV_ID_3}`) with status `Closed`.
 
@@ -126,5 +133,6 @@ Report these explicitly so a failing run produces an actionable finding rather t
 - **`HYDRA_ISSUE_ID` env var missing on the in-conversation session** → PR 3 regression (the env-var derivation was meant to be duplicated, not refactored — see the round-2 reviewer note on [[i-xipntwnu]]).
 - **Conversation remains `Active` after `pair-development` → `in-review`** → `close_conversations_on_interactive_exit` is not firing. PR 4 regression. Capture the event-bus trace.
 - **Conversation remains `Active` after `pair-development` → `pending`** (same automation, different trigger path) → same regression as above, but specifically the manual flip-out direction. Distinguish from the agent-forward direction in the failure note.
+- **Headless `swe` session spawns in `pending` despite `--clear-assignee`** → indicates either the `hydra issues update` atomic update is racing the dispatcher (unlikely but possible), or `pair-development.on_enter` is being re-applied on the re-entry side. Capture `hydra sessions list --from ${ISSUE_ID_2} --output-format jsonl` and the dispatcher tick log around the flip-out timestamp.
 - **Re-entering `pair-development` reuses the closed conversation instead of spawning a fresh one** → [[d-ulhrefm]] §5 "Lifecycle" regression. Capture both conversation ids and the spawn-side log line.
 - **`reviewer` chain produces a child `review-request` issue** → uniformity guarantee broken; the per-project same-issue review hand-off prompt slice did not apply inside the conversation session. Capture the child-issue list and the reviewer session's resolved `system_prompt`.
