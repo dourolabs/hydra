@@ -1,15 +1,15 @@
 //! `AppState::resolve_status` — single resolution point from
 //! `(project_id, status)` to a [`StatusDefinition`].
 //!
-//! Per-issue lookups go through the project store when `Issue.project_id`
-//! is set, falling back to the synthesized `default_project` when it's
-//! `None`. Centralizing here keeps storage, validation, and `on_enter`
-//! automation aligned on one resolver instead of duplicating the
-//! `project_id → statuses` walk at each call site.
+//! All lookups go through the project store. When `Issue.project_id` is
+//! `None` (a residual shape — the `seed_default_project` migration
+//! backfills all rows to the stable default id), we resolve through the
+//! same store fetch using `default_project_id()` instead of branching
+//! into an in-process singleton.
 
 use crate::domain::actors::ActorRef;
 use crate::domain::issues::Issue;
-use crate::domain::projects::default_project;
+use crate::domain::projects::default_project_id;
 use crate::store::{ReadOnlyStore, StoreError};
 use hydra_common::api::v1::projects::{KeyError, Project, StatusDefinition, StatusKey};
 use hydra_common::{ProjectId, VersionNumber};
@@ -64,38 +64,29 @@ impl AppState {
     /// Resolve an issue's `(project_id, status)` pair to a
     /// [`StatusDefinition`].
     ///
-    /// When `issue.project_id` is `None`, resolution falls back to the
-    /// synthesized [`default_project`] (no DB read). Otherwise the
-    /// resolver fetches the project via the [`crate::store::Store`] and
-    /// looks up the status by key. The result is the same
-    /// [`StatusDefinition`] embedded inline as `Issue.resolved_status`
-    /// on every API response.
+    /// The resolver fetches the project via the [`crate::store::Store`]
+    /// and looks up the status by key. An issue with `project_id ==
+    /// None` (residual shape; the seed migration backfills production
+    /// rows) is resolved through the seeded default project.
     pub async fn resolve_status(
         &self,
         issue: &Issue,
     ) -> Result<StatusDefinition, ResolveStatusError> {
         let key =
             StatusKey::try_new(issue.status.as_str()).map_err(ResolveStatusError::InvalidKey)?;
-        match &issue.project_id {
-            None => default_project()
-                .find_status(&key)
-                .cloned()
-                .ok_or(ResolveStatusError::UnknownStatus(key)),
-            Some(project_id) => {
-                let store: &dyn ReadOnlyStore = self.store.as_ref();
-                let project = match store.get_project(project_id, false).await {
-                    Ok(versioned) => versioned.item,
-                    Err(StoreError::ProjectNotFound(_)) => {
-                        return Err(ResolveStatusError::ProjectNotFound(project_id.clone()));
-                    }
-                    Err(err) => return Err(ResolveStatusError::Store(err)),
-                };
-                project
-                    .find_status(&key)
-                    .cloned()
-                    .ok_or(ResolveStatusError::UnknownStatus(key))
+        let project_id = issue.project_id.clone().unwrap_or_else(default_project_id);
+        let store: &dyn ReadOnlyStore = self.store.as_ref();
+        let project = match store.get_project(&project_id, false).await {
+            Ok(versioned) => versioned.item,
+            Err(StoreError::ProjectNotFound(_)) => {
+                return Err(ResolveStatusError::ProjectNotFound(project_id));
             }
-        }
+            Err(err) => return Err(ResolveStatusError::Store(err)),
+        };
+        project
+            .find_status(&key)
+            .cloned()
+            .ok_or(ResolveStatusError::UnknownStatus(key))
     }
 }
 

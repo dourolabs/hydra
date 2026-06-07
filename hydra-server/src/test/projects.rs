@@ -103,8 +103,15 @@ async fn project_crud_round_trip() -> anyhow::Result<()> {
         .error_for_status()?
         .json()
         .await?;
-    assert_eq!(listed.projects.len(), 1);
-    assert_eq!(listed.projects[0].project_id, project_id);
+    // The seeded default project is always present, so this round-trip
+    // verifies engineering shows up alongside it.
+    assert!(
+        listed
+            .projects
+            .iter()
+            .any(|p| p.project_id == project_id && p.project.key.as_str() == "engineering"),
+        "engineering project must appear in list_projects"
+    );
 
     let mut updated_project = project.clone();
     updated_project.name = "Engineering v2".to_string();
@@ -373,7 +380,13 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
             .error_for_status()?
             .json()
             .await?;
-        assert!(fetched.issue.project_id.is_none());
+        // Issues created via `Issue::new` now persist the seeded
+        // default-project id rather than NULL; status resolution still
+        // returns one of the five legacy statuses.
+        assert_eq!(
+            fetched.issue.project_id.as_ref().map(|p| p.as_ref()),
+            Some(crate::domain::projects::DEFAULT_PROJECT_ID_STR)
+        );
         let resolved = fetched
             .issue
             .resolved_status

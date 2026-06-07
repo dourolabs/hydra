@@ -10317,6 +10317,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn project_round_trip_pg(pool: PgStorePool) {
+        use crate::domain::projects::default_project_id;
         let store = PostgresStoreV2::new(pool);
         let (id, version) = store
             .add_project(sample_project_pg(), &ActorRef::test())
@@ -10331,9 +10332,14 @@ mod tests {
         // `on_enter` must round-trip through the JSONB column unchanged.
         assert_eq!(fetched.item.statuses, sample_project_pg().statuses);
 
+        // The seed migration inserts the default project, so listing
+        // should yield both it and the newly-added engineering project.
+        let default_id = default_project_id();
         let listed = store.list_projects(false).await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].0, id);
+        assert_eq!(listed.len(), 2);
+        let ids: Vec<&ProjectId> = listed.iter().map(|(i, _)| i).collect();
+        assert!(ids.contains(&&id));
+        assert!(ids.contains(&&default_id));
 
         let mut updated = sample_project_pg();
         updated.name = "Engineering Renamed".to_string();
@@ -10349,8 +10355,10 @@ mod tests {
 
         let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 3);
-        assert!(store.list_projects(false).await.unwrap().is_empty());
-        assert_eq!(store.list_projects(true).await.unwrap().len(), 1);
+        let after_delete = store.list_projects(false).await.unwrap();
+        assert_eq!(after_delete.len(), 1);
+        assert_eq!(after_delete[0].0, default_id);
+        assert_eq!(store.list_projects(true).await.unwrap().len(), 2);
         assert!(matches!(
             store.get_project(&id, false).await,
             Err(StoreError::ProjectNotFound(_))
@@ -10604,5 +10612,70 @@ mod tests {
             result.is_ok(),
             "expected ok keeping same key, got {result:?}"
         );
+    }
+
+    /// The `seed_default_project` migration inserts the default project
+    /// as version 1; this round-trips every field through `get_project`
+    /// so that any future drift in the SELECT projection is caught at
+    /// the Postgres store layer.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn default_project_seeded_by_migration_round_trips_pg(pool: PgStorePool) {
+        use crate::domain::projects::default_project_id;
+        let store = PostgresStoreV2::new(pool);
+        let fetched = store
+            .get_project(&default_project_id(), false)
+            .await
+            .expect("default project must be seeded by migration");
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.key.as_str(), "default");
+        assert_eq!(fetched.item.name, "Default");
+        assert_eq!(fetched.item.default_status_key.as_str(), "open");
+        assert_eq!(fetched.item.statuses.len(), 5);
+        assert_eq!(
+            fetched.item.prompt_path.as_deref(),
+            Some("/projects/default/prompt.md")
+        );
+        let keys: Vec<&str> = fetched
+            .item
+            .statuses
+            .iter()
+            .map(|s| s.key.as_str())
+            .collect();
+        assert_eq!(keys, ["open", "in-progress", "closed", "dropped", "failed"]);
+        let closed = fetched
+            .item
+            .find_status(&hydra_common::api::v1::projects::StatusKey::try_new("closed").unwrap())
+            .unwrap();
+        assert!(closed.unblocks_parents);
+        assert!(closed.unblocks_dependents);
+        assert!(!closed.cascades_to_children);
+    }
+
+    /// Issues constructed via `Issue::new` go through the seeded
+    /// default project — verify status resolves through the DB-backed
+    /// project.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn issue_with_default_project_id_resolves_through_db_pg(pool: PgStorePool) {
+        use crate::domain::projects::default_project_id;
+        let store = PostgresStoreV2::new(pool);
+        let (issue_id, _) = store
+            .add_issue(sample_issue(Vec::new()), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let issue = store.get_issue(&issue_id, false).await.unwrap().item;
+        assert_eq!(issue.project_id.as_ref(), Some(&default_project_id()));
+
+        let project = store
+            .get_project(issue.project_id.as_ref().unwrap(), false)
+            .await
+            .unwrap()
+            .item;
+        let status = project
+            .find_status(&issue.status)
+            .expect("issue status must resolve to a default-project status");
+        assert_eq!(status.key.as_str(), "open");
     }
 }

@@ -12927,6 +12927,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_round_trip_create_get_list_update_delete_sqlite() {
+        use crate::domain::projects::default_project_id;
         let store = create_test_store().await;
         let (id, version) = store
             .add_project(sample_project(), &ActorRef::test())
@@ -12941,9 +12942,14 @@ mod tests {
         // `on_enter` must round-trip through the JSON column unchanged.
         assert_eq!(fetched.item.statuses, sample_project().statuses);
 
+        // The seed migration inserts the default project, so listing
+        // should yield both it and the newly-added engineering project.
+        let default_id = default_project_id();
         let listed = store.list_projects(false).await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].0, id);
+        assert_eq!(listed.len(), 2);
+        let ids: Vec<&ProjectId> = listed.iter().map(|(i, _)| i).collect();
+        assert!(ids.contains(&&id));
+        assert!(ids.contains(&&default_id));
 
         let mut updated = sample_project();
         updated.name = "Engineering Renamed".to_string();
@@ -12958,8 +12964,10 @@ mod tests {
 
         let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 3);
-        assert!(store.list_projects(false).await.unwrap().is_empty());
-        assert_eq!(store.list_projects(true).await.unwrap().len(), 1);
+        let after_delete = store.list_projects(false).await.unwrap();
+        assert_eq!(after_delete.len(), 1);
+        assert_eq!(after_delete[0].0, default_id);
+        assert_eq!(store.list_projects(true).await.unwrap().len(), 2);
         assert!(matches!(
             store.get_project(&id, false).await,
             Err(StoreError::ProjectNotFound(_))
@@ -13064,12 +13072,13 @@ mod tests {
         );
     }
 
-    /// The migration must add `project_id` to existing `issues_v2` rows
-    /// without losing data. Verify the new column defaults to NULL so
-    /// legacy rows keep resolving through `DefaultProject` instead of a
-    /// stored value.
+    /// `Issue::new` defaults `project_id` to the stable default-project
+    /// id (see [[i-dqzrijzy]]). The column on `issues_v2` remains
+    /// nullable for backwards compatibility with old rows, but every
+    /// new write goes through the default-project id.
     #[tokio::test]
-    async fn issues_v2_has_nullable_project_id_column_sqlite() {
+    async fn new_issue_persists_default_project_id_sqlite() {
+        use crate::domain::projects::default_project_id;
         let store = create_test_store().await;
         let (id, _) = store
             .add_issue(sample_issue(Vec::new()), &ActorRef::test())
@@ -13082,9 +13091,10 @@ mod tests {
                 .fetch_one(&store.pool)
                 .await
                 .unwrap();
-        assert!(
-            project_id.is_none(),
-            "legacy rows must default project_id to NULL"
+        assert_eq!(
+            project_id.as_deref(),
+            Some(default_project_id().as_ref()),
+            "Issue::new must persist the default-project id by default"
         );
     }
 
@@ -13212,5 +13222,71 @@ mod tests {
             result.is_ok(),
             "expected ok keeping same key, got {result:?}"
         );
+    }
+
+    /// The `seed_default_project` migration inserts the default project
+    /// as version 1; this round-trips every field through
+    /// `get_project` so that any future drift in the SELECT projection
+    /// (e.g. a forgotten column → `#[sqlx(default)]` fallback) is
+    /// caught at the store layer rather than at the resolver.
+    #[tokio::test]
+    async fn default_project_seeded_by_migration_round_trips_sqlite() {
+        use crate::domain::projects::default_project_id;
+        let store = create_test_store().await;
+        let fetched = store
+            .get_project(&default_project_id(), false)
+            .await
+            .expect("default project must be seeded by migration");
+        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.item.key.as_str(), "default");
+        assert_eq!(fetched.item.name, "Default");
+        assert_eq!(fetched.item.default_status_key.as_str(), "open");
+        assert_eq!(fetched.item.statuses.len(), 5);
+        assert_eq!(
+            fetched.item.prompt_path.as_deref(),
+            Some("/projects/default/prompt.md")
+        );
+        let keys: Vec<&str> = fetched
+            .item
+            .statuses
+            .iter()
+            .map(|s| s.key.as_str())
+            .collect();
+        assert_eq!(keys, ["open", "in-progress", "closed", "dropped", "failed"]);
+        // The `closed` flags must survive the JSON column round-trip.
+        let closed = fetched
+            .item
+            .find_status(&hydra_common::api::v1::projects::StatusKey::try_new("closed").unwrap())
+            .unwrap();
+        assert!(closed.unblocks_parents);
+        assert!(closed.unblocks_dependents);
+        assert!(!closed.cascades_to_children);
+    }
+
+    /// Issues constructed via `Issue::new` go through the seeded
+    /// default project — verify `resolve_status` (via reading the
+    /// project back from the store) resolves their status through
+    /// the DB-backed default project.
+    #[tokio::test]
+    async fn issue_with_default_project_id_resolves_through_db_sqlite() {
+        use crate::domain::projects::default_project_id;
+        let store = create_test_store().await;
+        let (issue_id, _) = store
+            .add_issue(sample_issue(Vec::new()), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let issue = store.get_issue(&issue_id, false).await.unwrap().item;
+        assert_eq!(issue.project_id.as_ref(), Some(&default_project_id()));
+
+        let project = store
+            .get_project(issue.project_id.as_ref().unwrap(), false)
+            .await
+            .unwrap()
+            .item;
+        let status = project
+            .find_status(&issue.status)
+            .expect("issue status must resolve to a default-project status");
+        assert_eq!(status.key.as_str(), "open");
     }
 }

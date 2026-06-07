@@ -298,8 +298,10 @@ impl AppState {
     /// prompt resolver for a new session.
     ///
     /// - `Some(issue_id)`: load the issue, resolve its status via
-    ///   [`AppState::resolve_status`], and pick the project from the store
-    ///   (or [`default_project`] for `project_id = None`). On any lookup
+    ///   [`AppState::resolve_status`], and load the project from the store.
+    ///   Issues with `project_id = None` (residual shape; the
+    ///   `seed_default_project` migration backfills production rows) are
+    ///   resolved through the seeded default project. On any lookup
     ///   failure we fall back to the no-project sentinel — the session
     ///   still spawns, and the empty project / status slices keep
     ///   `system_prompt` byte-identical to today's `resolve_agent_prompt`
@@ -315,7 +317,7 @@ impl AppState {
         hydra_common::api::v1::projects::Project,
         hydra_common::api::v1::projects::StatusDefinition,
     ) {
-        use crate::domain::projects::{default_project, no_project_sentinel};
+        use crate::domain::projects::{default_project_id, no_project_sentinel};
 
         let Some(issue_id) = spawned_from else {
             return no_project_sentinel();
@@ -342,20 +344,18 @@ impl AppState {
                 return no_project_sentinel();
             }
         };
-        let project = match &issue.project_id {
-            None => default_project().clone(),
-            Some(project_id) => match self.store.as_ref().get_project(project_id, false).await {
-                Ok(v) => v.item,
-                Err(err) => {
-                    info!(
-                        issue_id = %issue_id,
-                        project_id = %project_id,
-                        error = %err,
-                        "could not load project for prompt layering; using no-project sentinel"
-                    );
-                    return no_project_sentinel();
-                }
-            },
+        let project_id = issue.project_id.clone().unwrap_or_else(default_project_id);
+        let project = match self.store.as_ref().get_project(&project_id, false).await {
+            Ok(v) => v.item,
+            Err(err) => {
+                info!(
+                    issue_id = %issue_id,
+                    project_id = %project_id,
+                    error = %err,
+                    "could not load project for prompt layering; using no-project sentinel"
+                );
+                return no_project_sentinel();
+            }
         };
         (project, status)
     }

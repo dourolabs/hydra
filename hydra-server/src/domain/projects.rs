@@ -1,8 +1,9 @@
-//! `DefaultProject`: the synthesized project used for issues with no
-//! `project_id`. Reproduces today's `IssueStatus` semantics so legacy
-//! issues continue to resolve without a per-row migration.
+//! Default-project constants and seed for stores that lack a SQL
+//! migration pipeline (e.g. `MemoryStore`). The five-status seed
+//! reproduces today's `IssueStatus` semantics so legacy issues continue
+//! to resolve without per-row migration.
 //!
-//! Flag table for the synthesized statuses:
+//! Flag table for the seeded statuses:
 //!
 //! | key           | unblocks_parents | unblocks_dependents | cascades_to_children |
 //! |---------------|------------------|---------------------|----------------------|
@@ -14,14 +15,21 @@
 //!
 //! Default status key is `open`; no status has `on_enter` automation.
 
+use hydra_common::ProjectId;
 use hydra_common::Rgb;
 use hydra_common::api::v1::projects::{IconKey, Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::users::Username;
-use std::sync::OnceLock;
 
-/// Wire string for the default project's slug. Stable: leaked to clients
-/// once routes land (PR 3), so don't rename without a migration plan.
+/// Wire string for the default project's slug. Stable: leaked to clients,
+/// so don't rename without a migration plan.
 pub const DEFAULT_PROJECT_KEY: &str = "default";
+
+/// Stable, well-known `ProjectId` for the default project. Inserted by
+/// the `seed_default_project` migration on SQL stores and seeded by
+/// [`MemoryStore::new`] in-process. Must stay byte-for-byte identical to
+/// the id in `sqlite-migrations/20260607000000_seed_default_project.sql`
+/// (and the Postgres equivalent).
+pub const DEFAULT_PROJECT_ID_STR: &str = "j-defaul";
 
 /// Wire string for the synthesized [`no_project_sentinel`] project slug.
 const NO_PROJECT_SENTINEL_KEY: &str = "no-project";
@@ -29,33 +37,31 @@ const NO_PROJECT_SENTINEL_KEY: &str = "no-project";
 /// Wire string for the synthesized [`no_project_sentinel`] status slug.
 const NO_PROJECT_SENTINEL_STATUS_KEY: &str = "none";
 
-/// Username under which the default project is "owned". Synthesized,
-/// never written to storage — used only to populate
-/// [`Project::creator`] on the in-memory const.
-const SYSTEM_USERNAME: &str = "system";
+/// Username under which the default project is "owned". Stored verbatim
+/// in the seed migration's `creator` column.
+pub const SYSTEM_USERNAME: &str = "system";
 
-/// The synthesized default project, lazily constructed once per process.
-///
-/// The five statuses (`open`, `in-progress`, `closed`, `dropped`, `failed`)
-/// reproduce today's `IssueStatus` flag semantics — see the table in this
-/// module's top-level doc-comment. The status colors are explicit hex values
-/// approximating the existing frontend badge palette
-/// (`hydra-web/packages/ui/src/theme/tokens.css:78-83` —
-/// `--s-open` blue, `--s-progress` amber, `--s-closed` green,
-/// `--s-failed` red, `--s-dropped` dim red-brown) so badge appearance
-/// is preserved when the frontend switches from the hardcoded
-/// `statusMapping.ts` to `resolved_status.color` in PR 5.
-pub fn default_project() -> &'static Project {
-    static INSTANCE: OnceLock<Project> = OnceLock::new();
-    INSTANCE.get_or_init(build_default_project)
+/// Returns the stable [`ProjectId`] for the default project. Parses the
+/// `DEFAULT_PROJECT_ID_STR` constant; the unwrap is sound because the
+/// constant is validated by tests in this module.
+pub fn default_project_id() -> ProjectId {
+    ProjectId::try_from(DEFAULT_PROJECT_ID_STR.to_string())
+        .expect("DEFAULT_PROJECT_ID_STR is a well-formed ProjectId")
 }
 
-fn build_default_project() -> Project {
+/// Build the default-project [`Project`] value seeded by SQL migrations
+/// and by [`MemoryStore::new`].
+///
+/// Status colors are explicit hex values approximating the existing
+/// frontend badge palette (`hydra-web/packages/ui/src/theme/tokens.css:78-83`).
+/// Any change here must be mirrored in the
+/// `20260607000000_seed_default_project.sql` migrations (SQLite and
+/// Postgres), or the SQL-backed and Memory-backed stores will disagree.
+pub fn default_project_seed() -> Project {
     let mut open = StatusDefinition::new(
         status_key("open"),
         "Open".to_string(),
         icon_key("circle"),
-        // Matches `--s-open` (blue) at tokens.css:78.
         rgb("#3498db"),
         false,
         false,
@@ -68,7 +74,6 @@ fn build_default_project() -> Project {
         status_key("in-progress"),
         "In progress".to_string(),
         icon_key("circle-dot"),
-        // Matches `--s-progress` (amber) at tokens.css:79.
         rgb("#f1c40f"),
         false,
         false,
@@ -84,7 +89,6 @@ fn build_default_project() -> Project {
             status_key("closed"),
             "Closed".to_string(),
             icon_key("check-circle"),
-            // Matches `--s-closed` (green) at tokens.css:80.
             rgb("#2ecc71"),
             true,
             true,
@@ -95,7 +99,6 @@ fn build_default_project() -> Project {
             status_key("dropped"),
             "Dropped".to_string(),
             icon_key("x-circle"),
-            // Matches `--s-dropped` (dim red-brown) at tokens.css:82.
             rgb("#795548"),
             true,
             false,
@@ -106,7 +109,6 @@ fn build_default_project() -> Project {
             status_key("failed"),
             "Failed".to_string(),
             icon_key("alert-circle"),
-            // Matches `--s-failed` (red) at tokens.css:81.
             rgb("#e74c3c"),
             true,
             false,
@@ -174,27 +176,34 @@ mod tests {
     use crate::domain::issues::IssueStatus;
 
     #[test]
-    fn default_project_validates() {
-        default_project()
+    fn default_project_id_is_well_formed() {
+        let id = default_project_id();
+        assert_eq!(id.as_ref(), DEFAULT_PROJECT_ID_STR);
+    }
+
+    #[test]
+    fn default_project_seed_validates() {
+        default_project_seed()
             .validate()
-            .expect("default project must validate");
+            .expect("default project seed must validate");
     }
 
     #[test]
-    fn default_project_has_five_statuses() {
-        assert_eq!(default_project().statuses.len(), 5);
+    fn default_project_seed_has_five_statuses() {
+        assert_eq!(default_project_seed().statuses.len(), 5);
     }
 
     #[test]
-    fn default_project_default_status_is_open() {
-        assert_eq!(default_project().default_status_key.as_str(), "open");
+    fn default_project_seed_default_status_is_open() {
+        assert_eq!(default_project_seed().default_status_key.as_str(), "open");
     }
 
     /// Every wire string produced by today's `IssueStatus` must resolve
     /// to a status in the default project. This is the legacy-compat
-    /// contract for issues with no `project_id`.
+    /// contract for issues that previously had no `project_id`.
     #[test]
     fn every_legacy_status_string_resolves() {
+        let project = default_project_seed();
         for status in [
             IssueStatus::Open,
             IssueStatus::InProgress,
@@ -204,7 +213,7 @@ mod tests {
         ] {
             let key = StatusKey::try_new(status.as_str()).unwrap();
             assert!(
-                default_project().find_status(&key).is_some(),
+                project.find_status(&key).is_some(),
                 "default project is missing status '{}'",
                 status.as_str()
             );
@@ -214,7 +223,8 @@ mod tests {
     /// Lock the flag values for each default-project status. A change
     /// here is a behavior change for every default project — update with intent.
     #[test]
-    fn default_project_flags_match_design_table() {
+    fn default_project_seed_flags_match_design_table() {
+        let project = default_project_seed();
         let cases: &[(&str, bool, bool, bool)] = &[
             // (key, unblocks_parents, unblocks_dependents, cascades_to_children)
             ("open", false, false, false),
@@ -225,7 +235,7 @@ mod tests {
         ];
         for (k, ub_p, ub_d, casc) in cases {
             let key = StatusKey::try_new(*k).unwrap();
-            let def = default_project()
+            let def = project
                 .find_status(&key)
                 .unwrap_or_else(|| panic!("missing status {k}"));
             assert_eq!(def.unblocks_parents, *ub_p, "unblocks_parents for {k}");
@@ -242,13 +252,6 @@ mod tests {
     }
 
     #[test]
-    fn default_project_returns_same_instance() {
-        let a = default_project() as *const Project;
-        let b = default_project() as *const Project;
-        assert_eq!(a, b);
-    }
-
-    #[test]
     fn no_project_sentinel_has_no_prompt_paths() {
         let (project, status) = no_project_sentinel();
         assert!(project.prompt_path.is_none());
@@ -259,8 +262,8 @@ mod tests {
     /// flipping any of them would silently change spawn behavior for the
     /// built-in statuses.
     #[test]
-    fn default_project_has_interactive_false_for_every_status() {
-        for status in &default_project().statuses {
+    fn default_project_seed_has_interactive_false_for_every_status() {
+        for status in &default_project_seed().statuses {
             assert!(
                 !status.interactive,
                 "default project status '{}' must not be interactive",
@@ -275,13 +278,10 @@ mod tests {
         assert!(!status.interactive);
     }
 
-    /// Locks the per-layer `prompt_path` references for the default project
-    /// shipped by PR 1 of [[d-rzreslz]]. The docs at these paths don't yet
-    /// exist (PR 2 authors them); the resolver tolerates the gap and
-    /// produces empty slices for the missing layers.
+    /// Locks the per-layer `prompt_path` references for the default project.
     #[test]
-    fn default_project_sets_prompt_paths_for_non_terminal_statuses_only() {
-        let project = default_project();
+    fn default_project_seed_sets_prompt_paths_for_non_terminal_statuses_only() {
+        let project = default_project_seed();
         assert_eq!(
             project.prompt_path.as_deref(),
             Some("/projects/default/prompt.md")
