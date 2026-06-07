@@ -1,0 +1,26 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  line-height: 1.4;
+  color: var(--fg-1);
+}
+
+.name {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  font-weight: normal;
+}

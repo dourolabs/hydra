@@ -76,44 +76,7 @@ vi.mock("../../features/issues/usePaginatedIssues", () => ({
   // Board owns its own fetches via this hook. The test suite renders the
   // default (table) layout, but the import graph still pulls IssuesBoard in
   // so the mock must export every name IssuesBoard reads.
-  usePaginatedIssuesByStatus: () => ({
-    open: {
-      issues: [],
-      isLoading: false,
-      hasNextPage: false,
-      isFetchingNextPage: false,
-      fetchNextPage: vi.fn(),
-    },
-    "in-progress": {
-      issues: [],
-      isLoading: false,
-      hasNextPage: false,
-      isFetchingNextPage: false,
-      fetchNextPage: vi.fn(),
-    },
-    failed: {
-      issues: [],
-      isLoading: false,
-      hasNextPage: false,
-      isFetchingNextPage: false,
-      fetchNextPage: vi.fn(),
-    },
-    closed: {
-      issues: [],
-      isLoading: false,
-      hasNextPage: false,
-      isFetchingNextPage: false,
-      fetchNextPage: vi.fn(),
-    },
-    dropped: {
-      issues: [],
-      isLoading: false,
-      hasNextPage: false,
-      isFetchingNextPage: false,
-      fetchNextPage: vi.fn(),
-    },
-  }),
-  BOARD_STATUSES: ["open", "in-progress", "failed", "closed", "dropped"],
+  useBoardIssuesByProject: () => new Map(),
 }));
 
 vi.mock("../../features/auth/useAuth", () => ({

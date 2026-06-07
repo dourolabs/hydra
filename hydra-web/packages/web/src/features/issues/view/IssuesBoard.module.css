@@ -1,22 +1,69 @@
 .kanban {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(260px, 1fr);
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
   padding: 14px 20px;
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 
+.projectGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.projectBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+}
+
+.projectBarLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.projectBarRight {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+.projectMeta {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+}
+
+.projectColumns {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
 .col {
   display: flex;
   flex-direction: column;
+  width: 272px;
+  flex: 0 0 272px;
   min-height: 200px;
   max-height: 100%;
-  background: var(--bg-1);
+  background: var(--bg-2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
@@ -24,7 +71,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   font-family: var(--f-sans);
   font-size: var(--t-sm);
@@ -34,6 +81,17 @@
   position: sticky;
   top: 0;
   flex-shrink: 0;
+}
+
+.defaultChip {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
 }
 
 .colCount {
@@ -54,9 +112,9 @@
 }
 
 .card {
-  background: var(--bg-2);
+  background: var(--bg-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   padding: 10px;
   cursor: pointer;
   transition:
@@ -140,7 +198,7 @@
   padding: 0 12px;
   background: var(--bg-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   color: var(--fg-1);
   font-family: var(--f-sans);
   font-size: var(--t-xs);

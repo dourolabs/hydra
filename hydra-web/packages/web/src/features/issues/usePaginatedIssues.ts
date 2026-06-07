@@ -1,10 +1,15 @@
-import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQueries,
+  useQuery,
+} from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
 import type {
-  IssueStatus,
   IssueSummaryRecord,
   ListIssuesResponse,
   SearchIssuesQuery,
+  StatusDefinition,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -59,26 +64,6 @@ export function usePaginatedIssues(filters: IssueFilters, enabled = true) {
   });
 }
 
-// Board columns are fixed; the rules of hooks forbid useInfiniteQuery in a
-// loop, so the per-status hook below makes 5 named calls.
-export const BOARD_STATUSES = [
-  "open",
-  "in-progress",
-  "failed",
-  "closed",
-  "dropped",
-] as const satisfies readonly IssueStatus[];
-
-export type BoardStatus = (typeof BOARD_STATUSES)[number];
-
-export interface BoardColumnQuery {
-  issues: IssueSummaryRecord[];
-  isLoading: boolean;
-  hasNextPage: boolean;
-  isFetchingNextPage: boolean;
-  fetchNextPage: () => void;
-}
-
 function dedupeIssues(issues: IssueSummaryRecord[]): IssueSummaryRecord[] {
   const seen = new Set<string>();
   const out: IssueSummaryRecord[] = [];
@@ -91,117 +76,170 @@ function dedupeIssues(issues: IssueSummaryRecord[]): IssueSummaryRecord[] {
 }
 
 /**
- * Per-status paginated board hook. Fires one `useInfiniteQuery` per column so
- * each column can be deep-paginated independently. Each query key shares the
- * `["paginatedIssues", …]` prefix used by the table-view query, so SSE
- * invalidations propagate to both shapes.
- *
- * When the page's chip filter is active (`baseFilters.status` set), every
- * column queries with that status (sharing the matching column's cache via a
- * common queryKey). Non-matching columns then render empty after a render-side
- * filter, matching the table-mode semantics where a chip narrows to a single
- * status.
+ * Describes one project section on the board. `project_id === null` is the
+ * synthesized default project that gathers issues with no `project_id`.
  */
-export function usePaginatedIssuesByStatus(
+export interface BoardProjectDescriptor {
+  project_id: string | null;
+  key: string;
+  name: string;
+  statuses: StatusDefinition[];
+  default_status_key: string;
+}
+
+export interface BoardCellQuery {
+  issues: IssueSummaryRecord[];
+  isLoading: boolean;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  fetchNextPage: () => void;
+}
+
+/**
+ * Result of `useBoardIssuesByProject`. Outer key is the project_id
+ * (`null` for the synthesized default project). Inner key is the
+ * status key. Order of insertion mirrors the `projects` argument
+ * for stable iteration.
+ */
+export type BoardCellsByProject = Map<string | null, Map<string, BoardCellQuery>>;
+
+function cellKey(projectId: string | null, statusKey: string): string {
+  return `${projectId ?? "__default__"}::${statusKey}`;
+}
+
+/**
+ * Per-(project, status) paginated board hook. Fans out one query per cell
+ * via `useQueries` so the column count is dynamic in both dimensions.
+ *
+ * Per-cell query key shares the `["paginatedIssues", …]` prefix used by the
+ * table-view query so SSE invalidations propagate to both shapes.
+ *
+ * When the page's chip filter is active (`baseFilters.status` set), only the
+ * column whose status matches the chip is queried; the other columns'
+ * queries are disabled and render empty headers, matching the table-mode
+ * semantics where a chip narrows to a single status.
+ *
+ * Pagination depth is tracked per cell as React state: `fetchNextPage` bumps
+ * the depth, which re-keys the cell's query so `queryFn` walks one more page
+ * through the server cursor chain. `keepPreviousData` keeps the prior pages
+ * on screen while the deeper fetch lands, mirroring `useInfiniteQuery`'s
+ * `isFetchingNextPage` UX.
+ *
+ * The synthesized default project (`project_id === null`) cannot be scoped
+ * server-side (there's no "project_id IS NULL" filter on `listIssues`), so
+ * its cells query unscoped and filter render-side to issues with no
+ * `project_id`. Once the default project becomes a real `ProjectRecord`
+ * with a `j-`-prefixed id (see [[i-vstbajos]]), this branch becomes dead and
+ * can be removed.
+ */
+export function useBoardIssuesByProject(
   baseFilters: IssueFilters,
+  projects: BoardProjectDescriptor[],
   enabled = true,
-): Record<BoardStatus, BoardColumnQuery> {
-  const chipStatus = (baseFilters.status ?? null) as BoardStatus | null;
+): BoardCellsByProject {
+  const chipStatus = baseFilters.status ?? null;
 
-  function makeQueryKey(column: BoardStatus) {
-    const effective = chipStatus ?? column;
-    return ["paginatedIssues", { ...baseFilters, status: effective }] as const;
-  }
+  const [depthByCell, setDepthByCell] = useState<Record<string, number>>({});
 
-  function makeQueryFn(column: BoardStatus) {
-    const effective = chipStatus ?? column;
-    return ({ pageParam }: { pageParam: unknown }) =>
-      apiClient.listIssues(
-        buildQuery(
-          { ...baseFilters, status: effective },
-          pageParam as string | undefined,
-        ),
-      );
-  }
+  const cells = useMemo(() => {
+    const out: Array<{ projectId: string | null; statusKey: string }> = [];
+    for (const p of projects) {
+      for (const s of p.statuses) {
+        out.push({ projectId: p.project_id, statusKey: s.key });
+      }
+    }
+    return out;
+  }, [projects]);
 
-  const openQuery = useInfiniteQuery<ListIssuesResponse, Error>({
-    queryKey: makeQueryKey("open"),
-    queryFn: makeQueryFn("open"),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    placeholderData: keepPreviousData,
-    enabled,
+  const queries = useQueries({
+    queries: cells.map(({ projectId, statusKey }) => {
+      const ck = cellKey(projectId, statusKey);
+      const depth = depthByCell[ck] ?? 1;
+      // When a chip filter is active and this column doesn't match it,
+      // skip the fetch entirely — the cell renders as an empty header
+      // and no network traffic is spent.
+      const filteredOut = chipStatus !== null && chipStatus !== statusKey;
+      const filtersForKey: IssueFilters = {
+        ...baseFilters,
+        project_id: projectId,
+        status: statusKey,
+      };
+      return {
+        // Depth suffix splits the cache per loaded-page-count so each
+        // load-more is its own cache entry while still sharing the
+        // `["paginatedIssues", …]` invalidation prefix.
+        queryKey: ["paginatedIssues", filtersForKey, "depth", depth] as const,
+        queryFn: async (): Promise<ListIssuesResponse[]> => {
+          const pages: ListIssuesResponse[] = [];
+          let cursor: string | undefined;
+          for (let i = 0; i < depth; i++) {
+            const page = await apiClient.listIssues(
+              buildQuery(filtersForKey, cursor),
+            );
+            pages.push(page);
+            if (!page.next_cursor) break;
+            cursor = page.next_cursor;
+          }
+          return pages;
+        },
+        placeholderData: keepPreviousData,
+        enabled: enabled && !filteredOut,
+      };
+    }),
   });
-  const inProgressQuery = useInfiniteQuery<ListIssuesResponse, Error>({
-    queryKey: makeQueryKey("in-progress"),
-    queryFn: makeQueryFn("in-progress"),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    placeholderData: keepPreviousData,
-    enabled,
-  });
-  const failedQuery = useInfiniteQuery<ListIssuesResponse, Error>({
-    queryKey: makeQueryKey("failed"),
-    queryFn: makeQueryFn("failed"),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    placeholderData: keepPreviousData,
-    enabled,
-  });
-  const closedQuery = useInfiniteQuery<ListIssuesResponse, Error>({
-    queryKey: makeQueryKey("closed"),
-    queryFn: makeQueryFn("closed"),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    placeholderData: keepPreviousData,
-    enabled,
-  });
-  const droppedQuery = useInfiniteQuery<ListIssuesResponse, Error>({
-    queryKey: makeQueryKey("dropped"),
-    queryFn: makeQueryFn("dropped"),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
-    placeholderData: keepPreviousData,
-    enabled,
-  });
+
+  const bumpDepth = useCallback(
+    (projectId: string | null, statusKey: string) => {
+      const ck = cellKey(projectId, statusKey);
+      setDepthByCell((prev) => ({ ...prev, [ck]: (prev[ck] ?? 1) + 1 }));
+    },
+    [],
+  );
 
   return useMemo(() => {
-    function toColumn(
-      column: BoardStatus,
-      query:
-        | typeof openQuery
-        | typeof inProgressQuery
-        | typeof failedQuery
-        | typeof closedQuery
-        | typeof droppedQuery,
-    ): BoardColumnQuery {
-      const filteredOut = chipStatus !== null && chipStatus !== column;
-      const raw = query.data?.pages.flatMap((p) => p.issues) ?? [];
-      // When the chip filter contradicts this column, render no rows even
-      // though the shared query may have data — the column header still shows.
-      const visible = filteredOut
+    const map: BoardCellsByProject = new Map();
+    for (const p of projects) {
+      map.set(p.project_id, new Map());
+    }
+    for (let i = 0; i < cells.length; i++) {
+      const { projectId, statusKey } = cells[i];
+      const query = queries[i];
+      const filteredOut = chipStatus !== null && chipStatus !== statusKey;
+
+      const pages = (query.data ?? []) as ListIssuesResponse[];
+      const rawAll = pages.flatMap((p) => p.issues);
+      const deduped = dedupeIssues(rawAll);
+      let visible = filteredOut
         ? []
-        : dedupeIssues(raw).filter((rec) => rec.issue.status === column);
-      return {
+        : deduped.filter((rec) => rec.issue.status === statusKey);
+      // Default project = issues with no project_id (synthesized section).
+      if (projectId === null) {
+        visible = visible.filter((rec) => !rec.issue.project_id);
+      }
+
+      const lastPage = pages[pages.length - 1];
+      const serverHasNext = !!lastPage?.next_cursor;
+      // Approximate useInfiniteQuery's isFetchingNextPage: a depth bump
+      // re-keys the query, React Query keeps the prior data via
+      // placeholderData, and `isFetching` is true while the deeper fetch
+      // runs.
+      const isFetchingNext = query.isFetching && pages.length > 0;
+
+      const cellQuery: BoardCellQuery = {
         issues: visible,
         isLoading: !filteredOut && query.isLoading,
-        hasNextPage: !filteredOut && (query.hasNextPage ?? false),
-        isFetchingNextPage: query.isFetchingNextPage ?? false,
+        hasNextPage: !filteredOut && serverHasNext,
+        isFetchingNextPage: !filteredOut && isFetchingNext,
         fetchNextPage: () => {
-          if (query.hasNextPage && !query.isFetchingNextPage) {
-            query.fetchNextPage();
+          if (serverHasNext && !isFetchingNext) {
+            bumpDepth(projectId, statusKey);
           }
         },
       };
+      map.get(projectId)!.set(statusKey, cellQuery);
     }
-    return {
-      open: toColumn("open", openQuery),
-      "in-progress": toColumn("in-progress", inProgressQuery),
-      failed: toColumn("failed", failedQuery),
-      closed: toColumn("closed", closedQuery),
-      dropped: toColumn("dropped", droppedQuery),
-    };
-  }, [chipStatus, openQuery, inProgressQuery, failedQuery, closedQuery, droppedQuery]);
+    return map;
+  }, [projects, cells, queries, chipStatus, bumpDepth]);
 }
 
 /**
