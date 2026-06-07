@@ -79,8 +79,8 @@ pub struct GetProjectArgs {
     /// `default_status_key`) on stdout, suitable for piping back into
     /// `projects update --body-file -`. Overrides the default pretty /
     /// jsonl rendering.
-    #[arg(long = "config")]
-    pub config: bool,
+    #[arg(long = "body-yaml")]
+    pub body_yaml: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -187,7 +187,7 @@ pub async fn run(
                 .get_project(&args.project_id)
                 .await
                 .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
-            if args.config {
+            if args.body_yaml {
                 let yaml = render_body_yaml(&record.project)?;
                 buffer.extend_from_slice(yaml.as_bytes());
             } else {
@@ -739,7 +739,7 @@ mod tests {
     }
 
     #[test]
-    fn get_project_args_parses_config_flag() {
+    fn get_project_args_parses_body_yaml_flag() {
         use clap::Parser;
 
         #[derive(Debug, Parser)]
@@ -748,11 +748,36 @@ mod tests {
             args: GetProjectArgs,
         }
 
-        let cli = Cli::try_parse_from(["cli", "j-abcdef", "--config"]).expect("parse");
-        assert!(cli.args.config);
+        let cli = Cli::try_parse_from(["cli", "j-abcdef", "--body-yaml"]).expect("parse");
+        assert!(cli.args.body_yaml);
 
         let cli = Cli::try_parse_from(["cli", "j-abcdef"]).expect("parse");
-        assert!(!cli.args.config);
+        assert!(!cli.args.body_yaml);
+    }
+
+    /// Drive the full top-level `Cli` parser end-to-end to catch flag
+    /// collisions with the global `--config <FILE>`. Parsing
+    /// `GetProjectArgs` in isolation can't see the global flag, so a
+    /// subcommand-level flag that shadows it would only surface as a
+    /// runtime panic. Keep this test next to the flag definition so the
+    /// next person who reaches for `--config` (or any other global-flag
+    /// name) discovers the conflict at `cargo test` time.
+    #[test]
+    fn cli_parses_projects_get_with_body_yaml_flag() {
+        use crate::cli::{Cli, Commands};
+        use clap::Parser;
+
+        let cli = Cli::try_parse_from(["hydra", "projects", "get", "j-abcdef", "--body-yaml"])
+            .expect("parse");
+        match cli.command {
+            Some(Commands::Projects {
+                command: ProjectsCommand::Get(args),
+            }) => {
+                assert_eq!(args.project_id.to_string(), "j-abcdef");
+                assert!(args.body_yaml);
+            }
+            _ => panic!("expected `projects get` subcommand"),
+        }
     }
 
     #[test]
