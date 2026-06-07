@@ -101,7 +101,7 @@ test.describe("Hidden labels are excluded from user-facing label UI @labels:hidd
     await page.getByRole("button", { name: "Edit labels" }).click();
 
     // The editable area should show platform-v2 but NOT inbox
-    const editorArea = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    const editorArea = page.getByTestId("label-editor");
     await expect(editorArea.getByText("platform-v2")).toBeVisible();
     await expect(editorArea.getByText("inbox")).not.toBeVisible();
   });
@@ -129,7 +129,7 @@ test.describe("Hidden labels are excluded from user-facing label UI @labels:hidd
 
     // Re-enter edit mode to confirm visible labels are still correct
     await page.getByRole("button", { name: "Edit labels" }).click();
-    const editorArea = page.getByText("Labels", { exact: true }).locator("..").locator("..");
+    const editorArea = page.getByTestId("label-editor");
     await expect(editorArea.getByText("platform-v2")).toBeVisible();
     await expect(editorArea.getByText("inbox")).not.toBeVisible();
   });

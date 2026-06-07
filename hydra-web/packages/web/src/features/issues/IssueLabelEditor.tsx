@@ -81,7 +81,7 @@ export function IssueLabelEditor({ issueId, labels }: IssueLabelEditorProps) {
 
   if (editing) {
     return (
-      <div className={styles.editor}>
+      <div className={styles.editor} data-testid="label-editor">
         <LabelPicker
           selectedNames={selectedNames}
           onChange={setSelectedNames}
