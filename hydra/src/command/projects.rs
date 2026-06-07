@@ -7,14 +7,14 @@ use crate::{
     },
     output_writer::write_stdout,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::api::v1::projects::{
-    Project, ProjectIdOrDefault, ProjectKey, ProjectRecord, StatusKey, UpsertProjectRequest,
-    UpsertProjectResponse,
+    Project, ProjectIdOrDefault, ProjectKey, ProjectRecord, StatusDefinition, StatusKey,
+    UpsertProjectRequest, UpsertProjectResponse,
 };
 use hydra_common::ProjectId;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 #[derive(Debug, Subcommand)]
@@ -37,6 +37,11 @@ pub enum ProjectsCommand {
         #[command(subcommand)]
         command: StatusCommand,
     },
+    /// Write a richly-commented sample project body file to disk. The
+    /// output is a valid `--body-file` input for `projects create` /
+    /// `projects update` and is the documented starting point for
+    /// authoring a new project.
+    SampleConfig(SampleConfigArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -69,6 +74,25 @@ pub struct GetProjectArgs {
     /// Project id (e.g. `j-abc123`).
     #[arg(value_name = "PROJECT_ID")]
     pub project_id: ProjectId,
+
+    /// Emit the project's body in `--body-file` YAML shape (statuses +
+    /// `default_status_key`) on stdout, suitable for piping back into
+    /// `projects update --body-file -`. Overrides the default pretty /
+    /// jsonl rendering.
+    #[arg(long = "config")]
+    pub config: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SampleConfigArgs {
+    /// Destination path for the sample body YAML.
+    #[arg(value_name = "OUTPUT_PATH")]
+    pub output_path: PathBuf,
+
+    /// Overwrite `<OUTPUT_PATH>` if it already exists. Without this flag
+    /// the command refuses to clobber an existing file.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -163,11 +187,16 @@ pub async fn run(
                 .get_project(&args.project_id)
                 .await
                 .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
-            render(
-                ProjectRecords(&[record]),
-                context.output_format,
-                &mut buffer,
-            )?;
+            if args.config {
+                let yaml = render_body_yaml(&record.project)?;
+                buffer.extend_from_slice(yaml.as_bytes());
+            } else {
+                render(
+                    ProjectRecords(&[record]),
+                    context.output_format,
+                    &mut buffer,
+                )?;
+            }
         }
         ProjectsCommand::Update(args) => {
             let record = update_project(client, args).await?;
@@ -207,6 +236,10 @@ pub async fn run(
                 )?;
             }
         },
+        ProjectsCommand::SampleConfig(args) => {
+            write_sample_config(&args.output_path, args.force)?;
+            write_sample_config_summary(context.output_format, &args.output_path, &mut buffer)?;
+        }
     }
     write_stdout(&buffer)?;
     Ok(())
@@ -327,6 +360,58 @@ fn apply_prompt_path_arg(arg: Option<String>, current: Option<String>) -> Option
     }
 }
 
+/// Render the body-file slice (`statuses` + `default_status_key`) of a
+/// project as YAML. This is the inverse of [`load_body_file`] for those
+/// two fields: piping the output back through `projects update --body-file`
+/// is a no-op for the body slice (modulo whitespace/comment loss).
+///
+/// `ProjectBodyFile` itself only derives `Deserialize`; we keep it that
+/// way and serialize a borrowed view here so the parser stays decoupled
+/// from the writer.
+fn render_body_yaml(project: &Project) -> Result<String> {
+    #[derive(serde::Serialize)]
+    struct BodyView<'a> {
+        statuses: &'a [StatusDefinition],
+        default_status_key: &'a StatusKey,
+    }
+    let view = BodyView {
+        statuses: &project.statuses,
+        default_status_key: &project.default_status_key,
+    };
+    serde_yaml_ng::to_string(&view).context("failed to serialize project body as YAML")
+}
+
+fn write_sample_config(path: &Path, force: bool) -> Result<()> {
+    if path.exists() && !force {
+        bail!(
+            "refusing to overwrite existing file '{}' (pass --force to overwrite)",
+            path.display()
+        );
+    }
+    std::fs::write(path, SAMPLE_PROJECT_BODY_YAML.as_bytes())
+        .with_context(|| format!("failed to write sample config to '{}'", path.display()))?;
+    Ok(())
+}
+
+fn write_sample_config_summary<W: std::io::Write>(
+    format: ResolvedOutputFormat,
+    path: &Path,
+    writer: &mut W,
+) -> Result<()> {
+    match format {
+        ResolvedOutputFormat::Pretty => {
+            writeln!(writer, "Wrote sample project body to '{}'", path.display())?;
+        }
+        ResolvedOutputFormat::Jsonl => {
+            let line = serde_json::json!({ "output_path": path.display().to_string() });
+            serde_json::to_writer(&mut *writer, &line)?;
+            writer.write_all(b"\n")?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 fn write_delete_summary<W: std::io::Write>(
     format: ResolvedOutputFormat,
     response: &UpsertProjectResponse,
@@ -395,6 +480,11 @@ impl ProjectRef {
     }
 }
 
+/// Richly-commented sample project body file. Round-trips through
+/// [`load_body_file`] (see `sample_project_body_yaml_round_trips` below)
+/// and is the documented starting point for `--body-file` authoring.
+const SAMPLE_PROJECT_BODY_YAML: &str = include_str!("sample_project_body.yaml");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +541,238 @@ mod tests {
             apply_prompt_path_arg(Some("/b".into()), None),
             Some("/b".into())
         );
+    }
+
+    /// Parse the bundled sample body file and assert it covers every
+    /// surface call-outs in the issue: ≥3 statuses, an `on_enter.assign_to`,
+    /// an `on_enter.attach_form`, a `prompt_path`, an `interactive: true`,
+    /// and varied dependency-graph booleans. Without this we'd silently
+    /// ship a sample that no longer parses (or quietly drifts off the
+    /// documented surface).
+    #[test]
+    fn sample_project_body_yaml_round_trips() {
+        let body = serde_yaml_ng::from_str::<crate::command::project_body_file::ProjectBodyFile>(
+            SAMPLE_PROJECT_BODY_YAML,
+        )
+        .expect("sample yaml must parse as a ProjectBodyFile");
+        assert!(
+            body.statuses.len() >= 3,
+            "sample must exercise ≥3 statuses, got {}",
+            body.statuses.len(),
+        );
+        assert!(
+            body.statuses
+                .iter()
+                .any(|s| s.key == body.default_status_key),
+            "default_status_key '{}' must resolve to a status entry",
+            body.default_status_key,
+        );
+        assert!(
+            body.statuses.iter().any(|s| s
+                .on_enter
+                .as_ref()
+                .and_then(|e| e.assign_to.as_ref())
+                .is_some()),
+            "sample must exercise on_enter.assign_to",
+        );
+        assert!(
+            body.statuses.iter().any(|s| s
+                .on_enter
+                .as_ref()
+                .and_then(|e| e.attach_form.as_ref())
+                .is_some()),
+            "sample must exercise on_enter.attach_form",
+        );
+        assert!(
+            body.statuses.iter().any(|s| s.prompt_path.is_some()),
+            "sample must exercise prompt_path",
+        );
+        assert!(
+            body.statuses.iter().any(|s| s.interactive),
+            "sample must exercise interactive: true",
+        );
+        assert!(
+            body.statuses.iter().any(|s| s.unblocks_parents),
+            "sample must exercise unblocks_parents: true",
+        );
+        assert!(
+            body.statuses.iter().any(|s| s.unblocks_dependents),
+            "sample must exercise unblocks_dependents: true",
+        );
+        assert!(
+            body.statuses.iter().any(|s| s.cascades_to_children),
+            "sample must exercise cascades_to_children: true",
+        );
+    }
+
+    /// The sample is shipped as the documented `--body-file` starting point,
+    /// so the constant SHOULD contain inline `#` comments — a regression
+    /// where someone replaced it with `serde_yaml_ng::to_string(...)` (which
+    /// drops comments) would silently degrade the UX.
+    #[test]
+    fn sample_project_body_yaml_contains_inline_comments() {
+        assert!(
+            SAMPLE_PROJECT_BODY_YAML.contains('#'),
+            "sample yaml lost its inline `#` comments",
+        );
+    }
+
+    fn build_project_fixture() -> Project {
+        use hydra_common::agents::AgentName;
+        use hydra_common::api::v1::projects::{IconKey, StatusOnEnter};
+        use hydra_common::api::v1::users::Username;
+        use hydra_common::principal::Principal;
+
+        let mut backlog = StatusDefinition::new(
+            StatusKey::try_new("backlog").unwrap(),
+            "Backlog".to_string(),
+            IconKey::try_new("list").unwrap(),
+            "#9b59b6".parse().unwrap(),
+            false,
+            false,
+            false,
+            Some(StatusOnEnter::new(
+                Some(Principal::agent(AgentName::try_new("pm").unwrap())),
+                None,
+            )),
+        );
+        backlog.prompt_path = Some("/projects/fixture/statuses/backlog.md".into());
+        backlog.interactive = true;
+
+        let pending_release = StatusDefinition::new(
+            StatusKey::try_new("pending-release").unwrap(),
+            "Pending release".to_string(),
+            IconKey::try_new("package").unwrap(),
+            "#2ecc71".parse().unwrap(),
+            true,
+            true,
+            false,
+            None,
+        );
+
+        Project::new(
+            ProjectKey::try_new("fixture").unwrap(),
+            "Fixture".to_string(),
+            vec![backlog, pending_release],
+            StatusKey::try_new("backlog").unwrap(),
+            Username::try_new("jayantk").unwrap(),
+            false,
+        )
+    }
+
+    /// Render an in-memory `Project` via `render_body_yaml`, parse the
+    /// output back through the same `load_body_file` parser the CLI uses,
+    /// and assert the body slice survives unchanged. Backs the `get --config`
+    /// → `update --body-file` round-trip without needing a live server.
+    #[test]
+    fn render_body_yaml_round_trips_through_body_file_parser() {
+        let project = build_project_fixture();
+        let yaml = render_body_yaml(&project).unwrap();
+        let body =
+            serde_yaml_ng::from_str::<crate::command::project_body_file::ProjectBodyFile>(&yaml)
+                .expect("rendered yaml must parse as a ProjectBodyFile");
+        assert_eq!(body.statuses, project.statuses);
+        assert_eq!(body.default_status_key, project.default_status_key);
+    }
+
+    /// The body view must NOT leak project-level fields that `ProjectBodyFile`
+    /// doesn't carry (`key`, `name`, `creator`, `deleted`, project-level
+    /// `prompt_path`). The body-file parser is tolerant of unknown fields,
+    /// so a future refactor that accidentally serialized the whole `Project`
+    /// would still appear to "round-trip" while quietly polluting the file
+    /// the user copies around as their config.
+    #[test]
+    fn render_body_yaml_omits_project_envelope_fields() {
+        let mut project = build_project_fixture();
+        project.prompt_path = Some("/projects/fixture/prompt.md".into());
+        let yaml = render_body_yaml(&project).unwrap();
+        let value: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&yaml).expect("rendered yaml must parse");
+        let mapping = value
+            .as_mapping()
+            .expect("rendered body should be a YAML mapping");
+        let keys: std::collections::BTreeSet<_> = mapping
+            .keys()
+            .filter_map(|k| k.as_str().map(str::to_owned))
+            .collect();
+        let expected: std::collections::BTreeSet<String> = ["statuses", "default_status_key"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            keys, expected,
+            "top-level body keys should be exactly statuses + default_status_key; got {keys:?}",
+        );
+    }
+
+    #[test]
+    fn write_sample_config_refuses_to_overwrite_without_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.yaml");
+        std::fs::write(&path, b"existing\n").unwrap();
+        let err = write_sample_config(&path, false).unwrap_err();
+        assert!(
+            err.to_string().contains("refusing to overwrite"),
+            "got: {err}",
+        );
+        // File must be left untouched.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing\n");
+    }
+
+    #[test]
+    fn write_sample_config_overwrites_with_force() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.yaml");
+        std::fs::write(&path, b"existing\n").unwrap();
+        write_sample_config(&path, true).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, SAMPLE_PROJECT_BODY_YAML);
+    }
+
+    #[test]
+    fn write_sample_config_writes_to_new_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.yaml");
+        write_sample_config(&path, false).unwrap();
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, SAMPLE_PROJECT_BODY_YAML);
+    }
+
+    #[test]
+    fn get_project_args_parses_config_flag() {
+        use clap::Parser;
+
+        #[derive(Debug, Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: GetProjectArgs,
+        }
+
+        let cli = Cli::try_parse_from(["cli", "j-abcdef", "--config"]).expect("parse");
+        assert!(cli.args.config);
+
+        let cli = Cli::try_parse_from(["cli", "j-abcdef"]).expect("parse");
+        assert!(!cli.args.config);
+    }
+
+    #[test]
+    fn sample_config_args_parses_force_flag() {
+        use clap::Parser;
+
+        #[derive(Debug, Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: SampleConfigArgs,
+        }
+
+        let cli = Cli::try_parse_from(["cli", "/tmp/x.yaml"]).expect("parse");
+        assert_eq!(cli.args.output_path, PathBuf::from("/tmp/x.yaml"));
+        assert!(!cli.args.force);
+
+        let cli = Cli::try_parse_from(["cli", "/tmp/x.yaml", "--force"]).expect("parse");
+        assert!(cli.args.force);
+
+        // Missing positional arg should error.
+        assert!(Cli::try_parse_from(["cli"]).is_err());
     }
 }
