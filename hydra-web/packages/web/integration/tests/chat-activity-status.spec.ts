@@ -15,7 +15,7 @@ import { test, expect } from "../fixtures/auth";
 //
 // In real prod usage `useSSE` invalidates `["sessionEvents", sid]` whenever
 // the server pushes a `session_event_created` event, driving the refetch +
-// re-render. In the e2e dev setup that flow is currently broken: the
+// re-render. In the integration dev setup that flow is currently broken: the
 // mock-server's `/v1/events` filter compares `types=...` (entity-category
 // names: `sessions`, `issues`, …) against the FULL event name
 // (`session_event_created`), so the SSE message never reaches the browser

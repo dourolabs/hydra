@@ -7,7 +7,7 @@ this is required reading.
 
 - [docs/testing.md](docs/testing.md) — Cross-cutting testing rules: TDD is required, and never widen exports for tests.
 - [docs/rust/AGENTS.md](docs/rust/AGENTS.md) — Rust workspace standards: style, idioms, errors/logging, testing, CLI conventions.
-- [docs/typescript/AGENTS.md](docs/typescript/AGENTS.md) — Frontend (`hydra-web/`) standards: workspace shape, CSS Modules, React Query + SSE, e2e testing.
+- [docs/typescript/AGENTS.md](docs/typescript/AGENTS.md) — Frontend (`hydra-web/`) standards: workspace shape, CSS Modules, React Query + SSE, integration testing.
 - [docs/architecture/AGENTS.md](docs/architecture/AGENTS.md) — Architectural standards: issue/graph model, sessions + git branches, routes/domain/store layering, automations vs. background workers, API wire contract.
 - [docs/open-core.md](docs/open-core.md) — Dual-license layout (MIT core + proprietary `ee/`), cargo features (`postgres`, `kubernetes`, `enterprise`, `test-utils`), and Postgres migration baselines.
 

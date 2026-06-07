@@ -1,17 +1,17 @@
 /**
  * Scenario coverage check: validates every required scenario in scenarios.md
- * has at least one corresponding tagged test in e2e/tests/**\/*.spec.ts.
+ * has at least one corresponding tagged test in integration/tests/**\/*.spec.ts.
  *
  * Scenarios marked with `(planned)` are excluded from the check.
  *
- * Usage: npx tsx e2e/check-coverage.ts
+ * Usage: npx tsx integration/check-coverage.ts
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const E2E_DIR = resolve(import.meta.dirname);
-const SCENARIOS_PATH = join(E2E_DIR, "scenarios.md");
-const TESTS_DIR = join(E2E_DIR, "tests");
+const INTEGRATION_DIR = resolve(import.meta.dirname);
+const SCENARIOS_PATH = join(INTEGRATION_DIR, "scenarios.md");
+const TESTS_DIR = join(INTEGRATION_DIR, "tests");
 
 // 1. Parse scenarios.md for all @tag:name entries (skip planned ones)
 function extractScenarios(content: string): Map<string, string> {

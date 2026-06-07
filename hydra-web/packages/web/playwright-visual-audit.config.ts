@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./e2e",
+  testDir: "./integration",
   testMatch: "visual-audit.spec.ts",
   outputDir: "./test-results",
   workers: 1,

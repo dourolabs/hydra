@@ -47,9 +47,9 @@ test.describe("Creating an issue with labels via LabelPicker @labels:create-with
     // Re-open the popover (it closed on selection? actually it stays open per
     // the picker's onMousedown outside check — but selection clears search).
     // Search input remains focused; type a name that doesn't exist.
-    await search.fill("e2e-test-label");
+    await search.fill("integration-test-label");
     const createOption = page.getByRole("button", {
-      name: /Create.*e2e-test-label/,
+      name: /Create.*integration-test-label/,
     });
     await expect(createOption).toBeVisible();
     await createOption.click();
@@ -59,7 +59,7 @@ test.describe("Creating an issue with labels via LabelPicker @labels:create-with
 
     // Verify both labels appear as chips in the pill summary
     await expect(labelsPill.getByText("platform-v2", { exact: true })).toBeVisible();
-    await expect(labelsPill.getByText("e2e-test-label", { exact: true })).toBeVisible();
+    await expect(labelsPill.getByText("integration-test-label", { exact: true })).toBeVisible();
 
     // Submit the form
     await modal.getByRole("button", { name: "Create issue" }).click();

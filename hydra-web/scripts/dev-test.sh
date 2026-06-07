@@ -7,15 +7,15 @@
 # its cleanup trap and kill its child dev servers. When backgrounded from a
 # non-interactive context (e.g. an agent's `./scripts/dev-test.sh &`), neither
 # the wait nor the trap will fire, leaving orphaned mock-server / vite
-# processes that outlive the caller. For agent workflows use `pnpm e2e` or
-# `pnpm visual-audit` instead — both Playwright configs declare a `webServer`
+# processes that outlive the caller. For agent workflows use `pnpm integration`
+# or `pnpm visual-audit` instead — both Playwright configs declare a `webServer`
 # block that manages the dev-server lifecycle automatically.
 #
-# Start mock server + Vite dev server, then optionally run E2E tests.
+# Start mock server + Vite dev server, then optionally run integration tests.
 #
 # Usage:
 #   ./scripts/dev-test.sh          # Start dev stack and keep running
-#   ./scripts/dev-test.sh --test   # Start dev stack, run E2E tests, then exit
+#   ./scripts/dev-test.sh --test   # Start dev stack, run integration tests, then exit
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -90,7 +90,7 @@ echo "========================================="
 echo ""
 
 if [[ "${1:-}" == "--test" ]]; then
-  echo "Running Playwright E2E tests..."
+  echo "Running Playwright integration tests..."
   pnpm --filter @hydra/web exec playwright test
   exit $?
 fi

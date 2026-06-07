@@ -7,7 +7,7 @@
 | `packages/api` | `@hydra/api` | `HydraApiClient`, generated request/response types, SSE primitives |
 | `packages/ui` | `@hydra/ui` | Reusable components + theme tokens |
 | `packages/web` | `@hydra/web` | The SPA |
-| `packages/mock-server` | `@hydra/mock-server` | Hono mock of the hydra API for e2e and contract tests |
+| `packages/mock-server` | `@hydra/mock-server` | Hono mock of the hydra API for integration and contract tests |
 
 When `api` or `ui` changes, rebuild them before re-running the web typecheck:
 

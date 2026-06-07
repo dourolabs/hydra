@@ -20,7 +20,7 @@ const queryClient = new QueryClient({
 });
 
 // Dev-only: expose the QueryClient on `window` so Playwright specs can drive
-// cache invalidation directly. Used by the `@chat:activity-status` e2e spec
+// cache invalidation directly. Used by the `@chat:activity-status` integration spec
 // to invalidate `["sessionEvents", sid]` after POST-ing a synthesised
 // SessionEvent to the mock-server's `POST /v1/dev/sessions/:id/events` test
 // seam — the mock-server's `/v1/events` SSE filter currently rejects
