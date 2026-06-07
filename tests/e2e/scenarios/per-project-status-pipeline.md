@@ -76,7 +76,7 @@ All interactions go through the dashboard at `http://localhost:8080` per the sui
 
 For each of the seven statuses (`inbox`, `backlog`, `pending`, `in-development`, `pair-development`, `in-review`, `pending-release`), file one issue directly into that status:
 
-1. Navigate to `/issues?project=engineering-v2`.
+1. Navigate to `/issues?project_key=engineering-v2`.
 2. Click the "Create issue" button. In the new-issue form, set:
    - Title: `UI surface check — <status-key>`
    - Repository: `dourolabs/hydra-test-fixture`
@@ -86,14 +86,14 @@ For each of the seven statuses (`inbox`, `backlog`, `pending`, `in-development`,
 
 For each issue filed above, assert:
 
-- **List page.** Navigate to `/issues?project=engineering-v2`. The issue's status column renders the project's declared `label`, `icon`, and `color` for that status — **not** the legacy hardcoded mapping from `statusMapping.ts` (which is deleted by [[i-ctfcvyru]] PR 5 per design §4 "Frontend display"). Apply the status filter chip for that status; confirm the issue is included when its status is selected and excluded when a different status is selected.
+- **List page.** Navigate to `/issues?project_key=engineering-v2`. The issue's status column renders the project's declared `label`, `icon`, and `color` for that status — **not** the legacy hardcoded mapping from `statusMapping.ts` (which is deleted by [[i-ctfcvyru]] PR 5 per design §4 "Frontend display"). Apply the status filter chip for that status; confirm the issue is included when its status is selected and excluded when a different status is selected.
 - **Detail page.** Open the issue. The status badge renders with the same `label` / `icon` / `color` as on the list. Open the transition control; confirm the dropdown lists all seven statuses in the project's defined order (`inbox`, `backlog`, `pending`, `in-development`, `pair-development`, `in-review`, `pending-release`). The `pair-development` row carries the project editor's "interactive" annotation chip alongside its label.
 - **Related-items panels.** If the issue is referenced from any related-items panel (e.g. a parent's child list, a blocked-by panel on a dependent), the badge appearance there matches the list and detail views.
 - **Filter dropdowns.** From any page that exposes a status filter dropdown (Issues list, Sessions filtered by issue status, etc.) when the project filter is set to `engineering-v2`, confirm all seven statuses appear as filter options.
 
 ### Step 3 — Test bundle B: End-to-end columnar flow
 
-1. From `/issues?project=engineering-v2`, click "Create issue". Fill in:
+1. From `/issues?project_key=engineering-v2`, click "Create issue". Fill in:
    - Title: `Make a small improvement to the hydra-test-fixture repo`
    - Description: `Make any small, low-risk improvement to the dourolabs/hydra-test-fixture repo at your discretion — for example, a typo fix, a minor wording polish, a tiny docs improvement, or an obviously-harmless cleanup. Use your judgment to pick the change. The goal is to submit a PR with a trivial change, not to make any specific edit.` (identical to the description used by `basic-issue-lifecycle.md`).
    - Repository: `dourolabs/hydra-test-fixture`
