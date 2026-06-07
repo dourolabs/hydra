@@ -270,11 +270,11 @@ impl AppState {
                     })
             }
         };
-        if let Some(session_id) = resolved_session_id {
+        if let Some(session_id) = resolved_session_id.as_ref() {
             let preview = session_event.preview();
             match self
                 .store
-                .append_session_event_with_actor(&session_id, session_event, actor_ref.clone())
+                .append_session_event_with_actor(session_id, session_event, actor_ref.clone())
                 .await
             {
                 Ok(version) => {
@@ -307,6 +307,15 @@ impl AppState {
         // mirrors as the relay entry being dropped). If the worker doesn't disconnect
         // within `GRACEFUL_CLOSE_TIMEOUT`, fall back to `kill_job` — the
         // pre-graceful behavior — so stuck workers can't block End Chat.
+        //
+        // If the relay is inactive (worker never reached Ready, or briefly
+        // disconnected) but `resolved_session_id` is `Some`, skip the
+        // graceful poll — there's no `to_worker` channel to send
+        // `EndSession` on — and go directly to `kill_job` + token revoke.
+        // Without this fallback the spawned job lingers indefinitely and
+        // the session row stays `Running`, which blocks
+        // `AgentQueue::has_active_session` on re-entry to the interactive
+        // status.
         if let Some(session_id) = self.chat_relay_map.active_session_id(conversation_id) {
             let sent = self.chat_relay_map.send_end_session(conversation_id);
             if sent {
@@ -380,6 +389,47 @@ impl AppState {
                         "failed to revoke session tokens after kill_job fallback"
                     );
                 }
+            }
+        } else if let Some(session_id) = resolved_session_id.as_ref() {
+            // Relay inactive but the store knows about a session for this
+            // conversation. The worker may have spawned but not reached
+            // Ready, or it may have briefly disconnected. Drive `kill_job`
+            // directly so the job doesn't linger and the
+            // `monitor_running_sessions` reconciler can move the session
+            // row out of Running on its next tick. Revoke tokens
+            // unconditionally — the call is idempotent at the store layer.
+            info!(
+                conversation_id = %conversation_id,
+                session_id = %session_id,
+                "no active relay; driving kill_job directly to terminate the linked session"
+            );
+            match self.job_engine.kill_job(session_id).await {
+                Ok(()) => {
+                    info!(
+                        conversation_id = %conversation_id,
+                        session_id = %session_id,
+                        "killed linked session via relay-inactive fallback"
+                    );
+                }
+                Err(err) => {
+                    // `NotFound` here means the job already exited (e.g.
+                    // worker crashed before the close arrived); we treat
+                    // this as success and still revoke tokens below.
+                    warn!(
+                        conversation_id = %conversation_id,
+                        session_id = %session_id,
+                        error = %err,
+                        "kill_job on relay-inactive fallback returned error (may already be stopped)"
+                    );
+                }
+            }
+            if let Err(err) = self.store.revoke_auth_tokens_for_session(session_id).await {
+                warn!(
+                    conversation_id = %conversation_id,
+                    session_id = %session_id,
+                    error = %err,
+                    "failed to revoke session tokens after relay-inactive fallback"
+                );
             }
         }
 
@@ -1566,6 +1616,294 @@ mod tests {
         assert_eq!(
             versioned_after.item, versioned_before.item,
             "forbidden send_message must not mutate the conversation",
+        );
+    }
+
+    /// Construct an `AppState` paired with a clone of its
+    /// [`MockJobEngine`]. The test code uses the clone to seed jobs and to
+    /// assert `kill_job` side effects (running → failed), without going
+    /// through the abstract `JobEngine` trait.
+    fn state_with_mock_engine() -> (AppState, std::sync::Arc<crate::test_utils::MockJobEngine>) {
+        use crate::test_utils::{MockJobEngine, test_app_config, test_secret_manager};
+        use crate::{app::ServiceState, store::MemoryStore};
+        use std::sync::Arc;
+        let engine = Arc::new(MockJobEngine::new());
+        let state = AppState::new(
+            Arc::new(test_app_config()),
+            None,
+            Arc::new(ServiceState::default()),
+            Arc::new(MemoryStore::new()),
+            engine.clone(),
+            test_secret_manager(),
+        );
+        (state, engine)
+    }
+
+    /// Seed an Interactive `Session` bound to `conversation_id` and
+    /// `issue_id` directly via the store, bypassing the spawn automation.
+    /// Used by the relay-inactive close-conversation tests to construct
+    /// the pre-Ready state where a session row exists but no relay
+    /// connection has ever been registered.
+    async fn seed_interactive_session(
+        state: &AppState,
+        conversation_id: &ConversationId,
+        issue_id: &hydra_common::IssueId,
+    ) -> hydra_common::SessionId {
+        use crate::domain::sessions::{AgentConfig, Session, SessionMode};
+        use crate::policy::automations::agent_queue::ISSUE_ID_ENV_VAR;
+        use crate::routes::sessions::mount_spec_from_create_request;
+        use crate::store::Status;
+        use std::collections::HashMap;
+        let mut env_vars = HashMap::new();
+        env_vars.insert(ISSUE_ID_ENV_VAR.to_string(), issue_id.to_string());
+        let session = Session::new(
+            Username::from("creator"),
+            Some(issue_id.clone()),
+            None,
+            AgentConfig::default(),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
+            Some("worker:latest".to_string()),
+            env_vars,
+            None,
+            None,
+            None,
+            SessionMode::Interactive {
+                conversation_id: conversation_id.clone(),
+                idle_timeout_secs: None,
+                greet_user: false,
+            },
+            Status::Running,
+            None,
+            None,
+        );
+        let (session_id, _) = state
+            .store
+            .add_session_with_actor(session, chrono::Utc::now(), ActorRef::test())
+            .await
+            .expect("seeded interactive session must persist");
+        session_id
+    }
+
+    #[tokio::test]
+    async fn close_conversation_kills_session_when_relay_inactive() {
+        // Regression test for [[i-jjbcjlix]]: when the chat relay shows no
+        // active connection for a conversation (worker hasn't reached
+        // Ready, or has briefly disconnected), `close_conversation` must
+        // still drive `kill_job` on the linked session so the job doesn't
+        // linger and re-entry spawn gates aren't blocked by a session row
+        // that stays Running indefinitely.
+        use crate::domain::conversations::{Conversation, ConversationStatus};
+        use crate::job_engine::JobStatus;
+        let (state, engine) = state_with_mock_engine();
+        let issue_id = hydra_common::IssueId::new();
+
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(
+                Conversation {
+                    title: None,
+                    agent_name: None,
+                    status: ConversationStatus::Active,
+                    creator: Username::from("creator"),
+                    session_settings: SessionSettings::default(),
+                    spawned_from: Some(issue_id.clone()),
+                    deleted: false,
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let session_id = seed_interactive_session(&state, &conversation_id, &issue_id).await;
+        engine.insert_job(&session_id, JobStatus::Running).await;
+
+        // No `simulate_worker_connect` call: `active_session_id` returns
+        // `None` for this conversation, exercising the new fallback.
+        assert!(
+            state
+                .chat_relay_map
+                .active_session_id(&conversation_id)
+                .is_none(),
+            "precondition: relay must be inactive for this conversation"
+        );
+
+        let closed = state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .expect("close_conversation must succeed under the relay-inactive fallback");
+        assert_eq!(closed.item.status, ConversationStatus::Closed);
+
+        // `kill_job` on MockJobEngine transitions the job's status from
+        // Running to Failed. Observing Failed here is the same signal the
+        // production `monitor_running_sessions` reconciler uses to drive
+        // the session row out of Running.
+        use crate::job_engine::JobEngine;
+        let job = engine
+            .find_job_by_hydra_id(&session_id)
+            .await
+            .expect("seeded job must still be present after kill_job");
+        assert_eq!(
+            job.status,
+            JobStatus::Failed,
+            "kill_job must have been invoked on the linked session"
+        );
+
+        // The session row itself is unchanged by `close_conversation`;
+        // `monitor_running_sessions` reconciles the Running → Failed
+        // transition asynchronously based on the job status it just
+        // observed (verified end-to-end by the reconcile_running_task
+        // test below).
+        let session = state
+            .store()
+            .get_session(&session_id, false)
+            .await
+            .expect("session row must still exist");
+        assert_eq!(
+            session.item.status,
+            crate::store::Status::Running,
+            "close_conversation must not synchronously transition the session row"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_conversation_is_noop_when_no_session_linked() {
+        // Legacy `/chat` shape: a conversation that never had a session
+        // spawned (e.g. an idle conversation closed before any send). The
+        // store-fallback for `resolved_session_id` returns `None`, and
+        // the relay-inactive branch must short-circuit without touching
+        // the job engine.
+        use crate::domain::conversations::{Conversation, ConversationStatus};
+        let (state, engine) = state_with_mock_engine();
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(
+                Conversation {
+                    title: None,
+                    agent_name: None,
+                    status: ConversationStatus::Active,
+                    creator: Username::from("creator"),
+                    session_settings: SessionSettings::default(),
+                    spawned_from: None,
+                    deleted: false,
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let closed = state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .expect("close_conversation must succeed with no linked session");
+        assert_eq!(closed.item.status, ConversationStatus::Closed);
+
+        use crate::job_engine::JobEngine;
+        assert!(
+            engine.list_jobs().await.unwrap().is_empty(),
+            "no job should have been created or touched by this close_conversation",
+        );
+    }
+
+    #[tokio::test]
+    async fn close_conversation_handles_kill_job_not_found_after_relay_inactive() {
+        // The job linked to the session may already have exited by the
+        // time `close_conversation` runs (worker crashed, container OOMed,
+        // etc.). `MockJobEngine::kill_job` returns `JobEngineError::NotFound`
+        // in that case; `close_conversation` must still transition the
+        // conversation to Closed and not propagate the error.
+        use crate::domain::conversations::{Conversation, ConversationStatus};
+        let (state, engine) = state_with_mock_engine();
+        let issue_id = hydra_common::IssueId::new();
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(
+                Conversation {
+                    title: None,
+                    agent_name: None,
+                    status: ConversationStatus::Active,
+                    creator: Username::from("creator"),
+                    session_settings: SessionSettings::default(),
+                    spawned_from: Some(issue_id.clone()),
+                    deleted: false,
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let session_id = seed_interactive_session(&state, &conversation_id, &issue_id).await;
+        // Deliberately omit `engine.insert_job(...)`: `kill_job` against
+        // this session id will return `NotFound`.
+
+        let closed = state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .expect("close_conversation must tolerate kill_job NotFound");
+        assert_eq!(closed.item.status, ConversationStatus::Closed);
+
+        // Sanity: the job engine still has no job for this session id.
+        use crate::job_engine::{JobEngine, JobEngineError};
+        let result = engine.find_job_by_hydra_id(&session_id).await;
+        assert!(
+            matches!(result, Err(JobEngineError::NotFound(_))),
+            "no job should exist after the NotFound path",
+        );
+    }
+
+    #[tokio::test]
+    async fn close_conversation_then_reconcile_drives_session_to_failed() {
+        // End-to-end check that the relay-inactive fallback dovetails
+        // with `monitor_running_sessions::reconcile_running_task`: after
+        // `close_conversation` drives `kill_job`, the next reconcile pass
+        // observes `JobStatus::Failed` and transitions the session row to
+        // `Status::Failed`. This is the chain the parent issue's
+        // user-visible-outcome paragraph requires.
+        use crate::domain::conversations::{Conversation, ConversationStatus};
+        use crate::job_engine::JobStatus;
+        use crate::store::Status;
+        let (state, engine) = state_with_mock_engine();
+        let issue_id = hydra_common::IssueId::new();
+
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(
+                Conversation {
+                    title: None,
+                    agent_name: None,
+                    status: ConversationStatus::Active,
+                    creator: Username::from("creator"),
+                    session_settings: SessionSettings::default(),
+                    spawned_from: Some(issue_id.clone()),
+                    deleted: false,
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let session_id = seed_interactive_session(&state, &conversation_id, &issue_id).await;
+        engine.insert_job(&session_id, JobStatus::Running).await;
+
+        state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .expect("close_conversation must succeed");
+
+        // Run one reconcile pass — equivalent to a single
+        // `MonitorRunningSessionsWorker::run_iteration` over this session.
+        state
+            .reconcile_running_task(session_id.clone(), ActorRef::test())
+            .await;
+
+        let session = state
+            .store()
+            .get_session(&session_id, false)
+            .await
+            .expect("session row must exist after reconcile");
+        assert_eq!(
+            session.item.status,
+            Status::Failed,
+            "reconcile must observe the Failed job status that kill_job produced and drive the session out of Running"
         );
     }
 
