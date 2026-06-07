@@ -362,7 +362,7 @@ describe("useSSE chatRelated cache invalidation", () => {
   it("routes session_updated through the SessionSummaryRecord arm even when the mock-server uses the plural entity_type 'sessions'", () => {
     // The mock-server emits entity_type = collection name (`sessions`, plural);
     // the real server emits `session` (singular). The dispatch must accept
-    // both — otherwise mock-driven e2e tests silently lose every session
+    // both — otherwise mock-driven integration tests silently lose every session
     // mutation event.
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];

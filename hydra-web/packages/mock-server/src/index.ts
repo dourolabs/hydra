@@ -69,7 +69,7 @@ app.use("*", async (c, next) => {
 // Health endpoint (no auth required)
 app.get("/health", (c) => c.json({ status: "ok" }));
 
-// BFF-style auth routes (cookie-based) for e2e tests
+// BFF-style auth routes (cookie-based) for integration tests
 app.route("/auth", createBffAuthRoutes());
 
 // Login endpoint does not require auth

@@ -45,7 +45,7 @@ function buildSyntheticEvent(variant: SyntheticVariant, tick: number): SessionEv
  * dev UI sees the chat / events tabs live-update without a manual refetch.
  *
  * The rotation is keyed off the current per-session event-log length so the
- * output is deterministic given a fixed seed (important for e2e snapshots).
+ * output is deterministic given a fixed seed (important for integration snapshots).
  *
  * Returns a handle whose `stop()` is idempotent: it clears the interval and
  * flips a per-handle `stopped` flag that causes any tick already queued by

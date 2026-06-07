@@ -1,6 +1,6 @@
 # hydra-web Agent Guidelines
 
-See also: [`docs/typescript/`](../docs/typescript/AGENTS.md) for the frontend reference cluster (workspace shape, CSS Modules, React Query + SSE, e2e testing).
+See also: [`docs/typescript/`](../docs/typescript/AGENTS.md) for the frontend reference cluster (workspace shape, CSS Modules, React Query + SSE, integration testing).
 
 This document helps AI agents and developers navigate the hydra-web frontend codebase. Read this before making changes to avoid duplicating existing utilities or diverging from established patterns.
 
@@ -98,15 +98,15 @@ Before submitting a patch, verify your changes using the dev testing stack.
 
 1. Install dependencies: `cd hydra-web && pnpm install`
 2. Install Playwright browsers (not needed in the worker Docker image): `pnpm --filter @hydra/web exec playwright install chromium`
-3. Run E2E tests: `pnpm e2e`
+3. Run integration tests: `pnpm integration`
    - Playwright automatically starts the mock server and frontend via its `webServer` config
    - Servers are automatically stopped when tests complete
 4. If tests fail, check screenshots in `packages/web/test-results/`
 5. If tests pass, create your patch
 
-> **WARNING: Do not use `dev-test.sh --test` with `run_in_background`.** Background dev servers can outlive the agent session and cause job hangs. Always use `pnpm e2e` instead — Playwright manages the full server lifecycle automatically.
+> **WARNING: Do not use `dev-test.sh --test` with `run_in_background`.** Background dev servers can outlive the agent session and cause job hangs. Always use `pnpm integration` instead — Playwright manages the full server lifecycle automatically.
 
-> **Do not start dev servers manually before running `pnpm e2e`.** Playwright's `reuseExistingServer: true` means it will skip starting servers if the ports are already occupied, but manually started servers won't be cleaned up when tests finish. Let Playwright handle it.
+> **Do not start dev servers manually before running `pnpm integration`.** Playwright's `reuseExistingServer: true` means it will skip starting servers if the ports are already occupied, but manually started servers won't be cleaned up when tests finish. Let Playwright handle it.
 
 Use `./scripts/dev-test.sh` only for interactive development where you need long-running servers (e.g., manual browser testing). Never use it in automated or agent workflows.
 
@@ -128,7 +128,7 @@ Add the `X-Mock-Error: <status-code>` header to any request to make the mock ser
 ### Run specific tests
 
 ```bash
-pnpm e2e                                           # all E2E tests
+pnpm integration                                   # all integration tests
 pnpm --filter @hydra/web exec playwright test login # specific test file
 pnpm --filter @hydra/web exec playwright test --headed  # visible browser
 ```
@@ -138,7 +138,7 @@ pnpm --filter @hydra/web exec playwright test --headed  # visible browser
 - Screenshots are saved to `packages/web/test-results/` on failure.
 - Traces are recorded on first retry (CI only by default). View with `pnpm --filter @hydra/web exec playwright show-trace <trace-file>`.
 - Run with `--headed` to watch the browser during test execution.
-- Playwright's `webServer` config in `packages/web/playwright.config.ts` auto-starts the mock server and frontend when running `pnpm e2e`.
+- Playwright's `webServer` config in `packages/web/playwright.config.ts` auto-starts the mock server and frontend when running `pnpm integration`.
 
 ### Visual Audit & Screenshot Capture
 
@@ -149,7 +149,7 @@ The visual audit script captures screenshots of every major page at both desktop
 1. Run the visual audit: `cd packages/web && pnpm visual-audit`
 2. Screenshots are saved to `packages/web/test-results/visual-audit/`
 
-Playwright manages the dev-server lifecycle (mock server on port 8080, Vite on port 3000) via the `webServer` config in `packages/web/playwright-visual-audit.config.ts` — servers are started before the audit and torn down when it exits, mirroring the `pnpm e2e` UX. Do not start dev servers manually beforehand.
+Playwright manages the dev-server lifecycle (mock server on port 8080, Vite on port 3000) via the `webServer` config in `packages/web/playwright-visual-audit.config.ts` — servers are started before the audit and torn down when it exits, mirroring the `pnpm integration` UX. Do not start dev servers manually beforehand.
 
 Each screenshot is named `{viewport}-{page}.png`, for example:
 - `desktop-dashboard.png`, `mobile-dashboard.png`
@@ -168,3 +168,7 @@ Login, dashboard, issue detail, patch detail, documents list, document detail, s
 ### Contract tests
 
 The `@hydra/mock-server` package includes contract tests that validate the mock server's responses against the `@hydra/api` client types. These run as part of `pnpm test` in CI and catch drift between the mock and real server.
+
+## Naming: integration vs. system e2e
+
+The Playwright suite under `packages/web/integration/` is the **frontend integration** suite — runs against `@hydra/mock-server`, scoped to UI flows. A separate suite at the repo root under `tests/e2e/` is the **system e2e** suite — driven by a Claude tester agent against a real single-player Hydra. Don't confuse the two; this rename was to remove that ambiguity.

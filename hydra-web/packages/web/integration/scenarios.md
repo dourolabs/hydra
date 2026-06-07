@@ -1,8 +1,8 @@
 # User Scenarios
 
-Central catalog of user scenarios for E2E validation. Each scenario has a unique tag
+Central catalog of user scenarios for integration validation. Each scenario has a unique tag
 that maps to one or more Playwright tests via `@tag` annotations. Run a subset with
-`pnpm e2e -- --grep @auth` (or any tag).
+`pnpm integration -- --grep @auth` (or any tag).
 
 ## Authentication
 

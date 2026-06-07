@@ -479,7 +479,7 @@ export function createSessionRoutes(store: Store): Hono {
   });
 
   // POST /v1/dev/sessions/:id/events — test-only: append a SessionEvent and
-  // broadcast a `session_event_created` SSE notification, so e2e scenarios
+  // broadcast a `session_event_created` SSE notification, so integration scenarios
   // can simulate the worker emitting `ToolUse` / `AssistantMessage` events
   // mid-conversation. Mirrors the real-server flow without requiring a
   // full agent loop.
@@ -523,7 +523,7 @@ export function createSessionRoutes(store: Store): Hono {
   });
 
   // POST /v1/sessions/:id/proxy-targets — worker-only on the real server.
-  // The mock accepts the call so test fixtures (and the e2e flow that
+  // The mock accepts the call so test fixtures (and the integration flow that
   // simulates a worker advertising a port) can drive the UI without a real
   // worker token.
   app.post("/v1/sessions/:id/proxy-targets", async (c) => {
@@ -566,7 +566,7 @@ export function createSessionRoutes(store: Store): Hono {
 
   // POST /v1/sessions/:id/proxy-auth — cookie-mint. The real server signs
   // and sets `Set-Cookie: hydra_proxy_<short>=…; Domain=.proxy.<host>;…`.
-  // The mock is content to return 204 without a cookie: e2e tests assert
+  // The mock is content to return 204 without a cookie: integration tests assert
   // the call lands, not that the cookie is honored (the proxy router
   // itself is not exercised in the SPA mock environment).
   app.post("/v1/sessions/:id/proxy-auth", (c) => {

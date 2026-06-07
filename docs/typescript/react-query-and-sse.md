@@ -61,4 +61,4 @@ Hooks and components live next to each other but in separate files — see the H
 ## See also
 
 - [packages.md](./packages.md) — `HydraApiClient` and the `utils/` checklist.
-- [testing.md](./testing.md) — how to exercise SSE behaviour in e2e.
+- [testing.md](./testing.md) — how to exercise SSE behaviour in integration tests.

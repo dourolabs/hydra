@@ -8,7 +8,7 @@
     "dev": "pnpm -r --filter @hydra/web dev",
     "dev:mock-server": "pnpm -r --filter @hydra/mock-server dev",
     "dev:test": "./scripts/dev-test.sh",
-    "e2e": "pnpm --filter @hydra/web exec playwright test",
+    "integration": "pnpm --filter @hydra/web exec playwright test",
     "generate-types": "cd .. && TS_RS_EXPORT_DIR=hydra-web/packages/api/src/generated cargo test -p hydra-common --features ts export_bindings && cd hydra-web && prettier --write packages/api/src/generated/",
     "lint": "eslint packages/*/src --ext .ts,.tsx",
     "test": "vitest run",

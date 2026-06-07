@@ -33,7 +33,7 @@ import type { Filter } from "../features/filters";
 import styles from "./IssuesListPage.module.css";
 
 // Map legacy `?selected=…` shortcut values onto the explicit filter URL params
-// so e2e tests and bookmarked URLs continue to work after the sidebar switched
+// so integration tests and bookmarked URLs continue to work after the sidebar switched
 // to the new scheme.
 const LEGACY_SELECTED_VALUES = new Set([
   "your-issues",

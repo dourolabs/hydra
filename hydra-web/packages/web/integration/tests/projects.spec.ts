@@ -15,7 +15,7 @@ test.describe("Projects @projects:create", () => {
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
-    await page.getByTestId("project-editor-key").fill("e2e-eng");
+    await page.getByTestId("project-editor-key").fill("integration-eng");
     await page.getByTestId("project-editor-name").fill("E2E Engineering");
 
     // Add one more status beyond the three defaults.
@@ -24,7 +24,7 @@ test.describe("Projects @projects:create", () => {
     await page.getByTestId("project-editor-save").click();
 
     // Routed to the detail page on success.
-    await page.waitForURL("**/projects/e2e-eng");
+    await page.waitForURL("**/projects/integration-eng");
     await expect(
       page.getByRole("heading", { name: "E2E Engineering" }),
     ).toBeVisible();

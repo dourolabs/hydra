@@ -73,7 +73,7 @@ export function createAuthRoutes(store: Store): Hono {
 
 /**
  * BFF-style auth routes under /auth (cookie-based).
- * These mimic the Rust BFF's cookie handling for e2e tests.
+ * These mimic the Rust BFF's cookie handling for integration tests.
  */
 export function createBffAuthRoutes(): Hono {
   const app = new Hono();

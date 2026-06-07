@@ -14,7 +14,7 @@ import { test, expect } from "../fixtures/auth";
 //
 // The mock server has no real proxy reach, so we intercept the HEAD probe to
 // the proxy subdomain and assert the call/URL shape directly. This matches
-// the e2e contract described in [[i-pdwsvquo]] acceptance criteria — the
+// the integration contract described in [[i-pdwsvquo]] acceptance criteria — the
 // real backend's proxy router is integration-tested in PR 2.
 
 const SEED_CONVERSATION_ID = "c-seed00001"; // dev-user's active conversation
@@ -88,7 +88,7 @@ test.describe("Proxy tab @chat:proxy-tab", () => {
     // through the dev `vite` proxy (see chat-activity-status.spec.ts for the
     // same workaround), so we shim the invalidation via the dev-only
     // `window.__hydraQueryClient` export. The useSSE → invalidate handler
-    // itself is covered by unit tests; this e2e covers the downstream
+    // itself is covered by unit tests; this integration spec covers the downstream
     // query-refetch → ProxyTab-appears path.
     const advertiseRes = await page.request.post(
       `http://localhost:8080/v1/sessions/${SEED_SESSION_ID}/proxy-targets`,

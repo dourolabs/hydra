@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./e2e/tests",
+  testDir: "./integration/tests",
   outputDir: "./test-results",
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -20,7 +20,7 @@ export default defineConfig({
     },
     {
       name: "Mobile Chrome",
-      testDir: "./e2e/tests/mobile",
+      testDir: "./integration/tests/mobile",
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 375, height: 812 },
@@ -35,7 +35,7 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       cwd: "../..",
       timeout: 120000,
-      // Freeze the synthetic-events loop during e2e runs so background
+      // Freeze the synthetic-events loop during integration runs so background
       // `tool_use` / `assistant_message` emissions on running sessions don't
       // race against assertions about session-event tails (e.g. the
       // `@chat:activity-status` spec). The loop's only purpose is dev-UI
