@@ -14,6 +14,15 @@ use hydra_common::api::v1::issues::SearchIssuesQuery;
 
 const AUTOMATION_NAME: &str = "spawn_sessions";
 
+/// Worker name used as the actor when the assignment-loop persists an
+/// auto-assignment. A bare `System { on_behalf_of: None }` (rather than the
+/// `Automation { triggered_by: ctx.actor() }` wrapping used elsewhere)
+/// prevents `LinkConversationToArtifactsAutomation` from interpreting the
+/// resulting `IssueUpdated` event as work derived from the triggering
+/// session's conversation — that misattribution previously caused a
+/// bulk-edge cascade across every unassigned issue.
+const ASSIGNMENT_WORKER_NAME: &str = "spawn_sessions_assignment";
+
 /// Event-driven automation that spawns sessions for eligible issues.
 ///
 /// Replaces the polling-based `RunSpawners` background job by reacting
@@ -146,6 +155,14 @@ impl Automation for SpawnSessionsAutomation {
         // runs. Issues with no assignee and no configured assignment agent
         // are left unassigned; the queue will skip them.
         if let Some(agent) = assignment_agent.as_ref() {
+            // Use a bare `System` actor (rather than the `Automation`-wrapped
+            // `ctx.actor()` reused elsewhere in this automation) so the
+            // resulting `IssueUpdated` event does not resolve to the
+            // triggering principal — see `ASSIGNMENT_WORKER_NAME`.
+            let assignment_actor = ActorRef::System {
+                worker_name: ASSIGNMENT_WORKER_NAME.into(),
+                on_behalf_of: None,
+            };
             let agent_name = hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone())
                 .map_err(|e| {
                     AutomationError::Other(anyhow::anyhow!(
@@ -167,7 +184,7 @@ impl Automation for SpawnSessionsAutomation {
                             issue.clone().into(),
                             None,
                         ),
-                        actor.clone(),
+                        assignment_actor.clone(),
                     )
                     .await
                 {
@@ -976,6 +993,107 @@ mod tests {
             sessions.len(),
             1,
             "expected one session to be spawned after auto-assignment"
+        );
+
+        Ok(())
+    }
+
+    /// The assignment-loop upsert must use a bare `System` actor with no
+    /// `on_behalf_of` principal so the resulting `IssueUpdated` event does
+    /// not carry the triggering session's identity downstream. If the actor
+    /// wraps `ctx.actor()` (e.g. via `Automation { triggered_by: .. }`),
+    /// `LinkConversationToArtifactsAutomation` follows the chain and mints
+    /// a spurious `refers-to` edge for every auto-assigned issue. See the
+    /// RCA in `i-trqznsor` for the bulk-edge cascade this prevents.
+    #[tokio::test]
+    async fn assignment_upsert_uses_system_actor_with_no_principal() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let agent_name = "pm";
+        register_assignment_agent(&handles, agent_name).await?;
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "Needs assignment".to_string(),
+            "desc".to_string(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open.into(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        // Fire the event as if a real session (an authenticated agent) had
+        // triggered the automation — the previous bug surfaced when the
+        // triggering actor was an agent whose `originating_session_id` was
+        // a conversation-bearing session.
+        let triggering_actor = ActorRef::Authenticated {
+            actor_id: crate::domain::actors::ActorId::Agent(
+                hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap(),
+            ),
+            session_id: Some(hydra_common::SessionId::new()),
+        };
+        let payload = Arc::new(MutationPayload::Issue {
+            old: None,
+            new: issue,
+            actor: triggering_actor.clone(),
+        });
+        let event = ServerEvent::IssueCreated {
+            seq: 1,
+            issue_id: issue_id.clone(),
+            version: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        // The upsert that persisted the auto-assignment must be the
+        // assignment-loop's `System` actor — not a wrapping of the
+        // triggering agent.
+        let versions = handles.store.get_issue_versions(&issue_id).await?;
+        let upsert_version = versions
+            .into_iter()
+            .rev()
+            .find(|v| v.item.assignee.is_some())
+            .expect("expected a persisted version with an assigned principal");
+        match upsert_version.actor {
+            Some(ActorRef::System {
+                ref worker_name,
+                on_behalf_of: None,
+            }) => {
+                assert_eq!(
+                    worker_name, ASSIGNMENT_WORKER_NAME,
+                    "assignment upsert should use the dedicated worker name"
+                );
+            }
+            other => panic!(
+                "expected `System {{ worker_name: \"{ASSIGNMENT_WORKER_NAME}\", on_behalf_of: None }}` actor; got {other:?}"
+            ),
+        }
+
+        // The downstream invariant the actor choice is protecting: an
+        // `IssueUpdated` synthesized with this actor must NOT trip
+        // `LinkConversationToArtifactsAutomation`'s `on_behalf_of()` chain.
+        let assignment_actor = upsert_version.actor.unwrap();
+        assert!(
+            assignment_actor.on_behalf_of().is_none(),
+            "assignment-loop actor must resolve to no on_behalf_of principal; got {:?}",
+            assignment_actor.on_behalf_of()
         );
 
         Ok(())
