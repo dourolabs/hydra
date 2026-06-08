@@ -53,9 +53,6 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
   const [statuses, setStatuses] = useState<StatusDefinition[]>(
     initial?.statuses ?? defaultNewStatuses(),
   );
-  const [defaultStatusKey, setDefaultStatusKey] = useState<string>(
-    initial?.default_status_key ?? statuses[0]?.key ?? "",
-  );
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [projectPromptExpanded, setProjectPromptExpanded] = useState(false);
   // Per-status expanded set keyed by index so each row's textarea stays
@@ -67,14 +64,9 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
   const projectKeyForPaths = (key.trim() || "<key>");
   const projectPromptDefault = `/projects/${projectKeyForPaths}/prompt.md`;
 
-  const defaultStatusOptions: SelectOption[] = useMemo(
-    () => statuses.map((s) => ({ value: s.key, label: s.label || s.key })),
-    [statuses],
-  );
-
   const formError = useMemo(
-    () => validate(key, name, statuses, defaultStatusKey, promptPath),
-    [key, name, statuses, defaultStatusKey, promptPath],
+    () => validate(key, name, statuses, promptPath),
+    [key, name, statuses, promptPath],
   );
 
   const mutation = useMutation({
@@ -146,7 +138,6 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       key: key.trim(),
       name: name.trim(),
       statuses: statuses.map(normalizeStatusForSubmit),
-      default_status_key: defaultStatusKey,
       creator,
       deleted: false,
       prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
@@ -161,7 +152,6 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     name,
     promptPath,
     statuses,
-    defaultStatusKey,
     creator,
     mutation,
     addToast,
@@ -176,18 +166,9 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     [],
   );
 
-  const removeStatus = useCallback(
-    (index: number) => {
-      setStatuses((prev) => {
-        const next = prev.filter((_, i) => i !== index);
-        if (defaultStatusKey && !next.some((s) => s.key === defaultStatusKey) && next[0]) {
-          setDefaultStatusKey(next[0].key);
-        }
-        return next;
-      });
-    },
-    [defaultStatusKey],
-  );
+  const removeStatus = useCallback((index: number) => {
+    setStatuses((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const moveStatus = useCallback((index: number, delta: number) => {
     setStatuses((prev) => {
@@ -226,15 +207,6 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
           placeholder="Engineering"
           required
           data-testid="project-editor-name"
-        />
-      </div>
-      <div className={styles.row}>
-        <label className={styles.label}>Default status</label>
-        <Select
-          options={defaultStatusOptions}
-          value={defaultStatusKey}
-          onChange={(e) => setDefaultStatusKey(e.target.value)}
-          data-testid="project-editor-default-status"
         />
       </div>
       <div className={styles.row}>
@@ -587,7 +559,6 @@ function validate(
   key: string,
   name: string,
   statuses: StatusDefinition[],
-  defaultStatusKey: string,
   promptPath: string,
 ): string | null {
   if (!key.trim()) return "Project key is required";
@@ -612,9 +583,6 @@ function validate(
     if (!isPromptPathValid(s.prompt_path ?? "")) {
       return `Status '${s.key}' prompt path must be a doc-store path starting with '/'`;
     }
-  }
-  if (!seen.has(defaultStatusKey)) {
-    return `Default status '${defaultStatusKey}' must reference a declared status`;
   }
   return null;
 }

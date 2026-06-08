@@ -186,7 +186,6 @@ const SEEDED_PROJECTS = [
       key: "engineering-v2",
       name: "Engineering v2",
       statuses: [],
-      default_status_key: "inbox",
       creator: "alice",
     },
   },
@@ -197,14 +196,12 @@ const ENG_V2_STATUSES = {
     { key: "backlog", label: "Backlog", color: "#bbb" },
     { key: "pending", label: "Pending", color: "#ccc" },
   ],
-  default_status_key: "inbox",
 };
 const DEFAULT_STATUSES = {
   statuses: [
     { key: "open", label: "Open", color: "#111" },
     { key: "in-progress", label: "In progress", color: "#222" },
   ],
-  default_status_key: "open",
 };
 
 describe("IssueCreateModal", () => {
@@ -439,7 +436,7 @@ describe("IssueCreateModal", () => {
     expect(body.issue.status).toBe("backlog");
   });
 
-  it("submits the project's default_status_key when the Status picker isn't touched", () => {
+  it("submits the legacy default status when the Status picker isn't touched", () => {
     render(
       <IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />,
     );
@@ -458,6 +455,6 @@ describe("IssueCreateModal", () => {
       issue: { status: string; project_id?: string };
     };
     expect(body.issue.project_id).toBe("j-engv2");
-    expect(body.issue.status).toBe("inbox");
+    expect(body.issue.status).toBe("open");
   });
 });

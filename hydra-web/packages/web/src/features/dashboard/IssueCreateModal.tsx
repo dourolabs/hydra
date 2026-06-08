@@ -106,9 +106,9 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     "hydra:draft:issue-create-modal:projectId",
     "",
   );
-  // Empty string = pick the project's default_status_key when the picker
-  // resolves; if it's still empty at submit time we fall back to `"open"` so
-  // the wire body matches today's behavior for the unselected case.
+  // Empty string = unselected; falls back to `LEGACY_DEFAULT_STATUS_KEY` at
+  // submit time so the wire body stays stable when the user doesn't touch the
+  // status picker.
   const [status, setStatus, clearStatusDraft] = useFormDraft<StatusKey>(
     "hydra:draft:issue-create-modal:status",
     "",
@@ -232,14 +232,10 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     const desc = description.trim();
     if (!desc) return;
     const assigneePrincipal = parseAssigneePath(assignee);
-    // Submit-time fallback chain matches the picker's resolved value: an
-    // explicit pick wins; else the project's default_status_key (if loaded);
-    // else the legacy `"open"`. Keeps the wire body stable for any project
-    // whose status fetch hasn't resolved yet.
-    const submitStatus: StatusKey =
-      status ||
-      projectStatuses?.default_status_key ||
-      LEGACY_DEFAULT_STATUS_KEY;
+    // Submit-time fallback: an explicit pick wins; otherwise the legacy
+    // `"open"` keeps the wire body stable for any project whose status fetch
+    // hasn't resolved yet.
+    const submitStatus: StatusKey = status || LEGACY_DEFAULT_STATUS_KEY;
     mutation.mutate({
       title: title.trim(),
       description: desc,
@@ -310,11 +306,8 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
   const selectedProject = projectEntries.find(
     (p) => p.project_id === projectId,
   );
-  const selectedStatusDef = statusEntries.find(
-    (s) => s.key === (status || projectStatuses?.default_status_key),
-  );
-  const effectiveStatusKey =
-    status || projectStatuses?.default_status_key || LEGACY_DEFAULT_STATUS_KEY;
+  const selectedStatusDef = statusEntries.find((s) => s.key === status);
+  const effectiveStatusKey = status || LEGACY_DEFAULT_STATUS_KEY;
   const canSubmit = description.trim().length > 0 && !isPending;
 
   return (
@@ -488,9 +481,8 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
                   active={!projectId}
                   onClick={() => {
                     setProjectId("");
-                    // Reset the explicit status pick: the next render's
-                    // `useProjectStatuses(null)` will apply the default
-                    // project's default_status_key as the resolved value.
+                    // Reset the explicit status pick so the picker falls back
+                    // to LEGACY_DEFAULT_STATUS_KEY on the next render.
                     setStatus("");
                     setPicker(null);
                   }}
@@ -504,9 +496,8 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
                     active={projectId === p.project_id}
                     onClick={() => {
                       setProjectId(p.project_id);
-                      // Reset to "" so the Status picker re-derives its
-                      // default from the newly-selected project's
-                      // default_status_key on the next render.
+                      // Reset to "" so the next render re-derives the picker's
+                      // default from the new project's status list.
                       setStatus("");
                       setPicker(null);
                     }}

@@ -1,9 +1,8 @@
 //! Per-project status configuration types.
 //!
 //! Defines the wire shapes for projects: a [`Project`] owns an ordered list
-//! of [`StatusDefinition`]s plus an explicit `default_status_key` applied to
-//! new issues. Each [`StatusDefinition`] declares display props (label,
-//! color), dependency-graph semantics (`unblocks_parents`,
+//! of [`StatusDefinition`]s. Each [`StatusDefinition`] declares display props
+//! (label, color), dependency-graph semantics (`unblocks_parents`,
 //! `unblocks_dependents`, `cascades_to_children`), and an optional
 //! [`StatusOnEnter`] automation that fires when an issue transitions into
 //! the status.
@@ -205,8 +204,7 @@ impl StatusDefinition {
     }
 }
 
-/// A project owns an ordered list of [`StatusDefinition`]s plus an explicit
-/// [`Self::default_status_key`] for new issues.
+/// A project owns an ordered list of [`StatusDefinition`]s.
 // No `Eq` derive: `priority` is `f64`. Use `PartialEq` for value equality.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -216,7 +214,6 @@ pub struct Project {
     pub key: ProjectKey,
     pub name: String,
     pub statuses: Vec<StatusDefinition>,
-    pub default_status_key: StatusKey,
     pub creator: Username,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deleted: bool,
@@ -236,7 +233,6 @@ pub struct Project {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectValidationError {
     DuplicateStatusKey(StatusKey),
-    DefaultStatusKeyMissing(StatusKey),
     NoStatuses,
 }
 
@@ -245,12 +241,6 @@ impl fmt::Display for ProjectValidationError {
         match self {
             ProjectValidationError::DuplicateStatusKey(key) => {
                 write!(f, "duplicate status key '{key}' in project")
-            }
-            ProjectValidationError::DefaultStatusKeyMissing(key) => {
-                write!(
-                    f,
-                    "default_status_key '{key}' does not reference any status in the project"
-                )
             }
             ProjectValidationError::NoStatuses => {
                 f.write_str("project must declare at least one status")
@@ -266,7 +256,6 @@ impl Project {
         key: ProjectKey,
         name: String,
         statuses: Vec<StatusDefinition>,
-        default_status_key: StatusKey,
         creator: Username,
         deleted: bool,
         priority: f64,
@@ -275,7 +264,6 @@ impl Project {
             key,
             name,
             statuses,
-            default_status_key,
             creator,
             deleted,
             prompt_path: None,
@@ -286,7 +274,6 @@ impl Project {
     /// Check structural invariants:
     /// - statuses is non-empty
     /// - all status keys are unique within the project
-    /// - `default_status_key` references an entry in `statuses`
     pub fn validate(&self) -> Result<(), ProjectValidationError> {
         if self.statuses.is_empty() {
             return Err(ProjectValidationError::NoStatuses);
@@ -298,11 +285,6 @@ impl Project {
                     status.key.clone(),
                 ));
             }
-        }
-        if !seen.contains(&self.default_status_key) {
-            return Err(ProjectValidationError::DefaultStatusKeyMissing(
-                self.default_status_key.clone(),
-            ));
         }
         Ok(())
     }
@@ -404,17 +386,11 @@ impl ListProjectsResponse {
 #[non_exhaustive]
 pub struct ProjectStatusesResponse {
     pub statuses: Vec<StatusDefinition>,
-    /// The project's `default_status_key`. Included so a status-picker
-    /// modal can pre-select the right entry without a second request.
-    pub default_status_key: String,
 }
 
 impl ProjectStatusesResponse {
-    pub fn new(statuses: Vec<StatusDefinition>, default_status_key: String) -> Self {
-        Self {
-            statuses,
-            default_status_key,
-        }
+    pub fn new(statuses: Vec<StatusDefinition>) -> Self {
+        Self { statuses }
     }
 }
 
@@ -472,12 +448,11 @@ mod tests {
         )
     }
 
-    fn project(default_key: &str, statuses: Vec<StatusDefinition>) -> Project {
+    fn project(statuses: Vec<StatusDefinition>) -> Project {
         Project::new(
             ProjectKey::try_new("eng").unwrap(),
             "Engineering".to_string(),
             statuses,
-            StatusKey::try_new(default_key).unwrap(),
             Username::try_new("jayantk").unwrap(),
             false,
             0.0,
@@ -543,14 +518,11 @@ mod tests {
         def.unblocks_dependents = false;
         def.cascades_to_children = false;
         def.on_enter = Some(on_enter);
-        let proj = project("in-progress", vec![def]);
+        let proj = project(vec![def]);
 
         let json = serde_json::to_string(&proj).unwrap();
         let parsed: Project = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, proj);
-        // The exact wire field name should be `default_status_key` so older
-        // clients see a stable contract.
-        assert!(json.contains("\"default_status_key\""));
     }
 
     #[test]
@@ -585,7 +557,7 @@ mod tests {
 
     #[test]
     fn project_omits_prompt_path_when_none() {
-        let proj = project("open", vec![status("open", "Open")]);
+        let proj = project(vec![status("open", "Open")]);
         let json = serde_json::to_string(&proj).unwrap();
         assert!(
             !json.contains("prompt_path"),
@@ -595,7 +567,7 @@ mod tests {
 
     #[test]
     fn project_round_trips_prompt_path() {
-        let mut proj = project("open", vec![status("open", "Open")]);
+        let mut proj = project(vec![status("open", "Open")]);
         proj.prompt_path = Some("/projects/default/prompt.md".to_string());
         let json = serde_json::to_string(&proj).unwrap();
         assert!(json.contains("\"prompt_path\""));
@@ -679,7 +651,6 @@ mod tests {
                     "cascades_to_children": false,
                 }
             ],
-            "default_status_key": "open",
             "creator": "jayantk",
         });
         let parsed: Project = serde_json::from_value(legacy).unwrap();
@@ -689,46 +660,27 @@ mod tests {
 
     #[test]
     fn project_validate_accepts_well_formed() {
-        let proj = project(
-            "open",
-            vec![status("open", "Open"), status("closed", "Closed")],
-        );
+        let proj = project(vec![status("open", "Open"), status("closed", "Closed")]);
         proj.validate().unwrap();
     }
 
     #[test]
     fn project_validate_rejects_duplicate_status_keys() {
-        let proj = project(
-            "open",
-            vec![status("open", "Open"), status("open", "Open Again")],
-        );
+        let proj = project(vec![status("open", "Open"), status("open", "Open Again")]);
         let err = proj.validate().unwrap_err();
         assert!(matches!(err, ProjectValidationError::DuplicateStatusKey(_)));
     }
 
     #[test]
-    fn project_validate_rejects_missing_default_status_key() {
-        let proj = project("missing", vec![status("open", "Open")]);
-        let err = proj.validate().unwrap_err();
-        assert!(matches!(
-            err,
-            ProjectValidationError::DefaultStatusKeyMissing(_)
-        ));
-    }
-
-    #[test]
     fn project_validate_rejects_empty_status_list() {
-        let proj = project("open", vec![]);
+        let proj = project(vec![]);
         let err = proj.validate().unwrap_err();
         assert!(matches!(err, ProjectValidationError::NoStatuses));
     }
 
     #[test]
     fn find_status_returns_matching_definition() {
-        let proj = project(
-            "open",
-            vec![status("open", "Open"), status("closed", "Closed")],
-        );
+        let proj = project(vec![status("open", "Open"), status("closed", "Closed")]);
         let key = StatusKey::try_new("closed").unwrap();
         let found = proj.find_status(&key).unwrap();
         assert_eq!(found.label, "Closed");
@@ -736,14 +688,14 @@ mod tests {
 
     #[test]
     fn find_status_returns_none_for_unknown_key() {
-        let proj = project("open", vec![status("open", "Open")]);
+        let proj = project(vec![status("open", "Open")]);
         let key = StatusKey::try_new("nope").unwrap();
         assert!(proj.find_status(&key).is_none());
     }
 
     #[test]
     fn project_serializes_priority() {
-        let mut proj = project("open", vec![status("open", "Open")]);
+        let mut proj = project(vec![status("open", "Open")]);
         proj.priority = 1000.0;
         let value = serde_json::to_value(&proj).unwrap();
         assert_eq!(value.get("priority"), Some(&serde_json::json!(1000.0)));

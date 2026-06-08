@@ -29,7 +29,6 @@ const listProjects = vi.fn(() =>
           key: "engineering-v2",
           name: "Engineering v2",
           statuses: [],
-          default_status_key: "inbox",
           creator: "alice",
           deleted: false,
         },
@@ -47,7 +46,6 @@ const getProjectStatuses = vi.fn((projectId: string) =>
       { key: "in-review", label: "In review", color: "#eee" },
       { key: "pending-release", label: "Pending release", color: "#fff" },
     ],
-    default_status_key: "inbox",
     _project_id: projectId, // unused; here to satisfy the call signature
   }),
 );
@@ -60,7 +58,6 @@ const getDefaultProjectStatuses = vi.fn(() =>
       { key: "closed", label: "Closed", color: "#444" },
       { key: "dropped", label: "Dropped", color: "#555" },
     ],
-    default_status_key: "open",
   }),
 );
 

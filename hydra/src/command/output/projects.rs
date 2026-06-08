@@ -41,11 +41,6 @@ fn write_project_details<W: Write>(record: &ProjectRecord, writer: &mut W) -> Re
     writeln!(writer, "  name: {}", project.name)?;
     writeln!(writer, "  version: {}", record.version)?;
     writeln!(writer, "  creator: {}", project.creator)?;
-    writeln!(
-        writer,
-        "  default_status_key: {}",
-        project.default_status_key
-    )?;
     if project.deleted {
         writeln!(writer, "  deleted: true")?;
     }
@@ -101,7 +96,6 @@ impl Render for ProjectStatuses<'_> {
     }
 
     fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
-        writeln!(writer, "default_status_key: {}", self.0.default_status_key)?;
         if self.0.statuses.is_empty() {
             writeln!(writer, "statuses: <none>")?;
         } else {

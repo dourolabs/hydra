@@ -1290,7 +1290,6 @@ describe("Seed data", () => {
     expect(engv2).toBeDefined();
     expect(engv2!.project_id).toBe("j-engv2");
     expect(engv2!.project.name).toBe("Engineering v2");
-    expect(engv2!.project.default_status_key).toBe("inbox");
     expect(engv2!.project.prompt_path).toBe("/projects/engineering-v2/prompt.md");
 
     const statusKeys = engv2!.project.statuses.map((s) => s.key);
@@ -1326,7 +1325,6 @@ describe("Seed data", () => {
 
   it("GET /v1/projects/:id/statuses returns engineering-v2 status list", async () => {
     const resp = await client.getProjectStatuses("j-engv2");
-    expect(resp.default_status_key).toBe("inbox");
     expect(resp.statuses.map((s) => s.key)).toEqual([
       "inbox",
       "backlog",

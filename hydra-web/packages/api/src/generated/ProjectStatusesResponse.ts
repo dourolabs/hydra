@@ -8,9 +8,4 @@ import type { StatusDefinition } from "./StatusDefinition";
  */
 export type ProjectStatusesResponse = {
   statuses: Array<StatusDefinition>;
-  /**
-   * The project's `default_status_key`. Included so a status-picker
-   * modal can pre-select the right entry without a second request.
-   */
-  default_status_key: string;
 };

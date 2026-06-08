@@ -29,7 +29,7 @@ The runner-side wiring needed to seed the configuration below is implemented by 
 
 ### Project `engineering-v2`
 
-`default_status_key = "inbox"`. Statuses (in display order):
+Statuses (in display order):
 
 | key | unblocks_parents | unblocks_dependents | cascades_to_children | interactive | on_enter |
 |---|---|---|---|---|---|
@@ -54,7 +54,7 @@ The four-level prompt resolver concatenates project- and status-level prompt sli
 | doc-store path | fixture file | encodes |
 |---|---|---|
 | `/projects/engineering-v2/prompt.md` | `tests/e2e/fixtures/projects/engineering-v2/prompt.md` | workflow narration — "this project routes work through `inbox → backlog → in-development → in-review → pending-release`, with `pending` as a holding state; reviews happen on the **same issue** via the form attached to `in-review`, not via child `review-request` issues; `apply_status_on_enter` routes assignment automatically; agents transition the issue by setting `--status <next>` on the same id." |
-| `/projects/engineering-v2/statuses/backlog.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/backlog.md` | **`pm` delta** — when filing child issues, set their `project_id` to `engineering-v2` and let the project's `default_status_key` (`inbox`) apply; move this issue forward (to `pending` or `in-development`) when the breakdown is complete. |
+| `/projects/engineering-v2/statuses/backlog.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/backlog.md` | **`pm` delta** — when filing child issues, set their `project_id` to `engineering-v2` and pass `--status inbox` so they land in the project's landing column; move this issue forward (to `pending` or `in-development`) when the breakdown is complete. |
 | `/projects/engineering-v2/statuses/in-development.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/in-development.md` | **`swe` delta** — when the PR is ready, transition the **same** issue from `in-development` to `in-review` (do NOT file a child `review-request` issue — this project uses same-issue review hand-off); if a review brings the issue back to `in-development` with `feedback` populated, address the feedback and re-transition to `in-review`. |
 | `/projects/engineering-v2/statuses/pair-development.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/pair-development.md` | **`swe` delta (interactive variant)** — same patch-and-handoff workflow as `in-development`, but the agent runs inside a spawned `Conversation` (`spawned_from = <issue_id>`, `greet_user: true`) instead of a headless session. Drives the `interactive-issue-mode` scenario ([[i-nuuyrbwl]]). |
 | `/projects/engineering-v2/statuses/in-review.md` | `tests/e2e/fixtures/projects/engineering-v2/statuses/in-review.md` | **`reviewer` delta** — read the patch, decide a verdict, and submit the attached `/forms/review.yaml`: `request_changes` (transitions back to `in-development` and writes the form's `review_comment` field into `issue.feedback` via `Effect::UpdateIssue { set_feedback_from: Some("review_comment") }`) or `approve` (transitions to `pending-release`); do NOT file a child review-request — the form action drives both verdict and status transition. |

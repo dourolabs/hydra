@@ -439,7 +439,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
                     "future": "field"
                 }
             ],
-            "default_status_key": "open",
             "extra": "statuses"
         }));
     });
@@ -623,7 +622,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             false,
             None,
         )],
-        StatusKey::try_new("open").unwrap(),
         Username::from("test-creator"),
         false,
         0.0,
@@ -646,7 +644,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .get_project_statuses(&ProjectIdOrDefault::Id(project_id.clone()))
         .await?;
     assert_eq!(statuses.statuses.len(), 1);
-    assert_eq!(statuses.default_status_key, "open");
 
     let deleted_project = client.delete_project(&project_id).await?;
     assert_eq!(deleted_project.project_id, project_id);
@@ -838,7 +835,6 @@ fn forward_project_json(project_id: &ProjectId) -> Value {
                     "future": "status-field"
                 }
             ],
-            "default_status_key": "open",
             "creator": "test-creator",
             "future": "project-field"
         },

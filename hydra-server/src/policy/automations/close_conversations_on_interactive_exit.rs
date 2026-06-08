@@ -228,7 +228,6 @@ mod tests {
             ProjectKey::try_new("engineering-v2").unwrap(),
             "Engineering v2".to_string(),
             vec![interactive_def, backlog_def],
-            backlog_key.clone(),
             ApiUsername::from("alice"),
             false,
             0.0,

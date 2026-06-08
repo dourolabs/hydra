@@ -115,7 +115,6 @@ pub fn default_project_seed() -> Project {
         ProjectKey::try_new(DEFAULT_PROJECT_KEY).expect("default project key is well-formed"),
         "Default".to_string(),
         statuses,
-        status_key("open"),
         Username::try_new(SYSTEM_USERNAME).expect("system username is well-formed"),
         false,
         1000.0,
@@ -145,7 +144,6 @@ pub fn no_project_sentinel() -> (Project, StatusDefinition) {
             .expect("no-project sentinel key is well-formed"),
         "No project".to_string(),
         vec![status.clone()],
-        status_key(NO_PROJECT_SENTINEL_STATUS_KEY),
         Username::try_new(SYSTEM_USERNAME).expect("system username is well-formed"),
         false,
         0.0,
@@ -182,11 +180,6 @@ mod tests {
     #[test]
     fn default_project_seed_has_five_statuses() {
         assert_eq!(default_project_seed().statuses.len(), 5);
-    }
-
-    #[test]
-    fn default_project_seed_default_status_is_open() {
-        assert_eq!(default_project_seed().default_status_key.as_str(), "open");
     }
 
     /// Every wire string produced by today's `IssueStatus` must resolve

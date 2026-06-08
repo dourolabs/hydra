@@ -218,7 +218,6 @@ describe("ProjectEditor — prompt_path", () => {
               prompt_path: "/projects/engineering/statuses/open.md",
             },
           ],
-          default_status_key: "open" as never,
           creator: "alice" as never,
           deleted: false,
           prompt_path: "/projects/engineering/prompt.md",

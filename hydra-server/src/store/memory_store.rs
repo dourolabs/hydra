@@ -9384,7 +9384,6 @@ mod tests {
             ProjectKey::try_new("engineering").unwrap(),
             "Engineering".to_string(),
             statuses,
-            StatusKey::try_new("backlog").unwrap(),
             ApiUsername::from("alice"),
             false,
             0.0,

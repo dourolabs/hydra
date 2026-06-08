@@ -140,7 +140,6 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
         ProjectKey::try_new("engineering").unwrap(),
         "Engineering".to_string(),
         engineering_statuses(),
-        StatusKey::try_new("backlog").unwrap(),
         Username::try_new("default").unwrap(),
         false,
         0.0,

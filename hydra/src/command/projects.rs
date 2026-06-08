@@ -61,10 +61,7 @@ pub struct CreateProjectArgs {
     pub name: String,
 
     /// Path to a JSON or YAML file containing the project body: a
-    /// `statuses` list (the project-specific set of issue statuses) and a
-    /// `default_status_key` selecting the status applied to issues that
-    /// don't declare one explicitly. `default_status_key` must reference a
-    /// key in the `statuses` list.
+    /// `statuses` list (the project-specific set of issue statuses).
     #[arg(long = "body-file", value_name = "PATH")]
     pub body_file: PathBuf,
 }
@@ -75,8 +72,8 @@ pub struct GetProjectArgs {
     #[arg(value_name = "PROJECT_ID")]
     pub project_id: ProjectId,
 
-    /// Emit the project's body in `--body-file` YAML shape (statuses +
-    /// `default_status_key`) on stdout, suitable for piping back into
+    /// Emit the project's body in `--body-file` YAML shape (statuses)
+    /// on stdout, suitable for piping back into
     /// `projects update --body-file -`. Overrides the default pretty /
     /// jsonl rendering.
     #[arg(long = "body-yaml")]
@@ -109,8 +106,8 @@ pub struct UpdateProjectArgs {
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
 
-    /// Path to a JSON or YAML file containing the new body (`statuses` list
-    /// and `default_status_key`). Defaults to the existing body.
+    /// Path to a JSON or YAML file containing the new body (`statuses`
+    /// list). Defaults to the existing body.
     #[arg(long = "body-file", value_name = "PATH")]
     pub body_file: Option<PathBuf>,
 
@@ -251,15 +248,7 @@ async fn create_project(
 ) -> Result<ProjectRecord> {
     let body = load_body_file(&args.body_file)?;
     let creator = resolve_username(client).await?;
-    let project = Project::new(
-        args.key,
-        args.name,
-        body.statuses,
-        body.default_status_key,
-        creator,
-        false,
-        0.0,
-    );
+    let project = Project::new(args.key, args.name, body.statuses, creator, false, 0.0);
     let request = UpsertProjectRequest::new(project.clone());
     let response = client
         .create_project(&request)
@@ -281,14 +270,11 @@ async fn update_project(
         .await
         .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
 
-    let (statuses, default_status_key) = if let Some(path) = args.body_file.as_ref() {
+    let statuses = if let Some(path) = args.body_file.as_ref() {
         let body = load_body_file(path)?;
-        (body.statuses, body.default_status_key)
+        body.statuses
     } else {
-        (
-            current.project.statuses.clone(),
-            current.project.default_status_key.clone(),
-        )
+        current.project.statuses.clone()
     };
 
     let prompt_path = apply_prompt_path_arg(args.prompt_path, current.project.prompt_path.clone());
@@ -297,7 +283,6 @@ async fn update_project(
         args.key.unwrap_or(current.project.key),
         args.name.unwrap_or(current.project.name),
         statuses,
-        default_status_key,
         current.project.creator,
         current.project.deleted,
         current.project.priority,
@@ -362,10 +347,10 @@ fn apply_prompt_path_arg(arg: Option<String>, current: Option<String>) -> Option
     }
 }
 
-/// Render the body-file slice (`statuses` + `default_status_key`) of a
-/// project as YAML. This is the inverse of [`load_body_file`] for those
-/// two fields: piping the output back through `projects update --body-file`
-/// is a no-op for the body slice (modulo whitespace/comment loss).
+/// Render the body-file slice (`statuses`) of a project as YAML. This
+/// is the inverse of [`load_body_file`] for the statuses field: piping
+/// the output back through `projects update --body-file` is a no-op for
+/// the body slice (modulo whitespace/comment loss).
 ///
 /// `ProjectBodyFile` itself only derives `Deserialize`; we keep it that
 /// way and serialize a borrowed view here so the parser stays decoupled
@@ -374,11 +359,9 @@ fn render_body_yaml(project: &Project) -> Result<String> {
     #[derive(serde::Serialize)]
     struct BodyView<'a> {
         statuses: &'a [StatusDefinition],
-        default_status_key: &'a StatusKey,
     }
     let view = BodyView {
         statuses: &project.statuses,
-        default_status_key: &project.default_status_key,
     };
     serde_yaml_ng::to_string(&view).context("failed to serialize project body as YAML")
 }
@@ -563,13 +546,6 @@ mod tests {
             body.statuses.len(),
         );
         assert!(
-            body.statuses
-                .iter()
-                .any(|s| s.key == body.default_status_key),
-            "default_status_key '{}' must resolve to a status entry",
-            body.default_status_key,
-        );
-        assert!(
             body.statuses.iter().any(|s| s
                 .on_enter
                 .as_ref()
@@ -654,7 +630,6 @@ mod tests {
             ProjectKey::try_new("fixture").unwrap(),
             "Fixture".to_string(),
             vec![backlog, pending_release],
-            StatusKey::try_new("backlog").unwrap(),
             Username::try_new("jayantk").unwrap(),
             false,
             0.0,
@@ -673,7 +648,6 @@ mod tests {
             serde_yaml_ng::from_str::<crate::command::project_body_file::ProjectBodyFile>(&yaml)
                 .expect("rendered yaml must parse as a ProjectBodyFile");
         assert_eq!(body.statuses, project.statuses);
-        assert_eq!(body.default_status_key, project.default_status_key);
     }
 
     /// The body view must NOT leak project-level fields that `ProjectBodyFile`
@@ -696,13 +670,11 @@ mod tests {
             .keys()
             .filter_map(|k| k.as_str().map(str::to_owned))
             .collect();
-        let expected: std::collections::BTreeSet<String> = ["statuses", "default_status_key"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let expected: std::collections::BTreeSet<String> =
+            ["statuses"].iter().map(|s| s.to_string()).collect();
         assert_eq!(
             keys, expected,
-            "top-level body keys should be exactly statuses + default_status_key; got {keys:?}",
+            "top-level body keys should be exactly statuses; got {keys:?}",
         );
     }
 

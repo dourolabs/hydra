@@ -183,10 +183,7 @@ pub async fn get_project_statuses(
         .await
         .map_err(|e| map_project_not_found(e, &project_id_typed))?;
 
-    let response = ProjectStatusesResponse::new(
-        versioned.item.statuses.clone(),
-        versioned.item.default_status_key.as_str().to_string(),
-    );
+    let response = ProjectStatusesResponse::new(versioned.item.statuses.clone());
 
     info!(
         actor = %actor.name(),

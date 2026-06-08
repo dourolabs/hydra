@@ -59,7 +59,6 @@ fn sample_project() -> Project {
             make_status_with_flags("in-review", "In review", "#9b59b6", false, false, false),
             make_status_with_flags("released", "Released", "#2ecc71", true, true, false),
         ],
-        StatusKey::try_new("backlog").unwrap(),
         api_default_user(),
         false,
         0.0,
@@ -174,7 +173,6 @@ async fn project_statuses_route_returns_status_list() -> anyhow::Result<()> {
         .json()
         .await?;
     assert_eq!(statuses.statuses.len(), 4);
-    assert_eq!(statuses.default_status_key, "backlog");
     let keys: Vec<&str> = statuses.statuses.iter().map(|s| s.key.as_str()).collect();
     assert_eq!(keys, ["backlog", "in-development", "in-review", "released"]);
 
@@ -195,7 +193,6 @@ async fn default_project_statuses_route_returns_legacy_status_list() -> anyhow::
         .json()
         .await?;
 
-    assert_eq!(statuses.default_status_key, "open");
     let keys: Vec<&str> = statuses.statuses.iter().map(|s| s.key.as_str()).collect();
     assert_eq!(keys, ["open", "in-progress", "closed", "dropped", "failed"]);
 

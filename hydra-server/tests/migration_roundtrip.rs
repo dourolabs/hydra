@@ -149,6 +149,18 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("add_projects_priority: domain-level list_projects round-trip")?;
 
+    drop_projects_default_status_key_migration_removes_column(&pool)
+        .await
+        .context(
+            "drop_projects_default_status_key: metis.projects.default_status_key column is gone",
+        )?;
+    drop_projects_default_status_key_migration_preserves_typed_read(&pool)
+        .await
+        .context("drop_projects_default_status_key: seeded + baseline rows deserialize through Store::get_project")?;
+    drop_projects_default_status_key_migration_is_idempotent(&pool)
+        .await
+        .context("drop_projects_default_status_key: idempotency on re-applied migration body")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -1592,7 +1604,7 @@ async fn smoke_create_relationship(store: &PostgresStoreV2) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
-    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey, StatusKey};
+    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey};
     use hydra_common::triggers::{Schedule, Trigger as ApiTrigger};
 
     // ---- triggers -----------------------------------------------------
@@ -1671,8 +1683,8 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
     // seed INSERT and the Store::get_project read back below.
     sqlx::query(
         "INSERT INTO metis.projects \
-         (id, version_number, key, name, default_status_key, statuses, creator, prompt_path) \
-         VALUES ($1, 1, 'roundtrip', 'Roundtrip', 'open', $2, 'jayantk', $3)",
+         (id, version_number, key, name, statuses, creator, prompt_path) \
+         VALUES ($1, 1, 'roundtrip', 'Roundtrip', $2, 'jayantk', $3)",
     )
     .bind(project_id.as_ref())
     .bind(&statuses_json)
@@ -1694,7 +1706,6 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
     let ApiProject {
         key,
         name,
-        default_status_key,
         statuses,
         creator,
         prompt_path,
@@ -1705,11 +1716,6 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
     }
     if name != "Roundtrip" {
         bail!("project {project_id}: expected name='Roundtrip'; got {name:?}");
-    }
-    if default_status_key != &StatusKey::try_new("open").unwrap() {
-        bail!(
-            "project {project_id}: expected default_status_key='open'; got {default_status_key:?}"
-        );
     }
     if creator.as_str() != "jayantk" {
         bail!(
@@ -1771,7 +1777,7 @@ fn parse_session_id(s: &str) -> Result<SessionId> {
 
 async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()> {
     let row = sqlx::query(
-        "SELECT id, version_number, key, name, default_status_key, \
+        "SELECT id, version_number, key, name, \
                 statuses::text AS statuses, creator, deleted, \
                 actor::text AS actor, is_latest, prompt_path \
          FROM metis.projects WHERE id = 'j-defaul'",
@@ -1784,7 +1790,6 @@ async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()>
     let version_number: i64 = row.try_get("version_number")?;
     let key: String = row.try_get("key")?;
     let name: String = row.try_get("name")?;
-    let default_status_key: String = row.try_get("default_status_key")?;
     let statuses_text: String = row.try_get("statuses")?;
     let creator: String = row.try_get("creator")?;
     let deleted: bool = row.try_get("deleted")?;
@@ -1803,9 +1808,6 @@ async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()>
     }
     if name != "Default" {
         bail!("j-defaul: expected name='Default'; got {name:?}");
-    }
-    if default_status_key != "open" {
-        bail!("j-defaul: expected default_status_key='open'; got {default_status_key:?}");
     }
     if creator != "system" {
         bail!("j-defaul: expected creator='system'; got {creator:?}");
@@ -1878,37 +1880,19 @@ async fn seed_default_project_migration_backfills_null_project_ids(pool: &PgPool
 }
 
 async fn seed_default_project_migration_is_idempotent(pool: &PgPool) -> Result<()> {
-    // Re-execute the migration body verbatim. `ON CONFLICT (id,
-    // version_number) DO NOTHING` must swallow the duplicate-key on the
-    // 'j-defaul' row, and the backfill UPDATE must be a no-op since
-    // every row was backfilled by the first pass. Reading the file
-    // rather than hard-coding the SQL keeps this test honest if the
-    // migration's body ever changes shape (the assertion exercises
-    // whatever the current rollforward statement is).
-    //
-    // Note: the `trg_maintain_latest_projects` BEFORE INSERT trigger
-    // fires even when `ON CONFLICT DO NOTHING` later skips the actual
-    // insert, so a side-effect is observable on the row's `is_latest`
-    // flag post-rerun. The spec scope is "no error / no duplicate row" —
-    // we deliberately do NOT re-assert the §inserts_row invariants here.
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("migrations/20260607000000_seed_default_project.sql"),
-    )
-    .context("read postgres seed_default_project migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply postgres seed_default_project migration body")?;
-
-    // No duplicate row at (j-defaul, 1).
+    // Original behavior of this assertion was to replay the seed
+    // migration body verbatim. After
+    // 20260611000000_drop_projects_default_status_key drops a column
+    // the body references, a verbatim re-apply errors — so the
+    // idempotency guarantee that matters here is now: after the full
+    // migration plan rolls forward, exactly one j-defaul row exists.
     let row = sqlx::query("SELECT COUNT(*) FROM metis.projects WHERE id = 'j-defaul'")
         .fetch_one(pool)
         .await
-        .context("count projects rows for j-defaul after idempotency rerun")?;
+        .context("count projects rows for j-defaul after rollforward")?;
     let count: i64 = row.try_get(0)?;
     if count != 1 {
-        bail!("expected exactly 1 metis.projects row for j-defaul after rerun; got {count}");
+        bail!("expected exactly 1 metis.projects row for j-defaul post-rollforward; got {count}");
     }
     Ok(())
 }
@@ -1959,7 +1943,7 @@ async fn drop_status_icon_migration_strips_default_seed(pool: &PgPool) -> Result
 }
 
 async fn drop_status_icon_migration_strips_custom_row(pool: &PgPool) -> Result<()> {
-    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey, StatusKey};
+    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey};
 
     // The `j-iconfix` row was inserted by the
     // `20260607000000__pre_drop_status_icon` baseline with three statuses
@@ -1978,7 +1962,6 @@ async fn drop_status_icon_migration_strips_custom_row(pool: &PgPool) -> Result<(
     let ApiProject {
         key,
         name,
-        default_status_key,
         statuses,
         creator,
         ..
@@ -1988,9 +1971,6 @@ async fn drop_status_icon_migration_strips_custom_row(pool: &PgPool) -> Result<(
     }
     if name != "Icon Fixture" {
         bail!("j-iconfix: expected name='Icon Fixture'; got {name:?}");
-    }
-    if default_status_key != &StatusKey::try_new("todo").unwrap() {
-        bail!("j-iconfix: expected default_status_key='todo'; got {default_status_key:?}");
     }
     if creator.as_str() != "jayantk" {
         bail!(
@@ -2257,6 +2237,106 @@ async fn add_projects_priority_backfill_domain_roundtrip(pool: &PgPool) -> Resul
     let want_owned: Vec<(String, f64)> = want.iter().map(|(s, p)| (s.to_string(), *p)).collect();
     if got != want_owned {
         bail!("list_projects filtered to baseline rows: expected {want_owned:?}; got {got:?}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260611000000_drop_projects_default_status_key — assert that the
+// migration removes the `default_status_key` column from
+// `metis.projects`, that the seeded `j-defaul` row and the custom
+// `j-dskdrop` baseline row still deserialize through
+// `PostgresStoreV2::get_project` into the new `Project` wire type (no
+// `default_status_key` field), and that the migration body is
+// idempotent on a second pass.
+// ---------------------------------------------------------------------------
+
+async fn drop_projects_default_status_key_migration_removes_column(pool: &PgPool) -> Result<()> {
+    if column_exists(pool, "projects", "default_status_key").await? {
+        bail!(
+            "expected metis.projects.default_status_key to be dropped after \
+             20260611000000_drop_projects_default_status_key"
+        );
+    }
+    Ok(())
+}
+
+async fn drop_projects_default_status_key_migration_preserves_typed_read(
+    pool: &PgPool,
+) -> Result<()> {
+    // Read the seeded `j-defaul` row plus the custom `j-dskdrop` baseline
+    // row back through the typed store API. Both must deserialize into
+    // `Project` without the `default_status_key` field — covers the
+    // serde-projection foot-gun (post-migration SELECT must match the
+    // ProjectRow struct, and the row must serde into the wire type).
+    let store = PostgresStoreV2::new(pool.clone());
+
+    let defaul = parse_project_id("j-defaul")?;
+    let fetched = store
+        .get_project(&defaul, false)
+        .await
+        .context("PostgresStoreV2::get_project(j-defaul) post-drop-default-status-key")?;
+    if fetched.item.key.as_str() != "default" {
+        bail!(
+            "j-defaul: expected key='default'; got {:?}",
+            fetched.item.key
+        );
+    }
+    if fetched.item.statuses.len() != 5 {
+        bail!(
+            "j-defaul: expected 5 statuses; got {}",
+            fetched.item.statuses.len()
+        );
+    }
+
+    let dskdrop = parse_project_id("j-dskdrop")?;
+    let fixture = store
+        .get_project(&dskdrop, false)
+        .await
+        .context("PostgresStoreV2::get_project(j-dskdrop) post-drop-default-status-key")?;
+    if fixture.item.key.as_str() != "dskdrop" {
+        bail!(
+            "j-dskdrop: expected key='dskdrop'; got {:?}",
+            fixture.item.key
+        );
+    }
+    if fixture.item.statuses.len() != 3 {
+        bail!(
+            "j-dskdrop: expected 3 statuses; got {}",
+            fixture.item.statuses.len()
+        );
+    }
+    let keys: Vec<&str> = fixture
+        .item
+        .statuses
+        .iter()
+        .map(|s| s.key.as_str())
+        .collect();
+    if keys != ["todo", "doing", "done"] {
+        bail!("j-dskdrop: expected statuses [todo,doing,done]; got {keys:?}");
+    }
+    Ok(())
+}
+
+async fn drop_projects_default_status_key_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    // Re-execute the migration body verbatim. `ALTER TABLE ... DROP
+    // COLUMN IF EXISTS` is intrinsically idempotent: a second pass on
+    // the already-stripped table is a no-op. Reading the file rather
+    // than hard-coding the SQL keeps this test honest if the
+    // migration's body ever changes shape.
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/20260611000000_drop_projects_default_status_key.sql"),
+    )
+    .context(
+        "read postgres drop_projects_default_status_key migration body for idempotency rerun",
+    )?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply postgres drop_projects_default_status_key migration body")?;
+    if column_exists(pool, "projects", "default_status_key").await? {
+        bail!("drop_projects_default_status_key: column reappeared after idempotency rerun");
     }
     Ok(())
 }

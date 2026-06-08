@@ -213,10 +213,8 @@ function EditStatusModal({
   // Bulk-move every issue at the to-delete status onto `moveTargetKey`, then
   // drop the status from the project's `statuses`. Errors halt the move
   // before the project save fires so we never orphan a status with a partial
-  // migration. We do the per-issue work outside of `saveMutation` because
-  // (a) it needs sequential progress reporting and (b) we also need to
-  // possibly re-point `default_status_key`, which `saveMutation` doesn't
-  // touch.
+  // migration. We do the per-issue work outside of `saveMutation` because it
+  // needs sequential progress reporting.
   const moveAndDeleteMutation = useMutation({
     mutationFn: async (targetKey: string) => {
       if (index < 0) throw new Error("Status not found in project");
@@ -260,22 +258,11 @@ function EditStatusModal({
         }
       }
 
-      // 3) Optimistic project save: drop the status, retarget the default
-      //    status key if it was the deleted one. Prefer the left neighbor;
-      //    fall back to the right neighbor (i.e. nextStatuses[0]) when the
-      //    deleted column was the leftmost.
+      // 3) Optimistic project save: drop the status from the list.
       const nextStatuses = statuses.filter((_, i) => i !== index);
-      const wasDefault =
-        projectRecord.project.default_status_key === statusKey;
-      let nextDefaultKey = projectRecord.project.default_status_key;
-      if (wasDefault) {
-        const leftKey = nextStatuses[index - 1]?.key;
-        nextDefaultKey = leftKey ?? nextStatuses[0]?.key ?? nextDefaultKey;
-      }
       const nextProject = {
         ...projectRecord.project,
         statuses: nextStatuses,
-        default_status_key: nextDefaultKey,
       };
 
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });

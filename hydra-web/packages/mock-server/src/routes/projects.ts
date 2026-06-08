@@ -63,7 +63,6 @@ function defaultProject(): Project {
         cascades_to_children: true,
       },
     ],
-    default_status_key: "open",
     creator: "system",
     deleted: false,
     priority: 1000,
@@ -85,7 +84,6 @@ function findByKey(store: Store, key: string): { id: string; project: Project } 
 function toStatusesResponse(project: Project): ProjectStatusesResponse {
   return {
     statuses: project.statuses.map((s: StatusDefinition) => ({ ...s })),
-    default_status_key: project.default_status_key,
   };
 }
 

@@ -129,7 +129,6 @@ export function IssuesBoard({
           key: match.project.key,
           name: match.project.name,
           statuses: match.project.statuses,
-          default_status_key: match.project.default_status_key,
         });
       }
       return out;
@@ -141,7 +140,6 @@ export function IssuesBoard({
         key: record.project.key,
         name: record.project.name,
         statuses: record.project.statuses,
-        default_status_key: record.project.default_status_key,
       });
     }
     return out;
@@ -706,7 +704,6 @@ function BoardColumn({
 }: BoardColumnProps & SortableHandleProps & { isOver?: boolean }) {
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
-  const isDefaultStatus = status.key === project.default_status_key;
   const assignTo = status.on_enter?.assign_to ?? null;
   const interactiveLabel = status.interactive === true ? "interactive" : "auto";
   const colClasses = [styles.col];
@@ -729,7 +726,6 @@ function BoardColumn({
         {...(dragHandleProps ?? {})}
       >
         <StatusChip definition={status} />
-        {isDefaultStatus && <span className={styles.defaultChip}>DEFAULT</span>}
         {!hideIssues && (
           <span className={styles.colCount}>{colIssues.length}</span>
         )}

@@ -394,7 +394,6 @@ function makeProject(statuses: StatusDefinition[]): ProjectRecord {
       key: "engineering" as never,
       name: "Engineering",
       statuses,
-      default_status_key: statuses[0]?.key ?? ("open" as never),
       creator: "alice" as never,
       deleted: false,
       prompt_path: null,
@@ -1029,13 +1028,12 @@ describe("StatusSettingsModal", () => {
       // Project save fires after all issues moved.
       expect(updateProjectSpy).toHaveBeenCalledTimes(1);
       const projectPayload = updateProjectSpy.mock.calls[0][1] as {
-        project: { statuses: StatusDefinition[]; default_status_key: string };
+        project: { statuses: StatusDefinition[] };
       };
       expect(projectPayload.project.statuses.map((s) => s.key)).toEqual([
         "open",
         "closed",
       ]);
-      expect(projectPayload.project.default_status_key).toBe("open");
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
@@ -1083,77 +1081,6 @@ describe("StatusSettingsModal", () => {
       expect(failureCall![1]).toBe("error");
     });
 
-    it("retargets default_status_key to the left neighbor when deleting the default", async () => {
-      const project = makeProject([
-        makeStatus("open"),
-        makeStatus("in-progress"),
-        makeStatus("closed"),
-      ]);
-      // Make "in-progress" the project's default so deleting it forces a
-      // reassign.
-      project.project.default_status_key = "in-progress" as never;
-      listIssuesSpy.mockImplementationOnce(async () => ({
-        issues: [{ issue_id: "i-aaa" }],
-        next_cursor: null,
-      }));
-
-      render(
-        <StatusSettingsModal
-          open={true}
-          onClose={() => {}}
-          projectRecord={project}
-          statusKey="in-progress"
-          issueCount={1}
-        />,
-      );
-
-      fireEvent.click(screen.getByTestId("status-settings-delete"));
-      await act(async () => {
-        fireEvent.click(screen.getByTestId("status-settings-move-confirm"));
-      });
-
-      const payload = updateProjectSpy.mock.calls[0][1] as {
-        project: { default_status_key: string };
-      };
-      // Left neighbor of "in-progress" is "open".
-      expect(payload.project.default_status_key).toBe("open");
-    });
-
-    it("retargets default_status_key to the right neighbor when deleting the leftmost default", async () => {
-      const project = makeProject([
-        makeStatus("open"),
-        makeStatus("in-progress"),
-        makeStatus("closed"),
-      ]);
-      // Default is "open" (leftmost) and we delete it — fall back to the
-      // right neighbor.
-      listIssuesSpy.mockImplementationOnce(async () => ({
-        issues: [{ issue_id: "i-aaa" }],
-        next_cursor: null,
-      }));
-
-      render(
-        <StatusSettingsModal
-          open={true}
-          onClose={() => {}}
-          projectRecord={project}
-          statusKey="open"
-          issueCount={1}
-        />,
-      );
-
-      fireEvent.click(screen.getByTestId("status-settings-delete"));
-      // The default neighbor target for "open" is "in-progress", so we can
-      // confirm without changing the select.
-      await act(async () => {
-        fireEvent.click(screen.getByTestId("status-settings-move-confirm"));
-      });
-
-      const payload = updateProjectSpy.mock.calls[0][1] as {
-        project: { default_status_key: string };
-      };
-      expect(payload.project.default_status_key).toBe("in-progress");
-    });
   });
 
   describe("Prompt document editor (PR-11)", () => {

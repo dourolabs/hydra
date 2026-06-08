@@ -115,6 +115,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_projects_priority_backfill_sql_level(&pool).await?;
     add_projects_priority_backfill_domain_roundtrip(&pool).await?;
 
+    drop_projects_default_status_key_migration_removes_column(&pool).await?;
+    drop_projects_default_status_key_migration_preserves_typed_read(&pool).await?;
+    drop_projects_default_status_key_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -653,14 +657,13 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
     // `20260606010000_add_projects_prompt_path.sql`.
     sqlx::query(
         "INSERT INTO projects \
-           (id, version_number, key, name, default_status_key, statuses, \
+           (id, version_number, key, name, statuses, \
             creator, deleted, actor, prompt_path, is_latest) \
-         VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, 0, NULL, ?7, 1)",
+         VALUES (?1, 1, ?2, ?3, ?4, ?5, 0, NULL, ?6, 1)",
     )
     .bind(project_id)
     .bind("smoke")
     .bind("Smoke")
-    .bind("todo")
     .bind(&project_statuses)
     .bind("alice")
     .bind("/projects/smoke/prompt.md")
@@ -970,7 +973,7 @@ async fn assert_agent_config_system_prompt_backfill(pool: &SqlitePool) -> Result
 
 async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result<()> {
     let row = sqlx::query(
-        "SELECT id, version_number, key, name, default_status_key, statuses, \
+        "SELECT id, version_number, key, name, statuses, \
                 creator, deleted, actor, is_latest, prompt_path \
          FROM projects WHERE id = 'j-defaul'",
     )
@@ -982,7 +985,6 @@ async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result
     let version_number: i64 = row.try_get("version_number")?;
     let key: String = row.try_get("key")?;
     let name: String = row.try_get("name")?;
-    let default_status_key: String = row.try_get("default_status_key")?;
     let statuses_text: String = row.try_get("statuses")?;
     let creator: String = row.try_get("creator")?;
     let deleted: i64 = row.try_get("deleted")?;
@@ -1001,9 +1003,6 @@ async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result
     }
     if name != "Default" {
         bail!("j-defaul: expected name='Default'; got {name:?}");
-    }
-    if default_status_key != "open" {
-        bail!("j-defaul: expected default_status_key='open'; got {default_status_key:?}");
     }
     if creator != "system" {
         bail!("j-defaul: expected creator='system'; got {creator:?}");
@@ -1160,12 +1159,6 @@ async fn drop_status_icon_migration_strips_custom_row(pool: &SqlitePool) -> Resu
             fetched.item.name
         );
     }
-    if fetched.item.default_status_key.as_str() != "todo" {
-        bail!(
-            "j-iconfix: expected default_status_key='todo'; got {:?}",
-            fetched.item.default_status_key
-        );
-    }
     if fetched.item.creator.as_str() != "jayantk" {
         bail!(
             "j-iconfix: expected creator='jayantk'; got {:?}",
@@ -1266,30 +1259,19 @@ async fn snapshot_status_arrays(
 }
 
 async fn seed_default_project_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
-    // Re-execute the migration body verbatim. `INSERT OR IGNORE` must
-    // swallow the (id, version_number) conflict and the UPDATE must be a
-    // no-op since every row was backfilled by the first pass. Reading the
-    // file rather than hard-coding the SQL keeps this test honest if the
-    // migration's body ever changes shape (the assertion exercises
-    // whatever the current rollforward statement is).
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("sqlite-migrations/20260607000000_seed_default_project.sql"),
-    )
-    .context("read sqlite seed_default_project migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply sqlite seed_default_project migration body")?;
-
-    // No duplicate row at (j-defaul, 1).
+    // Original behavior of this assertion was to replay the seed
+    // migration body verbatim. After
+    // 20260611000000_drop_projects_default_status_key drops a column
+    // the body references, a verbatim re-apply errors — so the
+    // idempotency guarantee that matters here is now: after the full
+    // migration plan rolls forward, exactly one j-defaul row exists.
     let row = sqlx::query("SELECT COUNT(*) FROM projects WHERE id = 'j-defaul'")
         .fetch_one(pool)
         .await
-        .context("count projects rows for j-defaul after idempotency rerun")?;
+        .context("count projects rows for j-defaul after rollforward")?;
     let count: i64 = row.try_get(0)?;
     if count != 1 {
-        bail!("expected exactly 1 projects row for j-defaul after rerun; got {count}");
+        bail!("expected exactly 1 projects row for j-defaul post-rollforward; got {count}");
     }
     Ok(())
 }
@@ -1491,6 +1473,115 @@ async fn add_projects_priority_backfill_domain_roundtrip(pool: &SqlitePool) -> R
     let want_owned: Vec<(String, f64)> = want.iter().map(|(s, p)| (s.to_string(), *p)).collect();
     if got != want_owned {
         bail!("list_projects filtered to baseline rows: expected {want_owned:?}; got {got:?}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260611000000_drop_projects_default_status_key — assert that the
+// migration removes the `default_status_key` column from `projects`,
+// that the seeded `j-defaul` row and the custom `j-dskdrop` baseline row
+// still deserialize through `SqliteStore::get_project` into the new
+// `Project` wire type (no `default_status_key` field), and that the
+// table-rebuild body is idempotent on a second pass.
+// ---------------------------------------------------------------------------
+
+async fn drop_projects_default_status_key_migration_removes_column(
+    pool: &SqlitePool,
+) -> Result<()> {
+    if column_exists(pool, "projects", "default_status_key").await? {
+        bail!(
+            "expected projects.default_status_key to be dropped after \
+             20260611000000_drop_projects_default_status_key"
+        );
+    }
+    Ok(())
+}
+
+async fn drop_projects_default_status_key_migration_preserves_typed_read(
+    pool: &SqlitePool,
+) -> Result<()> {
+    // Read the seeded `j-defaul` row plus the custom `j-dskdrop` baseline
+    // row back through the typed store API. Both must deserialize into
+    // `Project` without the `default_status_key` field — covers the
+    // serde-projection foot-gun (post-migration SELECT must match the
+    // ProjectRow struct, and the row must serde into the wire type).
+    let store = SqliteStore::new(pool.clone());
+
+    let defaul = ProjectId::from_str("j-defaul").context("parse 'j-defaul'")?;
+    let fetched = store
+        .get_project(&defaul, false)
+        .await
+        .context("SqliteStore::get_project(j-defaul) post-drop-default-status-key")?;
+    if fetched.item.key.as_str() != "default" {
+        bail!(
+            "j-defaul: expected key='default'; got {:?}",
+            fetched.item.key
+        );
+    }
+    if fetched.item.statuses.len() != 5 {
+        bail!(
+            "j-defaul: expected 5 statuses; got {}",
+            fetched.item.statuses.len()
+        );
+    }
+
+    let dskdrop = ProjectId::from_str("j-dskdrop").context("parse 'j-dskdrop'")?;
+    let fixture = store
+        .get_project(&dskdrop, false)
+        .await
+        .context("SqliteStore::get_project(j-dskdrop) post-drop-default-status-key")?;
+    if fixture.item.key.as_str() != "dskdrop" {
+        bail!(
+            "j-dskdrop: expected key='dskdrop'; got {:?}",
+            fixture.item.key
+        );
+    }
+    if fixture.item.statuses.len() != 3 {
+        bail!(
+            "j-dskdrop: expected 3 statuses; got {}",
+            fixture.item.statuses.len()
+        );
+    }
+    let keys: Vec<&str> = fixture
+        .item
+        .statuses
+        .iter()
+        .map(|s| s.key.as_str())
+        .collect();
+    if keys != ["todo", "doing", "done"] {
+        bail!("j-dskdrop: expected statuses [todo,doing,done]; got {keys:?}");
+    }
+    Ok(())
+}
+
+async fn drop_projects_default_status_key_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // Re-execute the migration body verbatim. The table-rebuild dance
+    // (CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE + DROP + RENAME)
+    // is naturally idempotent: a second pass rebuilds an empty
+    // `projects_new`, copies the now-already-stripped rows, and swaps
+    // the table back into place. Reading the file rather than
+    // hard-coding the SQL keeps this test honest if the migration's
+    // body ever changes shape.
+    let before = snapshot_status_arrays(pool).await?;
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260611000000_drop_projects_default_status_key.sql"),
+    )
+    .context("read sqlite drop_projects_default_status_key migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply sqlite drop_projects_default_status_key migration body")?;
+    let after = snapshot_status_arrays(pool).await?;
+    if before != after {
+        bail!(
+            "drop_projects_default_status_key: expected no change on re-apply; \
+             before={before:?}, after={after:?}"
+        );
+    }
+    if column_exists(pool, "projects", "default_status_key").await? {
+        bail!("drop_projects_default_status_key: column reappeared after idempotency rerun");
     }
     Ok(())
 }

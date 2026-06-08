@@ -32,5 +32,4 @@ export interface ListProjectsResponse {
 
 export interface ProjectStatusesResponse {
   statuses: StatusDefinition[];
-  default_status_key: string;
 }
