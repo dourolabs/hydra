@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, Select, Textarea } from "@hydra/ui";
+import {
+  Avatar,
+  Button,
+  Input,
+  Modal,
+  Picker,
+  PickerRow,
+  Select,
+  Textarea,
+} from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type {
   DocumentPath,
@@ -15,12 +24,6 @@ import { useToast } from "../toast/useToast";
 import { useAgents } from "../../hooks/useAgents";
 import { useUsers } from "../../hooks/useUsers";
 import { ColorPicker, LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
-import {
-  principalKind,
-  principalToPath,
-  pathToPrincipal,
-  type AssignKind,
-} from "./principalAssign";
 import {
   PROJECTS_QUERY_KEY,
   applyOptimisticUpsert,
@@ -350,8 +353,6 @@ function EditStatusModal({
         setDraft={setDraft}
         agents={agents?.map((a) => a.name) ?? []}
         users={users?.map((u) => u.username) ?? []}
-        agentsLoaded={agents !== undefined}
-        usersLoaded={users !== undefined}
         projectKey={projectRecord.project.key as string}
         statusKeyForDefaultPath={statusKey}
         promptExpanded={promptExpanded}
@@ -471,8 +472,6 @@ interface StatusFormProps {
   setDraft: (next: StatusDefinition) => void;
   agents: string[];
   users: string[];
-  agentsLoaded: boolean;
-  usersLoaded: boolean;
   projectKey: string;
   statusKeyForDefaultPath: string;
   promptExpanded: boolean;
@@ -484,48 +483,28 @@ function StatusForm({
   setDraft,
   agents,
   users,
-  agentsLoaded,
-  usersLoaded,
   projectKey,
   statusKeyForDefaultPath,
   promptExpanded,
   onTogglePromptExpanded,
 }: StatusFormProps) {
   const onEnter = draft.on_enter ?? null;
-  const assignKind = principalKind(onEnter?.assign_to ?? null);
-  const principalPath = onEnter?.assign_to ? principalToPath(onEnter.assign_to) : "";
-  const external = onEnter?.assign_to && "External" in onEnter.assign_to
-    ? onEnter.assign_to.External
-    : null;
+  const principal = onEnter?.assign_to ?? null;
   const attachForm = onEnter?.attach_form ?? "";
+  const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
 
   const patch = (p: Partial<StatusDefinition>) => setDraft({ ...draft, ...p });
 
-  const userOptions: SelectOption[] = useMemo(
-    () => [
-      { value: "", label: "— select user —" },
-      ...users.map((u) => ({ value: `users/${u}`, label: u })),
-    ],
-    [users],
-  );
-  const agentOptions: SelectOption[] = useMemo(
-    () => [
-      { value: "", label: "— select agent —" },
-      ...agents.map((a) => ({ value: `agents/${a}`, label: a })),
-    ],
-    [agents],
-  );
-  const hasUsers = usersLoaded && users.length > 0;
-  const hasAgents = agentsLoaded && agents.length > 0;
-  const kindOptions: SelectOption[] = useMemo(
-    () => [
-      { value: "none", label: "— none —" },
-      { value: "user", label: hasUsers ? "User" : "User (none available)" },
-      { value: "agent", label: hasAgents ? "Agent" : "Agent (none available)" },
-      { value: "external", label: "External" },
-    ],
-    [hasUsers, hasAgents],
-  );
+  // The new flat picker doesn't model External, so legacy External
+  // assignments render as "Unassigned" in the trigger pill until the user
+  // re-picks (the underlying value stays put unless they pick a new row).
+  const assigneeView: { name: string; kind: "agent" | "user" } | null =
+    useMemo(() => {
+      if (!principal) return null;
+      if ("Agent" in principal) return { name: principal.Agent.name, kind: "agent" };
+      if ("User" in principal) return { name: principal.User.name, kind: "user" };
+      return null;
+    }, [principal]);
 
   const setAssign = (next: Principal | null) => {
     const nextForm = onEnter?.attach_form ?? null;
@@ -544,24 +523,6 @@ function StatusForm({
       return;
     }
     patch({ on_enter: { assign_to: nextAssign, attach_form: nextForm } });
-  };
-
-  const setKind = (kind: AssignKind) => {
-    if (kind === "none") return setAssign(null);
-    // Don't seed an empty Principal name — Principal::{User,Agent}.name must
-    // always be a real handle. If the list isn't loaded yet (or is empty),
-    // leave the existing assignment alone so the user can pick once it loads.
-    if (kind === "user") {
-      if (!hasUsers) return;
-      return setAssign({ User: { name: users[0] } });
-    }
-    if (kind === "agent") {
-      if (!hasAgents) return;
-      return setAssign({ Agent: { name: agents[0] } });
-    }
-    setAssign({
-      External: { system: external?.system ?? "", username: external?.username ?? "" },
-    });
   };
 
   return (
@@ -636,59 +597,85 @@ function StatusForm({
 
       <div className={styles.onEnter}>
         <span className={styles.onEnterTitle}>On enter</span>
-        <Select
-          label="Assign to"
-          options={kindOptions}
-          value={assignKind}
-          onChange={(e) => setKind(e.target.value as AssignKind)}
-          data-testid="status-settings-assign-kind"
-        />
-        {assignKind === "user" && (
-          <Select
-            label="User"
-            options={userOptions}
-            value={principalPath}
-            onChange={(e) => setAssign(pathToPrincipal(e.target.value))}
-          />
-        )}
-        {assignKind === "agent" && (
-          <Select
-            label="Agent"
-            options={agentOptions}
-            value={principalPath}
-            onChange={(e) => setAssign(pathToPrincipal(e.target.value))}
-          />
-        )}
-        {assignKind === "external" && (
-          <div className={styles.statusInputs}>
-            <Input
-              label="System"
-              value={external?.system ?? ""}
-              onChange={(e) =>
-                setAssign({
-                  External: {
-                    system: e.target.value,
-                    username: external?.username ?? "",
-                  },
-                })
-              }
-              placeholder="github"
-            />
-            <Input
-              label="Username"
-              value={external?.username ?? ""}
-              onChange={(e) =>
-                setAssign({
-                  External: {
-                    system: external?.system ?? "",
-                    username: e.target.value,
-                  },
-                })
-              }
-              placeholder="jayantk"
-            />
-          </div>
-        )}
+        <div data-testid="status-settings-assignee">
+          <Picker
+            label="Assign to"
+            open={assigneePickerOpen}
+            onToggle={() => setAssigneePickerOpen((v) => !v)}
+            wide
+            value={
+              assigneeView ? (
+                <span className={styles.pillContent}>
+                  <Avatar
+                    name={assigneeView.name}
+                    kind={assigneeView.kind === "agent" ? "agent" : "human"}
+                    size="md"
+                  />
+                  <span>{assigneeView.name}</span>
+                </span>
+              ) : (
+                <span className={styles.pillEmpty}>Unassigned</span>
+              )
+            }
+          >
+            <PickerRow
+              active={!principal}
+              onClick={() => {
+                setAssign(null);
+                setAssigneePickerOpen(false);
+              }}
+            >
+              <span className={styles.pillEmpty}>Unassigned</span>
+              <span className={styles.popSpacer} />
+            </PickerRow>
+            {agents.length > 0 && (
+              <>
+                <div className={styles.popSection}>Agents</div>
+                {agents.map((name) => (
+                  <PickerRow
+                    key={`agents/${name}`}
+                    active={
+                      !!principal &&
+                      "Agent" in principal &&
+                      principal.Agent.name === name
+                    }
+                    onClick={() => {
+                      setAssign({ Agent: { name } });
+                      setAssigneePickerOpen(false);
+                    }}
+                  >
+                    <Avatar name={name} kind="agent" size="md" />
+                    <span>{name}</span>
+                    <span className={styles.popSpacer} />
+                  </PickerRow>
+                ))}
+              </>
+            )}
+            {users.length > 0 && (
+              <>
+                <div className={styles.popSection}>Users</div>
+                {users.map((name) => (
+                  <PickerRow
+                    key={`users/${name}`}
+                    active={
+                      !!principal &&
+                      "User" in principal &&
+                      principal.User.name === name
+                    }
+                    onClick={() => {
+                      setAssign({ User: { name } });
+                      setAssigneePickerOpen(false);
+                    }}
+                  >
+                    <Avatar name={name} kind="human" size="md" />
+                    <span>{name}</span>
+                    <span className={styles.popSpacer} />
+                  </PickerRow>
+                ))}
+              </>
+            )}
+          </Picker>
+        </div>
         <Input
           label="Attach form"
           value={attachForm}

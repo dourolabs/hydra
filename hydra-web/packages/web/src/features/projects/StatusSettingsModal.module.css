@@ -103,6 +103,39 @@
   color: var(--color-text-tertiary);
 }
 
+/* ── Assignee Picker — inline content rendered in the trigger pill and
+ *    inside the portaled popover. Shell styles (.pop, .popRow, etc.) live
+ *    in @hydra/ui's Picker module. */
+.pillContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pillEmpty {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.popSection {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  padding: 8px 10px 4px;
+}
+
+.popSection:first-child {
+  padding-top: 4px;
+}
+
+.popSpacer {
+  flex: 1;
+}
+
 .moveBlock {
   display: flex;
   flex-direction: column;
