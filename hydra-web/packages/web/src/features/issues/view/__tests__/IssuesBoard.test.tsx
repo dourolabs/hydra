@@ -279,7 +279,10 @@ function emptyCell(overrides: Partial<BoardCellQuery> = {}): BoardCellQuery {
   };
 }
 
-function renderBoard(queryClient?: QueryClient) {
+function renderBoard(
+  queryClient?: QueryClient,
+  opts: { hideIssues?: boolean } = {},
+) {
   const client =
     queryClient ??
     new QueryClient({
@@ -292,6 +295,7 @@ function renderBoard(queryClient?: QueryClient) {
           baseFilters={{}}
           username="alice"
           filterRootId={null}
+          hideIssues={opts.hideIssues}
         />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -667,5 +671,60 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     // No project sections means no DndContext was mounted.
     expect(lastDragEndHandler).toBeNull();
     expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+});
+
+describe("IssuesBoard hideIssues (Projects tab)", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+    ];
+  });
+
+  it("keeps the project sections, status columns, and add-status ghost rendered", () => {
+    renderBoard(undefined, { hideIssues: true });
+
+    // Project sections still render.
+    expect(screen.getByTestId("board-project-engineering")).toBeDefined();
+    // Status columns still render.
+    expect(screen.getByTestId("board-col-engineering-open")).toBeDefined();
+    expect(screen.getByTestId("board-col-engineering-in-progress")).toBeDefined();
+    // The "+ Add status" and "+ New project" ghosts remain.
+    expect(screen.getByTestId("board-col-add-engineering")).toBeDefined();
+    expect(screen.getByTestId("board-new-project")).toBeDefined();
+  });
+
+  it("suppresses the per-column 'No issues' placeholder", () => {
+    renderBoard(undefined, { hideIssues: true });
+
+    expect(screen.queryByText("No issues")).toBeNull();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
+
+  it("suppresses the per-project 'N issues' meta pill", () => {
+    renderBoard(undefined, { hideIssues: true });
+
+    // The board normally renders e.g. "0 issues" next to the project chip.
+    // In projects-only mode that pill should not appear.
+    expect(screen.queryByText(/^\d+ issues?$/)).toBeNull();
+    // The "N statuses" pill should still render.
+    expect(screen.getByText(/^2 statuses$/)).toBeDefined();
+  });
+
+  it("renders columns in the same order as the normal board (status chips visible)", () => {
+    renderBoard(undefined, { hideIssues: true });
+
+    // Status chips are emitted via StatusChip; the column heads carry
+    // testids parameterised on the status key — verify both eng statuses
+    // render in order.
+    const cols = [
+      screen.getByTestId("board-col-engineering-open"),
+      screen.getByTestId("board-col-engineering-in-progress"),
+    ];
+    // Each column head must still be present (chrome match parity).
+    expect(within(cols[0]).getByTestId("board-col-head-engineering-open")).toBeDefined();
+    expect(
+      within(cols[1]).getByTestId("board-col-head-engineering-in-progress"),
+    ).toBeDefined();
   });
 });

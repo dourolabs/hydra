@@ -1,0 +1,16 @@
+.page { composes: page from "./adminPage.module.css"; }
+.pageHead { composes: pageHead from "./adminPage.module.css"; }
+.headLeft { composes: headLeft from "./adminPage.module.css"; }
+.eyebrow { composes: eyebrow from "./adminPage.module.css"; }
+.pageTitle { composes: pageTitle from "./adminPage.module.css"; }
+.headSpacer { composes: headSpacer from "./adminPage.module.css"; }
+
+/* Override adminPage.body — the board owns its own padding and scroll
+ * via `.kanban`, so the page body must not double-pad or double-scroll. */
+.body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
