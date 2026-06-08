@@ -1,25 +1,32 @@
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  border: 1px solid;
-  font-size: var(--font-size-xs);
+  gap: 6px;
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  font-weight: 500;
   line-height: 1.4;
+  color: var(--fg-0);
+  text-transform: capitalize;
   white-space: nowrap;
-  background: var(--color-bg-secondary);
 }
 
 .dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
+.dotInProgress {
+  animation: statusChipPulse 1.8s ease-in-out infinite;
+}
+
 .label {
-  color: var(--color-text-primary);
+  color: var(--fg-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .interactiveTag {
@@ -28,9 +35,16 @@
   border-radius: var(--radius-pill);
   border: 1px solid var(--color-text-tertiary);
   font-size: 9px;
+  font-weight: 500;
   line-height: 1.4;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--color-text-secondary);
-  background: var(--color-bg-primary);
+  background: var(--color-bg-secondary);
+}
+
+@keyframes statusChipPulse {
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
 }

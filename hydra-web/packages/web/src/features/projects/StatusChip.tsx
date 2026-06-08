@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { StatusDefinition } from "@hydra/api";
 import styles from "./StatusChip.module.css";
 
@@ -12,18 +13,36 @@ interface StatusChipProps {
   "data-testid"?: string;
 }
 
+const NEUTRAL_DOT = "var(--s-neutral)";
+
+function isInProgressKey(key: string): boolean {
+  return key === "in-progress";
+}
+
+function dotStyle(color: string, inProgress: boolean): CSSProperties {
+  if (!inProgress) return { background: color };
+  return {
+    background: color,
+    boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 18%, transparent)`,
+  };
+}
+
 export function StatusChip({
   definition,
   fallbackKey,
   className,
   "data-testid": testId,
 }: StatusChipProps) {
+  const cls = [styles.chip, className].filter(Boolean).join(" ");
+
   if (definition) {
-    const color = definition.color;
-    const cls = [styles.chip, className].filter(Boolean).join(" ");
+    const inProgress = isInProgressKey(definition.key);
+    const dotCls = [styles.dot, inProgress && styles.dotInProgress]
+      .filter(Boolean)
+      .join(" ");
     return (
-      <span className={cls} style={{ borderColor: color }} data-testid={testId}>
-        <span className={styles.dot} style={{ backgroundColor: color }} />
+      <span className={cls} data-testid={testId}>
+        <span className={dotCls} style={dotStyle(definition.color, inProgress)} />
         <span className={styles.label}>{definition.label}</span>
         {definition.interactive && (
           <span
@@ -42,11 +61,13 @@ export function StatusChip({
     return null;
   }
 
-  const cls = [styles.chip, className].filter(Boolean).join(" ");
-  const neutral = "var(--color-border-secondary, #6b7280)";
+  const inProgress = isInProgressKey(fallbackKey);
+  const dotCls = [styles.dot, inProgress && styles.dotInProgress]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <span className={cls} style={{ borderColor: neutral }} data-testid={testId}>
-      <span className={styles.dot} style={{ backgroundColor: neutral }} />
+    <span className={cls} data-testid={testId}>
+      <span className={dotCls} style={dotStyle(NEUTRAL_DOT, inProgress)} />
       <span className={styles.label}>{fallbackKey}</span>
     </span>
   );
