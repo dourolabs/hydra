@@ -116,6 +116,16 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("seed_default_project: idempotency on re-applied migration body")?;
 
+    drop_status_icon_migration_strips_default_seed(&pool)
+        .await
+        .context("drop_status_icon: j-defaul statuses no longer carry an `icon` key")?;
+    drop_status_icon_migration_strips_custom_row(&pool)
+        .await
+        .context("drop_status_icon: j-iconfix statuses round-trip without `icon`")?;
+    drop_status_icon_migration_is_idempotent(&pool)
+        .await
+        .context("drop_status_icon: idempotency on re-applied migration body")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -1899,6 +1909,184 @@ async fn seed_default_project_migration_is_idempotent(pool: &PgPool) -> Result<(
         bail!("expected exactly 1 metis.projects row for j-defaul after rerun; got {count}");
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260608000000_drop_status_icon — assert that the migration strips the
+// `icon` key from every row's `metis.projects.statuses` array (both the
+// already-seeded `j-defaul` row and a custom fixture row), the migration
+// body is idempotent, and the post-migration JSON deserializes cleanly
+// through `Vec<StatusDefinition>` (which no longer carries an `icon`
+// field). Covers [[i-jazguvll]].
+// ---------------------------------------------------------------------------
+
+async fn drop_status_icon_migration_strips_default_seed(pool: &PgPool) -> Result<()> {
+    // The `j-defaul` row was inserted by 20260607000000_seed_default_project
+    // with `"icon": "..."` on every status; 20260608000000_drop_status_icon
+    // must have stripped each. `seed_default_project_migration_inserts_row`
+    // above already compares the deserialized Vec<StatusDefinition>
+    // against `default_project_seed()`; here we additionally assert at
+    // the JSONB level so a regression that re-adds the key shows up
+    // independently of the Rust type's serde shape.
+    let row =
+        sqlx::query("SELECT statuses::text AS statuses FROM metis.projects WHERE id = 'j-defaul'")
+            .fetch_one(pool)
+            .await
+            .context("read j-defaul statuses post-drop_status_icon")?;
+    let statuses_text: String = row.try_get("statuses")?;
+    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
+        .context("decode j-defaul.statuses JSON post-drop_status_icon")?;
+    let arr = statuses_json
+        .as_array()
+        .context("expected j-defaul.statuses to be a JSON array")?;
+    if arr.len() != 5 {
+        bail!(
+            "j-defaul: expected 5 statuses post-drop_status_icon; got {}",
+            arr.len()
+        );
+    }
+    for (i, elem) in arr.iter().enumerate() {
+        let obj = elem
+            .as_object()
+            .with_context(|| format!("j-defaul.statuses[{i}] is not a JSON object"))?;
+        if obj.contains_key("icon") {
+            bail!("j-defaul.statuses[{i}]: expected no `icon` key; got {elem}");
+        }
+    }
+    Ok(())
+}
+
+async fn drop_status_icon_migration_strips_custom_row(pool: &PgPool) -> Result<()> {
+    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey, StatusKey};
+
+    // The `j-iconfix` row was inserted by the
+    // `20260607000000__pre_drop_status_icon` baseline with three statuses
+    // that each carry `"icon": "<value>"`. Read back through
+    // `Store::get_project` so any drift between the migration's
+    // post-strip JSON shape and the Rust `StatusDefinition` serde impl
+    // fails loud here (the typed deserializer must accept the migrated
+    // rows).
+    let project_id = parse_project_id("j-iconfix")?;
+    let store = PostgresStoreV2::new(pool.clone());
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("Store::get_project(j-iconfix) post-drop_status_icon")?;
+
+    let ApiProject {
+        key,
+        name,
+        default_status_key,
+        statuses,
+        creator,
+        ..
+    } = &fetched.item;
+    if key != &ProjectKey::try_new("iconfix").unwrap() {
+        bail!("j-iconfix: expected key='iconfix'; got {key:?}");
+    }
+    if name != "Icon Fixture" {
+        bail!("j-iconfix: expected name='Icon Fixture'; got {name:?}");
+    }
+    if default_status_key != &StatusKey::try_new("todo").unwrap() {
+        bail!("j-iconfix: expected default_status_key='todo'; got {default_status_key:?}");
+    }
+    if creator.as_str() != "jayantk" {
+        bail!(
+            "j-iconfix: expected creator='jayantk'; got {:?}",
+            creator.as_str()
+        );
+    }
+    if statuses.len() != 3 {
+        bail!("j-iconfix: expected 3 statuses; got {}", statuses.len());
+    }
+
+    let expected_shapes: &[(&str, &str, &str, bool, bool, bool)] = &[
+        ("todo", "Todo", "#abcdef", false, false, false),
+        ("doing", "Doing", "#f1c40f", false, false, false),
+        ("done", "Done", "#2ecc71", true, true, false),
+    ];
+    for (i, (k, label, color, up, ud, ctc)) in expected_shapes.iter().enumerate() {
+        let s = &statuses[i];
+        if s.key.as_str() != *k
+            || s.label != *label
+            || s.color.as_ref() != *color
+            || s.unblocks_parents != *up
+            || s.unblocks_dependents != *ud
+            || s.cascades_to_children != *ctc
+        {
+            bail!(
+                "j-iconfix.statuses[{i}]: expected ({k}, {label}, {color}, {up}, {ud}, {ctc}); got {s:?}"
+            );
+        }
+    }
+
+    // Belt-and-braces JSONB-level check: confirm the raw column shape
+    // has no surviving `icon` keys, independent of the typed-serde path
+    // (e.g. a future `StatusDefinition` that silently ignores unknown
+    // fields wouldn't catch a regression).
+    let row =
+        sqlx::query("SELECT statuses::text AS statuses FROM metis.projects WHERE id = 'j-iconfix'")
+            .fetch_one(pool)
+            .await
+            .context("read j-iconfix raw statuses for icon-presence check")?;
+    let statuses_text: String = row.try_get("statuses")?;
+    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
+        .context("decode j-iconfix.statuses JSON post-drop_status_icon")?;
+    let arr = statuses_json
+        .as_array()
+        .context("expected j-iconfix.statuses to be a JSON array")?;
+    for (i, elem) in arr.iter().enumerate() {
+        let obj = elem
+            .as_object()
+            .with_context(|| format!("j-iconfix.statuses[{i}] is not a JSON object"))?;
+        if obj.contains_key("icon") {
+            bail!("j-iconfix.statuses[{i}]: expected no `icon` key post-strip; got {elem}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn drop_status_icon_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    // Re-execute the migration body verbatim. `elem - 'icon'` is a no-op
+    // on rows whose statuses no longer carry the key, so a second pass
+    // must produce no change. Reading the file rather than hard-coding
+    // the SQL keeps this test honest if the migration's body ever
+    // changes shape.
+    let before = snapshot_status_arrays(pool).await?;
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/20260608000000_drop_status_icon.sql"),
+    )
+    .context("read postgres drop_status_icon migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply postgres drop_status_icon migration body")?;
+    let after = snapshot_status_arrays(pool).await?;
+    if before != after {
+        bail!(
+            "drop_status_icon: expected no change on re-apply; before={before:?}, after={after:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Read every `(id, statuses)` pair from `metis.projects` and return it
+/// keyed by `id`. Used by the idempotency check above to compare the
+/// statuses JSON byte-for-byte across re-applications.
+async fn snapshot_status_arrays(pool: &PgPool) -> Result<HashMap<String, String>> {
+    let rows = sqlx::query("SELECT id, statuses::text AS statuses FROM metis.projects")
+        .fetch_all(pool)
+        .await
+        .context("read all projects rows for statuses snapshot")?;
+    let mut snap = HashMap::new();
+    for row in rows {
+        let id: String = row.try_get("id")?;
+        let statuses: String = row.try_get("statuses")?;
+        snap.insert(id, statuses);
+    }
+    Ok(snap)
 }
 
 // ---------------------------------------------------------------------------
