@@ -48,7 +48,7 @@ function readLayout(): IssuesLayout {
   if (typeof window === "undefined") return "table";
   try {
     const v = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
-    if (v === "board" || v === "table" || v === "cards") return v;
+    if (v === "board" || v === "table") return v;
   } catch {
     /* ignore */
   }
@@ -336,9 +336,9 @@ export function IssuesListPage() {
   useEffect(() => {
     writeLayout(layout);
   }, [layout]);
-  // Table + cards layouts share the same flat-issue-list query path; only
-  // board layout owns its own per-column fetches via baseFilters.
-  const isFlatList = layout === "table" || layout === "cards";
+  // Only board layout owns its own per-column fetches via baseFilters; the
+  // table layout drives off the shared flat-issue-list query path below.
+  const isFlatList = layout === "table";
 
   // Resolve relation filters into a concrete issue id set the server can
   // narrow on via `ids=`. Holds off `listIssues` while the resolver is in
@@ -400,11 +400,9 @@ export function IssuesListPage() {
 
   const displayCount = totalCount ?? issues.length;
 
-  // Only the table layout actually reads childStatusMap / sessionsByIssue
-  // (progress column + runtime cell). Cards consume the same flat issue list
-  // but render none of the tree-derived data, so keep the tree fetch gated on
-  // `table` to avoid three wasted backend calls per Cards render. Board owns
-  // its own tree expansion over the per-column issue union.
+  // Only the table layout reads childStatusMap / sessionsByIssue (progress
+  // column + runtime cell). Board owns its own tree expansion over the
+  // per-column issue union, so skip the tree fetch when it's active.
   const { childStatusMap, sessionsByIssue } = usePageIssueTrees(
     layout === "table" ? issues : [],
     currentUser,
