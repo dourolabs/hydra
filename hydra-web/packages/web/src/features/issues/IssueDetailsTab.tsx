@@ -1,19 +1,27 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Avatar, TypeChip } from "@hydra/ui";
-import type { IssueVersionRecord } from "@hydra/api";
+import type { IssueSummaryRecord, IssueVersionRecord } from "@hydra/api";
 import {
   principalAvatarKind,
   principalDisplayName,
 } from "../principal/formatPrincipal";
+import { ProjectChip } from "../projects/ProjectChip";
 import { StatusChip } from "../projects/StatusChip";
+import { useProject, useProjects } from "../projects/useProjects";
 import { formatTimestamp } from "../../utils/time";
-import { useIssue } from "./useIssue";
+import { useIssuesByIds } from "./useIssue";
+import { computeBlockedStatus } from "./blockedStatus";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import styles from "./IssueDetailsTab.module.css";
 
-function DepRow({ issueId }: { issueId: string }) {
-  const { data: record } = useIssue(issueId);
+function DepRow({
+  issueId,
+  record,
+}: {
+  issueId: string;
+  record?: IssueVersionRecord;
+}) {
   const title = record?.issue.title || issueId;
   return (
     <Link to={`/issues/${issueId}`} className={styles.depRow} title={title}>
@@ -37,6 +45,17 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
   const { issue } = record;
   const issueId = record.issue_id;
   const settings = issue.session_settings;
+  const projectId = issue.project_id ?? null;
+
+  const { data: projectRecord } = useProject(projectId);
+  const { data: allProjects } = useProjects();
+  const project = useMemo(() => {
+    if (projectRecord) return projectRecord.project;
+    if (!projectId) {
+      return allProjects?.find((p) => p.project.key === "default")?.project;
+    }
+    return undefined;
+  }, [projectRecord, projectId, allProjects]);
 
   const blockedOnIds = useMemo(
     () =>
@@ -44,25 +63,52 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
     [issue.dependencies],
   );
 
+  const depRecords = useIssuesByIds(blockedOnIds);
+  const blocked = useMemo(() => {
+    if (blockedOnIds.length === 0) return false;
+    return computeBlockedStatus(
+      record as unknown as IssueSummaryRecord,
+      depRecords as unknown as Map<string, IssueSummaryRecord>,
+    ).blocked;
+  }, [record, depRecords, blockedOnIds]);
+
   return (
     <div className={styles.side}>
       <div className={styles.block}>
         <span className={styles.blockLabel}>Status</span>
-        <button
-          type="button"
-          className={styles.statusButton}
-          onClick={onOpenStatusModal}
-          data-testid="status-chip"
-        >
-          <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
-          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path
-              fillRule="evenodd"
-              d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </button>
+        <span className={styles.statusValue}>
+          <button
+            type="button"
+            className={styles.statusButton}
+            onClick={onOpenStatusModal}
+            data-testid="status-chip"
+          >
+            <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
+            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path
+                fillRule="evenodd"
+                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+          {blocked && (
+            <span className={styles.blockedTag} data-testid="blocked-tag">
+              BLOCKED
+            </span>
+          )}
+        </span>
+      </div>
+
+      <div className={styles.block}>
+        <span className={styles.blockLabel}>Project</span>
+        {project ? (
+          <span className={styles.blockValue}>
+            <ProjectChip projectKey={project.key} name={project.name} />
+          </span>
+        ) : (
+          <span className={`${styles.blockValue} ${styles.blockEmpty}`}>—</span>
+        )}
       </div>
 
       <div className={styles.block}>
@@ -132,7 +178,7 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
           <span className={styles.blockLabel}>Blocked on</span>
           <div className={styles.depList}>
             {blockedOnIds.map((id) => (
-              <DepRow key={id} issueId={id} />
+              <DepRow key={id} issueId={id} record={depRecords.get(id)} />
             ))}
           </div>
         </div>
