@@ -3,8 +3,20 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
 import type { IssueVersionRecord } from "@hydra/api";
 
+const useIssuesByIdsMock = vi.fn<
+  (ids: string[]) => Map<string, IssueVersionRecord>
+>(() => new Map());
+
 vi.mock("../useIssue", () => ({
   useIssue: () => ({ data: undefined }),
+  useIssuesByIds: (ids: string[]) => useIssuesByIdsMock(ids),
+}));
+
+const useProjectMock = vi.fn();
+const useProjectsMock = vi.fn();
+vi.mock("../../projects/useProjects", () => ({
+  useProject: (id: string | null) => useProjectMock(id),
+  useProjects: () => useProjectsMock(),
 }));
 
 vi.mock("../IssueLabelEditor", () => ({
@@ -21,6 +33,18 @@ vi.mock("@hydra/ui", () => ({
     <span data-testid={`badge-${status}`}>{status}</span>
   ),
   TypeChip: ({ type }: { type: string }) => <span data-testid={`type-${type}`}>{type}</span>,
+}));
+
+vi.mock("../../projects/ProjectChip", () => ({
+  ProjectChip: ({ projectKey, name }: { projectKey: string; name?: string | null }) => (
+    <span data-testid="project-chip" data-key={projectKey}>
+      {name ?? projectKey}
+    </span>
+  ),
+}));
+
+vi.mock("../../projects/StatusChip", () => ({
+  StatusChip: () => <span data-testid="status-chip-inner" />,
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -61,8 +85,35 @@ function makeRecord(
   } as unknown as IssueVersionRecord;
 }
 
+function makeDepRecord(
+  id: string,
+  status: string,
+): IssueVersionRecord {
+  return {
+    issue_id: id,
+    version: 1n,
+    timestamp: "2026-01-01T00:00:00Z",
+    creation_time: "2026-01-01T00:00:00Z",
+    issue: {
+      type: "task",
+      title: `Title ${id}`,
+      description: "",
+      creator: "alice",
+      status,
+      progress: "",
+      dependencies: [],
+      patches: [],
+    },
+  } as unknown as IssueVersionRecord;
+}
+
 describe("IssueDetailsTab", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useIssuesByIdsMock.mockReturnValue(new Map());
+    useProjectMock.mockReturnValue({ data: undefined });
+    useProjectsMock.mockReturnValue({ data: undefined });
+  });
 
   it("renders status chip, assignee, type, created, updated, and labels editor", () => {
     render(
@@ -157,5 +208,91 @@ describe("IssueDetailsTab", () => {
     render(<IssueDetailsTab record={makeRecord({})} onOpenStatusModal={onOpen} />);
     fireEvent.click(screen.getByTestId("status-chip"));
     expect(onOpen).toHaveBeenCalled();
+  });
+
+  describe("Project block", () => {
+    it("renders the resolved project chip when issue has a project_id", () => {
+      useProjectMock.mockReturnValue({
+        data: {
+          project_id: "j-engv2",
+          version: 1,
+          project: { key: "engineering-v2", name: "Engineering v2" },
+        },
+      });
+      render(
+        <IssueDetailsTab
+          record={makeRecord({ project_id: "j-engv2" })}
+          onOpenStatusModal={() => {}}
+        />,
+      );
+      expect(useProjectMock).toHaveBeenCalledWith("j-engv2");
+      const chip = screen.getByTestId("project-chip");
+      expect(chip.getAttribute("data-key")).toBe("engineering-v2");
+      expect(chip.textContent).toBe("Engineering v2");
+    });
+
+    it("falls back to the default project when issue has no project_id", () => {
+      useProjectMock.mockReturnValue({ data: undefined });
+      useProjectsMock.mockReturnValue({
+        data: [
+          {
+            project_id: "j-other",
+            version: 1,
+            project: { key: "other", name: "Other" },
+          },
+          {
+            project_id: "j-defaul",
+            version: 1,
+            project: { key: "default", name: "Default" },
+          },
+        ],
+      });
+      render(
+        <IssueDetailsTab record={makeRecord({})} onOpenStatusModal={() => {}} />,
+      );
+      expect(useProjectMock).toHaveBeenCalledWith(null);
+      const chip = screen.getByTestId("project-chip");
+      expect(chip.getAttribute("data-key")).toBe("default");
+      expect(chip.textContent).toBe("Default");
+    });
+  });
+
+  describe("BLOCKED tag", () => {
+    it("appears when a blocked-on target is not closed", () => {
+      useIssuesByIdsMock.mockReturnValue(
+        new Map([["i-blocker", makeDepRecord("i-blocker", "open")]]),
+      );
+      render(
+        <IssueDetailsTab
+          record={makeRecord({
+            dependencies: [{ type: "blocked-on", issue_id: "i-blocker" }],
+          })}
+          onOpenStatusModal={() => {}}
+        />,
+      );
+      expect(screen.getByTestId("blocked-tag").textContent).toBe("BLOCKED");
+    });
+
+    it("does NOT appear when the only blocked-on target is closed", () => {
+      useIssuesByIdsMock.mockReturnValue(
+        new Map([["i-blocker", makeDepRecord("i-blocker", "closed")]]),
+      );
+      render(
+        <IssueDetailsTab
+          record={makeRecord({
+            dependencies: [{ type: "blocked-on", issue_id: "i-blocker" }],
+          })}
+          onOpenStatusModal={() => {}}
+        />,
+      );
+      expect(screen.queryByTestId("blocked-tag")).toBeNull();
+    });
+
+    it("does NOT appear when there are no blocked-on deps", () => {
+      render(
+        <IssueDetailsTab record={makeRecord({})} onOpenStatusModal={() => {}} />,
+      );
+      expect(screen.queryByTestId("blocked-tag")).toBeNull();
+    });
   });
 });
