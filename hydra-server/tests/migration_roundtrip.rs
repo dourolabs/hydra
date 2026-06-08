@@ -27,6 +27,7 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use hydra_common::api::v1::agents::AgentName;
+use hydra_common::api::v1::projects::StatusDefinition;
 use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::principal::{ExternalSystem, Principal};
 use hydra_common::{
@@ -36,6 +37,7 @@ use hydra_common::{
 use hydra_server::domain::actors::ActorRef;
 use hydra_server::domain::issues::{Issue, IssueStatus, IssueType};
 use hydra_server::domain::patches::{Patch, PatchStatus, Review};
+use hydra_server::domain::projects::default_project_seed;
 use hydra_server::domain::sessions::{AgentConfig, Session, SessionEvent, SessionMode};
 use hydra_server::domain::task_status::Status;
 use hydra_server::domain::users::Username;
@@ -103,6 +105,16 @@ async fn migration_roundtrip() -> Result<()> {
     assert_recent_migration_data_shape(&pool)
         .await
         .context("triggers / projects post-rollforward data-shape round-trip")?;
+
+    seed_default_project_migration_inserts_row(&pool)
+        .await
+        .context("seed_default_project: inserted row matches expected shape")?;
+    seed_default_project_migration_backfills_null_project_ids(&pool)
+        .await
+        .context("seed_default_project: backfill of NULL project_id values")?;
+    seed_default_project_migration_is_idempotent(&pool)
+        .await
+        .context("seed_default_project: idempotency on re-applied migration body")?;
 
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
@@ -1736,6 +1748,159 @@ fn parse_patch_id(s: &str) -> Result<PatchId> {
 
 fn parse_session_id(s: &str) -> Result<SessionId> {
     SessionId::from_str(s).with_context(|| format!("parse session id '{s}'"))
+}
+
+// ---------------------------------------------------------------------------
+// 20260607000000_seed_default_project — assert that the seed INSERT, the
+// `metis.issues_v2.project_id` backfill UPDATE, and the migration's
+// idempotency guard (`ON CONFLICT (id, version_number) DO NOTHING`) all
+// behave as designed. Coverage gap closed by [[i-bivbnsgb]] (follow-up to
+// [[p-xtixlxfy]]) — the merged seed migration shipped with in-store
+// round-trip tests but no migration-framework coverage.
+// ---------------------------------------------------------------------------
+
+async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT id, version_number, key, name, default_status_key, \
+                statuses::text AS statuses, creator, deleted, \
+                actor::text AS actor, is_latest, prompt_path \
+         FROM metis.projects WHERE id = 'j-defaul'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read seeded default project row 'j-defaul'")?;
+
+    let id: String = row.try_get("id")?;
+    let version_number: i64 = row.try_get("version_number")?;
+    let key: String = row.try_get("key")?;
+    let name: String = row.try_get("name")?;
+    let default_status_key: String = row.try_get("default_status_key")?;
+    let statuses_text: String = row.try_get("statuses")?;
+    let creator: String = row.try_get("creator")?;
+    let deleted: bool = row.try_get("deleted")?;
+    let is_latest: bool = row.try_get("is_latest")?;
+    let actor: Option<String> = row.try_get("actor")?;
+    let prompt_path: Option<String> = row.try_get("prompt_path")?;
+
+    if id != "j-defaul" {
+        bail!("j-defaul: expected id='j-defaul'; got {id:?}");
+    }
+    if version_number != 1 {
+        bail!("j-defaul: expected version_number=1; got {version_number}");
+    }
+    if key != "default" {
+        bail!("j-defaul: expected key='default'; got {key:?}");
+    }
+    if name != "Default" {
+        bail!("j-defaul: expected name='Default'; got {name:?}");
+    }
+    if default_status_key != "open" {
+        bail!("j-defaul: expected default_status_key='open'; got {default_status_key:?}");
+    }
+    if creator != "system" {
+        bail!("j-defaul: expected creator='system'; got {creator:?}");
+    }
+    if deleted {
+        bail!("j-defaul: expected deleted=FALSE; got TRUE");
+    }
+    if !is_latest {
+        bail!("j-defaul: expected is_latest=TRUE; got FALSE");
+    }
+    if actor.is_some() {
+        bail!("j-defaul: expected actor=NULL; got {actor:?}");
+    }
+    if prompt_path.as_deref() != Some("/projects/default/prompt.md") {
+        bail!("j-defaul: expected prompt_path='/projects/default/prompt.md'; got {prompt_path:?}");
+    }
+
+    // `statuses` JSONB must deserialize into a Vec<StatusDefinition> that
+    // matches `default_project_seed()` byte-for-byte. Comparing against
+    // the Rust seed locks the SQL literal to the Rust constant: any drift
+    // in either direction fails loud here.
+    let statuses: Vec<StatusDefinition> = serde_json::from_str(&statuses_text)
+        .context("deserialize projects.statuses into Vec<StatusDefinition>")?;
+    let expected = default_project_seed().statuses;
+    if statuses != expected {
+        bail!(
+            "j-defaul: statuses do not match default_project_seed(): \
+             expected {expected:?}; got {statuses:?}"
+        );
+    }
+    Ok(())
+}
+
+async fn seed_default_project_migration_backfills_null_project_ids(pool: &PgPool) -> Result<()> {
+    // Every fixture row that had NULL `project_id` at baseline-insert
+    // time (single-version and multi-version) must now point at
+    // `'j-defaul'`. The multi-version rows verify that the UPDATE
+    // touches every NULL row regardless of `is_latest`.
+    for (id, version) in [("i-seedone", 1_i64), ("i-seedmv", 1), ("i-seedmv", 2)] {
+        let row = sqlx::query(
+            "SELECT project_id FROM metis.issues_v2 \
+             WHERE id = $1 AND version_number = $2",
+        )
+        .bind(id)
+        .bind(version)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read project_id for metis.issues_v2({id}, {version})"))?;
+        let project_id: Option<String> = row.try_get("project_id")?;
+        if project_id.as_deref() != Some("j-defaul") {
+            bail!(
+                "metis.issues_v2({id}, {version}).project_id: \
+                 expected 'j-defaul'; got {project_id:?}"
+            );
+        }
+    }
+
+    // Catch-all: no `issues_v2` row should be left with NULL project_id
+    // post-backfill. The migration's UPDATE is unconditional on
+    // `is_latest`, so older / soft-deleted versions get backfilled too.
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.issues_v2 WHERE project_id IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count remaining NULL project_id rows after backfill")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!("expected 0 metis.issues_v2 rows with NULL project_id post-backfill; got {count}");
+    }
+    Ok(())
+}
+
+async fn seed_default_project_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    // Re-execute the migration body verbatim. `ON CONFLICT (id,
+    // version_number) DO NOTHING` must swallow the duplicate-key on the
+    // 'j-defaul' row, and the backfill UPDATE must be a no-op since
+    // every row was backfilled by the first pass. Reading the file
+    // rather than hard-coding the SQL keeps this test honest if the
+    // migration's body ever changes shape (the assertion exercises
+    // whatever the current rollforward statement is).
+    //
+    // Note: the `trg_maintain_latest_projects` BEFORE INSERT trigger
+    // fires even when `ON CONFLICT DO NOTHING` later skips the actual
+    // insert, so a side-effect is observable on the row's `is_latest`
+    // flag post-rerun. The spec scope is "no error / no duplicate row" —
+    // we deliberately do NOT re-assert the §inserts_row invariants here.
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/20260607000000_seed_default_project.sql"),
+    )
+    .context("read postgres seed_default_project migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply postgres seed_default_project migration body")?;
+
+    // No duplicate row at (j-defaul, 1).
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.projects WHERE id = 'j-defaul'")
+        .fetch_one(pool)
+        .await
+        .context("count projects rows for j-defaul after idempotency rerun")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 1 {
+        bail!("expected exactly 1 metis.projects row for j-defaul after rerun; got {count}");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
