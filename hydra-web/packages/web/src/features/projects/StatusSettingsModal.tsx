@@ -26,6 +26,7 @@ import {
   applyOptimisticUpsert,
 } from "./projectCache";
 import { blankStatus, validateStatusKey } from "./statusDefaults";
+import { PromptDocumentEditor } from "./PromptDocumentEditor";
 import styles from "./StatusSettingsModal.module.css";
 
 export interface StatusSettingsModalProps {
@@ -73,6 +74,7 @@ export function StatusSettingsModal({
     current: number;
     total: number;
   } | null>(null);
+  const [promptExpanded, setPromptExpanded] = useState(false);
 
   // Resync local draft whenever the modal is opened against a different
   // status (gear click on another column reuses the same component instance).
@@ -83,6 +85,7 @@ export function StatusSettingsModal({
     );
     setConfirmingDelete(false);
     setMoveProgress(null);
+    setPromptExpanded(false);
   }, [open, mode, statuses.length, initialStatus]);
 
   const projectId = projectRecord.project_id;
@@ -389,6 +392,10 @@ export function StatusSettingsModal({
         onMove={handleMove}
         saving={saveMutation.isPending}
         mode={mode}
+        projectKey={projectRecord.project.key as string}
+        statusKeyForDefaultPath={mode === "edit" ? statusKey : draft.key}
+        promptExpanded={promptExpanded}
+        onTogglePromptExpanded={() => setPromptExpanded((v) => !v)}
       />
 
       {mode === "new" && newModeError && (
@@ -527,6 +534,10 @@ interface StatusFormProps {
   onMove: (delta: number) => void;
   saving: boolean;
   mode: "edit" | "new";
+  projectKey: string;
+  statusKeyForDefaultPath: string;
+  promptExpanded: boolean;
+  onTogglePromptExpanded: () => void;
 }
 
 function StatusForm({
@@ -541,6 +552,10 @@ function StatusForm({
   onMove,
   saving,
   mode,
+  projectKey,
+  statusKeyForDefaultPath,
+  promptExpanded,
+  onTogglePromptExpanded,
 }: StatusFormProps) {
   const onEnter = draft.on_enter ?? null;
   const assignKind = principalKind(onEnter?.assign_to ?? null);
@@ -788,12 +803,17 @@ function StatusForm({
         />
       </div>
 
-      <Input
+      <PromptDocumentEditor
+        path={draft.prompt_path ?? null}
+        defaultPath={`/projects/${projectKey || "<key>"}/statuses/${
+          statusKeyForDefaultPath.trim() || "<status-key>"
+        }.md`}
+        onPathChange={(value) => patch({ prompt_path: value })}
+        expanded={promptExpanded}
+        onToggleExpanded={onTogglePromptExpanded}
         label="Prompt path"
-        value={draft.prompt_path ?? ""}
-        onChange={(e) => patch({ prompt_path: e.target.value })}
         placeholder="/projects/<key>/statuses/<status-key>.md"
-        data-testid="status-settings-prompt-path"
+        testId="status-settings-prompt-path"
       />
     </div>
   );

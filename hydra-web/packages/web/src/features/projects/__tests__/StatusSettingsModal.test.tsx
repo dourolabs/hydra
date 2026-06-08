@@ -17,7 +17,35 @@ const setQueryDataSpy = vi.fn();
 const invalidateQueriesSpy = vi.fn();
 let queryDataByKey: Map<string, unknown> = new Map();
 
+type QueryState = {
+  isLoading: boolean;
+  isError: boolean;
+  isSuccess: boolean;
+  data: unknown;
+  error: Error | null;
+};
+let promptQueryState: QueryState = {
+  isLoading: false,
+  isError: false,
+  isSuccess: true,
+  data: null,
+  error: null,
+};
+const lastPromptQueryKeyRef: { key: readonly unknown[] | null } = { key: null };
+const lastPromptQueryFnRef: { fn: (() => unknown) | null } = { fn: null };
+
 vi.mock("@tanstack/react-query", () => ({
+  useQuery: ({
+    queryKey,
+    queryFn,
+  }: {
+    queryKey: readonly unknown[];
+    queryFn: () => unknown;
+  }) => {
+    lastPromptQueryKeyRef.key = queryKey;
+    lastPromptQueryFnRef.fn = queryFn;
+    return promptQueryState;
+  },
   useMutation: ({
     mutationFn,
     onMutate,
@@ -209,12 +237,25 @@ const getIssueSpy = vi.fn(async (id: string) => ({
   },
 }));
 const updateIssueSpy = vi.fn(async (_id: string, req: unknown) => req);
+const getDocumentByPathSpy = vi.fn();
+const createDocumentSpy = vi.fn();
+const updateDocumentSpy = vi.fn();
+class ApiErrorMock extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 vi.mock("../../../api/client", () => ({
+  ApiError: ApiErrorMock,
   apiClient: {
     updateProject: updateProjectSpy,
     listIssues: listIssuesSpy,
     getIssue: getIssueSpy,
     updateIssue: updateIssueSpy,
+    getDocumentByPath: getDocumentByPathSpy,
+    createDocument: createDocumentSpy,
+    updateDocument: updateDocumentSpy,
   },
 }));
 
@@ -238,6 +279,10 @@ vi.mock("../../../components/ColorPicker", () => ({
 }));
 
 vi.mock("../StatusSettingsModal.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+vi.mock("../PromptDocumentEditor.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
@@ -291,9 +336,21 @@ describe("StatusSettingsModal", () => {
     cancelQueriesSpy.mockClear();
     setQueryDataSpy.mockClear();
     invalidateQueriesSpy.mockClear();
+    getDocumentByPathSpy.mockReset();
+    createDocumentSpy.mockReset();
+    updateDocumentSpy.mockReset();
     queryDataByKey = new Map();
     mutationPending = false;
     simulateError = null;
+    promptQueryState = {
+      isLoading: false,
+      isError: false,
+      isSuccess: true,
+      data: null,
+      error: null,
+    };
+    lastPromptQueryKeyRef.key = null;
+    lastPromptQueryFnRef.fn = null;
   });
 
   afterEach(() => {
@@ -958,6 +1015,141 @@ describe("StatusSettingsModal", () => {
         project: { default_status_key: string };
       };
       expect(payload.project.default_status_key).toBe("in-progress");
+    });
+  });
+
+  describe("Prompt document editor (PR-11)", () => {
+    it("renders the PromptDocumentEditor in place of the prompt path Input", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      // Container + toggle are owned by PromptDocumentEditor.
+      expect(
+        screen.getByTestId("status-settings-prompt-path-container"),
+      ).toBeDefined();
+      expect(
+        screen.getByTestId("status-settings-prompt-path-toggle"),
+      ).toBeDefined();
+      // Path input still exposes the same testId for editing.
+      expect(screen.getByTestId("status-settings-prompt-path")).toBeDefined();
+      // Collapsed by default — textarea/save are not mounted.
+      expect(
+        screen.queryByTestId("status-settings-prompt-path-textarea"),
+      ).toBeNull();
+      expect(
+        screen.queryByTestId("status-settings-prompt-path-save"),
+      ).toBeNull();
+      // Critically: no doc fetch is triggered while collapsed.
+      expect(lastPromptQueryFnRef.fn).toBeNull();
+    });
+
+    it("expanding fetches the doc at /projects/<key>/statuses/<status-key>.md by default", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+
+      fireEvent.click(
+        screen.getByTestId("status-settings-prompt-path-toggle"),
+      );
+      // The body mounts and registers a useQuery against the default path
+      // since the status has no prompt_path set.
+      expect(lastPromptQueryKeyRef.key).toEqual([
+        "documentByPath",
+        "/projects/engineering/statuses/in-progress.md",
+      ]);
+    });
+
+    it("uses the existing prompt_path over the default when one is set", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress", {
+          prompt_path: "/custom/status.md" as never,
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+
+      fireEvent.click(
+        screen.getByTestId("status-settings-prompt-path-toggle"),
+      );
+      expect(lastPromptQueryKeyRef.key).toEqual([
+        "documentByPath",
+        "/custom/status.md",
+      ]);
+    });
+
+    it("in new mode, the default path uses the draft's key (kebab-case input)", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+      fireEvent.change(screen.getByTestId("status-settings-key"), {
+        target: { value: "blocked" },
+      });
+      fireEvent.click(
+        screen.getByTestId("status-settings-prompt-path-toggle"),
+      );
+      expect(lastPromptQueryKeyRef.key).toEqual([
+        "documentByPath",
+        "/projects/engineering/statuses/blocked.md",
+      ]);
+    });
+
+    it("editing the path input persists into the modal draft via patch", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      fireEvent.change(screen.getByTestId("status-settings-prompt-path"), {
+        target: { value: "/my/explicit/path.md" },
+      });
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
+      expect(next[1].prompt_path).toBe("/my/explicit/path.md");
     });
   });
 
