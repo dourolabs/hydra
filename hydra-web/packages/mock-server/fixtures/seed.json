@@ -3008,7 +3008,6 @@
     "j-defaul": {
       "key": "default",
       "name": "Default",
-      "default_status_key": "open",
       "creator": "system",
       "prompt_path": "/projects/default/prompt.md",
       "statuses": [
@@ -3062,7 +3061,6 @@
     "j-engv2": {
       "key": "engineering-v2",
       "name": "Engineering v2",
-      "default_status_key": "inbox",
       "creator": "alice",
       "prompt_path": "/projects/engineering-v2/prompt.md",
       "statuses": [

@@ -62,4 +62,3 @@ statuses:
     unblocks_parents: true
     unblocks_dependents: true
     cascades_to_children: false
-default_status_key: inbox

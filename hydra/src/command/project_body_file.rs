@@ -5,17 +5,15 @@
 //! `hydra-single-player` can drive the exact same parser the CLI uses.
 
 use anyhow::{bail, Context, Result};
-use hydra_common::api::v1::projects::StatusKey;
 use std::path::Path;
 
 /// Body file payload for `projects create` / `projects update`. Describes a
-/// project's status list and its `default_status_key`. The CLI fills in the
-/// `key`, `name`, and `creator` fields on top of this.
+/// project's status list. The CLI fills in the `key`, `name`, and `creator`
+/// fields on top of this.
 #[derive(Debug, serde::Deserialize)]
 pub struct ProjectBodyFile {
     #[serde(default)]
     pub statuses: Vec<hydra_common::api::v1::projects::StatusDefinition>,
-    pub default_status_key: StatusKey,
 }
 
 pub fn load_body_file(path: &Path) -> Result<ProjectBodyFile> {
@@ -35,7 +33,7 @@ pub fn load_body_file(path: &Path) -> Result<ProjectBodyFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hydra_common::api::v1::projects::StatusDefinition;
+    use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -58,14 +56,12 @@ mod tests {
                         "unblocks_dependents": false,
                         "cascades_to_children": false
                     }
-                ],
-                "default_status_key": "open"
+                ]
             }"##,
         );
         let body = load_body_file(file.path()).unwrap();
         assert_eq!(body.statuses.len(), 1);
         assert_eq!(body.statuses[0].key, StatusKey::try_new("open").unwrap());
-        assert_eq!(body.default_status_key, StatusKey::try_new("open").unwrap());
     }
 
     #[test]
@@ -79,12 +75,11 @@ statuses:
     unblocks_parents: false
     unblocks_dependents: false
     cascades_to_children: false
-default_status_key: open
 "##,
         );
         let body = load_body_file(file.path()).unwrap();
         assert_eq!(body.statuses.len(), 1);
-        assert_eq!(body.default_status_key, StatusKey::try_new("open").unwrap());
+        assert_eq!(body.statuses[0].key, StatusKey::try_new("open").unwrap());
     }
 
     #[test]
@@ -100,7 +95,6 @@ statuses:
     cascades_to_children: false
     on_enter:
       assign_to: !Agent { name: pm }
-default_status_key: backlog
 "##,
         );
         let body = load_body_file(file.path()).unwrap();
@@ -141,7 +135,7 @@ default_status_key: backlog
             None,
         );
         let json = format!(
-            r#"{{ "statuses": [{}], "default_status_key": "inbox" }}"#,
+            r#"{{ "statuses": [{}] }}"#,
             serde_json::to_string(&def).unwrap()
         );
         let file = write_body(&json);
@@ -174,7 +168,6 @@ statuses:
     unblocks_dependents: false
     cascades_to_children: false
     prompt_path: /projects/engineering-v2/statuses/in-review.md
-default_status_key: backlog
 "##,
         );
         let body = load_body_file(file.path()).unwrap();
@@ -203,7 +196,6 @@ statuses:
     unblocks_parents: true
     unblocks_dependents: true
     cascades_to_children: false
-default_status_key: pending-release
 "##,
         );
         let body = load_body_file(file.path()).unwrap();

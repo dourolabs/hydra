@@ -11,9 +11,10 @@ use serde_json::Value;
 use std::{collections::HashMap, fmt, str::FromStr};
 
 /// Default value for `Issue.status` and `IssueSummary.status` when the field
-/// is omitted from a request body. Matches the `default_status_key` of
-/// `DefaultProject` so existing clients that don't set a status still land
-/// in `open` exactly like they did before the PR 3 wire-shape change.
+/// is omitted from a request body. Matches the historical "open" landing
+/// status of the synthesized `DefaultProject` so existing clients that don't
+/// set a status still land in `open` exactly like they did before the PR 3
+/// wire-shape change.
 fn default_status_key() -> StatusKey {
     StatusKey::try_new("open").expect("\"open\" is a well-formed StatusKey")
 }

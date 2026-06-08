@@ -341,7 +341,6 @@ mod tests {
             ProjectKey::try_new("eng").unwrap(),
             "Engineering".to_string(),
             vec![status_def_with_prompt("open", None)],
-            StatusKey::try_new("open").unwrap(),
             Username::try_new("system").unwrap(),
             false,
             0.0,

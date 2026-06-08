@@ -1,7 +1,6 @@
 # Project body file consumed by `hydra projects create --body-file` and
-# `hydra projects update --body-file`. Pairs an ordered list of statuses
-# (the project-specific issue lifecycle) with the `default_status_key`
-# applied to new issues that don't declare one.
+# `hydra projects update --body-file`. Holds an ordered list of statuses
+# (the project-specific issue lifecycle).
 #
 # Edit the fields to taste, then create the project with:
 #
@@ -85,7 +84,3 @@ statuses:
     unblocks_parents: true
     unblocks_dependents: true
     cascades_to_children: true
-
-# default_status_key: status applied to new issues that don't declare one;
-# MUST reference an entry in `statuses` above.
-default_status_key: inbox

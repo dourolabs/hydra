@@ -39,8 +39,7 @@ const ENGINEERING_BODY: &str = r##"{
             "unblocks_dependents": true,
             "cascades_to_children": false
         }
-    ],
-    "default_status_key": "inbox"
+    ]
 }"##;
 
 #[tokio::test]
@@ -80,7 +79,6 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
     let fetched = user.client().get_project(&project_id).await?;
     assert_eq!(fetched.project.key.as_str(), "engineering");
     assert_eq!(fetched.project.statuses.len(), 3);
-    assert_eq!(fetched.project.default_status_key.as_str(), "inbox");
 
     // Statuses endpoint via CLI.
     let statuses_out = user
@@ -161,7 +159,6 @@ async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
                 None,
             ),
         ],
-        StatusKey::try_new("inbox").unwrap(),
         hydra_common::api::v1::users::Username::try_new(user.name()).unwrap(),
         false,
         0.0,

@@ -69,7 +69,6 @@ function makeProject(): ProjectRecord {
           cascades_to_children: false,
         },
       ],
-      default_status_key: "open",
       creator: "alice",
       deleted: false,
       priority: 0,

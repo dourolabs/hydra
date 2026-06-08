@@ -85,7 +85,6 @@ const DEFAULT_PROJECT = {
   key: "default",
   name: "Default",
   statuses: DEFAULT_STATUSES,
-  default_status_key: "open",
 };
 
 describe("useBoardIssuesByProject", () => {
@@ -129,14 +128,12 @@ describe("useBoardIssuesByProject", () => {
       key: "alpha",
       name: "Alpha",
       statuses: [makeStatus("inbox"), makeStatus("done")],
-      default_status_key: "inbox",
     };
     const projectBeta = {
       project_id: "j-beta",
       key: "beta",
       name: "Beta",
       statuses: [makeStatus("backlog"), makeStatus("active"), makeStatus("shipped")],
-      default_status_key: "backlog",
     };
 
     mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) =>

@@ -1297,15 +1297,14 @@ impl PostgresStoreV2 {
 
         let query = format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, prompt_path, priority) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+             (id, version_number, key, name, statuses, creator, deleted, actor, prompt_path, priority) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
             .bind(version_number)
             .bind(project.key.as_str())
             .bind(&project.name)
-            .bind(project.default_status_key.as_str())
             .bind(&statuses_json)
             .bind(project.creator.as_str())
             .bind(project.deleted)
@@ -1333,17 +1332,10 @@ impl PostgresStoreV2 {
         let key = ProjectKey::try_new(row.key.clone()).map_err(|e| {
             StoreError::Internal(format!("invalid project key stored for project: {e}"))
         })?;
-        let default_status_key =
-            StatusKey::try_new(row.default_status_key.clone()).map_err(|e| {
-                StoreError::Internal(format!(
-                    "invalid default_status_key stored for project: {e}"
-                ))
-            })?;
         let mut project = Project::new(
             key,
             row.name.clone(),
             statuses,
-            default_status_key,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
             row.deleted,
             row.priority,
@@ -1668,7 +1660,6 @@ struct ProjectRow {
     version_number: i64,
     key: String,
     name: String,
-    default_status_key: String,
     statuses: Value,
     creator: String,
     deleted: bool,
@@ -3728,7 +3719,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Project>, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
-            "SELECT id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, key, name, statuses, creator, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
              prompt_path, priority \
              FROM {TABLE_PROJECTS} \
@@ -3775,7 +3766,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.key, p.name, p.default_status_key, p.statuses, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
+            "SELECT p.id, p.version_number, p.key, p.name, p.statuses, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
              p.prompt_path, p.priority \
              FROM {TABLE_PROJECTS} p \
@@ -10112,7 +10103,6 @@ mod tests {
             ProjectKey::try_new("engineering").unwrap(),
             "Engineering".to_string(),
             statuses,
-            StatusKey::try_new("backlog").unwrap(),
             ApiUsername::from("alice"),
             false,
             0.0,
@@ -10492,7 +10482,6 @@ mod tests {
         assert_eq!(fetched.version, 1);
         assert_eq!(fetched.item.key.as_str(), "default");
         assert_eq!(fetched.item.name, "Default");
-        assert_eq!(fetched.item.default_status_key.as_str(), "open");
         assert_eq!(fetched.item.statuses.len(), 5);
         assert_eq!(
             fetched.item.prompt_path.as_deref(),

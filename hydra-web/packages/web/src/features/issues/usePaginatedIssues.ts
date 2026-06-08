@@ -83,7 +83,6 @@ export interface BoardProjectDescriptor {
   key: string;
   name: string;
   statuses: StatusDefinition[];
-  default_status_key: string;
 }
 
 export interface BoardCellQuery {

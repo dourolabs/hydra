@@ -113,7 +113,6 @@ function makeProject(
       key,
       name,
       statuses,
-      default_status_key: "open",
       creator: "alice",
       deleted: false,
       priority: 0,

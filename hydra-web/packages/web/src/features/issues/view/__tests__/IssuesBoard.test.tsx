@@ -261,7 +261,6 @@ function makeProject(
       key,
       name: name ?? key,
       statuses,
-      default_status_key: statuses[0]?.key ?? "open",
       creator: "alice",
       deleted: false,
       priority: 0,
@@ -379,17 +378,6 @@ describe("IssuesBoard column sub-row", () => {
     expect(mode.textContent).toBe("interactive");
   });
 
-  it("keeps the DEFAULT chip on the top header row, not the sub-row", () => {
-    const status = makeStatus({ key: "open", label: "Open" });
-    projectsData = [makeProject("j-proj", "proj", [status])];
-
-    renderBoard();
-
-    const subhead = screen.getByTestId("board-col-subhead-proj-open");
-    expect(within(subhead).queryByText("DEFAULT")).toBeNull();
-    // DEFAULT chip lives elsewhere in the column (the top header row).
-    expect(screen.getByText("DEFAULT")).toBeDefined();
-  });
 });
 
 describe("IssuesBoard project settings gear", () => {

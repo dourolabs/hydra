@@ -1452,7 +1452,6 @@ mod tests {
             ProjectKey::try_new("engineering-v2").unwrap(),
             "Engineering v2".to_string(),
             vec![backlog_status],
-            StatusKey::try_new("backlog").unwrap(),
             hydra_common::api::v1::users::Username::from("alice"),
             false,
             0.0,
