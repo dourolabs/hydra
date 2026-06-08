@@ -5,7 +5,7 @@ import { test, expect } from "../fixtures/auth";
 //   - @projects:badge — issue list badge consumes resolved_status
 //   - @projects:status-modal-options — status modal pulls from API per project
 test.describe("Projects @projects:create", () => {
-  test("user can create a project with custom statuses @projects:create", async ({
+  test("user can create a project from the simplified new-project modal @projects:create", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/projects");
@@ -15,16 +15,21 @@ test.describe("Projects @projects:create", () => {
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
-    await page.getByTestId("project-editor-key").fill("integration-eng");
-    await page.getByTestId("project-editor-name").fill("E2E Engineering");
+    // The simplified modal has only a Name input and a Prompt textarea —
+    // no key field, no status list, no prompt-path field.
+    await expect(page.getByTestId("project-editor-key")).toHaveCount(0);
+    await expect(page.getByTestId("project-editor-add-status")).toHaveCount(0);
+    await expect(page.getByTestId("project-editor-prompt-path")).toHaveCount(0);
 
-    // Add one more status beyond the three defaults.
-    await page.getByTestId("project-editor-add-status").click();
+    await page.getByTestId("new-project-name").fill("E2E Engineering");
+    await page
+      .getByTestId("new-project-prompt-body")
+      .fill("# E2E project prompt");
 
-    await page.getByTestId("project-editor-save").click();
+    await page.getByTestId("new-project-save").click();
 
-    // Routed to the detail page on success.
-    await page.waitForURL("**/projects/integration-eng");
+    // Key is slugified from name and the page routes to the detail page.
+    await page.waitForURL("**/projects/e2e-engineering");
     await expect(
       page.getByRole("heading", { name: "E2E Engineering" }),
     ).toBeVisible();
