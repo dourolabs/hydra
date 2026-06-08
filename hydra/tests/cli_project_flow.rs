@@ -2,7 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use hydra_common::api::v1::projects::{
-    IconKey, Project, ProjectKey, StatusDefinition, StatusKey, UpsertProjectRequest,
+    Project, ProjectKey, StatusDefinition, StatusKey, UpsertProjectRequest,
 };
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -18,7 +18,6 @@ const ENGINEERING_BODY: &str = r##"{
         {
             "key": "inbox",
             "label": "Inbox",
-            "icon": "inbox",
             "color": "#aabbcc",
             "unblocks_parents": false,
             "unblocks_dependents": false,
@@ -27,7 +26,6 @@ const ENGINEERING_BODY: &str = r##"{
         {
             "key": "backlog",
             "label": "Backlog",
-            "icon": "list",
             "color": "#1199ee",
             "unblocks_parents": false,
             "unblocks_dependents": false,
@@ -36,7 +34,6 @@ const ENGINEERING_BODY: &str = r##"{
         {
             "key": "released",
             "label": "Released",
-            "icon": "check",
             "color": "#22aa44",
             "unblocks_parents": true,
             "unblocks_dependents": true,
@@ -148,7 +145,6 @@ async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
             StatusDefinition::new(
                 StatusKey::try_new("inbox").unwrap(),
                 "Inbox".into(),
-                IconKey::try_new("inbox").unwrap(),
                 "#aabbcc".parse().unwrap(),
                 false,
                 false,
@@ -158,7 +154,6 @@ async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
             StatusDefinition::new(
                 StatusKey::try_new("backlog").unwrap(),
                 "Backlog".into(),
-                IconKey::try_new("list").unwrap(),
                 "#1199ee".parse().unwrap(),
                 false,
                 false,

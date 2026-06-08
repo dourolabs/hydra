@@ -8,8 +8,7 @@ use hydra_common::{
     },
     principal::Principal,
     projects::{
-        IconKey, Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
-        UpsertProjectRequest,
+        Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter, UpsertProjectRequest,
     },
     users::Username,
     IssueId, RepoName, SessionId,
@@ -71,7 +70,6 @@ fn status_def(
     StatusDefinition::new(
         StatusKey::try_new(key).unwrap(),
         label.to_string(),
-        IconKey::try_new("circle").unwrap(),
         "#abcdef".parse().unwrap(),
         unblocks_parents,
         unblocks_dependents,

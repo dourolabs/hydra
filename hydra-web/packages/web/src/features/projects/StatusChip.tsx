@@ -24,11 +24,6 @@ export function StatusChip({
     return (
       <span className={cls} style={{ borderColor: color }} data-testid={testId}>
         <span className={styles.dot} style={{ backgroundColor: color }} />
-        {definition.icon && (
-          <span className={styles.icon} aria-hidden="true">
-            {iconChar(definition.icon)}
-          </span>
-        )}
         <span className={styles.label}>{definition.label}</span>
         {definition.interactive && (
           <span
@@ -55,8 +50,4 @@ export function StatusChip({
       <span className={styles.label}>{fallbackKey}</span>
     </span>
   );
-}
-
-function iconChar(icon: string): string {
-  return icon.charAt(0).toUpperCase();
 }

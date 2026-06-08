@@ -12,7 +12,7 @@ use crate::{
 use hydra_common::api::v1::{
     issues::{IssueVersionRecord, UpsertIssueRequest, UpsertIssueResponse},
     projects::{
-        IconKey, ListProjectsResponse, Project, ProjectKey, ProjectRecord, ProjectStatusesResponse,
+        ListProjectsResponse, Project, ProjectKey, ProjectRecord, ProjectStatusesResponse,
         StatusDefinition, StatusKey, UpsertProjectRequest, UpsertProjectResponse,
     },
     users::Username as ApiUsername,
@@ -41,7 +41,6 @@ fn make_status_with_flags(
     StatusDefinition::new(
         StatusKey::try_new(key).unwrap(),
         label.to_string(),
-        IconKey::try_new("circle").unwrap(),
         color.parse().unwrap(),
         unblocks_parents,
         unblocks_dependents,

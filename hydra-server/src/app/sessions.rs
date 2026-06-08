@@ -1929,7 +1929,7 @@ mod tests {
         use crate::domain::agents::Agent;
         use crate::domain::documents::Document;
         use hydra_common::api::v1::projects::{
-            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+            Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
         };
         use hydra_common::api::v1::sessions::{
             AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
@@ -1971,7 +1971,6 @@ mod tests {
             let mut def = StatusDefinition::new(
                 StatusKey::try_new("backlog").unwrap(),
                 "Backlog".to_string(),
-                IconKey::try_new("list").unwrap(),
                 "#9b59b6".parse().unwrap(),
                 false,
                 false,
@@ -2078,7 +2077,7 @@ mod tests {
         use crate::domain::agents::Agent;
         use crate::domain::documents::Document;
         use hydra_common::api::v1::projects::{
-            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+            Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
         };
         use hydra_common::api::v1::sessions::{
             AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
@@ -2116,7 +2115,6 @@ mod tests {
             let mut def = StatusDefinition::new(
                 StatusKey::try_new("in-review").unwrap(),
                 "In review".to_string(),
-                IconKey::try_new("eye").unwrap(),
                 "#f1c40f".parse().unwrap(),
                 false,
                 false,

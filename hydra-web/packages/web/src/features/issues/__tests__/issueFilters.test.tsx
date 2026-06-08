@@ -40,12 +40,12 @@ const listProjects = vi.fn(() =>
 const getProjectStatuses = vi.fn((projectId: string) =>
   Promise.resolve({
     statuses: [
-      { key: "inbox", label: "Inbox", icon: "i", color: "#aaa" },
-      { key: "backlog", label: "Backlog", icon: "b", color: "#bbb" },
-      { key: "pending", label: "Pending", icon: "p", color: "#ccc" },
-      { key: "in-development", label: "In dev", icon: "d", color: "#ddd" },
-      { key: "in-review", label: "In review", icon: "r", color: "#eee" },
-      { key: "pending-release", label: "Pending release", icon: "x", color: "#fff" },
+      { key: "inbox", label: "Inbox", color: "#aaa" },
+      { key: "backlog", label: "Backlog", color: "#bbb" },
+      { key: "pending", label: "Pending", color: "#ccc" },
+      { key: "in-development", label: "In dev", color: "#ddd" },
+      { key: "in-review", label: "In review", color: "#eee" },
+      { key: "pending-release", label: "Pending release", color: "#fff" },
     ],
     default_status_key: "inbox",
     _project_id: projectId, // unused; here to satisfy the call signature
@@ -54,11 +54,11 @@ const getProjectStatuses = vi.fn((projectId: string) =>
 const getDefaultProjectStatuses = vi.fn(() =>
   Promise.resolve({
     statuses: [
-      { key: "open", label: "Open", icon: "o", color: "#111" },
-      { key: "in-progress", label: "In progress", icon: "i", color: "#222" },
-      { key: "failed", label: "Failed", icon: "f", color: "#333" },
-      { key: "closed", label: "Closed", icon: "c", color: "#444" },
-      { key: "dropped", label: "Dropped", icon: "d", color: "#555" },
+      { key: "open", label: "Open", color: "#111" },
+      { key: "in-progress", label: "In progress", color: "#222" },
+      { key: "failed", label: "Failed", color: "#333" },
+      { key: "closed", label: "Closed", color: "#444" },
+      { key: "dropped", label: "Dropped", color: "#555" },
     ],
     default_status_key: "open",
   }),

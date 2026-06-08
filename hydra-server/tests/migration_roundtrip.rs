@@ -1648,7 +1648,6 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
         {
             "key": "open",
             "label": "Open",
-            "icon": "circle",
             "color": "#3498db",
             "unblocks_parents": false,
             "unblocks_dependents": false,
@@ -1716,7 +1715,6 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
     };
     if status.key.as_str() != "open"
         || status.label != "Open"
-        || status.icon.as_str() != "circle"
         || status.color.as_ref() != "#3498db"
         || status.unblocks_parents
         || status.unblocks_dependents

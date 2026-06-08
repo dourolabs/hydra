@@ -3,7 +3,7 @@
 //! Defines the wire shapes for projects: a [`Project`] owns an ordered list
 //! of [`StatusDefinition`]s plus an explicit `default_status_key` applied to
 //! new issues. Each [`StatusDefinition`] declares display props (label,
-//! icon, color), dependency-graph semantics (`unblocks_parents`,
+//! color), dependency-graph semantics (`unblocks_parents`,
 //! `unblocks_dependents`, `cascades_to_children`), and an optional
 //! [`StatusOnEnter`] automation that fires when an issue transitions into
 //! the status.
@@ -16,12 +16,12 @@ use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 
-/// Maximum length for project / status / icon keys. Keeps wire strings
+/// Maximum length for project / status keys. Keeps wire strings
 /// bounded and well below any reasonable index limit.
 pub const MAX_KEY_LENGTH: usize = 64;
 
 /// Validation failure for newtyped string keys ([`ProjectKey`],
-/// [`StatusKey`], [`IconKey`]).
+/// [`StatusKey`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyError {
     Empty,
@@ -126,10 +126,6 @@ define_key_newtype!(
     StatusKey,
     "Status slug, unique within a project; the wire string for `Issue.status`."
 );
-define_key_newtype!(
-    IconKey,
-    "Frontend icon identifier (resolved against the theme's icon set)."
-);
 
 /// Automation fired the moment an issue transitions INTO a status whose
 /// [`StatusDefinition::on_enter`] is `Some`: when `assign_to` is set,
@@ -167,7 +163,6 @@ impl StatusOnEnter {
 pub struct StatusDefinition {
     pub key: StatusKey,
     pub label: String,
-    pub icon: IconKey,
     pub color: Rgb,
     pub unblocks_parents: bool,
     pub unblocks_dependents: bool,
@@ -187,11 +182,9 @@ pub struct StatusDefinition {
 }
 
 impl StatusDefinition {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         key: StatusKey,
         label: String,
-        icon: IconKey,
         color: Rgb,
         unblocks_parents: bool,
         unblocks_dependents: bool,
@@ -201,7 +194,6 @@ impl StatusDefinition {
         Self {
             key,
             label,
-            icon,
             color,
             unblocks_parents,
             unblocks_dependents,
@@ -461,7 +453,6 @@ mod tests {
         StatusDefinition::new(
             StatusKey::try_new(key).unwrap(),
             label.to_string(),
-            IconKey::try_new("circle").unwrap(),
             "#abcdef".parse().unwrap(),
             false,
             false,
@@ -629,7 +620,6 @@ mod tests {
         let legacy = serde_json::json!({
             "key": "open",
             "label": "Open",
-            "icon": "circle",
             "color": "#abcdef",
             "unblocks_parents": false,
             "unblocks_dependents": false,
@@ -645,7 +635,6 @@ mod tests {
         let wire = serde_json::json!({
             "key": "open",
             "label": "Open",
-            "icon": "circle",
             "color": "#abcdef",
             "unblocks_parents": false,
             "unblocks_dependents": false,
@@ -672,7 +661,6 @@ mod tests {
                 {
                     "key": "open",
                     "label": "Open",
-                    "icon": "circle",
                     "color": "#abcdef",
                     "unblocks_parents": false,
                     "unblocks_dependents": false,

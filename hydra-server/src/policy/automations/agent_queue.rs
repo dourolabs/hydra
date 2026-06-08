@@ -2875,14 +2875,13 @@ mod tests {
         hydra_common::api::v1::projects::StatusKey,
     ) {
         use hydra_common::api::v1::projects::{
-            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+            Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
         };
         let interactive_key = StatusKey::try_new("design-chat").unwrap();
         let backlog_key = StatusKey::try_new("backlog").unwrap();
         let mut interactive_def = StatusDefinition::new(
             interactive_key.clone(),
             "Design Chat".to_string(),
-            IconKey::try_new("chat").unwrap(),
             "#3498db".parse().unwrap(),
             false,
             false,
@@ -2893,7 +2892,6 @@ mod tests {
         let backlog_def = StatusDefinition::new(
             backlog_key.clone(),
             "Backlog".to_string(),
-            IconKey::try_new("list").unwrap(),
             "#9b59b6".parse().unwrap(),
             false,
             false,

@@ -17,7 +17,7 @@
 
 use hydra_common::ProjectId;
 use hydra_common::Rgb;
-use hydra_common::api::v1::projects::{IconKey, Project, ProjectKey, StatusDefinition, StatusKey};
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::users::Username;
 
 /// Wire string for the default project's slug. Stable: leaked to clients,
@@ -53,15 +53,13 @@ pub fn default_project_id() -> ProjectId {
 /// and by [`MemoryStore::new`].
 ///
 /// Status colors are explicit hex values approximating the existing
-/// frontend badge palette (`hydra-web/packages/ui/src/theme/tokens.css:78-83`).
-/// Any change here must be mirrored in the
+/// frontend badge palette. Any change here must be mirrored in the
 /// `20260607000000_seed_default_project.sql` migrations (SQLite and
 /// Postgres), or the SQL-backed and Memory-backed stores will disagree.
 pub fn default_project_seed() -> Project {
     let mut open = StatusDefinition::new(
         status_key("open"),
         "Open".to_string(),
-        icon_key("circle"),
         rgb("#3498db"),
         false,
         false,
@@ -73,7 +71,6 @@ pub fn default_project_seed() -> Project {
     let mut in_progress = StatusDefinition::new(
         status_key("in-progress"),
         "In progress".to_string(),
-        icon_key("circle-dot"),
         rgb("#f1c40f"),
         false,
         false,
@@ -88,7 +85,6 @@ pub fn default_project_seed() -> Project {
         StatusDefinition::new(
             status_key("closed"),
             "Closed".to_string(),
-            icon_key("check-circle"),
             rgb("#2ecc71"),
             true,
             true,
@@ -98,7 +94,6 @@ pub fn default_project_seed() -> Project {
         StatusDefinition::new(
             status_key("dropped"),
             "Dropped".to_string(),
-            icon_key("x-circle"),
             rgb("#795548"),
             true,
             false,
@@ -108,7 +103,6 @@ pub fn default_project_seed() -> Project {
         StatusDefinition::new(
             status_key("failed"),
             "Failed".to_string(),
-            icon_key("alert-circle"),
             rgb("#e74c3c"),
             true,
             false,
@@ -139,7 +133,6 @@ pub fn no_project_sentinel() -> (Project, StatusDefinition) {
     let status = StatusDefinition::new(
         status_key(NO_PROJECT_SENTINEL_STATUS_KEY),
         "None".to_string(),
-        icon_key("circle"),
         rgb("#000000"),
         false,
         false,
@@ -160,10 +153,6 @@ pub fn no_project_sentinel() -> (Project, StatusDefinition) {
 
 fn status_key(value: &str) -> StatusKey {
     StatusKey::try_new(value).expect("default project status keys are well-formed")
-}
-
-fn icon_key(value: &str) -> IconKey {
-    IconKey::try_new(value).expect("default project icon keys are well-formed")
 }
 
 fn rgb(value: &str) -> Rgb {

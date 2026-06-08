@@ -210,7 +210,6 @@ describe("ProjectEditor — prompt_path", () => {
             {
               key: "open" as never,
               label: "Open",
-              icon: "circle" as never,
               color: "#abcdef" as never,
               unblocks_parents: false,
               unblocks_dependents: false,

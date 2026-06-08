@@ -619,14 +619,13 @@ mod tests {
 
     fn build_project_fixture() -> Project {
         use hydra_common::agents::AgentName;
-        use hydra_common::api::v1::projects::{IconKey, StatusOnEnter};
+        use hydra_common::api::v1::projects::StatusOnEnter;
         use hydra_common::api::v1::users::Username;
         use hydra_common::principal::Principal;
 
         let mut backlog = StatusDefinition::new(
             StatusKey::try_new("backlog").unwrap(),
             "Backlog".to_string(),
-            IconKey::try_new("list").unwrap(),
             "#9b59b6".parse().unwrap(),
             false,
             false,
@@ -642,7 +641,6 @@ mod tests {
         let pending_release = StatusDefinition::new(
             StatusKey::try_new("pending-release").unwrap(),
             "Pending release".to_string(),
-            IconKey::try_new("package").unwrap(),
             "#2ecc71".parse().unwrap(),
             true,
             true,

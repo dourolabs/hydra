@@ -93,7 +93,6 @@ export type { MergeQueue } from "./generated/MergeQueue";
 export type { MountItem } from "./generated/MountItem";
 export type { MountSpec } from "./generated/MountSpec";
 export type { HydraId } from "./generated/HydraId";
-export type { IconKey } from "./generated/IconKey";
 export type { PathChildDocumentRef } from "./generated/PathChildDocumentRef";
 export type { PathChildEntry } from "./generated/PathChildEntry";
 export type { Patch } from "./generated/Patch";

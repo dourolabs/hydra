@@ -619,7 +619,6 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
         {
             "key": "todo",
             "label": "Todo",
-            "icon": "circle",
             "color": "#abcdef",
             "unblocks_parents": false,
             "unblocks_dependents": false,
