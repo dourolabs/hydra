@@ -15,12 +15,19 @@ use hydra_common::api::v1::issues::SearchIssuesQuery;
 const AUTOMATION_NAME: &str = "spawn_sessions";
 
 /// Worker name used as the actor when the assignment-loop persists an
-/// auto-assignment. A bare `System { on_behalf_of: None }` (rather than the
-/// `Automation { triggered_by: ctx.actor() }` wrapping used elsewhere)
-/// prevents `LinkConversationToArtifactsAutomation` from interpreting the
-/// resulting `IssueUpdated` event as work derived from the triggering
-/// session's conversation — that misattribution previously caused a
-/// bulk-edge cascade across every unassigned issue.
+/// auto-assignment. The actor is wrapped as
+/// `Automation { automation_name: AUTOMATION_NAME, triggered_by: Some(System { on_behalf_of: None }) }`
+/// so two invariants hold at once:
+/// - The self-loop early-out at the top of `execute` (matching
+///   `automation_name == AUTOMATION_NAME`) blocks re-entry when the
+///   `IssueUpdated` event we minted here fires the automation again.
+/// - `LinkConversationToArtifactsAutomation`'s short-circuit still fires:
+///   `actor.on_behalf_of()` recursively unwraps `Automation.triggered_by`
+///   to the inner `System { on_behalf_of: None }`, which resolves to
+///   `None`, so no spurious `refers-to` edges are minted. (Before this
+///   wrapping, an unwrapped `Automation { triggered_by: ctx.actor() }`
+///   carried the triggering session's principal forward and caused a
+///   bulk-edge cascade across every unassigned issue.)
 const ASSIGNMENT_WORKER_NAME: &str = "spawn_sessions_assignment";
 
 /// Event-driven automation that spawns sessions for eligible issues.
@@ -155,13 +162,17 @@ impl Automation for SpawnSessionsAutomation {
         // runs. Issues with no assignee and no configured assignment agent
         // are left unassigned; the queue will skip them.
         if let Some(agent) = assignment_agent.as_ref() {
-            // Use a bare `System` actor (rather than the `Automation`-wrapped
-            // `ctx.actor()` reused elsewhere in this automation) so the
-            // resulting `IssueUpdated` event does not resolve to the
-            // triggering principal — see `ASSIGNMENT_WORKER_NAME`.
-            let assignment_actor = ActorRef::System {
-                worker_name: ASSIGNMENT_WORKER_NAME.into(),
-                on_behalf_of: None,
+            // Wrap a `System { on_behalf_of: None }` inside `Automation`
+            // so the self-loop early-out matches on `automation_name` and
+            // blocks re-entry, while `on_behalf_of()` still resolves to
+            // `None` and keeps the `LinkConversationToArtifactsAutomation`
+            // short-circuit firing — see `ASSIGNMENT_WORKER_NAME`.
+            let assignment_actor = ActorRef::Automation {
+                automation_name: AUTOMATION_NAME.into(),
+                triggered_by: Some(Box::new(ActorRef::System {
+                    worker_name: ASSIGNMENT_WORKER_NAME.into(),
+                    on_behalf_of: None,
+                })),
             };
             let agent_name = hydra_common::api::v1::agents::AgentName::try_new(agent.name.clone())
                 .map_err(|e| {
@@ -998,13 +1009,17 @@ mod tests {
         Ok(())
     }
 
-    /// The assignment-loop upsert must use a bare `System` actor with no
-    /// `on_behalf_of` principal so the resulting `IssueUpdated` event does
-    /// not carry the triggering session's identity downstream. If the actor
-    /// wraps `ctx.actor()` (e.g. via `Automation { triggered_by: .. }`),
-    /// `LinkConversationToArtifactsAutomation` follows the chain and mints
-    /// a spurious `refers-to` edge for every auto-assigned issue. See the
-    /// RCA in `i-trqznsor` for the bulk-edge cascade this prevents.
+    /// The assignment-loop upsert wraps `System { on_behalf_of: None }`
+    /// inside `Automation { automation_name: AUTOMATION_NAME, .. }`. The
+    /// `Automation` outer layer lets the self-loop early-out at the top of
+    /// `execute` short-circuit re-entry from the `IssueUpdated` event this
+    /// upsert emits, while the inner `System { on_behalf_of: None }` keeps
+    /// `on_behalf_of()` resolving to `None` so the resulting event does not
+    /// carry the triggering session's identity downstream. If the inner
+    /// actor were `ctx.actor()` instead, `LinkConversationToArtifactsAutomation`
+    /// would follow the chain and mint a spurious `refers-to` edge for every
+    /// auto-assigned issue. See the RCA in `i-trqznsor` for the bulk-edge
+    /// cascade this prevents.
     #[tokio::test]
     async fn assignment_upsert_uses_system_actor_with_no_principal() -> anyhow::Result<()> {
         let handles = test_utils::test_state_handles();
@@ -1063,8 +1078,10 @@ mod tests {
         automation.execute(&ctx).await?;
 
         // The upsert that persisted the auto-assignment must be the
-        // assignment-loop's `System` actor — not a wrapping of the
-        // triggering agent.
+        // assignment-loop's wrapped actor — `Automation { automation_name:
+        // AUTOMATION_NAME, triggered_by: Some(System { worker_name:
+        // ASSIGNMENT_WORKER_NAME, on_behalf_of: None }) }` — not a wrapping
+        // of the triggering agent.
         let versions = handles.store.get_issue_versions(&issue_id).await?;
         let upsert_version = versions
             .into_iter()
@@ -1072,17 +1089,32 @@ mod tests {
             .find(|v| v.item.assignee.is_some())
             .expect("expected a persisted version with an assigned principal");
         match upsert_version.actor {
-            Some(ActorRef::System {
-                ref worker_name,
-                on_behalf_of: None,
+            Some(ActorRef::Automation {
+                ref automation_name,
+                triggered_by: Some(ref triggered_by),
             }) => {
                 assert_eq!(
-                    worker_name, ASSIGNMENT_WORKER_NAME,
-                    "assignment upsert should use the dedicated worker name"
+                    automation_name, AUTOMATION_NAME,
+                    "assignment upsert outer actor should name this automation \
+                     so the self-loop early-out matches"
                 );
+                match triggered_by.as_ref() {
+                    ActorRef::System {
+                        worker_name,
+                        on_behalf_of: None,
+                    } => {
+                        assert_eq!(
+                            worker_name, ASSIGNMENT_WORKER_NAME,
+                            "assignment upsert inner actor should use the dedicated worker name"
+                        );
+                    }
+                    other => panic!(
+                        "expected inner `System {{ worker_name: \"{ASSIGNMENT_WORKER_NAME}\", on_behalf_of: None }}` actor; got {other:?}"
+                    ),
+                }
             }
             other => panic!(
-                "expected `System {{ worker_name: \"{ASSIGNMENT_WORKER_NAME}\", on_behalf_of: None }}` actor; got {other:?}"
+                "expected `Automation {{ automation_name: \"{AUTOMATION_NAME}\", triggered_by: Some(System {{ worker_name: \"{ASSIGNMENT_WORKER_NAME}\", on_behalf_of: None }}) }}` actor; got {other:?}"
             ),
         }
 
@@ -1094,6 +1126,88 @@ mod tests {
             assignment_actor.on_behalf_of().is_none(),
             "assignment-loop actor must resolve to no on_behalf_of principal; got {:?}",
             assignment_actor.on_behalf_of()
+        );
+
+        Ok(())
+    }
+
+    /// The self-loop early-out at the top of `execute` must short-circuit
+    /// when the triggering actor is an `Automation { automation_name:
+    /// AUTOMATION_NAME, .. }` — i.e. the `IssueUpdated` event minted by
+    /// the assignment-loop upsert itself. We verify the short-circuit by
+    /// firing such an event against state where the next step *would*
+    /// have called `list_issues` and auto-assigned an unassigned issue,
+    /// then asserting nothing was persisted: no assignment, no session.
+    #[tokio::test]
+    async fn skips_reentry_from_wrapped_assignment_actor() -> anyhow::Result<()> {
+        let handles = test_utils::test_state_handles();
+        let agent_name = "pm";
+        register_assignment_agent(&handles, agent_name).await?;
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "Needs assignment".to_string(),
+            "desc".to_string(),
+            Username::from("worker"),
+            String::new(),
+            IssueStatus::Open.into(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await?;
+
+        // The same actor shape the assignment-loop upsert uses.
+        let wrapped_actor = ActorRef::Automation {
+            automation_name: AUTOMATION_NAME.into(),
+            triggered_by: Some(Box::new(ActorRef::System {
+                worker_name: ASSIGNMENT_WORKER_NAME.into(),
+                on_behalf_of: None,
+            })),
+        };
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(issue.clone()),
+            new: issue,
+            actor: wrapped_actor,
+        });
+        let event = ServerEvent::IssueUpdated {
+            seq: 2,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = SpawnSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await?;
+
+        // If `execute` had proceeded past the self-loop early-out, it would
+        // have listed issues, auto-assigned this unassigned issue to `pm`,
+        // and spawned a session for it. Neither should have happened.
+        let stored = handles.store.get_issue(&issue_id, false).await?.item;
+        assert!(
+            stored.assignee.is_none(),
+            "self-loop early-out must skip auto-assignment; got assignee {:?}",
+            stored.assignee
+        );
+        let sessions = handles.state.list_sessions().await?;
+        assert_eq!(
+            sessions.len(),
+            0,
+            "self-loop early-out must skip the spawn pass; got {} sessions",
+            sessions.len()
         );
 
         Ok(())
