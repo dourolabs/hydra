@@ -15,6 +15,10 @@
   min-height: 0;
 }
 
+.projectGroupDragging {
+  z-index: 2;
+}
+
 .projectBar {
   display: flex;
   align-items: center;
@@ -23,6 +27,20 @@
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
+}
+
+.projectBarDraggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.projectBarDraggable:active {
+  cursor: grabbing;
+}
+
+.projectBarDraggable:focus-visible {
+  outline: 1px solid var(--line-strong);
+  outline-offset: -1px;
 }
 
 .projectBarLeft {
