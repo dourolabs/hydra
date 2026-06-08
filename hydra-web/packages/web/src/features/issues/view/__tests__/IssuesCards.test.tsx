@@ -235,6 +235,40 @@ describe("IssuesCards grouping", () => {
   });
 });
 
+describe("IssuesCards collapse toggle", () => {
+  it("hides cards under a section when its header is clicked and toggles aria-expanded", () => {
+    renderCards({
+      issues: [
+        makeIssue("i-a", { project_id: "j-defaul" }),
+        makeIssue("i-c", { project_id: "j-altpro" }),
+      ],
+    });
+
+    expect(screen.getByTestId("issues-card-i-a")).toBeDefined();
+    const toggle = screen.getByTestId("issues-cards-group-toggle-default");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(toggle);
+
+    expect(screen.queryByTestId("issues-card-i-a")).toBeNull();
+    // Other sections stay visible.
+    expect(screen.getByTestId("issues-card-i-c")).toBeDefined();
+    expect(
+      screen
+        .getByTestId("issues-cards-group-toggle-default")
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+
+    fireEvent.click(screen.getByTestId("issues-cards-group-toggle-default"));
+    expect(screen.getByTestId("issues-card-i-a")).toBeDefined();
+    expect(
+      screen
+        .getByTestId("issues-cards-group-toggle-default")
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+});
+
 describe("IssuesCards status chip", () => {
   it("renders the project-resolved status definition (dot + label) per card", () => {
     renderCards({

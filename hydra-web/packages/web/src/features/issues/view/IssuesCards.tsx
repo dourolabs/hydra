@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Avatar } from "@hydra/ui";
 import type { IssueSummaryRecord } from "@hydra/api";
@@ -40,6 +40,10 @@ export function IssuesCards({ issues, filterRootId }: IssuesCardsProps) {
     [issues, projects],
   );
 
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const toggle = (key: string) =>
+    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+
   const handleCardClick = (id: string) => {
     navigate(`/issues/${id}${linkSearch}`);
   };
@@ -63,35 +67,49 @@ export function IssuesCards({ issues, filterRootId }: IssuesCardsProps) {
 
   return (
     <div className={styles.cardsWrap}>
-      {sections.map((section) => (
-        <section
-          key={section.groupKey}
-          className={styles.section}
-          data-testid={`issues-cards-group-${section.projectKey}`}
-        >
-          <div className={styles.sectionHeader}>
-            <ProjectChip
-              projectKey={section.projectKey}
-              name={section.projectName ?? undefined}
-              data-testid={`issues-cards-group-chip-${section.projectKey}`}
-            />
-            <span className={styles.issueCount}>
-              {section.issues.length}{" "}
-              {section.issues.length === 1 ? "issue" : "issues"}
-            </span>
-          </div>
-          <div className={styles.grid}>
-            {section.issues.map((rec) => (
-              <IssueCard
-                key={rec.issue_id}
-                rec={rec}
-                blocked={computeBlockedStatus(rec, issueMap).blocked}
-                onClick={handleCardClick}
+      {sections.map((section) => {
+        const isCollapsed = collapsed[section.groupKey] === true;
+        return (
+          <section
+            key={section.groupKey}
+            className={styles.section}
+            data-testid={`issues-cards-group-${section.projectKey}`}
+          >
+            <button
+              type="button"
+              className={styles.sectionHeader}
+              onClick={() => toggle(section.groupKey)}
+              aria-expanded={!isCollapsed}
+              data-testid={`issues-cards-group-toggle-${section.projectKey}`}
+            >
+              <span className={styles.chevron} aria-hidden="true">
+                {isCollapsed ? "▸" : "▾"}
+              </span>
+              <ProjectChip
+                projectKey={section.projectKey}
+                name={section.projectName ?? undefined}
+                data-testid={`issues-cards-group-chip-${section.projectKey}`}
               />
-            ))}
-          </div>
-        </section>
-      ))}
+              <span className={styles.issueCount}>
+                {section.issues.length}{" "}
+                {section.issues.length === 1 ? "issue" : "issues"}
+              </span>
+            </button>
+            {!isCollapsed && (
+              <div className={styles.grid}>
+                {section.issues.map((rec) => (
+                  <IssueCard
+                    key={rec.issue_id}
+                    rec={rec}
+                    blocked={computeBlockedStatus(rec, issueMap).blocked}
+                    onClick={handleCardClick}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }

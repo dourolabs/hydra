@@ -19,6 +19,29 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+}
+
+.sectionHeader:hover .chevron {
+  color: var(--fg-1);
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+  line-height: 1;
 }
 
 .issueCount {
