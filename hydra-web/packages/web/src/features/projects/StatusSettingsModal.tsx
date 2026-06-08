@@ -4,6 +4,7 @@ import { Button, Input, Modal, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type {
   DocumentPath,
+  IssueSummaryRecord,
   ListProjectsResponse,
   Principal,
   ProjectRecord,
@@ -67,6 +68,11 @@ export function StatusSettingsModal({
     mode === "new" ? blankStatus(statuses.length) : initialStatus?.status ?? null,
   );
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [moveTargetKey, setMoveTargetKey] = useState<string>("");
+  const [moveProgress, setMoveProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
 
   // Resync local draft whenever the modal is opened against a different
   // status (gear click on another column reuses the same component instance).
@@ -76,6 +82,7 @@ export function StatusSettingsModal({
       mode === "new" ? blankStatus(statuses.length) : initialStatus?.status ?? null,
     );
     setConfirmingDelete(false);
+    setMoveProgress(null);
   }, [open, mode, statuses.length, initialStatus]);
 
   const projectId = projectRecord.project_id;
@@ -120,12 +127,39 @@ export function StatusSettingsModal({
 
   const onlyStatus = statuses.length <= 1;
   const hasIssues = issueCount > 0;
-  const canDelete = !onlyStatus && !hasIssues;
+  const canDelete = !onlyStatus;
   const deleteTooltip = onlyStatus
     ? "Cannot delete the only status"
     : hasIssues
-    ? `Cannot delete a status with ${issueCount} open issues; move them first`
+    ? `Will move ${issueCount} open issue(s) to a sibling status`
     : "";
+
+  // Neighbor statuses available for the bulk-move (excludes the to-delete one).
+  const moveOptions: SelectOption[] = useMemo(
+    () =>
+      statuses
+        .filter((_, i) => i !== index)
+        .map((s) => ({ value: s.key as string, label: s.label || (s.key as string) })),
+    [statuses, index],
+  );
+
+  // Default neighbor: left of the to-delete column, or the right neighbor when
+  // to-delete is the leftmost. `index === -1` ("not found") falls back to "".
+  const defaultMoveTargetKey = useMemo(() => {
+    if (index < 0) return "";
+    const left = statuses[index - 1];
+    if (left) return left.key as string;
+    const right = statuses[index + 1];
+    return right ? (right.key as string) : "";
+  }, [statuses, index]);
+
+  // Reset the move-target selection whenever the modal re-targets a status or
+  // the user re-enters the confirming-delete substep — keeps the default
+  // neighbor in sync with the current `index`.
+  useEffect(() => {
+    if (!confirmingDelete) return;
+    setMoveTargetKey(defaultMoveTargetKey);
+  }, [confirmingDelete, defaultMoveTargetKey]);
 
   const existingKeysExceptDraft = useMemo(
     () => new Set(statuses.map((s) => s.key as string)),
@@ -202,6 +236,125 @@ export function StatusSettingsModal({
     });
   }, [canDelete, index, statuses, saveMutation, addToast, onClose]);
 
+  // Bulk-move every issue at the to-delete status onto `moveTargetKey`, then
+  // drop the status from the project's `statuses`. Errors halt the move
+  // before the project save fires so we never orphan a status with a partial
+  // migration. We do the per-issue work outside of `saveMutation` because
+  // (a) it needs sequential progress reporting and (b) we also need to
+  // possibly re-point `default_status_key`, which `saveMutation` doesn't
+  // touch.
+  const moveAndDeleteMutation = useMutation({
+    mutationFn: async (targetKey: string) => {
+      if (index < 0) throw new Error("Status not found in project");
+
+      // 1) Enumerate every issue at the to-delete status (paginated).
+      const ids: string[] = [];
+      let cursor: string | null = null;
+      let more = true;
+      while (more) {
+        const resp = await apiClient.listIssues({
+          project_id: projectId,
+          status: statusKey,
+          limit: null,
+          ...(cursor ? { cursor } : {}),
+        });
+        for (const rec of resp.issues as IssueSummaryRecord[]) {
+          ids.push(rec.issue_id as string);
+        }
+        cursor = resp.next_cursor ?? null;
+        more = !!cursor;
+      }
+
+      // 2) Sequentially patch each issue's status to the neighbor. Refetch
+      //    the full Issue body first so we don't clobber the description /
+      //    session_settings with the truncated summary shape.
+      setMoveProgress({ current: 0, total: ids.length });
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        setMoveProgress({ current: i + 1, total: ids.length });
+        try {
+          const record = await apiClient.getIssue(id);
+          await apiClient.updateIssue(id, {
+            issue: { ...record.issue, status: targetKey },
+            session_id: null,
+          });
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : "request failed";
+          throw new Error(
+            `Move halted at issue ${id}: ${reason}. No statuses were deleted.`,
+          );
+        }
+      }
+
+      // 3) Optimistic project save: drop the status, retarget the default
+      //    status key if it was the deleted one. Prefer the left neighbor;
+      //    fall back to the right neighbor (i.e. nextStatuses[0]) when the
+      //    deleted column was the leftmost.
+      const nextStatuses = statuses.filter((_, i) => i !== index);
+      const wasDefault =
+        projectRecord.project.default_status_key === statusKey;
+      let nextDefaultKey = projectRecord.project.default_status_key;
+      if (wasDefault) {
+        const leftKey = nextStatuses[index - 1]?.key;
+        nextDefaultKey = leftKey ?? nextStatuses[0]?.key ?? nextDefaultKey;
+      }
+      const nextProject = {
+        ...projectRecord.project,
+        statuses: nextStatuses,
+        default_status_key: nextDefaultKey,
+      };
+
+      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
+      const previous =
+        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, {
+          projects: applyOptimisticUpsert(previous.projects, projectId, nextProject),
+        });
+      }
+      try {
+        return await apiClient.updateProject(projectId, { project: nextProject });
+      } catch (err) {
+        if (previous) {
+          queryClient.setQueryData(PROJECTS_QUERY_KEY, previous);
+        }
+        throw err;
+      }
+    },
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
+      queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
+      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+      addToast(`Moved ${issueCount} issue(s) and deleted status`, "success");
+      setMoveProgress(null);
+      onClose();
+    },
+    onError: (err) => {
+      addToast(
+        err instanceof Error ? err.message : "Failed to move issues",
+        "error",
+      );
+      setMoveProgress(null);
+    },
+  });
+
+  const handleMoveAndDelete = useCallback(() => {
+    if (!canDelete || index < 0 || !hasIssues) return;
+    if (!moveTargetKey) {
+      addToast("Pick a status to move issues to", "error");
+      return;
+    }
+    moveAndDeleteMutation.mutate(moveTargetKey);
+  }, [
+    canDelete,
+    index,
+    hasIssues,
+    moveTargetKey,
+    moveAndDeleteMutation,
+    addToast,
+  ]);
+
   if (!draft || (mode === "edit" && index < 0)) {
     return (
       <Modal open={open} onClose={onClose} title="Status settings">
@@ -248,26 +401,74 @@ export function StatusSettingsModal({
         <div className={styles.actionsLeft}>
           {mode === "edit" &&
             (confirmingDelete ? (
-              <>
-                <span className={styles.label}>Delete this status?</span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setConfirmingDelete(false)}
-                  disabled={saveMutation.isPending}
+              hasIssues ? (
+                <div
+                  className={styles.moveBlock}
+                  data-testid="status-settings-move-block"
                 >
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleDelete}
-                  disabled={saveMutation.isPending}
-                  data-testid="status-settings-delete-confirm"
-                >
-                  {saveMutation.isPending ? "Deleting…" : "Confirm delete"}
-                </Button>
-              </>
+                  <label className={styles.label}>
+                    Move {issueCount} issue(s) to:
+                    <Select
+                      options={moveOptions}
+                      value={moveTargetKey}
+                      onChange={(e) => setMoveTargetKey(e.target.value)}
+                      data-testid="status-settings-move-target"
+                    />
+                  </label>
+                  <div className={styles.moveActions}>
+                    {moveProgress && moveProgress.total > 0 && (
+                      <span
+                        className={styles.label}
+                        data-testid="status-settings-move-progress"
+                      >
+                        Moving {moveProgress.current} of {moveProgress.total}…
+                      </span>
+                    )}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={moveAndDeleteMutation.isPending}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={handleMoveAndDelete}
+                      disabled={
+                        moveAndDeleteMutation.isPending || !moveTargetKey
+                      }
+                      data-testid="status-settings-move-confirm"
+                    >
+                      {moveAndDeleteMutation.isPending
+                        ? "Moving…"
+                        : `Move ${issueCount} and delete`}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <span className={styles.label}>Delete this status?</span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setConfirmingDelete(false)}
+                    disabled={saveMutation.isPending}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleDelete}
+                    disabled={saveMutation.isPending}
+                    data-testid="status-settings-delete-confirm"
+                  >
+                    {saveMutation.isPending ? "Deleting…" : "Confirm delete"}
+                  </Button>
+                </>
+              )
             ) : (
               <button
                 type="button"
@@ -286,7 +487,7 @@ export function StatusSettingsModal({
             variant="secondary"
             size="md"
             onClick={onClose}
-            disabled={saveMutation.isPending}
+            disabled={saveMutation.isPending || moveAndDeleteMutation.isPending}
           >
             Cancel
           </Button>
@@ -295,7 +496,9 @@ export function StatusSettingsModal({
             size="md"
             onClick={handleSave}
             disabled={
-              saveMutation.isPending || (mode === "new" && !!newModeError)
+              saveMutation.isPending ||
+              moveAndDeleteMutation.isPending ||
+              (mode === "new" && !!newModeError)
             }
             data-testid="status-settings-save"
           >
