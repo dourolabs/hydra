@@ -148,6 +148,10 @@
   color: var(--acc);
 }
 
+.rowProjectChip {
+  flex-shrink: 0;
+}
+
 .rowLabel {
   flex: 1;
   min-width: 0;
