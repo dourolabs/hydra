@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ProjectRecord } from "@hydra/api";
 
 // --- API client mocks ---
 
@@ -28,16 +29,50 @@ vi.mock("../../api/client", () => ({
   },
 }));
 
+const useProjectsMock = vi.fn<() => { data: ProjectRecord[] | undefined }>();
+vi.mock("../projects/useProjects", () => ({
+  useProjects: () => useProjectsMock(),
+}));
+
 vi.mock("./GlobalSearchModal.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
+
+vi.mock("../projects/ProjectChip.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+const SEEDED_PROJECTS: ProjectRecord[] = [
+  {
+    project_id: "j-defaul",
+    version: 1,
+    project: {
+      key: "default",
+      name: "Default",
+      statuses: [],
+      default_status_key: "open",
+      creator: "system",
+    },
+  },
+  {
+    project_id: "j-engv2",
+    version: 1,
+    project: {
+      key: "engineering-v2",
+      name: "Engineering v2",
+      statuses: [],
+      default_status_key: "inbox",
+      creator: "alice",
+    },
+  },
+];
 
 // --- Import after mocks ---
 const { GlobalSearchModal } = await import("./GlobalSearchModal");
 
 // --- Fixtures ---
 
-function issueRow(id: string, title: string) {
+function issueRow(id: string, title: string, projectId: string | null = null) {
   return {
     issue_id: id,
     version: 1n,
@@ -49,6 +84,7 @@ function issueRow(id: string, title: string) {
       description: "",
       creator: "alice",
       status: "open",
+      project_id: projectId,
       progress: "",
       dependencies: [],
       patches: [],
@@ -187,6 +223,7 @@ async function typeQuery(value: string) {
 
 beforeEach(() => {
   defaultMocks();
+  useProjectsMock.mockReturnValue({ data: SEEDED_PROJECTS });
 });
 
 afterEach(() => {
@@ -196,6 +233,7 @@ afterEach(() => {
   listDocuments.mockReset();
   listConversations.mockReset();
   listSessions.mockReset();
+  useProjectsMock.mockReset();
 });
 
 describe("GlobalSearchModal rendering", () => {
@@ -251,6 +289,64 @@ describe("GlobalSearchModal rendering", () => {
     );
     expect(screen.queryByTestId("global-search-group-issue")).toBeNull();
     expect(screen.queryByTestId("global-search-group-patch")).toBeNull();
+  });
+
+  it("renders a project chip on issue rows for a known project_id", async () => {
+    listIssues.mockResolvedValue({
+      issues: [issueRow("i-eng", "Engineering issue", "j-engv2")],
+    });
+    listPatches.mockResolvedValue({ patches: [] });
+    listDocuments.mockResolvedValue({ documents: [] });
+    listConversations.mockResolvedValue([]);
+    listSessions.mockResolvedValue({ sessions: [] });
+
+    renderModal();
+    await typeQuery("foo");
+
+    const chip = await screen.findByTestId("rail-row-project-chip-i-eng");
+    expect(chip.textContent).toBe("engineering-v2");
+  });
+
+  it("falls back to the default project key when issue.project_id is null", async () => {
+    listIssues.mockResolvedValue({
+      issues: [issueRow("i-orphan", "No project", null)],
+    });
+    listPatches.mockResolvedValue({ patches: [] });
+    listDocuments.mockResolvedValue({ documents: [] });
+    listConversations.mockResolvedValue([]);
+    listSessions.mockResolvedValue({ sessions: [] });
+
+    renderModal();
+    await typeQuery("foo");
+
+    const chip = await screen.findByTestId("rail-row-project-chip-i-orphan");
+    expect(chip.textContent).toBe("default");
+  });
+
+  it("suppresses the chip when projects are still loading", async () => {
+    useProjectsMock.mockReturnValue({ data: undefined });
+    listIssues.mockResolvedValue({
+      issues: [issueRow("i-eng", "Engineering issue", "j-engv2")],
+    });
+    listPatches.mockResolvedValue({ patches: [] });
+    listDocuments.mockResolvedValue({ documents: [] });
+    listConversations.mockResolvedValue([]);
+    listSessions.mockResolvedValue({ sessions: [] });
+
+    renderModal();
+    await typeQuery("foo");
+
+    expect(screen.queryByTestId("rail-row-project-chip-i-eng")).toBeNull();
+    // Row itself still renders cleanly.
+    expect(screen.getByTestId("global-search-row-issue-i-eng")).toBeTruthy();
+  });
+
+  it("does not render a project chip on patch or document rows", async () => {
+    renderModal();
+    await typeQuery("foo");
+
+    expect(screen.queryByTestId("rail-row-project-chip-p-1")).toBeNull();
+    expect(screen.queryByTestId("rail-row-project-chip-d-1")).toBeNull();
   });
 
   it("renders the orphan session row as a clickable link to /sessions/<id>", async () => {

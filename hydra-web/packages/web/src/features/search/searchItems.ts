@@ -21,15 +21,37 @@ export interface SearchItem {
   href: string;
   /** Short mono meta string shown on the right side of the row. */
   meta?: string;
+  /** Project key for issue rows; resolved by the caller against the
+   * loaded project list. Null when projects are still loading or no
+   * matching project is found. */
+  projectKey?: string | null;
 }
 
-export function issueToItem(record: IssueSummaryRecord): SearchItem {
+function resolveProjectKey(
+  projectsById: Map<string, string>,
+  projectId: string | null | undefined,
+): string | null {
+  if (projectsById.size === 0) return null;
+  if (projectId) {
+    return projectsById.get(projectId) ?? null;
+  }
+  for (const key of projectsById.values()) {
+    if (key === "default") return key;
+  }
+  return null;
+}
+
+export function issueToItem(
+  record: IssueSummaryRecord,
+  projectsById: Map<string, string>,
+): SearchItem {
   return {
     kind: "issue",
     id: record.issue_id,
     label: record.issue.title || record.issue_id,
     href: `/issues/${record.issue_id}`,
     meta: record.issue.status.replace("-", " "),
+    projectKey: resolveProjectKey(projectsById, record.issue.project_id),
   };
 }
 

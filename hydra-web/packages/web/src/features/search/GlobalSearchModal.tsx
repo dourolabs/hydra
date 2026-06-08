@@ -20,6 +20,8 @@ import {
   type SearchItem,
   type SearchItemKind,
 } from "./searchItems";
+import { ProjectChip } from "../projects/ProjectChip";
+import { useProjects } from "../projects/useProjects";
 import styles from "./GlobalSearchModal.module.css";
 
 interface GlobalSearchModalProps {
@@ -104,13 +106,22 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
   }, [open, onClose]);
 
   const results = useGlobalSearch(debouncedQuery);
+  const { data: projects } = useProjects();
+
+  const projectsById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of projects ?? []) {
+      map.set(p.project_id, p.project.key);
+    }
+    return map;
+  }, [projects]);
 
   const groups = useMemo<SearchGroup[]>(() => {
     const all: SearchGroup[] = [
       {
         kind: "issue",
         heading: GROUP_HEADINGS.issue,
-        items: results.issues.map(issueToItem),
+        items: results.issues.map((r) => issueToItem(r, projectsById)),
       },
       {
         kind: "patch",
@@ -134,7 +145,7 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
       },
     ];
     return all.filter((g) => g.items.length > 0);
-  }, [results]);
+  }, [results, projectsById]);
 
   const flatItems = useMemo<SearchItem[]>(
     () => groups.flatMap((g) => g.items),
@@ -281,6 +292,13 @@ export function GlobalSearchModal({ open, onClose }: GlobalSearchModalProps) {
                             <span className={styles.rowIcon}>
                               <Icon size={14} />
                             </span>
+                            {item.kind === "issue" && item.projectKey && (
+                              <ProjectChip
+                                projectKey={item.projectKey}
+                                className={styles.rowProjectChip}
+                                data-testid={`rail-row-project-chip-${item.id}`}
+                              />
+                            )}
                             <span className={styles.rowLabel}>{item.label}</span>
                             {item.meta && (
                               <span className={styles.rowMeta}>{item.meta}</span>
