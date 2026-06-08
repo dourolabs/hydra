@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import type {
   ListProjectsResponse,
   ProjectRecord,
@@ -228,6 +235,54 @@ vi.mock("@hydra/ui", () => ({
         data-testid={testId}
       />
     </label>
+  ),
+  Avatar: ({ name }: { name: string; kind?: string; size?: string }) => (
+    <span data-testid={`avatar-${name}`}>{name}</span>
+  ),
+  Picker: ({
+    label,
+    value,
+    open,
+    onToggle,
+    children,
+  }: {
+    label: string;
+    value: ReactNode;
+    open: boolean;
+    onToggle: () => void;
+    wide?: boolean;
+    children: ReactNode;
+  }) => (
+    <div>
+      <div>{label}</div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={label}
+      >
+        {value}
+      </button>
+      {open && <div role="menu">{children}</div>}
+    </div>
+  ),
+  PickerRow: ({
+    active,
+    onClick,
+    children,
+  }: {
+    active?: boolean;
+    onClick: () => void;
+    children: ReactNode;
+  }) => (
+    <button
+      type="button"
+      role="menuitem"
+      aria-pressed={!!active}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   ),
 }));
 
@@ -669,7 +724,7 @@ describe("StatusSettingsModal", () => {
       expect(screen.queryByTestId("status-settings-label")).toBeNull();
       expect(screen.queryByTestId("status-settings-prompt-path")).toBeNull();
       expect(screen.queryByTestId("status-settings-prompt-path-toggle")).toBeNull();
-      expect(screen.queryByTestId("status-settings-assign-kind")).toBeNull();
+      expect(screen.queryByTestId("status-settings-assignee")).toBeNull();
     });
 
     it("hides the delete control in new mode", () => {
@@ -1210,27 +1265,79 @@ describe("StatusSettingsModal", () => {
     });
   });
 
-  it("setKind('user') is a no-op when no users are loaded", () => {
-    const project = makeProject([
-      makeStatus("open"),
-      makeStatus("in-progress"),
-    ]);
-    render(
-      <StatusSettingsModal
-        open={true}
-        onClose={() => {}}
-        projectRecord={project}
-        statusKey="open"
-        issueCount={0}
-      />,
-    );
-    // useUsers is mocked to return [] above, so flipping to "user" should
-    // not produce an on_enter assignment with an empty Principal name.
-    fireEvent.change(screen.getByTestId("status-settings-assign-kind"), {
-      target: { value: "user" },
+  describe("assignee picker", () => {
+    it("renders only the Unassigned row when no agents/users are loaded", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="open"
+          issueCount={0}
+        />,
+      );
+      // useAgents/useUsers are mocked to return [] above, so opening the
+      // picker should surface only the Unassigned row — no agent/user
+      // sections.
+      fireEvent.click(screen.getByLabelText("Assign to"));
+      const menu = screen.getByRole("menu");
+      const rows = within(menu).getAllByRole("menuitem");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].textContent).toContain("Unassigned");
     });
-    fireEvent.click(screen.getByTestId("status-settings-save"));
-    const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
-    expect(next[0].on_enter).toBeNull();
+
+    it("shows the existing agent assignment in the trigger pill", () => {
+      const project = makeProject([
+        makeStatus("open", {
+          on_enter: {
+            assign_to: { Agent: { name: "swe" } },
+            attach_form: null,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="open"
+          issueCount={0}
+        />,
+      );
+      // The pill renders the avatar (mocked) + name, so the trigger button's
+      // aria-label is the picker caption and its text content is the name.
+      expect(screen.getByLabelText("Assign to").textContent).toContain("swe");
+    });
+
+    it("picking Unassigned clears on_enter.assign_to", () => {
+      const project = makeProject([
+        makeStatus("open", {
+          on_enter: {
+            assign_to: { User: { name: "alice" } },
+            attach_form: null,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="open"
+          issueCount={0}
+        />,
+      );
+      fireEvent.click(screen.getByLabelText("Assign to"));
+      const menu = screen.getByRole("menu");
+      const rows = within(menu).getAllByRole("menuitem");
+      fireEvent.click(rows[0]);
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
+      expect(next[0].on_enter).toBeNull();
+    });
   });
 });
