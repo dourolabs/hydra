@@ -3005,6 +3005,60 @@
     }
   },
   "projects": {
+    "j-defaul": {
+      "key": "default",
+      "name": "Default",
+      "default_status_key": "open",
+      "creator": "system",
+      "prompt_path": "/projects/default/prompt.md",
+      "statuses": [
+        {
+          "key": "open",
+          "label": "Open",
+          "color": "#3498db",
+          "unblocks_parents": false,
+          "unblocks_dependents": false,
+          "cascades_to_children": false,
+          "prompt_path": "/projects/default/statuses/open.md"
+        },
+        {
+          "key": "in-progress",
+          "label": "In progress",
+          "color": "#f1c40f",
+          "unblocks_parents": false,
+          "unblocks_dependents": false,
+          "cascades_to_children": false,
+          "prompt_path": "/projects/default/statuses/in-progress.md"
+        },
+        {
+          "key": "closed",
+          "label": "Closed",
+          "color": "#2ecc71",
+          "unblocks_parents": true,
+          "unblocks_dependents": true,
+          "cascades_to_children": false,
+          "prompt_path": null
+        },
+        {
+          "key": "dropped",
+          "label": "Dropped",
+          "color": "#795548",
+          "unblocks_parents": true,
+          "unblocks_dependents": false,
+          "cascades_to_children": true,
+          "prompt_path": null
+        },
+        {
+          "key": "failed",
+          "label": "Failed",
+          "color": "#e74c3c",
+          "unblocks_parents": true,
+          "unblocks_dependents": false,
+          "cascades_to_children": true,
+          "prompt_path": null
+        }
+      ]
+    },
     "j-engv2": {
       "key": "engineering-v2",
       "name": "Engineering v2",
