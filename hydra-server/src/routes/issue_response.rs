@@ -3,7 +3,7 @@
 //!
 //! Centralizing the resolution here (rather than duplicating it per
 //! route) keeps the wire contract uniform: every `Issue` returned over
-//! the wire carries its `resolved_status` (label, icon, color, flags)
+//! the wire carries its `resolved_status` (label, color, flags)
 //! inline, so the frontend can render badges without a second round-trip
 //! and without re-implementing `(project_id, status) → StatusDefinition`
 //! resolution on the client.

@@ -30,12 +30,11 @@ function makeStatus(key: string, label = key): StatusDefinition {
   return {
     key,
     label,
-    icon: "circle",
     color: "#3498db",
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,
-  } as unknown as StatusDefinition;
+  };
 }
 
 const DEFAULT_STATUSES: StatusDefinition[] = [
