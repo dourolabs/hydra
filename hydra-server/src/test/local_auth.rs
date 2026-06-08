@@ -50,8 +50,8 @@ async fn setup_local_auth_creates_actor() -> anyhow::Result<()> {
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
     // Local auth seeds a `users/<name>` row plus an `auth_tokens` row
-    // pointing at that actor name (the actors table is gone — the auth
-    // middleware reconstructs the runtime `Actor` from the token row).
+    // pointing at that actor name; the auth middleware reconstructs
+    // the runtime `Actor` from the token row.
     let hashes = store.get_auth_token_hashes("users/local").await?;
     assert_eq!(hashes.len(), 1, "expected exactly one minted token");
 

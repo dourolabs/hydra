@@ -34,11 +34,12 @@ SET creator = substr(actor_name, length('users/') + 1)
 WHERE session_id IS NULL
   AND actor_name LIKE 'users/%';
 
--- Catch-all for any leftover '__backfill__' rows (session_id pointed at a
--- vanished task, or actor_name was not a 'users/<name>' shape). These
--- shouldn't exist in well-formed data but we still need a non-default
--- value before tightening the column.
-UPDATE auth_tokens SET creator = 'unknown' WHERE creator = '__backfill__';
+-- Drop stragglers whose creator could not be derived (session_id pointed
+-- at a vanished task, or actor_name was not a `users/<name>` shape). The
+-- NOT NULL + CHECK below leaves no room for a sentinel value, and any
+-- caller relying on such a row would already be failing for an unrelated
+-- reason.
+DELETE FROM auth_tokens WHERE creator = '__backfill__';
 
 -- SQLite has no `ALTER COLUMN ... DROP DEFAULT`; rebuild via the
 -- create-new / copy / rename dance. List every column explicitly in both

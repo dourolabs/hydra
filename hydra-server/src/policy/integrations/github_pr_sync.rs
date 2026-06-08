@@ -190,10 +190,9 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
             }
             // `agents/<name>` is a shared identity across sessions, so
             // the creator has to come from the session that *minted*
-            // this auth token, not from the agent actor row (which used
-            // to pin to the first user to instantiate it). The
-            // authenticated `ActorRef` carries the originating session
-            // id end-to-end via `Actor::new_from_actor_id`.
+            // this auth token. The authenticated `ActorRef` carries the
+            // originating session id end-to-end via
+            // `Actor::new_from_actor_id`.
             ActorId::Agent(_) => {
                 let session_id = actor_ref.originating_session_id().ok_or_else(|| {
                     AutomationError::Other(anyhow::anyhow!(

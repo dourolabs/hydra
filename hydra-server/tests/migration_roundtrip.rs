@@ -435,7 +435,7 @@ async fn assert_data_shape_invariants(pool: &PgPool) -> Result<()> {
     // ---- auth_tokens: legacy row keeps NULL session_id, default is_revoked=FALSE ----
     let row = sqlx::query(
         "SELECT session_id, is_revoked FROM metis.auth_tokens \
-         WHERE actor_name = 'agents/swe' AND token_hash = 'deadbeef'",
+         WHERE actor_name = 'users/legacy' AND token_hash = 'deadbeef'",
     )
     .fetch_one(pool)
     .await?;

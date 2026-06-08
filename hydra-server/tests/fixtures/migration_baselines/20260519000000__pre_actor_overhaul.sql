@@ -98,12 +98,16 @@ VALUES
     ('i-bare000001', 'issue', 'p-bareauth01',  'patch', 'has-patch');
 
 --------------------------------------------------------------------------------
--- auth_tokens — legacy row predating session_id / is_revoked columns; the
--- migrations that add those columns must populate them (session_id stays NULL,
--- is_revoked defaults to FALSE).
+-- auth_tokens — legacy row predating session_id / is_revoked / creator
+-- columns; the migrations that add those columns must populate them
+-- (session_id stays NULL, is_revoked defaults to FALSE, creator backfills
+-- from the `users/<name>` shape via the denormalize-creator migration).
+--
+-- `actor_name = 'users/legacy'` keeps this row eligible for the
+-- username-parse backfill so it survives the NOT NULL tightening.
 --------------------------------------------------------------------------------
 INSERT INTO metis.auth_tokens (actor_name, token_hash)
-VALUES ('agents/swe', 'deadbeef');
+VALUES ('users/legacy', 'deadbeef');
 
 --------------------------------------------------------------------------------
 -- repositories_v2 — row carries a populated `patch_workflow` (still a column

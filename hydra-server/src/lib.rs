@@ -615,9 +615,9 @@ pub async fn setup_local_auth(
         on_behalf_of: None,
     };
 
-    // Build the runtime `Actor` in memory — there is no longer a persisted
-    // actors table to round-trip through. The auth middleware rebuilds the
-    // same shape from `auth_tokens.actor_name` + `creator` on every request.
+    // Build the runtime `Actor` in memory; the auth middleware rebuilds
+    // the same shape from `auth_tokens.actor_name` + `creator` on every
+    // request.
     let (_actor, auth_token) = Actor::new_for_user(username.clone());
 
     // Always rotate: clear any tokens still associated with this actor

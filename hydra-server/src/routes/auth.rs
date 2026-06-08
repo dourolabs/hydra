@@ -69,9 +69,7 @@ pub async fn require_auth(
 
     // Build the runtime `Actor` straight from the matched token row.
     // `actor_id` parses from the token's `actor_name`; `creator` is the
-    // per-token denormalization that fixes the multi-user attribution
-    // bug — distinct session tokens for the same `ActorId::Agent` no
-    // longer collapse onto a single creator.
+    // per-token denormalization on `auth_tokens.creator`.
     let actor_id = match Actor::parse_name(auth_token.actor_name()) {
         Ok(id) => id,
         Err(error) => {

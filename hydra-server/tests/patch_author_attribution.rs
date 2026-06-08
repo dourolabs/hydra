@@ -16,9 +16,11 @@
 //! - Real `SqliteStore`, not `MemoryStore` (the latter mirrors the struct
 //!   as-is and would trivially pass even with the bug in place).
 //! - Two distinct users (`alice`, `bob`).
-//! - Spawn one `agents/swe` session under each, mint each session's
-//!   auth token via `create_actor_for_job`, then drive a patch upsert
-//!   request as that session and assert `patch.creator == <expected>`.
+//! - Mint one auth token under each user's session, then resolve each
+//!   token through `SqliteStore::get_auth_token_by_hash` (the lookup the
+//!   auth middleware performs) and assert the per-token creator is the
+//!   originating user. Drive `add_patch` through the runtime `Actor`
+//!   built off that lookup and assert `patch.creator` matches.
 //! - A live `gh pr view` check is out of scope. The github_pr_sync
 //!   integration calls Octocrab's `personal_token` flow with the
 //!   patch creator's GitHub PAT — the upstream attribution follows
@@ -28,23 +30,25 @@
 //! `SqliteStore` migration plan (including the new
 //! `20260609000000_add_creator_to_auth_tokens` migration) rather than
 //! the in-process `MemoryStore` happy path.
+//!
+//! Self-contained: avoids `hydra_server::test_utils` (which is gated on
+//! the `test-utils` feature and would not be visible to this integration
+//! crate under the workflow's `--features enterprise` build) by going
+//! straight to the `Store` trait and the auth-token round-trip the
+//! middleware uses.
 
 use anyhow::{Context, Result};
 use hydra_common::RepoName;
 use hydra_common::api::v1::agents::AgentName;
-use hydra_common::api::v1::patches::UpsertPatchRequest;
-use hydra_common::api::v1::sessions::Bundle;
+use hydra_common::api::v1::sessions::MountSpec;
 use hydra_common::repositories::Repository;
-use hydra_server::app::AppState;
-use hydra_server::domain::actors::{Actor, ActorRef, AuthToken};
+use hydra_server::domain::actors::{Actor, ActorId, ActorRef};
 use hydra_server::domain::patches::{Patch, PatchStatus};
 use hydra_server::domain::sessions::{AgentConfig, Session, SessionMode};
 use hydra_server::domain::task_status::Status;
 use hydra_server::domain::users::{User, Username};
-use hydra_server::routes::sessions::mount_spec_from_create_request;
 use hydra_server::store::Store;
 use hydra_server::store::sqlite_store::{self, SqliteStore};
-use hydra_server::test_utils::test_state_with_store;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -57,7 +61,6 @@ async fn distinct_session_tokens_resolve_to_distinct_creators_via_auth_middlewar
         .await
         .context("apply sqlite migrations to HEAD")?;
     let store: Arc<dyn Store> = Arc::new(SqliteStore::new(pool));
-    let handles = test_state_with_store(store.clone());
 
     let alice = Username::from("alice");
     let bob = Username::from("bob");
@@ -75,33 +78,29 @@ async fn distinct_session_tokens_resolve_to_distinct_creators_via_auth_middlewar
     // each created by a different user. Pre-fix, both would attribute
     // any patch they create to whichever user instantiated the
     // `agents/swe` actor row first.
-    let alice_token =
-        spawn_agent_session_and_mint_token(&handles.state, store.as_ref(), &agent_name, &alice)
-            .await?;
-    let bob_token =
-        spawn_agent_session_and_mint_token(&handles.state, store.as_ref(), &agent_name, &bob)
-            .await?;
+    let (alice_session_id, alice_token) =
+        seed_agent_session_and_token(store.as_ref(), &agent_name, &alice).await?;
+    let (bob_session_id, bob_token) =
+        seed_agent_session_and_token(store.as_ref(), &agent_name, &bob).await?;
+    assert_ne!(
+        alice_session_id, bob_session_id,
+        "each session must have a distinct SessionId"
+    );
 
     // The two tokens carry the same actor name (`agents/swe`) but
     // different originating creators — this is the exact shape that
     // pre-fix collapsed into a single creator at the actor table.
-    let alice_parsed = AuthToken::parse(&alice_token)?;
-    let bob_parsed = AuthToken::parse(&bob_token)?;
-    assert_eq!(alice_parsed.actor_name(), "agents/swe");
-    assert_eq!(bob_parsed.actor_name(), "agents/swe");
-
-    let alice_row = handles
-        .state
-        .store()
-        .get_auth_token_by_hash(&Actor::hash_auth_token(alice_parsed.raw_token()))
+    let alice_row = store
+        .get_auth_token_by_hash(&Actor::hash_auth_token(&alice_token))
         .await?
         .context("alice token must be retrievable by hash")?;
-    let bob_row = handles
-        .state
-        .store()
-        .get_auth_token_by_hash(&Actor::hash_auth_token(bob_parsed.raw_token()))
+    let bob_row = store
+        .get_auth_token_by_hash(&Actor::hash_auth_token(&bob_token))
         .await?
         .context("bob token must be retrievable by hash")?;
+
+    assert_eq!(alice_row.actor_name, format!("agents/{agent_name}"));
+    assert_eq!(bob_row.actor_name, format!("agents/{agent_name}"));
 
     // Domain-level assertion: the auth-middleware-equivalent lookup
     // returns the *per-token* creator, not the agent row's creator.
@@ -117,29 +116,14 @@ async fn distinct_session_tokens_resolve_to_distinct_creators_via_auth_middlewar
         "two sessions for the same agent identity must NOT share a creator (this is the bug)",
     );
 
-    // End-to-end through the patch upsert path: build the same `Actor`
-    // shape the auth middleware would have stamped onto the request,
-    // then drive an upsert through `AppState::upsert_patch_from_request`.
-    // The persisted `patch.creator` must come back as the session's
-    // originating user, not the other one.
+    // Drive an `add_patch` for each user via the runtime `Actor` that
+    // `routes/auth.rs::require_auth` would build from the matched row,
+    // and assert the persisted `patch.creator` is the originating user.
     let repo_name = seed_repository(store.as_ref()).await?;
 
-    let alice_patch_id = upsert_patch_as(
-        &handles.state,
-        &alice_row,
-        alice_parsed.actor_name(),
-        &repo_name,
-        "alice patch",
-    )
-    .await?;
-    let bob_patch_id = upsert_patch_as(
-        &handles.state,
-        &bob_row,
-        bob_parsed.actor_name(),
-        &repo_name,
-        "bob patch",
-    )
-    .await?;
+    let alice_patch_id =
+        add_patch_as(store.as_ref(), &alice_row, &repo_name, "alice patch").await?;
+    let bob_patch_id = add_patch_as(store.as_ref(), &bob_row, &repo_name, "bob patch").await?;
 
     let alice_patch = store.get_patch(&alice_patch_id, false).await?;
     let bob_patch = store.get_patch(&bob_patch_id, false).await?;
@@ -157,20 +141,20 @@ async fn distinct_session_tokens_resolve_to_distinct_creators_via_auth_middlewar
 }
 
 /// Persist a session whose `creator = creator` and whose agent is the
-/// shared `agents/<name>` actor, then mint the session's auth token via
-/// the same `create_actor_for_job` path the live `sessions` route uses.
-async fn spawn_agent_session_and_mint_token(
-    state: &AppState,
+/// shared `agents/<name>` actor, then mint an auth token bound to that
+/// session — mirroring what `AppState::create_actor_for_job` does, but
+/// without dragging in the rest of the app surface.
+async fn seed_agent_session_and_token(
     store: &dyn Store,
     agent_name: &AgentName,
     creator: &Username,
-) -> Result<String> {
+) -> Result<(hydra_common::SessionId, String)> {
     let session = Session::new(
         creator.clone(),
         None,
         None,
         AgentConfig::new(Some(agent_name.clone()), None, None, None),
-        mount_spec_from_create_request(Bundle::None, None),
+        MountSpec::default(),
         None,
         HashMap::new(),
         None,
@@ -184,8 +168,22 @@ async fn spawn_agent_session_and_mint_token(
     let (session_id, _) = store
         .add_session(session, chrono::Utc::now(), &ActorRef::test())
         .await?;
-    let (_actor, auth_token) = state.create_actor_for_job(session_id).await?;
-    Ok(auth_token)
+
+    let actor_id = ActorId::Agent(agent_name.clone());
+    let (_actor, auth_token) =
+        Actor::new_from_actor_id(actor_id, creator.clone(), Some(session_id.clone()));
+
+    let actor_name = format!("agents/{agent_name}");
+    let raw_token = auth_token
+        .split_once(':')
+        .map(|(_, raw)| raw)
+        .context("auth_token must be '<actor_name>:<raw>'")?;
+    let token_hash = Actor::hash_auth_token(raw_token);
+    store
+        .add_auth_token(&actor_name, &token_hash, Some(&session_id), creator)
+        .await?;
+
+    Ok((session_id, raw_token.to_string()))
 }
 
 async fn seed_repository(store: &dyn Store) -> Result<RepoName> {
@@ -201,10 +199,9 @@ async fn seed_repository(store: &dyn Store) -> Result<RepoName> {
     Ok(name)
 }
 
-async fn upsert_patch_as(
-    state: &AppState,
+async fn add_patch_as(
+    store: &dyn Store,
     auth_row: &hydra_server::store::AuthTokenRow,
-    actor_name: &str,
     repo_name: &RepoName,
     title: &str,
 ) -> Result<hydra_common::PatchId> {
@@ -214,20 +211,13 @@ async fn upsert_patch_as(
     // `Actor` whose `creator` was the shared agent row's creator
     // regardless of which session's token came in.
     let actor_id =
-        Actor::parse_name(actor_name).context("parse actor_name into ActorId for upsert")?;
+        Actor::parse_name(&auth_row.actor_name).context("parse actor_name into ActorId")?;
     let actor = Actor {
         actor_id,
         creator: auth_row.creator.clone(),
         session_id: auth_row.session_id.clone(),
     };
 
-    // `routes/patches::create_patch` requires the request's `creator`
-    // to equal `actor.creator` — see hydra-server/src/routes/patches.rs.
-    // Stamp the request to mirror what a real CLI / web client would
-    // send for the authenticated user; the assertion above on
-    // `auth_row.creator` is what proves the per-token denormalization
-    // is correct, and the patch round-trip here proves the same value
-    // survives all the way to `patches.creator` in the store.
     let patch = Patch::new(
         title.to_string(),
         "regression test".to_string(),
@@ -242,9 +232,6 @@ async fn upsert_patch_as(
         None,
         None,
     );
-    let request = UpsertPatchRequest::new(patch.into());
-    let (patch_id, _) = state
-        .upsert_patch_from_request(ActorRef::from(&actor), None, request)
-        .await?;
+    let (patch_id, _) = store.add_patch(patch, &ActorRef::from(&actor)).await?;
     Ok(patch_id)
 }

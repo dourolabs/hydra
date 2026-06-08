@@ -23,8 +23,11 @@ SET creator = substring(actor_name FROM length('users/') + 1)
 WHERE session_id IS NULL
   AND actor_name LIKE 'users/%';
 
--- Catch-all for stragglers (vanished session id, malformed actor_name).
-UPDATE metis.auth_tokens SET creator = 'unknown' WHERE creator = '__backfill__';
+-- Drop stragglers whose creator could not be derived (vanished session id,
+-- malformed actor_name). These rows would otherwise need a sentinel value
+-- to satisfy the NOT NULL + CHECK below, which we don't allow. Any caller
+-- relying on such a row would already be failing for an unrelated reason.
+DELETE FROM metis.auth_tokens WHERE creator = '__backfill__';
 
 ALTER TABLE metis.auth_tokens ALTER COLUMN creator DROP DEFAULT;
 ALTER TABLE metis.auth_tokens
