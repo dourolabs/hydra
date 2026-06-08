@@ -81,7 +81,7 @@ function page(
 const { useBoardIssuesByProject } = await import("../usePaginatedIssues");
 
 const DEFAULT_PROJECT = {
-  project_id: null as string | null,
+  project_id: "j-defaul",
   key: "default",
   name: "Default",
   statuses: DEFAULT_STATUSES,
@@ -105,7 +105,7 @@ describe("useBoardIssuesByProject", () => {
 
     await waitFor(() => {
       for (const s of DEFAULT_STATUSES) {
-        expect(result.current.get(null)!.get(s.key)!.issues.length).toBe(1);
+        expect(result.current.get("j-defaul")!.get(s.key)!.issues.length).toBe(1);
       }
     });
 
@@ -175,30 +175,6 @@ describe("useBoardIssuesByProject", () => {
     expect(seen.has("j-beta::shipped")).toBe(true);
   });
 
-  it("default project section keeps only issues without a project_id", async () => {
-    // Server doesn't filter by "project_id IS NULL", so the unscoped
-    // request mixes default-project rows with rows from other projects.
-    // The hook must drop the project-scoped rows from the default cells.
-    mockListIssues.mockImplementation(() =>
-      Promise.resolve(
-        page([
-          issue("i-orphan", "open", null),
-          issue("i-scoped", "open", "j-other"),
-        ]),
-      ),
-    );
-
-    const { result } = renderHook(
-      () => useBoardIssuesByProject({}, [DEFAULT_PROJECT]),
-      { wrapper: makeWrapper() },
-    );
-
-    await waitFor(() => {
-      const ids = result.current.get(null)!.get("open")!.issues.map((r) => r.issue_id);
-      expect(ids).toEqual(["i-orphan"]);
-    });
-  });
-
   it("fetchNextPage on a column passes that column's cursor and status only", async () => {
     mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) => {
       if (query.status === "open" && query.cursor === "open-next") {
@@ -218,18 +194,18 @@ describe("useBoardIssuesByProject", () => {
     );
 
     await waitFor(() => {
-      expect(result.current.get(null)!.get("open")!.hasNextPage).toBe(true);
-      expect(result.current.get(null)!.get("in-progress")!.issues.length).toBe(1);
+      expect(result.current.get("j-defaul")!.get("open")!.hasNextPage).toBe(true);
+      expect(result.current.get("j-defaul")!.get("in-progress")!.issues.length).toBe(1);
     });
 
     const before = mockListIssues.mock.calls.length;
 
     await act(async () => {
-      result.current.get(null)!.get("open")!.fetchNextPage();
+      result.current.get("j-defaul")!.get("open")!.fetchNextPage();
     });
 
     await waitFor(() => {
-      expect(result.current.get(null)!.get("open")!.issues.length).toBe(2);
+      expect(result.current.get("j-defaul")!.get("open")!.issues.length).toBe(2);
     });
 
     // After the depth bump, the open cell refetches its full chain
@@ -292,7 +268,7 @@ describe("useBoardIssuesByProject", () => {
     );
 
     await waitFor(() => {
-      expect(result.current.get(null)!.get("open")!.issues.length).toBe(2);
+      expect(result.current.get("j-defaul")!.get("open")!.issues.length).toBe(2);
     });
 
     // Every actual network call must use the chip status — the cell
@@ -306,7 +282,7 @@ describe("useBoardIssuesByProject", () => {
     // Non-matching columns render zero rows and have no Load more.
     for (const s of DEFAULT_STATUSES) {
       if (s.key === "open") continue;
-      const cell = result.current.get(null)!.get(s.key)!;
+      const cell = result.current.get("j-defaul")!.get(s.key)!;
       expect(cell.issues.length).toBe(0);
       expect(cell.hasNextPage).toBe(false);
     }

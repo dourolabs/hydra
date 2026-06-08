@@ -76,11 +76,10 @@ function dedupeIssues(issues: IssueSummaryRecord[]): IssueSummaryRecord[] {
 }
 
 /**
- * Describes one project section on the board. `project_id === null` is the
- * synthesized default project that gathers issues with no `project_id`.
+ * Describes one project section on the board.
  */
 export interface BoardProjectDescriptor {
-  project_id: string | null;
+  project_id: string;
   key: string;
   name: string;
   statuses: StatusDefinition[];
@@ -96,15 +95,14 @@ export interface BoardCellQuery {
 }
 
 /**
- * Result of `useBoardIssuesByProject`. Outer key is the project_id
- * (`null` for the synthesized default project). Inner key is the
- * status key. Order of insertion mirrors the `projects` argument
- * for stable iteration.
+ * Result of `useBoardIssuesByProject`. Outer key is the project_id.
+ * Inner key is the status key. Order of insertion mirrors the
+ * `projects` argument for stable iteration.
  */
-export type BoardCellsByProject = Map<string | null, Map<string, BoardCellQuery>>;
+export type BoardCellsByProject = Map<string, Map<string, BoardCellQuery>>;
 
-function cellKey(projectId: string | null, statusKey: string): string {
-  return `${projectId ?? "__default__"}::${statusKey}`;
+function cellKey(projectId: string, statusKey: string): string {
+  return `${projectId}::${statusKey}`;
 }
 
 /**
@@ -124,13 +122,6 @@ function cellKey(projectId: string | null, statusKey: string): string {
  * through the server cursor chain. `keepPreviousData` keeps the prior pages
  * on screen while the deeper fetch lands, mirroring `useInfiniteQuery`'s
  * `isFetchingNextPage` UX.
- *
- * The synthesized default project (`project_id === null`) cannot be scoped
- * server-side (there's no "project_id IS NULL" filter on `listIssues`), so
- * its cells query unscoped and filter render-side to issues with no
- * `project_id`. Once the default project becomes a real `ProjectRecord`
- * with a `j-`-prefixed id (see [[i-vstbajos]]), this branch becomes dead and
- * can be removed.
  */
 export function useBoardIssuesByProject(
   baseFilters: IssueFilters,
@@ -142,7 +133,7 @@ export function useBoardIssuesByProject(
   const [depthByCell, setDepthByCell] = useState<Record<string, number>>({});
 
   const cells = useMemo(() => {
-    const out: Array<{ projectId: string | null; statusKey: string }> = [];
+    const out: Array<{ projectId: string; statusKey: string }> = [];
     for (const p of projects) {
       for (const s of p.statuses) {
         out.push({ projectId: p.project_id, statusKey: s.key });
@@ -189,7 +180,7 @@ export function useBoardIssuesByProject(
   });
 
   const bumpDepth = useCallback(
-    (projectId: string | null, statusKey: string) => {
+    (projectId: string, statusKey: string) => {
       const ck = cellKey(projectId, statusKey);
       setDepthByCell((prev) => ({ ...prev, [ck]: (prev[ck] ?? 1) + 1 }));
     },
@@ -209,13 +200,9 @@ export function useBoardIssuesByProject(
       const pages = (query.data ?? []) as ListIssuesResponse[];
       const rawAll = pages.flatMap((p) => p.issues);
       const deduped = dedupeIssues(rawAll);
-      let visible = filteredOut
+      const visible = filteredOut
         ? []
         : deduped.filter((rec) => rec.issue.status === statusKey);
-      // Default project = issues with no project_id (synthesized section).
-      if (projectId === null) {
-        visible = visible.filter((rec) => !rec.issue.project_id);
-      }
 
       const lastPage = pages[pages.length - 1];
       const serverHasNext = !!lastPage?.next_cursor;

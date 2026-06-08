@@ -14,7 +14,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   ListProjectsResponse,
   ProjectRecord,
-  ProjectStatusesResponse,
   StatusDefinition,
 } from "@hydra/api";
 import type { BoardCellQuery } from "../../usePaginatedIssues";
@@ -22,15 +21,10 @@ import type { BoardCellQuery } from "../../usePaginatedIssues";
 // --- Hook mocks ---
 
 let projectsData: ProjectRecord[] | undefined = [];
-let defaultStatusesData: ProjectStatusesResponse | undefined = {
-  statuses: [],
-  default_status_key: "open",
-};
-let cellsByProject: Map<string | null, Map<string, BoardCellQuery>> = new Map();
+let cellsByProject: Map<string, Map<string, BoardCellQuery>> = new Map();
 
 vi.mock("../../../projects/useProjects", () => ({
   useProjects: () => ({ data: projectsData }),
-  useProjectStatuses: () => ({ data: defaultStatusesData }),
 }));
 
 vi.mock("../../usePaginatedIssues", () => ({
@@ -306,7 +300,6 @@ function renderBoard(queryClient?: QueryClient) {
 
 beforeEach(() => {
   projectsData = [];
-  defaultStatusesData = { statuses: [], default_status_key: "open" };
   cellsByProject = new Map();
   lastModalProps.open = undefined;
   lastModalProps.projectRecord = undefined;
@@ -400,27 +393,13 @@ describe("IssuesBoard project settings gear", () => {
       makeProject("j-altpro", "alpha", DEFAULT_STATUSES, "Alpha"),
       makeProject("j-betpro", "beta", DEFAULT_STATUSES, "Beta"),
     ];
-    defaultStatusesData = {
-      statuses: DEFAULT_STATUSES,
-      default_status_key: "open",
-    };
   });
 
-  it("renders the gear button on each real project section", () => {
+  it("renders the gear button on each project section", () => {
     renderBoard();
 
     expect(screen.getByTestId("board-project-settings-alpha")).toBeDefined();
     expect(screen.getByTestId("board-project-settings-beta")).toBeDefined();
-  });
-
-  it("does NOT render the gear on the synthesized default-project section", () => {
-    renderBoard();
-
-    // The default section is synthesized from `defaultStatusesData` with
-    // project_id: null — it must not expose a gear because there is no
-    // real ProjectRecord to edit.
-    expect(screen.getByTestId("board-project-default")).toBeDefined();
-    expect(screen.queryByTestId("board-project-settings-default")).toBeNull();
   });
 
   it("opens the settings modal with the clicked project's data", () => {
@@ -453,15 +432,7 @@ describe("IssuesBoard project settings gear", () => {
 describe("IssuesBoard column gear", () => {
   beforeEach(() => {
     projectsData = [makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering")];
-    defaultStatusesData = {
-      statuses: DEFAULT_STATUSES,
-      default_status_key: "open",
-    };
     cellsByProject = new Map([
-      [
-        null,
-        new Map<string, BoardCellQuery>([["open", emptyCell()]]),
-      ],
       [
         "j-eng",
         new Map<string, BoardCellQuery>([
@@ -472,19 +443,13 @@ describe("IssuesBoard column gear", () => {
     ]);
   });
 
-  it("renders a gear button per column for real-project sections", () => {
+  it("renders a gear button per column", () => {
     renderBoard();
 
     expect(screen.getByTestId("board-col-gear-engineering-open")).toBeDefined();
     expect(
       screen.getByTestId("board-col-gear-engineering-in-progress"),
     ).toBeDefined();
-  });
-
-  it("suppresses the gear for the synthesized default-project section", () => {
-    renderBoard();
-    // The synthesized default section has no ProjectRecord; the gear is omitted.
-    expect(screen.queryByTestId("board-col-gear-default-open")).toBeNull();
   });
 
   it("opens StatusSettingsModal with the right status key on gear click", () => {
@@ -521,21 +486,11 @@ describe("IssuesBoard '+ Add status' ghost column", () => {
     projectsData = [
       makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
     ];
-    defaultStatusesData = {
-      statuses: DEFAULT_STATUSES,
-      default_status_key: "open",
-    };
   });
 
-  it("renders the '+ Add status' ghost column for real projects", () => {
+  it("renders the '+ Add status' ghost column for each project", () => {
     renderBoard();
     expect(screen.getByTestId("board-col-add-engineering")).toBeDefined();
-  });
-
-  it("suppresses the ghost column for the synthesized default-project section", () => {
-    renderBoard();
-    expect(screen.getByTestId("board-project-default")).toBeDefined();
-    expect(screen.queryByTestId("board-col-add-default")).toBeNull();
   });
 
   it("opens StatusSettingsModal in 'new' mode for the clicked project", () => {
@@ -566,10 +521,6 @@ describe("IssuesBoard '+ New project' ghost row", () => {
     projectsData = [
       makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
     ];
-    defaultStatusesData = {
-      statuses: DEFAULT_STATUSES,
-      default_status_key: "open",
-    };
   });
 
   it("renders the '+ New project' row at the end of the board when not scoped", () => {
@@ -614,32 +565,20 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     projectsData = [
       makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
     ];
-    defaultStatusesData = {
-      statuses: DEFAULT_STATUSES,
-      default_status_key: "open",
-    };
   });
 
-  it("registers a SortableContext over the real-project status keys", () => {
+  it("registers a SortableContext over the project's status keys", () => {
     renderBoard();
     expect(lastSortableItems).toEqual(["open", "in-progress"]);
   });
 
-  it("renders the column head with draggable handle attributes for real projects", () => {
+  it("renders the column head with draggable handle attributes", () => {
     renderBoard();
     const head = screen.getByTestId("board-col-head-engineering-open");
     // The mocked useSortable returns a marker attribute the real component
     // spreads onto the head; assert it lands there so the drag-handle wiring
     // is actually plumbed through.
     expect(head.getAttribute("data-sortable-handle")).toBe("true");
-  });
-
-  it("does NOT make the default-project column head draggable", () => {
-    const head = renderBoard().container.querySelector(
-      '[data-testid="board-col-head-default-open"]',
-    );
-    expect(head).not.toBeNull();
-    expect(head?.getAttribute("data-sortable-handle")).toBeNull();
   });
 
   it("on drop reorders statuses and calls apiClient.updateProject with the new order", async () => {
@@ -722,10 +661,10 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     expect(mockAddToast).toHaveBeenCalledWith("boom", "error");
   });
 
-  it("does not call updateProject when the only section is the default project", () => {
+  it("does not call updateProject when there are no projects", () => {
     projectsData = [];
     renderBoard();
-    // No real project means no DndContext was mounted, so no handler exists.
+    // No project sections means no DndContext was mounted.
     expect(lastDragEndHandler).toBeNull();
     expect(mockUpdateProject).not.toHaveBeenCalled();
   });
