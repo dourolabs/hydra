@@ -398,6 +398,7 @@ function makeProject(statuses: StatusDefinition[]): ProjectRecord {
       creator: "alice" as never,
       deleted: false,
       prompt_path: null,
+      priority: 0,
     },
   };
 }

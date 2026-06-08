@@ -222,6 +222,7 @@ describe("ProjectEditor — prompt_path", () => {
           creator: "alice" as never,
           deleted: false,
           prompt_path: "/projects/engineering/prompt.md",
+          priority: 0,
         }}
       />,
     );

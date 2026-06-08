@@ -344,6 +344,7 @@ mod tests {
             StatusKey::try_new("open").unwrap(),
             Username::try_new("system").unwrap(),
             false,
+            0.0,
         );
         proj.prompt_path = prompt_path.map(str::to_string);
         proj

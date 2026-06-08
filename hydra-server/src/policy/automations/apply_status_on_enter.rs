@@ -315,6 +315,7 @@ mod tests {
             StatusKey::try_new("open").unwrap(),
             hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
             false,
+            0.0,
         );
         let (id, _) = handles
             .store
@@ -653,6 +654,7 @@ mod tests {
             StatusKey::try_new("open").unwrap(),
             hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
             false,
+            0.0,
         );
         let (project_id, _) = handles
             .store

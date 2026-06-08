@@ -264,6 +264,7 @@ function makeProject(
       default_status_key: statuses[0]?.key ?? "open",
       creator: "alice",
       deleted: false,
+      priority: 0,
     },
   };
 }

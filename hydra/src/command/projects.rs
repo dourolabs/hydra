@@ -258,6 +258,7 @@ async fn create_project(
         body.default_status_key,
         creator,
         false,
+        0.0,
     );
     let request = UpsertProjectRequest::new(project.clone());
     let response = client
@@ -299,6 +300,7 @@ async fn update_project(
         default_status_key,
         current.project.creator,
         current.project.deleted,
+        current.project.priority,
     );
     project.prompt_path = prompt_path;
 
@@ -655,6 +657,7 @@ mod tests {
             StatusKey::try_new("backlog").unwrap(),
             Username::try_new("jayantk").unwrap(),
             false,
+            0.0,
         )
     }
 

@@ -164,6 +164,7 @@ async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
         StatusKey::try_new("inbox").unwrap(),
         hydra_common::api::v1::users::Username::try_new(user.name()).unwrap(),
         false,
+        0.0,
     );
     user.client()
         .create_project(&UpsertProjectRequest::new(project))

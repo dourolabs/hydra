@@ -1297,8 +1297,8 @@ impl PostgresStoreV2 {
 
         let query = format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, prompt_path) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+             (id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, prompt_path, priority) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -1311,6 +1311,7 @@ impl PostgresStoreV2 {
             .bind(project.deleted)
             .bind(actor)
             .bind(project.prompt_path.as_deref())
+            .bind(project.priority)
             .execute(executor)
             .await
             .map_err(|err| {
@@ -1345,6 +1346,7 @@ impl PostgresStoreV2 {
             default_status_key,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
             row.deleted,
+            row.priority,
         );
         project.prompt_path = row.prompt_path.clone();
         Ok(project)
@@ -1678,6 +1680,11 @@ struct ProjectRow {
     creation_time: Option<DateTime<Utc>>,
     #[sqlx(default)]
     prompt_path: Option<String>,
+    // No `#[sqlx(default)]`: forces every SELECT site that produces a
+    // `ProjectRow` to project `p.priority`. A missing column should fail
+    // loud at runtime instead of silently surfacing `0.0` in place of the
+    // backfilled value.
+    priority: f64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -3723,7 +3730,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
             "SELECT id, version_number, key, name, default_status_key, statuses, creator, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
-             prompt_path \
+             prompt_path, priority \
              FROM {TABLE_PROJECTS} \
              WHERE id = $1 \
              ORDER BY version_number DESC \
@@ -3770,14 +3777,14 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.key, p.name, p.default_status_key, p.statuses, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
-             p.prompt_path \
+             p.prompt_path, p.priority \
              FROM {TABLE_PROJECTS} p \
              WHERE p.is_latest = true"
         );
         if !include_deleted {
             sql.push_str(" AND p.deleted = false");
         }
-        sql.push_str(" ORDER BY p.created_at DESC, p.id DESC");
+        sql.push_str(" ORDER BY p.priority ASC, p.created_at DESC, p.id DESC");
 
         let rows = sqlx::query_as::<_, ProjectRow>(&sql)
             .fetch_all(&self.pool)
@@ -10108,6 +10115,7 @@ mod tests {
             StatusKey::try_new("backlog").unwrap(),
             ApiUsername::from("alice"),
             false,
+            0.0,
         )
     }
 
@@ -10257,6 +10265,63 @@ mod tests {
         assert_eq!(
             entry.1.item.prompt_path.as_deref(),
             Some("/projects/engineering/prompt-v2.md"),
+        );
+    }
+
+    /// `list_projects` must return projects in `priority ASC, created_at
+    /// DESC, id DESC` order — the discriminator the priority-column
+    /// migration adds. The default-project seed migration writes
+    /// `priority = 1000.0` for `j-defaul`; this test inserts two custom
+    /// projects with priorities straddling the default (1500.0 and
+    /// 5000.0) and asserts the resulting order is `[default, custom-1500,
+    /// custom-5000]`. Updating one project's priority must reflect in the
+    /// next listing.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_projects_orders_by_priority_pg(pool: PgStorePool) {
+        use crate::domain::projects::default_project_id;
+        let store = PostgresStoreV2::new(pool);
+
+        let mut high_priority = sample_project_pg();
+        high_priority.key = ProjectKey::try_new("eng-high").unwrap();
+        high_priority.priority = 5000.0;
+        let (high_id, _) = store
+            .add_project(high_priority, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut mid_priority = sample_project_pg();
+        mid_priority.key = ProjectKey::try_new("eng-mid").unwrap();
+        mid_priority.priority = 1500.0;
+        let (mid_id, _) = store
+            .add_project(mid_priority, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let listed = store.list_projects(false).await.unwrap();
+        let ids: Vec<&ProjectId> = listed.iter().map(|(i, _)| i).collect();
+        let priorities: Vec<f64> = listed.iter().map(|(_, v)| v.item.priority).collect();
+        let default_id = default_project_id();
+        assert_eq!(
+            ids,
+            vec![&default_id, &mid_id, &high_id],
+            "list_projects must order by priority ASC: default(1000) → mid(1500) → high(5000)"
+        );
+        assert_eq!(priorities, vec![1000.0, 1500.0, 5000.0]);
+
+        let mut bumped = store.get_project(&mid_id, false).await.unwrap().item;
+        bumped.priority = 9000.0;
+        store
+            .update_project(&mid_id, bumped, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let listed = store.list_projects(false).await.unwrap();
+        let ids: Vec<&ProjectId> = listed.iter().map(|(i, _)| i).collect();
+        assert_eq!(
+            ids,
+            vec![&default_id, &high_id, &mid_id],
+            "after bumping mid → 9000, order must be default(1000) → high(5000) → mid(9000)"
         );
     }
 

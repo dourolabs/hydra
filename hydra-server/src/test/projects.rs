@@ -62,6 +62,7 @@ fn sample_project() -> Project {
         StatusKey::try_new("backlog").unwrap(),
         api_default_user(),
         false,
+        0.0,
     )
 }
 

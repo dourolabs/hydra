@@ -2905,6 +2905,7 @@ mod tests {
             backlog_key.clone(),
             hydra_common::api::v1::users::Username::from("alice"),
             false,
+            0.0,
         );
         let (project_id, _) = handles
             .store
