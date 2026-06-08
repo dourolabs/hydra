@@ -1,0 +1,315 @@
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import type {
+  IssueSummaryRecord,
+  ProjectRecord,
+  SessionSummaryRecord,
+  StatusDefinition,
+} from "@hydra/api";
+import type { ChildStatus } from "../../../dashboard/computeIssueProgress";
+
+// --- Hook mocks ---
+
+// Force desktop branch by default. Tests that need mobile override this.
+let mobileMatches = false;
+vi.mock("../../../../hooks/useMediaQuery", () => ({
+  useMediaQuery: () => mobileMatches,
+}));
+
+let projectsData: ProjectRecord[] | undefined = [];
+vi.mock("../../../projects/useProjects", () => ({
+  useProjects: () => ({ data: projectsData }),
+}));
+
+vi.mock("../../../dashboard/useSessionDuration", () => ({
+  useSessionDuration: () => ({ durationText: "—", status: "idle" }),
+}));
+
+// --- @hydra/ui stubs ---
+vi.mock("@hydra/ui", () => ({
+  Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
+  TypeChip: ({ type }: { type: string }) => <span data-testid={`type-${type}`}>{type}</span>,
+  StatusDot: () => <span data-testid="status-dot" />,
+  Icons: {
+    IconDoc: () => <span />,
+    IconRepo: () => <span />,
+  },
+}));
+
+// Stub child rail-row so mobile-branch assertions are simple.
+vi.mock("../../../related/RailRow", () => ({
+  IssueRailRow: ({ record }: { record: IssueSummaryRecord }) => (
+    <div data-testid={`rail-row-${record.issue_id}`}>{record.issue.title}</div>
+  ),
+}));
+
+// Bypass CSS module proxy.
+vi.mock("../IssuesTable.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+vi.mock("../../../projects/StatusChip.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+vi.mock("../../../projects/ProjectChip.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+const { IssuesTable } = await import("../IssuesTable");
+
+// --- Fixtures ---
+
+const STATUSES: StatusDefinition[] = [
+  {
+    key: "open",
+    label: "Open",
+    color: "#3498db",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+  },
+  {
+    key: "in-progress",
+    label: "In progress",
+    color: "#f1c40f",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+  },
+  {
+    key: "closed",
+    label: "Closed",
+    color: "#2ecc71",
+    unblocks_parents: true,
+    unblocks_dependents: true,
+    cascades_to_children: false,
+  },
+];
+
+const ALT_STATUSES: StatusDefinition[] = [
+  {
+    key: "open",
+    label: "Open",
+    color: "#9b59b6",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+  },
+];
+
+function makeProject(
+  id: string,
+  key: string,
+  name: string,
+  statuses: StatusDefinition[] = STATUSES,
+): ProjectRecord {
+  return {
+    project_id: id,
+    version: 1,
+    project: {
+      key,
+      name,
+      statuses,
+      default_status_key: "open",
+      creator: "alice",
+      deleted: false,
+    },
+  };
+}
+
+function makeIssue(
+  id: string,
+  overrides: Partial<IssueSummaryRecord["issue"]> = {},
+): IssueSummaryRecord {
+  return {
+    issue_id: id,
+    version: 1n,
+    timestamp: "2026-06-01T00:00:00Z",
+    creation_time: "2026-06-01T00:00:00Z",
+    issue: {
+      type: "task",
+      title: `Issue ${id}`,
+      description: "",
+      creator: "alice",
+      status: "open",
+      project_id: null,
+      assignee: null,
+      progress: "",
+      dependencies: [],
+      patches: [],
+      labels: [],
+      ...overrides,
+    },
+  };
+}
+
+function renderTable(props: {
+  issues: IssueSummaryRecord[];
+  childStatusMap?: Map<string, ChildStatus[]>;
+  sessionsByIssue?: Map<string, SessionSummaryRecord[]>;
+  filterRootId?: string | null;
+}) {
+  return render(
+    <MemoryRouter>
+      <IssuesTable
+        issues={props.issues}
+        childStatusMap={props.childStatusMap ?? new Map()}
+        sessionsByIssue={props.sessionsByIssue ?? new Map()}
+        filterRootId={props.filterRootId ?? null}
+      />
+    </MemoryRouter>,
+  );
+}
+
+beforeEach(() => {
+  mobileMatches = false;
+  projectsData = [
+    makeProject("j-defaul", "default", "Default"),
+    makeProject("j-altpro", "alpha", "Alpha", ALT_STATUSES),
+  ];
+});
+
+describe("IssuesTable grouping", () => {
+  it("groups issues under per-project section headers", () => {
+    renderTable({
+      issues: [
+        makeIssue("i-a", { project_id: "j-defaul", status: "open" }),
+        makeIssue("i-b", { project_id: "j-defaul", status: "in-progress" }),
+        makeIssue("i-c", { project_id: "j-altpro", status: "open" }),
+      ],
+    });
+
+    const defaultGroup = screen.getByTestId("issues-table-group-default");
+    const alphaGroup = screen.getByTestId("issues-table-group-alpha");
+    expect(defaultGroup).toBeDefined();
+    expect(alphaGroup).toBeDefined();
+
+    expect(screen.getByTestId("issues-list-row-i-a")).toBeDefined();
+    expect(screen.getByTestId("issues-list-row-i-b")).toBeDefined();
+    expect(screen.getByTestId("issues-list-row-i-c")).toBeDefined();
+  });
+
+  it("places issues with null project_id under the default project section", () => {
+    renderTable({
+      issues: [makeIssue("i-null", { project_id: null, status: "open" })],
+    });
+
+    const defaultGroup = screen.getByTestId("issues-table-group-default");
+    expect(defaultGroup).toBeDefined();
+    expect(screen.getByTestId("issues-list-row-i-null")).toBeDefined();
+  });
+
+  it("falls back to a flat ungrouped table when projects haven't loaded", () => {
+    projectsData = undefined;
+    renderTable({
+      issues: [
+        makeIssue("i-a", { project_id: "j-defaul" }),
+        makeIssue("i-b", { project_id: "j-altpro" }),
+      ],
+    });
+
+    expect(screen.queryByTestId("issues-table-group-default")).toBeNull();
+    expect(screen.getByTestId("issues-list-row-i-a")).toBeDefined();
+    expect(screen.getByTestId("issues-list-row-i-b")).toBeDefined();
+  });
+});
+
+describe("IssuesTable collapse toggle", () => {
+  it("hides issue rows under a group when its header is clicked", () => {
+    renderTable({
+      issues: [
+        makeIssue("i-a", { project_id: "j-defaul" }),
+        makeIssue("i-c", { project_id: "j-altpro" }),
+      ],
+    });
+
+    expect(screen.getByTestId("issues-list-row-i-a")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("issues-table-group-toggle-default"));
+
+    expect(screen.queryByTestId("issues-list-row-i-a")).toBeNull();
+    // Other groups stay visible.
+    expect(screen.getByTestId("issues-list-row-i-c")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("issues-table-group-toggle-default"));
+    expect(screen.getByTestId("issues-list-row-i-a")).toBeDefined();
+  });
+});
+
+describe("IssuesTable status pips", () => {
+  it("renders a pip for each non-zero status in the loaded section issues, in project status order", () => {
+    renderTable({
+      issues: [
+        makeIssue("i-a", { project_id: "j-defaul", status: "open" }),
+        makeIssue("i-b", { project_id: "j-defaul", status: "open" }),
+        makeIssue("i-c", { project_id: "j-defaul", status: "in-progress" }),
+      ],
+    });
+
+    const openPip = screen.getByTestId("issues-table-pip-default-open");
+    const progPip = screen.getByTestId("issues-table-pip-default-in-progress");
+    expect(openPip).toBeDefined();
+    expect(progPip).toBeDefined();
+
+    expect(within(openPip).getByText("2")).toBeDefined();
+    expect(within(progPip).getByText("1")).toBeDefined();
+
+    // Zero-count status is skipped.
+    expect(screen.queryByTestId("issues-table-pip-default-closed")).toBeNull();
+  });
+});
+
+describe("IssuesTable BLOCKED tag", () => {
+  it("renders BLOCKED on a row with an open blocked-on dep", () => {
+    const blocker = makeIssue("i-blocker", {
+      project_id: "j-defaul",
+      status: "open",
+    });
+    const blocked = makeIssue("i-blocked", {
+      project_id: "j-defaul",
+      status: "open",
+      dependencies: [{ type: "blocked-on", issue_id: "i-blocker" }],
+    });
+
+    renderTable({ issues: [blocker, blocked] });
+
+    expect(screen.getByTestId("issues-row-blocked-i-blocked")).toBeDefined();
+    expect(screen.queryByTestId("issues-row-blocked-i-blocker")).toBeNull();
+  });
+
+  it("does NOT render BLOCKED when the blocked-on target is closed", () => {
+    const closer = makeIssue("i-closer", {
+      project_id: "j-defaul",
+      status: "closed",
+    });
+    const candidate = makeIssue("i-cand", {
+      project_id: "j-defaul",
+      status: "open",
+      dependencies: [{ type: "blocked-on", issue_id: "i-closer" }],
+    });
+
+    renderTable({ issues: [closer, candidate] });
+
+    expect(screen.queryByTestId("issues-row-blocked-i-cand")).toBeNull();
+  });
+});
+
+describe("IssuesTable mobile layout", () => {
+  it("keeps per-project section headers above mobile rail rows", () => {
+    mobileMatches = true;
+    renderTable({
+      issues: [
+        makeIssue("i-a", { project_id: "j-defaul" }),
+        makeIssue("i-c", { project_id: "j-altpro" }),
+      ],
+    });
+
+    expect(screen.getByTestId("issues-table-group-default")).toBeDefined();
+    expect(screen.getByTestId("issues-table-group-alpha")).toBeDefined();
+    expect(screen.getByTestId("rail-row-i-a")).toBeDefined();
+    expect(screen.getByTestId("rail-row-i-c")).toBeDefined();
+  });
+});

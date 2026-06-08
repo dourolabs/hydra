@@ -30,17 +30,17 @@
   white-space: nowrap;
 }
 
-.table tbody tr {
+.dataRow {
   border-bottom: 1px solid var(--line);
   transition: background var(--tx-fast);
   cursor: pointer;
 }
 
-.table tbody tr:hover {
+.dataRow:hover {
   background: var(--bg-1);
 }
 
-.table tbody tr[data-selected="true"] {
+.dataRow[data-selected="true"] {
   background: var(--bg-2);
 }
 
@@ -77,7 +77,7 @@
 }
 
 .colStatus {
-  width: 110px;
+  width: 140px;
 }
 
 .colType {
@@ -98,6 +98,28 @@
 
 .colUpdated {
   width: 84px;
+}
+
+.statusCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.blockedTag {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+}
+
+.blocked .titleText {
+  color: var(--fg-2);
 }
 
 .assignee {
@@ -159,6 +181,83 @@
   }
 }
 
+.sectionRow {
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.sectionCell {
+  padding: 0 !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.sectionHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px var(--pad-x);
+  background: var(--bg-1);
+  border: 0;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  cursor: pointer;
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+}
+
+.sectionHeader:hover {
+  background: var(--bg-2);
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+  line-height: 1;
+}
+
+.issueCount {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+}
+
+.pipRow {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+  min-width: 0;
+}
+
+.pip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pipDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pipCount {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+}
+
 .mobileList {
   display: flex;
   flex-direction: column;
@@ -166,4 +265,11 @@
   min-height: 0;
   overflow: auto;
   padding: 12px var(--pad-x);
+}
+
+.mobileGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
 }
