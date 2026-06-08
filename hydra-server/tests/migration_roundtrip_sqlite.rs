@@ -31,10 +31,12 @@
 
 use anyhow::{Context, Result, bail};
 use hydra_common::api::v1::agents::AgentName;
+use hydra_common::api::v1::projects::StatusDefinition;
 use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::principal::Principal;
 use hydra_common::{ConversationId, HydraId, IssueId, ProjectId, SessionId, TriggerId};
 use hydra_server::domain::actors::{ActorId, ActorRef};
+use hydra_server::domain::projects::default_project_seed;
 use hydra_server::domain::sessions::SessionMode;
 use hydra_server::store::sqlite_store::{self, MIGRATOR, SqliteStore};
 use hydra_server::store::{ReadOnlyStore, RelationshipType};
@@ -94,6 +96,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     assert_review_author_principal_rewrite(&pool).await?;
     assert_refers_to_rename(&pool).await?;
     assert_agent_config_system_prompt_backfill(&pool).await?;
+
+    seed_default_project_migration_inserts_row(&pool).await?;
+    seed_default_project_migration_backfills_null_project_ids(&pool).await?;
+    seed_default_project_migration_is_idempotent(&pool).await?;
 
     Ok(())
 }
@@ -928,6 +934,150 @@ async fn assert_agent_config_system_prompt_backfill(pool: &SqlitePool) -> Result
     match resumed.item.resumed_from.as_ref().map(|s| s.as_ref()) {
         Some("s-interone") => {}
         other => bail!("s-intertwo: expected resumed_from=s-interone; got {other:?}"),
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260607000000_seed_default_project — assert that the seed INSERT, the
+// `issues_v2.project_id` backfill UPDATE, and the migration's idempotency
+// guard (`INSERT OR IGNORE`) all behave as designed. Coverage gap closed by
+// [[i-bivbnsgb]] (follow-up to [[p-xtixlxfy]]) — the merged seed migration
+// shipped with in-store round-trip tests but no migration-framework
+// coverage.
+// ---------------------------------------------------------------------------
+
+async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT id, version_number, key, name, default_status_key, statuses, \
+                creator, deleted, actor, is_latest, prompt_path \
+         FROM projects WHERE id = 'j-defaul'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read seeded default project row 'j-defaul'")?;
+
+    let id: String = row.try_get("id")?;
+    let version_number: i64 = row.try_get("version_number")?;
+    let key: String = row.try_get("key")?;
+    let name: String = row.try_get("name")?;
+    let default_status_key: String = row.try_get("default_status_key")?;
+    let statuses_text: String = row.try_get("statuses")?;
+    let creator: String = row.try_get("creator")?;
+    let deleted: i64 = row.try_get("deleted")?;
+    let is_latest: i64 = row.try_get("is_latest")?;
+    let actor: Option<String> = row.try_get("actor")?;
+    let prompt_path: Option<String> = row.try_get("prompt_path")?;
+
+    if id != "j-defaul" {
+        bail!("j-defaul: expected id='j-defaul'; got {id:?}");
+    }
+    if version_number != 1 {
+        bail!("j-defaul: expected version_number=1; got {version_number}");
+    }
+    if key != "default" {
+        bail!("j-defaul: expected key='default'; got {key:?}");
+    }
+    if name != "Default" {
+        bail!("j-defaul: expected name='Default'; got {name:?}");
+    }
+    if default_status_key != "open" {
+        bail!("j-defaul: expected default_status_key='open'; got {default_status_key:?}");
+    }
+    if creator != "system" {
+        bail!("j-defaul: expected creator='system'; got {creator:?}");
+    }
+    if deleted != 0 {
+        bail!("j-defaul: expected deleted=0; got {deleted}");
+    }
+    if is_latest != 1 {
+        bail!("j-defaul: expected is_latest=1; got {is_latest}");
+    }
+    if actor.is_some() {
+        bail!("j-defaul: expected actor=NULL; got {actor:?}");
+    }
+    if prompt_path.as_deref() != Some("/projects/default/prompt.md") {
+        bail!("j-defaul: expected prompt_path='/projects/default/prompt.md'; got {prompt_path:?}");
+    }
+
+    // `statuses` JSON must deserialize into a Vec<StatusDefinition> that
+    // matches `default_project_seed()` byte-for-byte. Comparing against the
+    // Rust seed locks the SQL literal to the Rust constant: any drift in
+    // either direction fails loud here.
+    let statuses: Vec<StatusDefinition> = serde_json::from_str(&statuses_text)
+        .context("deserialize projects.statuses into Vec<StatusDefinition>")?;
+    let expected = default_project_seed().statuses;
+    if statuses != expected {
+        bail!(
+            "j-defaul: statuses do not match default_project_seed(): \
+             expected {expected:?}; got {statuses:?}"
+        );
+    }
+    Ok(())
+}
+
+async fn seed_default_project_migration_backfills_null_project_ids(
+    pool: &SqlitePool,
+) -> Result<()> {
+    // Every fixture row that had NULL `project_id` at baseline-insert time
+    // (single-version and multi-version) must now point at `'j-defaul'`.
+    // The multi-version rows verify that the UPDATE touches every NULL
+    // row regardless of `is_latest`.
+    for (id, version) in [("i-seedone", 1), ("i-seedmv", 1), ("i-seedmv", 2)] {
+        let row = sqlx::query(
+            "SELECT project_id FROM issues_v2 \
+             WHERE id = ?1 AND version_number = ?2",
+        )
+        .bind(id)
+        .bind(version)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read project_id for issues_v2({id}, {version})"))?;
+        let project_id: Option<String> = row.try_get("project_id")?;
+        if project_id.as_deref() != Some("j-defaul") {
+            bail!("issues_v2({id}, {version}).project_id: expected 'j-defaul'; got {project_id:?}");
+        }
+    }
+
+    // Catch-all: no `issues_v2` row should be left with NULL project_id
+    // post-backfill. The migration's UPDATE is unconditional on
+    // `is_latest`, so older / soft-deleted versions get backfilled too.
+    let row = sqlx::query("SELECT COUNT(*) FROM issues_v2 WHERE project_id IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count remaining NULL project_id rows after backfill")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!("expected 0 issues_v2 rows with NULL project_id post-backfill; got {count}");
+    }
+    Ok(())
+}
+
+async fn seed_default_project_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // Re-execute the migration body verbatim. `INSERT OR IGNORE` must
+    // swallow the (id, version_number) conflict and the UPDATE must be a
+    // no-op since every row was backfilled by the first pass. Reading the
+    // file rather than hard-coding the SQL keeps this test honest if the
+    // migration's body ever changes shape (the assertion exercises
+    // whatever the current rollforward statement is).
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260607000000_seed_default_project.sql"),
+    )
+    .context("read sqlite seed_default_project migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply sqlite seed_default_project migration body")?;
+
+    // No duplicate row at (j-defaul, 1).
+    let row = sqlx::query("SELECT COUNT(*) FROM projects WHERE id = 'j-defaul'")
+        .fetch_one(pool)
+        .await
+        .context("count projects rows for j-defaul after idempotency rerun")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 1 {
+        bail!("expected exactly 1 projects row for j-defaul after rerun; got {count}");
     }
     Ok(())
 }
