@@ -13,6 +13,7 @@ import type {
   ProjectStatusesResponse,
   StatusDefinition,
 } from "@hydra/api";
+import type { BoardCellQuery } from "../../usePaginatedIssues";
 
 // --- Hook mocks ---
 
@@ -21,6 +22,7 @@ let defaultStatusesData: ProjectStatusesResponse | undefined = {
   statuses: [],
   default_status_key: "open",
 };
+let cellsByProject: Map<string | null, Map<string, BoardCellQuery>> = new Map();
 
 vi.mock("../../../projects/useProjects", () => ({
   useProjects: () => ({ data: projectsData }),
@@ -28,7 +30,7 @@ vi.mock("../../../projects/useProjects", () => ({
 }));
 
 vi.mock("../../usePaginatedIssues", () => ({
-  useBoardIssuesByProject: () => new Map(),
+  useBoardIssuesByProject: () => cellsByProject,
 }));
 
 vi.mock("../../../dashboard/usePageIssueTrees", () => ({
@@ -111,6 +113,41 @@ vi.mock("../../../projects/ProjectEditor", () => ({
   ),
 }));
 
+const lastModalProps: {
+  projectRecord?: ProjectRecord;
+  statusKey?: string;
+  issueCount?: number;
+  open?: boolean;
+} = {};
+vi.mock("../../../projects/StatusSettingsModal", () => ({
+  StatusSettingsModal: ({
+    open,
+    projectRecord,
+    statusKey,
+    issueCount,
+    onClose,
+  }: {
+    open: boolean;
+    projectRecord: ProjectRecord;
+    statusKey: string;
+    issueCount: number;
+    onClose: () => void;
+  }) => {
+    lastModalProps.open = open;
+    lastModalProps.projectRecord = projectRecord;
+    lastModalProps.statusKey = statusKey;
+    lastModalProps.issueCount = issueCount;
+    return open ? (
+      <div data-testid="status-settings-modal">
+        modal:{projectRecord.project_id}:{statusKey}:{issueCount}
+        <button data-testid="status-modal-close" onClick={onClose}>
+          x
+        </button>
+      </div>
+    ) : null;
+  },
+}));
+
 const { IssuesBoard } = await import("../IssuesBoard");
 
 // --- Fixtures ---
@@ -129,6 +166,11 @@ function makeStatus(
 
 const DEFAULT_STATUSES: StatusDefinition[] = [
   makeStatus({ key: "open", label: "Open" }),
+];
+
+const ENG_STATUSES: StatusDefinition[] = [
+  makeStatus({ key: "open", label: "Open", color: "#9b59b6" }),
+  makeStatus({ key: "in-progress", label: "In progress", color: "#f1c40f" }),
 ];
 
 function makeProject(
@@ -151,6 +193,17 @@ function makeProject(
   };
 }
 
+function emptyCell(overrides: Partial<BoardCellQuery> = {}): BoardCellQuery {
+  return {
+    issues: [],
+    isLoading: false,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    fetchNextPage: () => {},
+    ...overrides,
+  };
+}
+
 function renderBoard() {
   return render(
     <MemoryRouter>
@@ -166,6 +219,11 @@ function renderBoard() {
 beforeEach(() => {
   projectsData = [];
   defaultStatusesData = { statuses: [], default_status_key: "open" };
+  cellsByProject = new Map();
+  lastModalProps.open = undefined;
+  lastModalProps.projectRecord = undefined;
+  lastModalProps.statusKey = undefined;
+  lastModalProps.issueCount = undefined;
 });
 
 afterEach(() => {
@@ -296,5 +354,71 @@ describe("IssuesBoard project settings gear", () => {
 
     fireEvent.click(screen.getByTestId("modal-close"));
     expect(screen.queryByTestId("modal")).toBeNull();
+  });
+});
+
+describe("IssuesBoard column gear", () => {
+  beforeEach(() => {
+    projectsData = [makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering")];
+    defaultStatusesData = {
+      statuses: DEFAULT_STATUSES,
+      default_status_key: "open",
+    };
+    cellsByProject = new Map([
+      [
+        null,
+        new Map<string, BoardCellQuery>([["open", emptyCell()]]),
+      ],
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell()],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+  });
+
+  it("renders a gear button per column for real-project sections", () => {
+    renderBoard();
+
+    expect(screen.getByTestId("board-col-gear-engineering-open")).toBeDefined();
+    expect(
+      screen.getByTestId("board-col-gear-engineering-in-progress"),
+    ).toBeDefined();
+  });
+
+  it("suppresses the gear for the synthesized default-project section", () => {
+    renderBoard();
+    // The synthesized default section has no ProjectRecord; the gear is omitted.
+    expect(screen.queryByTestId("board-col-gear-default-open")).toBeNull();
+  });
+
+  it("opens StatusSettingsModal with the right status key on gear click", () => {
+    renderBoard();
+    fireEvent.click(
+      screen.getByTestId("board-col-gear-engineering-in-progress"),
+    );
+
+    expect(screen.getByTestId("status-settings-modal")).toBeDefined();
+    expect(lastModalProps.statusKey).toBe("in-progress");
+    expect(lastModalProps.projectRecord?.project_id).toBe("j-eng");
+    expect(lastModalProps.issueCount).toBe(0);
+  });
+
+  it("treats hasNextPage as a non-empty column for delete safety", () => {
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ hasNextPage: true })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-col-gear-engineering-open"));
+    // hasNextPage forces a sentinel positive count so the modal disables delete.
+    expect(lastModalProps.issueCount).toBeGreaterThan(0);
   });
 });

@@ -19,6 +19,12 @@ import { useAgents } from "../../hooks/useAgents";
 import { useUsers } from "../../hooks/useUsers";
 import { ColorPicker, LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
+import {
+  principalKind,
+  principalToPath,
+  pathToPrincipal,
+  type AssignKind,
+} from "./principalAssign";
 import styles from "./ProjectEditor.module.css";
 
 interface ProjectEditorProps {
@@ -298,8 +304,6 @@ interface StatusEditorProps {
   agents: string[];
   users: string[];
 }
-
-type AssignKind = "none" | "user" | "agent" | "external";
 
 function StatusEditor({
   status,
@@ -636,34 +640,6 @@ function defaultNewStatuses(): StatusDefinition[] {
       prompt_path: null,
     },
   ];
-}
-
-function principalKind(p: Principal | null): AssignKind {
-  if (!p) return "none";
-  if ("Agent" in p) return "agent";
-  if ("User" in p) return "user";
-  return "external";
-}
-
-function principalToPath(p: Principal): string {
-  if ("Agent" in p) return `agents/${p.Agent.name}`;
-  if ("User" in p) return `users/${p.User.name}`;
-  return `external/${p.External.system}/${p.External.username}`;
-}
-
-function pathToPrincipal(path: string): Principal | null {
-  if (!path) return null;
-  if (path.startsWith("agents/")) return { Agent: { name: path.slice(7) } };
-  if (path.startsWith("users/")) return { User: { name: path.slice(6) } };
-  if (path.startsWith("external/")) {
-    const rest = path.slice("external/".length);
-    const slash = rest.indexOf("/");
-    if (slash < 0) return null;
-    return {
-      External: { system: rest.slice(0, slash), username: rest.slice(slash + 1) },
-    };
-  }
-  return null;
 }
 
 function applyOptimisticUpsert(
