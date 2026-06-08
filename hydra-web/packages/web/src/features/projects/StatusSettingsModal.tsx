@@ -51,7 +51,6 @@ export function StatusSettingsModal(props: StatusSettingsModalProps) {
         title={`New status · ${props.projectRecord.project.name}`}
       >
         <AddStatusForm
-          open={props.open}
           onClose={props.onClose}
           projectRecord={props.projectRecord}
         />
@@ -715,7 +714,6 @@ function StatusForm({
 }
 
 interface AddStatusFormProps {
-  open: boolean;
   onClose: () => void;
   projectRecord: ProjectRecord;
 }
@@ -725,7 +723,7 @@ interface AddStatusFormProps {
 // document. The status's `prompt_path` is auto-generated from project + slug;
 // users never see or edit it. The advanced fields (color, on-enter, cascades)
 // stay reachable through the gear's edit modal after the column lands.
-function AddStatusForm({ open, onClose, projectRecord }: AddStatusFormProps) {
+function AddStatusForm({ onClose, projectRecord }: AddStatusFormProps) {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const statuses = projectRecord.project.statuses;
@@ -734,14 +732,6 @@ function AddStatusForm({ open, onClose, projectRecord }: AddStatusFormProps) {
 
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
-
-  // Reset the form whenever the modal reopens against a different project
-  // (the IssuesBoard reuses the same component instance per click).
-  useEffect(() => {
-    if (!open) return;
-    setName("");
-    setBody("");
-  }, [open]);
 
   const key = useMemo(() => slugifyStatusKey(name), [name]);
   const existingKeys = useMemo(
@@ -760,28 +750,28 @@ function AddStatusForm({ open, onClose, projectRecord }: AddStatusFormProps) {
   }, [name, key, existingKeys]);
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (status: StatusDefinition) => {
       const trimmedBody = body.trim();
       if (trimmedBody) {
         // Upsert the prompt doc at the auto path. We check first because
         // re-creating a previously-deleted status under the same key would
         // collide on the unique-path constraint server-side.
         try {
-          const existing = await apiClient.getDocumentByPath(promptPath);
+          const existing = await apiClient.getDocumentByPath(status.prompt_path as string);
           await apiClient.updateDocument(existing.document_id, {
             document: {
               ...existing.document,
               body_markdown: body,
-              path: promptPath as DocumentPath,
+              path: status.prompt_path as DocumentPath,
             },
           });
         } catch (err) {
           if (err instanceof ApiError && err.status === 404) {
             await apiClient.createDocument({
               document: {
-                title: promptPath,
+                title: status.prompt_path as string,
                 body_markdown: body,
-                path: promptPath as DocumentPath,
+                path: status.prompt_path as DocumentPath,
               },
             });
           } else {
@@ -790,16 +780,35 @@ function AddStatusForm({ open, onClose, projectRecord }: AddStatusFormProps) {
         }
       }
 
-      const status: StatusDefinition = {
-        ...blankStatus(statuses.length),
-        key: key as never,
-        label: name.trim(),
-        prompt_path: promptPath as DocumentPath,
-      };
       const nextStatuses = [...statuses, status];
       return apiClient.updateProject(projectId, {
         project: { ...projectRecord.project, statuses: nextStatuses },
       });
+    },
+    onMutate: async (status) => {
+      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
+      const previous =
+        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        const nextProject = {
+          ...projectRecord.project,
+          statuses: [...statuses, status],
+        };
+        const next: ListProjectsResponse = {
+          projects: applyOptimisticUpsert(previous.projects, projectId, nextProject),
+        };
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
+      }
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+      }
+      addToast(
+        err instanceof Error ? err.message : "Failed to add status",
+        "error",
+      );
     },
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
@@ -812,16 +821,21 @@ function AddStatusForm({ open, onClose, projectRecord }: AddStatusFormProps) {
       addToast("Status added", "success");
       onClose();
     },
-    onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to add status",
-        "error",
-      );
-    },
   });
 
   const canSave =
     !!key && !nameError && !!name.trim() && !saveMutation.isPending;
+
+  const handleSave = useCallback(() => {
+    if (!canSave) return;
+    const status: StatusDefinition = {
+      ...blankStatus(statuses.length),
+      key,
+      label: name.trim(),
+      prompt_path: promptPath as DocumentPath,
+    };
+    saveMutation.mutate(status);
+  }, [canSave, key, name, promptPath, statuses, saveMutation]);
 
   return (
     <div className={styles.body} data-testid="status-settings-form">
@@ -861,7 +875,7 @@ function AddStatusForm({ open, onClose, projectRecord }: AddStatusFormProps) {
           <Button
             variant="primary"
             size="md"
-            onClick={() => saveMutation.mutate()}
+            onClick={handleSave}
             disabled={!canSave}
             data-testid="status-settings-save"
           >
