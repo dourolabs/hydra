@@ -407,7 +407,7 @@ describe("StatusSettingsModal", () => {
     expect(next[1].label).toBe("Doing");
   });
 
-  it("Move right swaps the status with its neighbor and persists", () => {
+  it("does not render move-left / move-right buttons (drag-and-drop owns reordering)", () => {
     const project = makeProject([
       makeStatus("open"),
       makeStatus("in-progress"),
@@ -418,33 +418,12 @@ describe("StatusSettingsModal", () => {
         open={true}
         onClose={() => {}}
         projectRecord={project}
-        statusKey="open"
+        statusKey="in-progress"
         issueCount={0}
       />,
     );
-
-    fireEvent.click(screen.getByTestId("status-settings-move-right"));
-
-    const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
-    expect(next.map((s) => s.key)).toEqual(["in-progress", "open", "closed"]);
-  });
-
-  it("Move left is disabled at the first position", () => {
-    const project = makeProject([
-      makeStatus("open"),
-      makeStatus("in-progress"),
-    ]);
-    render(
-      <StatusSettingsModal
-        open={true}
-        onClose={() => {}}
-        projectRecord={project}
-        statusKey="open"
-        issueCount={0}
-      />,
-    );
-    const btn = screen.getByTestId("status-settings-move-left") as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
+    expect(screen.queryByTestId("status-settings-move-left")).toBeNull();
+    expect(screen.queryByTestId("status-settings-move-right")).toBeNull();
   });
 
   it("Delete on a non-empty column reveals the Move sub-step with a neighbor default", () => {
@@ -618,28 +597,6 @@ describe("StatusSettingsModal", () => {
     expect(addToastSpy).toHaveBeenCalledWith("boom", "error");
   });
 
-  it("Move does NOT close the modal (user can keep nudging the column)", () => {
-    const project = makeProject([
-      makeStatus("open"),
-      makeStatus("in-progress"),
-      makeStatus("closed"),
-    ]);
-    const onClose = vi.fn();
-    render(
-      <StatusSettingsModal
-        open={true}
-        onClose={onClose}
-        projectRecord={project}
-        statusKey="open"
-        issueCount={0}
-      />,
-    );
-
-    fireEvent.click(screen.getByTestId("status-settings-move-right"));
-    expect(mutateSpy).toHaveBeenCalledTimes(1);
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   it("Save closes the modal after a successful mutation", async () => {
     const project = makeProject([
       makeStatus("open"),
@@ -705,7 +662,7 @@ describe("StatusSettingsModal", () => {
       expect(screen.getByTestId("color-#333")).toBeDefined();
     });
 
-    it("hides the move and delete controls in new mode", () => {
+    it("hides the delete control in new mode", () => {
       const project = makeProject([
         makeStatus("open"),
         makeStatus("in-progress"),
@@ -719,8 +676,6 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      expect(screen.queryByTestId("status-settings-move-left")).toBeNull();
-      expect(screen.queryByTestId("status-settings-move-right")).toBeNull();
       expect(screen.queryByTestId("status-settings-delete")).toBeNull();
     });
 

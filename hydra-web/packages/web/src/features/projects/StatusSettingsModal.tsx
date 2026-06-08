@@ -210,24 +210,6 @@ export function StatusSettingsModal({
     });
   }, [draft, mode, newModeError, index, statuses, saveMutation, addToast, onClose]);
 
-  // Move stays inside the modal: persist the swap but do NOT close, so the
-  // user can keep nudging the column without reopening the gear each time.
-  const handleMove = useCallback(
-    (delta: number) => {
-      if (index < 0) return;
-      const target = index + delta;
-      if (target < 0 || target >= statuses.length) return;
-      const next = [...statuses];
-      const tmp = next[index];
-      next[index] = next[target];
-      next[target] = tmp;
-      saveMutation.mutate(next, {
-        onSuccess: () => addToast("Status moved", "success"),
-      });
-    },
-    [index, statuses, saveMutation, addToast],
-  );
-
   const handleDelete = useCallback(() => {
     if (!canDelete || index < 0) return;
     const next = statuses.filter((_, i) => i !== index);
@@ -387,10 +369,6 @@ export function StatusSettingsModal({
         users={users?.map((u) => u.username) ?? []}
         agentsLoaded={agents !== undefined}
         usersLoaded={users !== undefined}
-        index={index}
-        count={statuses.length}
-        onMove={handleMove}
-        saving={saveMutation.isPending}
         mode={mode}
         projectKey={projectRecord.project.key as string}
         statusKeyForDefaultPath={mode === "edit" ? statusKey : draft.key}
@@ -529,10 +507,6 @@ interface StatusFormProps {
   users: string[];
   agentsLoaded: boolean;
   usersLoaded: boolean;
-  index: number;
-  count: number;
-  onMove: (delta: number) => void;
-  saving: boolean;
   mode: "edit" | "new";
   projectKey: string;
   statusKeyForDefaultPath: string;
@@ -547,10 +521,6 @@ function StatusForm({
   users,
   agentsLoaded,
   usersLoaded,
-  index,
-  count,
-  onMove,
-  saving,
   mode,
   projectKey,
   statusKeyForDefaultPath,
@@ -632,35 +602,6 @@ function StatusForm({
 
   return (
     <div className={styles.body} data-testid="status-settings-form">
-      {mode === "edit" && (
-        <div className={styles.header}>
-          <button
-            type="button"
-            className={styles.miniButton}
-            onClick={() => onMove(-1)}
-            disabled={index === 0 || saving}
-            aria-label="Move left"
-            data-testid="status-settings-move-left"
-          >
-            ← Move left
-          </button>
-          <button
-            type="button"
-            className={styles.miniButton}
-            onClick={() => onMove(1)}
-            disabled={index === count - 1 || saving}
-            aria-label="Move right"
-            data-testid="status-settings-move-right"
-          >
-            Move right →
-          </button>
-          <span style={{ flex: 1 }} />
-          <span className={styles.label}>
-            Position {index + 1} of {count}
-          </span>
-        </div>
-      )}
-
       <div className={styles.statusInputs}>
         {mode === "new" ? (
           <Input
