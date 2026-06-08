@@ -34,6 +34,9 @@ vi.mock("../../sessions/useSession", () => ({
 vi.mock("../useConversations", () => ({
   useConversation: () => conversationState,
 }));
+vi.mock("../../projects/useProjects", () => ({
+  useProjects: () => ({ data: [] }),
+}));
 
 // --- Stub @hydra/ui with what the card path needs. ---
 //

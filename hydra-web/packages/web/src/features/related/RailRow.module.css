@@ -93,6 +93,18 @@
   color: var(--s-closed);
 }
 
+.projectChip {
+  flex-shrink: 0;
+}
+
+.statusLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .agent {
   font-family: var(--f-mono);
   font-size: var(--t-xxs);
