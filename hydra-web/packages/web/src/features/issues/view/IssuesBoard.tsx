@@ -228,12 +228,37 @@ function BoardColumn({
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const isDefaultStatus = status.key === project.default_status_key;
+  const assignTo = status.on_enter?.assign_to ?? null;
+  const interactiveLabel = status.interactive === true ? "interactive" : "auto";
   return (
     <div className={styles.col} data-testid={`board-col-${project.key}-${status.key}`}>
       <div className={styles.colHead}>
         <StatusChip definition={status} />
         {isDefaultStatus && <span className={styles.defaultChip}>DEFAULT</span>}
         <span className={styles.colCount}>{colIssues.length}</span>
+      </div>
+      <div
+        className={styles.colSubHead}
+        data-testid={`board-col-subhead-${project.key}-${status.key}`}
+      >
+        {assignTo && (
+          <span className={styles.subHeadAssignee}>
+            <Avatar
+              name={principalDisplayName(assignTo)}
+              kind={principalAvatarKind(assignTo)}
+              size="sm"
+            />
+            <span className={styles.subHeadName}>
+              {principalDisplayName(assignTo)}
+            </span>
+          </span>
+        )}
+        <span
+          className={styles.modeBadge}
+          data-testid={`board-col-mode-${project.key}-${status.key}`}
+        >
+          {interactiveLabel}
+        </span>
       </div>
       <div className={styles.colBody}>
         {showInitialLoading && (
