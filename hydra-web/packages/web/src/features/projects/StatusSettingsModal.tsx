@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, Select } from "@hydra/ui";
+import { Button, Input, Modal, Select, Textarea } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type {
   DocumentPath,
@@ -10,7 +10,7 @@ import type {
   ProjectRecord,
   StatusDefinition,
 } from "@hydra/api";
-import { apiClient } from "../../api/client";
+import { ApiError, apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { useAgents } from "../../hooks/useAgents";
 import { useUsers } from "../../hooks/useUsers";
@@ -25,7 +25,7 @@ import {
   PROJECTS_QUERY_KEY,
   applyOptimisticUpsert,
 } from "./projectCache";
-import { blankStatus, validateStatusKey } from "./statusDefaults";
+import { blankStatus, slugifyStatusKey } from "./statusDefaults";
 import { PromptDocumentEditor } from "./PromptDocumentEditor";
 import styles from "./StatusSettingsModal.module.css";
 
@@ -41,15 +41,33 @@ export interface StatusSettingsModalProps {
   issueCount?: number;
 }
 
-export function StatusSettingsModal({
+export function StatusSettingsModal(props: StatusSettingsModalProps) {
+  const mode: "edit" | "new" = props.mode ?? "edit";
+  if (mode === "new") {
+    return (
+      <Modal
+        open={props.open}
+        onClose={props.onClose}
+        title={`New status · ${props.projectRecord.project.name}`}
+      >
+        <AddStatusForm
+          open={props.open}
+          onClose={props.onClose}
+          projectRecord={props.projectRecord}
+        />
+      </Modal>
+    );
+  }
+  return <EditStatusModal {...props} />;
+}
+
+function EditStatusModal({
   open,
   onClose,
   projectRecord,
-  mode: modeProp,
   statusKey: statusKeyProp,
   issueCount: issueCountProp,
 }: StatusSettingsModalProps) {
-  const mode: "edit" | "new" = modeProp ?? "edit";
   const statusKey = statusKeyProp ?? "";
   const issueCount = issueCountProp ?? 0;
   const { addToast } = useToast();
@@ -59,14 +77,13 @@ export function StatusSettingsModal({
 
   const statuses = projectRecord.project.statuses;
   const initialStatus = useMemo(() => {
-    if (mode === "new") return null;
     const i = statuses.findIndex((s) => s.key === statusKey);
     return i >= 0 ? { status: statuses[i], index: i } : null;
-  }, [mode, statuses, statusKey]);
+  }, [statuses, statusKey]);
   const index = initialStatus?.index ?? -1;
 
-  const [draft, setDraft] = useState<StatusDefinition | null>(() =>
-    mode === "new" ? blankStatus(statuses.length) : initialStatus?.status ?? null,
+  const [draft, setDraft] = useState<StatusDefinition | null>(
+    () => initialStatus?.status ?? null,
   );
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [moveTargetKey, setMoveTargetKey] = useState<string>("");
@@ -80,13 +97,11 @@ export function StatusSettingsModal({
   // status (gear click on another column reuses the same component instance).
   useEffect(() => {
     if (!open) return;
-    setDraft(
-      mode === "new" ? blankStatus(statuses.length) : initialStatus?.status ?? null,
-    );
+    setDraft(initialStatus?.status ?? null);
     setConfirmingDelete(false);
     setMoveProgress(null);
     setPromptExpanded(false);
-  }, [open, mode, statuses.length, initialStatus]);
+  }, [open, initialStatus]);
 
   const projectId = projectRecord.project_id;
 
@@ -164,21 +179,8 @@ export function StatusSettingsModal({
     setMoveTargetKey(defaultMoveTargetKey);
   }, [confirmingDelete, defaultMoveTargetKey]);
 
-  const existingKeysExceptDraft = useMemo(
-    () => new Set(statuses.map((s) => s.key as string)),
-    [statuses],
-  );
-
-  const newModeError = useMemo(() => {
-    if (mode !== "new" || !draft) return null;
-    const keyErr = validateStatusKey(draft.key, existingKeysExceptDraft);
-    if (keyErr) return keyErr;
-    if (!draft.label.trim()) return "Status label is required";
-    return null;
-  }, [mode, draft, existingKeysExceptDraft]);
-
   const handleSave = useCallback(() => {
-    if (!draft) return;
+    if (!draft || index < 0) return;
     const trimmedPromptPath = draft.prompt_path?.trim() ?? "";
     const normalized: StatusDefinition = {
       ...draft,
@@ -186,21 +188,6 @@ export function StatusSettingsModal({
       label: draft.label.trim(),
       prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
     };
-    if (mode === "new") {
-      if (newModeError) {
-        addToast(newModeError, "error");
-        return;
-      }
-      const next = [...statuses, normalized];
-      saveMutation.mutate(next, {
-        onSuccess: () => {
-          addToast("Status added", "success");
-          onClose();
-        },
-      });
-      return;
-    }
-    if (index < 0) return;
     const next = statuses.map((s, i) => (i === index ? normalized : s));
     saveMutation.mutate(next, {
       onSuccess: () => {
@@ -208,7 +195,7 @@ export function StatusSettingsModal({
         onClose();
       },
     });
-  }, [draft, mode, newModeError, index, statuses, saveMutation, addToast, onClose]);
+  }, [draft, index, statuses, saveMutation, addToast, onClose]);
 
   const handleDelete = useCallback(() => {
     if (!canDelete || index < 0) return;
@@ -340,7 +327,7 @@ export function StatusSettingsModal({
     addToast,
   ]);
 
-  if (!draft || (mode === "edit" && index < 0)) {
+  if (!draft || index < 0) {
     return (
       <Modal open={open} onClose={onClose} title="Status settings">
         <div className={styles.body}>
@@ -355,10 +342,7 @@ export function StatusSettingsModal({
     );
   }
 
-  const title =
-    mode === "new"
-      ? `New status · ${projectRecord.project.name}`
-      : `Status — ${draft.label || draft.key}`;
+  const title = `Status — ${draft.label || draft.key}`;
 
   return (
     <Modal open={open} onClose={onClose} title={title}>
@@ -369,103 +353,95 @@ export function StatusSettingsModal({
         users={users?.map((u) => u.username) ?? []}
         agentsLoaded={agents !== undefined}
         usersLoaded={users !== undefined}
-        mode={mode}
         projectKey={projectRecord.project.key as string}
-        statusKeyForDefaultPath={mode === "edit" ? statusKey : draft.key}
+        statusKeyForDefaultPath={statusKey}
         promptExpanded={promptExpanded}
         onTogglePromptExpanded={() => setPromptExpanded((v) => !v)}
       />
 
-      {mode === "new" && newModeError && (
-        <span className={styles.error} data-testid="status-settings-new-error">
-          {newModeError}
-        </span>
-      )}
-
       <div className={styles.actions} data-testid="status-settings-actions">
         <div className={styles.actionsLeft}>
-          {mode === "edit" &&
-            (confirmingDelete ? (
-              hasIssues ? (
-                <div
-                  className={styles.moveBlock}
-                  data-testid="status-settings-move-block"
-                >
-                  <label className={styles.label}>
-                    Move {issueCount} issue(s) to:
-                    <Select
-                      options={moveOptions}
-                      value={moveTargetKey}
-                      onChange={(e) => setMoveTargetKey(e.target.value)}
-                      data-testid="status-settings-move-target"
-                    />
-                  </label>
-                  <div className={styles.moveActions}>
-                    {moveProgress && moveProgress.total > 0 && (
-                      <span
-                        className={styles.label}
-                        data-testid="status-settings-move-progress"
-                      >
-                        Moving {moveProgress.current} of {moveProgress.total}…
-                      </span>
-                    )}
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setConfirmingDelete(false)}
-                      disabled={moveAndDeleteMutation.isPending}
+          {confirmingDelete ? (
+            hasIssues ? (
+              <div
+                className={styles.moveBlock}
+                data-testid="status-settings-move-block"
+              >
+                <label className={styles.label}>
+                  Move {issueCount} issue(s) to:
+                  <Select
+                    options={moveOptions}
+                    value={moveTargetKey}
+                    onChange={(e) => setMoveTargetKey(e.target.value)}
+                    data-testid="status-settings-move-target"
+                  />
+                </label>
+                <div className={styles.moveActions}>
+                  {moveProgress && moveProgress.total > 0 && (
+                    <span
+                      className={styles.label}
+                      data-testid="status-settings-move-progress"
                     >
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={handleMoveAndDelete}
-                      disabled={
-                        moveAndDeleteMutation.isPending || !moveTargetKey
-                      }
-                      data-testid="status-settings-move-confirm"
-                    >
-                      {moveAndDeleteMutation.isPending
-                        ? "Moving…"
-                        : `Move ${issueCount} and delete`}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <span className={styles.label}>Delete this status?</span>
+                      Moving {moveProgress.current} of {moveProgress.total}…
+                    </span>
+                  )}
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => setConfirmingDelete(false)}
-                    disabled={saveMutation.isPending}
+                    disabled={moveAndDeleteMutation.isPending}
                   >
                     Cancel
                   </Button>
                   <Button
                     variant="danger"
                     size="sm"
-                    onClick={handleDelete}
-                    disabled={saveMutation.isPending}
-                    data-testid="status-settings-delete-confirm"
+                    onClick={handleMoveAndDelete}
+                    disabled={
+                      moveAndDeleteMutation.isPending || !moveTargetKey
+                    }
+                    data-testid="status-settings-move-confirm"
                   >
-                    {saveMutation.isPending ? "Deleting…" : "Confirm delete"}
+                    {moveAndDeleteMutation.isPending
+                      ? "Moving…"
+                      : `Move ${issueCount} and delete`}
                   </Button>
-                </>
-              )
+                </div>
+              </div>
             ) : (
-              <button
-                type="button"
-                className={`${styles.miniButton} ${styles.miniButtonDanger}`}
-                onClick={() => setConfirmingDelete(true)}
-                disabled={!canDelete || saveMutation.isPending}
-                title={deleteTooltip || undefined}
-                data-testid="status-settings-delete"
-              >
-                Delete status
-              </button>
-            ))}
+              <>
+                <span className={styles.label}>Delete this status?</span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={saveMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleDelete}
+                  disabled={saveMutation.isPending}
+                  data-testid="status-settings-delete-confirm"
+                >
+                  {saveMutation.isPending ? "Deleting…" : "Confirm delete"}
+                </Button>
+              </>
+            )
+          ) : (
+            <button
+              type="button"
+              className={`${styles.miniButton} ${styles.miniButtonDanger}`}
+              onClick={() => setConfirmingDelete(true)}
+              disabled={!canDelete || saveMutation.isPending}
+              title={deleteTooltip || undefined}
+              data-testid="status-settings-delete"
+            >
+              Delete status
+            </button>
+          )}
         </div>
         <div className={styles.actionsRight}>
           <Button
@@ -480,24 +456,15 @@ export function StatusSettingsModal({
             variant="primary"
             size="md"
             onClick={handleSave}
-            disabled={
-              saveMutation.isPending ||
-              moveAndDeleteMutation.isPending ||
-              (mode === "new" && !!newModeError)
-            }
+            disabled={saveMutation.isPending || moveAndDeleteMutation.isPending}
             data-testid="status-settings-save"
           >
-            {saveButtonLabel(mode, saveMutation.isPending)}
+            {saveMutation.isPending ? "Saving…" : "Save"}
           </Button>
         </div>
       </div>
     </Modal>
   );
-}
-
-function saveButtonLabel(mode: "edit" | "new", pending: boolean): string {
-  if (mode === "new") return pending ? "Adding…" : "Add status";
-  return pending ? "Saving…" : "Save";
 }
 
 interface StatusFormProps {
@@ -507,7 +474,6 @@ interface StatusFormProps {
   users: string[];
   agentsLoaded: boolean;
   usersLoaded: boolean;
-  mode: "edit" | "new";
   projectKey: string;
   statusKeyForDefaultPath: string;
   promptExpanded: boolean;
@@ -521,7 +487,6 @@ function StatusForm({
   users,
   agentsLoaded,
   usersLoaded,
-  mode,
   projectKey,
   statusKeyForDefaultPath,
   promptExpanded,
@@ -603,28 +568,17 @@ function StatusForm({
   return (
     <div className={styles.body} data-testid="status-settings-form">
       <div className={styles.statusInputs}>
-        {mode === "new" ? (
+        <div>
           <Input
             label="Key"
             value={draft.key}
-            onChange={(e) => patch({ key: e.target.value })}
-            placeholder="in-progress"
-            required
+            disabled
             data-testid="status-settings-key"
           />
-        ) : (
-          <div>
-            <Input
-              label="Key"
-              value={draft.key}
-              disabled
-              data-testid="status-settings-key"
-            />
-            <span className={styles.readOnlyNote}>
-              Key rename is not yet supported (orphans live issues).
-            </span>
-          </div>
-        )}
+          <span className={styles.readOnlyNote}>
+            Key rename is not yet supported (orphans live issues).
+          </span>
+        </div>
         <Input
           label="Label"
           value={draft.label}
@@ -756,6 +710,165 @@ function StatusForm({
         placeholder="/projects/<key>/statuses/<status-key>.md"
         testId="status-settings-prompt-path"
       />
+    </div>
+  );
+}
+
+interface AddStatusFormProps {
+  open: boolean;
+  onClose: () => void;
+  projectRecord: ProjectRecord;
+}
+
+// Minimal "Add status" flow: a single Name input drives both the user-visible
+// label and a slugified key, and an inline markdown editor writes the prompt
+// document. The status's `prompt_path` is auto-generated from project + slug;
+// users never see or edit it. The advanced fields (color, on-enter, cascades)
+// stay reachable through the gear's edit modal after the column lands.
+function AddStatusForm({ open, onClose, projectRecord }: AddStatusFormProps) {
+  const { addToast } = useToast();
+  const queryClient = useQueryClient();
+  const statuses = projectRecord.project.statuses;
+  const projectKey = projectRecord.project.key as string;
+  const projectId = projectRecord.project_id;
+
+  const [name, setName] = useState("");
+  const [body, setBody] = useState("");
+
+  // Reset the form whenever the modal reopens against a different project
+  // (the IssuesBoard reuses the same component instance per click).
+  useEffect(() => {
+    if (!open) return;
+    setName("");
+    setBody("");
+  }, [open]);
+
+  const key = useMemo(() => slugifyStatusKey(name), [name]);
+  const existingKeys = useMemo(
+    () => new Set(statuses.map((s) => s.key as string)),
+    [statuses],
+  );
+  const promptPath = key ? `/projects/${projectKey}/statuses/${key}.md` : "";
+
+  const nameError = useMemo(() => {
+    if (!name.trim()) return null;
+    if (!key) return "Status name must include a letter or digit";
+    if (existingKeys.has(key)) {
+      return `Status '${key}' already exists in this project`;
+    }
+    return null;
+  }, [name, key, existingKeys]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const trimmedBody = body.trim();
+      if (trimmedBody) {
+        // Upsert the prompt doc at the auto path. We check first because
+        // re-creating a previously-deleted status under the same key would
+        // collide on the unique-path constraint server-side.
+        try {
+          const existing = await apiClient.getDocumentByPath(promptPath);
+          await apiClient.updateDocument(existing.document_id, {
+            document: {
+              ...existing.document,
+              body_markdown: body,
+              path: promptPath as DocumentPath,
+            },
+          });
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 404) {
+            await apiClient.createDocument({
+              document: {
+                title: promptPath,
+                body_markdown: body,
+                path: promptPath as DocumentPath,
+              },
+            });
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      const status: StatusDefinition = {
+        ...blankStatus(statuses.length),
+        key: key as never,
+        label: name.trim(),
+        prompt_path: promptPath as DocumentPath,
+      };
+      const nextStatuses = [...statuses, status];
+      return apiClient.updateProject(projectId, {
+        project: { ...projectRecord.project, statuses: nextStatuses },
+      });
+    },
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: ["project", response.project_id],
+      });
+      queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
+      queryClient.invalidateQueries({ queryKey: ["documentPaths"] });
+      queryClient.invalidateQueries({ queryKey: ["documentsAtPath"] });
+      addToast("Status added", "success");
+      onClose();
+    },
+    onError: (err) => {
+      addToast(
+        err instanceof Error ? err.message : "Failed to add status",
+        "error",
+      );
+    },
+  });
+
+  const canSave =
+    !!key && !nameError && !!name.trim() && !saveMutation.isPending;
+
+  return (
+    <div className={styles.body} data-testid="status-settings-form">
+      <Input
+        label="Name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Blocked"
+        required
+        data-testid="status-settings-name"
+      />
+      <Textarea
+        label="Prompt"
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        placeholder={`# Prompt for this status\n\nWrite the prompt the assignee sees on enter.`}
+        rows={12}
+        data-testid="status-settings-prompt-body"
+      />
+      {nameError && (
+        <span className={styles.error} data-testid="status-settings-new-error">
+          {nameError}
+        </span>
+      )}
+
+      <div className={styles.actions} data-testid="status-settings-actions">
+        <div className={styles.actionsLeft} />
+        <div className={styles.actionsRight}>
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={onClose}
+            disabled={saveMutation.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            onClick={() => saveMutation.mutate()}
+            disabled={!canSave}
+            data-testid="status-settings-save"
+          >
+            {saveMutation.isPending ? "Adding…" : "Add status"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

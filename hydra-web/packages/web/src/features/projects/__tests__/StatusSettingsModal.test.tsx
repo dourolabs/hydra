@@ -203,6 +203,32 @@ vi.mock("@hydra/ui", () => ({
       </select>
     </label>
   ),
+  Textarea: ({
+    label,
+    value,
+    onChange,
+    placeholder,
+    "data-testid": testId,
+  }: {
+    label?: string;
+    value: string;
+    onChange?: (e: { target: { value: string } }) => void;
+    placeholder?: string;
+    rows?: number;
+    "data-testid"?: string;
+  }) => (
+    <label>
+      {label}
+      <textarea
+        value={value}
+        onChange={(e) =>
+          onChange?.({ target: { value: e.target.value } })
+        }
+        placeholder={placeholder}
+        data-testid={testId}
+      />
+    </label>
+  ),
 }));
 
 const updateProjectSpy = vi.fn(async (_id: string, req: unknown) => req);
@@ -620,7 +646,7 @@ describe("StatusSettingsModal", () => {
   });
 
   describe("new mode", () => {
-    it("opens with a blank draft and an editable Key field", () => {
+    it("renders only a Name input and inline Prompt editor — no Key, no advanced fields", () => {
       const project = makeProject([
         makeStatus("open"),
         makeStatus("in-progress"),
@@ -634,32 +660,16 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      const key = screen.getByTestId("status-settings-key") as HTMLInputElement;
-      expect(key.disabled).toBe(false);
-      // blankStatus(2) → key === "status-3" because there are already 2 statuses.
-      expect(key.value).toBe("status-3");
-
-      const label = screen.getByTestId("status-settings-label") as HTMLInputElement;
-      expect(label.value).toBe("");
-    });
-
-    it("default color cycles from LABEL_COLOR_PALETTE by statuses.length", () => {
-      const project = makeProject([
-        makeStatus("open"),
-        makeStatus("in-progress"),
-      ]);
-      render(
-        <StatusSettingsModal
-          open={true}
-          mode="new"
-          onClose={() => {}}
-          projectRecord={project}
-        />,
-      );
-      // ColorPicker is mocked to render `data-testid="color-<value>"`.
-      // Mocked palette = ["#111", "#222", "#333", "#444", "#555", "#666"].
-      // With 2 existing statuses, blankStatus(2) picks index 2 → "#333".
-      expect(screen.getByTestId("color-#333")).toBeDefined();
+      const name = screen.getByTestId("status-settings-name") as HTMLInputElement;
+      expect(name.value).toBe("");
+      // Inline markdown editor is mounted directly (no toggle, no path field).
+      expect(screen.getByTestId("status-settings-prompt-body")).toBeDefined();
+      // Advanced edit-mode UI must not appear in the simplified Add flow.
+      expect(screen.queryByTestId("status-settings-key")).toBeNull();
+      expect(screen.queryByTestId("status-settings-label")).toBeNull();
+      expect(screen.queryByTestId("status-settings-prompt-path")).toBeNull();
+      expect(screen.queryByTestId("status-settings-prompt-path-toggle")).toBeNull();
+      expect(screen.queryByTestId("status-settings-assign-kind")).toBeNull();
     });
 
     it("hides the delete control in new mode", () => {
@@ -679,7 +689,7 @@ describe("StatusSettingsModal", () => {
       expect(screen.queryByTestId("status-settings-delete")).toBeNull();
     });
 
-    it("Save appends the new status to the project's statuses array", () => {
+    it("Save derives the key by slugifying the name and appends the status with an auto prompt_path", async () => {
       const project = makeProject([
         makeStatus("open", { label: "Open" }),
         makeStatus("in-progress", { label: "In progress" }),
@@ -693,21 +703,28 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      fireEvent.change(screen.getByTestId("status-settings-key"), {
-        target: { value: "blocked" },
+      fireEvent.change(screen.getByTestId("status-settings-name"), {
+        target: { value: "In Review" },
       });
-      fireEvent.change(screen.getByTestId("status-settings-label"), {
-        target: { value: "Blocked" },
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-save"));
       });
-      fireEvent.click(screen.getByTestId("status-settings-save"));
 
-      expect(mutateSpy).toHaveBeenCalledTimes(1);
-      const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
-      expect(next.map((s) => s.key)).toEqual(["open", "in-progress", "blocked"]);
-      expect(next[2].label).toBe("Blocked");
+      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
+      const projectPayload = updateProjectSpy.mock.calls[0][1] as {
+        project: { statuses: StatusDefinition[] };
+      };
+      expect(projectPayload.project.statuses.map((s) => s.key)).toEqual([
+        "open",
+        "in-progress",
+        "in-review",
+      ]);
+      const added = projectPayload.project.statuses[2];
+      expect(added.label).toBe("In Review");
+      expect(added.prompt_path).toBe("/projects/engineering/statuses/in-review.md");
     });
 
-    it("disables Save and shows error when key collides with an existing status", () => {
+    it("disables Save and shows error when the derived key collides", () => {
       const project = makeProject([
         makeStatus("open"),
         makeStatus("in-progress"),
@@ -721,21 +738,18 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      fireEvent.change(screen.getByTestId("status-settings-key"), {
-        target: { value: "open" },
-      });
-      fireEvent.change(screen.getByTestId("status-settings-label"), {
+      fireEvent.change(screen.getByTestId("status-settings-name"), {
         target: { value: "Open" },
       });
 
       const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
       expect(save.disabled).toBe(true);
-      expect(screen.getByTestId("status-settings-new-error").textContent).toContain(
-        "already exists",
-      );
+      expect(
+        screen.getByTestId("status-settings-new-error").textContent,
+      ).toContain("already exists");
     });
 
-    it("rejects invalid key characters", () => {
+    it("disables Save when the name has no slug-able characters", () => {
       const project = makeProject([makeStatus("open")]);
       render(
         <StatusSettingsModal
@@ -746,13 +760,129 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      fireEvent.change(screen.getByTestId("status-settings-key"), {
-        target: { value: "Has Spaces" },
+      fireEvent.change(screen.getByTestId("status-settings-name"), {
+        target: { value: "@@@" },
       });
       const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
       expect(save.disabled).toBe(true);
-      expect(screen.getByTestId("status-settings-new-error").textContent).toContain(
-        "lowercase letters",
+      expect(
+        screen.getByTestId("status-settings-new-error").textContent,
+      ).toContain("letter or digit");
+    });
+
+    it("writes the prompt document at the auto path before creating the status", async () => {
+      const project = makeProject([makeStatus("open")]);
+      // No existing doc at the auto path → 404 → createDocument fires.
+      getDocumentByPathSpy.mockImplementation(async () => {
+        throw new ApiErrorMock(404, "not found");
+      });
+      createDocumentSpy.mockImplementation(async () => ({
+        document_id: "d-new",
+      }));
+
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+      fireEvent.change(screen.getByTestId("status-settings-name"), {
+        target: { value: "Blocked" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-prompt-body"), {
+        target: { value: "Body text" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+      });
+
+      expect(getDocumentByPathSpy).toHaveBeenCalledWith(
+        "/projects/engineering/statuses/blocked.md",
+      );
+      expect(createDocumentSpy).toHaveBeenCalledTimes(1);
+      const docPayload = createDocumentSpy.mock.calls[0][0] as {
+        document: { path: string; body_markdown: string };
+      };
+      expect(docPayload.document.path).toBe(
+        "/projects/engineering/statuses/blocked.md",
+      );
+      expect(docPayload.document.body_markdown).toBe("Body text");
+      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("upserts the prompt document when one already exists at the auto path", async () => {
+      const project = makeProject([makeStatus("open")]);
+      getDocumentByPathSpy.mockImplementation(async () => ({
+        document_id: "d-existing",
+        version: 4,
+        timestamp: "2026-01-01T00:00:00Z",
+        document: {
+          title: "old title",
+          body_markdown: "old body",
+          path: "/projects/engineering/statuses/blocked.md",
+        },
+      }));
+      updateDocumentSpy.mockImplementation(async () => ({
+        document_id: "d-existing",
+      }));
+
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+      fireEvent.change(screen.getByTestId("status-settings-name"), {
+        target: { value: "Blocked" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-prompt-body"), {
+        target: { value: "Fresh body" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+      });
+
+      expect(createDocumentSpy).not.toHaveBeenCalled();
+      expect(updateDocumentSpy).toHaveBeenCalledTimes(1);
+      const docCall = updateDocumentSpy.mock.calls[0];
+      expect(docCall[0]).toBe("d-existing");
+      expect(
+        (docCall[1] as { document: { body_markdown: string } }).document
+          .body_markdown,
+      ).toBe("Fresh body");
+    });
+
+    it("skips the document write when the prompt body is empty", async () => {
+      const project = makeProject([makeStatus("open")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+      fireEvent.change(screen.getByTestId("status-settings-name"), {
+        target: { value: "Blocked" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+      });
+
+      expect(getDocumentByPathSpy).not.toHaveBeenCalled();
+      expect(createDocumentSpy).not.toHaveBeenCalled();
+      expect(updateDocumentSpy).not.toHaveBeenCalled();
+      // The status still records the auto path so a later editor knows
+      // where to write the document.
+      const projectPayload = updateProjectSpy.mock.calls[0][1] as {
+        project: { statuses: StatusDefinition[] };
+      };
+      expect(projectPayload.project.statuses[1].prompt_path).toBe(
+        "/projects/engineering/statuses/blocked.md",
       );
     });
 
@@ -768,10 +898,7 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      fireEvent.change(screen.getByTestId("status-settings-key"), {
-        target: { value: "blocked" },
-      });
-      fireEvent.change(screen.getByTestId("status-settings-label"), {
+      fireEvent.change(screen.getByTestId("status-settings-name"), {
         target: { value: "Blocked" },
       });
       await act(async () => {
@@ -1057,31 +1184,6 @@ describe("StatusSettingsModal", () => {
       expect(lastPromptQueryKeyRef.key).toEqual([
         "documentByPath",
         "/custom/status.md",
-      ]);
-    });
-
-    it("in new mode, the default path uses the draft's key (kebab-case input)", () => {
-      const project = makeProject([
-        makeStatus("open"),
-        makeStatus("in-progress"),
-      ]);
-      render(
-        <StatusSettingsModal
-          open={true}
-          mode="new"
-          onClose={() => {}}
-          projectRecord={project}
-        />,
-      );
-      fireEvent.change(screen.getByTestId("status-settings-key"), {
-        target: { value: "blocked" },
-      });
-      fireEvent.click(
-        screen.getByTestId("status-settings-prompt-path-toggle"),
-      );
-      expect(lastPromptQueryKeyRef.key).toEqual([
-        "documentByPath",
-        "/projects/engineering/statuses/blocked.md",
       ]);
     });
 

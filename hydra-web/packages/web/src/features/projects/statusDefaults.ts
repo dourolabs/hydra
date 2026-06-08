@@ -30,3 +30,13 @@ export function validateStatusKey(
   }
   return null;
 }
+
+// Lowercase, dash-separated slug stripped of any character outside
+// STATUS_KEY_RE. Collapsed and trimmed so callers get a key the wire layer
+// already accepts.
+export function slugifyStatusKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
