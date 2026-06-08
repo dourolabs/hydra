@@ -6,6 +6,7 @@ import type {
   DocumentSummaryRecord,
   IssueSummaryRecord,
   PatchSummaryRecord,
+  ProjectRecord,
   RepositoryRecord,
   SessionSummaryRecord,
 } from "@hydra/api";
@@ -23,7 +24,20 @@ import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
 import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSessionDuration";
 import type { ChildStatus } from "../dashboard/computeIssueProgress";
 import { PatchRepoLink } from "../patches/PatchRepoLink";
+import { ProjectChip } from "../projects/ProjectChip";
+import { useProjects } from "../projects/useProjects";
 import styles from "./RailRow.module.css";
+
+function resolveProjectKey(
+  projects: ProjectRecord[] | undefined,
+  projectId: string | null | undefined,
+): string | null {
+  if (!projects) return null;
+  if (projectId) {
+    return projects.find((p) => p.project_id === projectId)?.project.key ?? null;
+  }
+  return projects.find((p) => p.project.key === "default")?.project.key ?? null;
+}
 
 interface IssueRailRowProps {
   record: IssueSummaryRecord;
@@ -63,6 +77,8 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
   const hasActiveChild = !!childStatuses?.some((c) => c.hasActiveTask);
   const { durationText, status: runtimeStatus } = useSessionDuration(sessions);
   const assigneeName = issue.assignee ? principalDisplayName(issue.assignee) : null;
+  const { data: projects } = useProjects();
+  const projectKey = resolveProjectKey(projects, issue.project_id);
   const to = `/issues/${record.issue_id}${linkSearch ?? ""}`;
 
   return (
@@ -91,6 +107,16 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
       <div className={styles.body}>
         <div className={styles.title}>{issue.title || "(untitled)"}</div>
         <div className={styles.meta}>
+          {projectKey && (
+            <ProjectChip
+              projectKey={projectKey}
+              className={styles.projectChip}
+              data-testid={`rail-row-project-chip-${record.issue_id}`}
+            />
+          )}
+          {resolved?.label && (
+            <span className={styles.statusLabel}>{resolved.label}</span>
+          )}
           {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
           {issue.assignee && assigneeName && (
             <Avatar

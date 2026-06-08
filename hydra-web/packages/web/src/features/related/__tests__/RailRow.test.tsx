@@ -1,10 +1,57 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import type { IssueSummaryRecord, Principal } from "@hydra/api";
-import { IssueRailRow } from "../RailRow";
+import type { IssueSummaryRecord, Principal, ProjectRecord, StatusDefinition } from "@hydra/api";
 
-function makeRecord(assignee?: Principal | null): IssueSummaryRecord {
+const useProjectsMock = vi.fn<() => { data: ProjectRecord[] | undefined }>();
+vi.mock("../../projects/useProjects", () => ({
+  useProjects: () => useProjectsMock(),
+}));
+
+const { IssueRailRow } = await import("../RailRow");
+
+const SEEDED_PROJECTS: ProjectRecord[] = [
+  {
+    project_id: "j-defaul",
+    version: 1,
+    project: {
+      key: "default",
+      name: "Default",
+      statuses: [],
+      default_status_key: "open",
+      creator: "system",
+    },
+  },
+  {
+    project_id: "j-engv2",
+    version: 1,
+    project: {
+      key: "engineering-v2",
+      name: "Engineering v2",
+      statuses: [],
+      default_status_key: "inbox",
+      creator: "alice",
+    },
+  },
+];
+
+function makeStatus(over?: Partial<StatusDefinition>): StatusDefinition {
+  return {
+    key: "open",
+    label: "Open",
+    color: "#3498db",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+    ...over,
+  };
+}
+
+function makeRecord(opts?: {
+  assignee?: Principal | null;
+  projectId?: string | null;
+  resolvedStatus?: StatusDefinition | null;
+}): IssueSummaryRecord {
   return {
     issue_id: "i-1",
     version: 1n,
@@ -16,7 +63,10 @@ function makeRecord(assignee?: Principal | null): IssueSummaryRecord {
       description: "desc",
       creator: "alice",
       status: "open",
-      assignee: assignee ?? null,
+      project_id: opts?.projectId ?? null,
+      resolved_status:
+        opts?.resolvedStatus === undefined ? makeStatus() : opts.resolvedStatus,
+      assignee: opts?.assignee ?? null,
       progress: "",
       dependencies: [],
       patches: [],
@@ -36,17 +86,18 @@ function renderRow(record: IssueSummaryRecord) {
 describe("IssueRailRow assignee avatar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useProjectsMock.mockReturnValue({ data: SEEDED_PROJECTS });
   });
 
   it("does not render an avatar when assignee is absent", () => {
-    const { container } = renderRow(makeRecord(null));
+    const { container } = renderRow(makeRecord({ assignee: null }));
     const avatars = container.querySelectorAll('[title^="Assignee"]');
     expect(avatars).toHaveLength(0);
   });
 
   it("renders an avatar with human kind and the Assignee tooltip for a User principal", () => {
     const principal: Principal = { User: { name: "alice" } };
-    const { container } = renderRow(makeRecord(principal));
+    const { container } = renderRow(makeRecord({ assignee: principal }));
     const avatar = container.querySelector('[title="Assignee · alice"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-kind")).toBe("human");
@@ -55,15 +106,15 @@ describe("IssueRailRow assignee avatar", () => {
 
   it("renders an avatar with agent kind for an Agent principal", () => {
     const principal: Principal = { Agent: { name: "swe" } };
-    const { container } = renderRow(makeRecord(principal));
+    const { container } = renderRow(makeRecord({ assignee: principal }));
     const avatar = container.querySelector('[title="Assignee · swe"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-kind")).toBe("agent");
   });
 
-  it("places the avatar between the type chip and the AgoTime element in the meta line", () => {
+  it("places the avatar before the AgoTime element in the meta line", () => {
     const principal: Principal = { User: { name: "alice" } };
-    const { container } = renderRow(makeRecord(principal));
+    const { container } = renderRow(makeRecord({ assignee: principal }));
     const meta = container.querySelector('[class*="meta"]');
     expect(meta).not.toBeNull();
     const children = Array.from(meta!.children);
@@ -73,5 +124,57 @@ describe("IssueRailRow assignee avatar", () => {
       (el.getAttribute("title") ?? "").startsWith("Last updated"),
     );
     expect(agoIdx).toBeGreaterThan(avatarIdx);
+  });
+});
+
+describe("IssueRailRow ProjectChip + status label", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useProjectsMock.mockReturnValue({ data: SEEDED_PROJECTS });
+  });
+
+  it("renders a ProjectChip with the default project key when project_id is null", () => {
+    const { getByTestId } = renderRow(makeRecord({ projectId: null }));
+    const chip = getByTestId("rail-row-project-chip-i-1");
+    expect(chip.textContent).toBe("default");
+  });
+
+  it("renders a ProjectChip with the matched project key when project_id is set", () => {
+    const { getByTestId } = renderRow(makeRecord({ projectId: "j-engv2" }));
+    const chip = getByTestId("rail-row-project-chip-i-1");
+    expect(chip.textContent).toBe("engineering-v2");
+  });
+
+  it("renders the resolved_status label as a supplementary mono span", () => {
+    const { container } = renderRow(
+      makeRecord({
+        resolvedStatus: makeStatus({
+          key: "in-progress",
+          label: "In progress",
+          color: "#f1c40f",
+        }),
+      }),
+    );
+    const meta = container.querySelector('[class*="meta"]');
+    expect(meta?.textContent).toContain("In progress");
+  });
+
+  it("places the ProjectChip before the TypeChip in the meta row", () => {
+    const { container, getByTestId } = renderRow(makeRecord({ projectId: "j-engv2" }));
+    const meta = container.querySelector('[class*="meta"]');
+    expect(meta).not.toBeNull();
+    const children = Array.from(meta!.children);
+    const chipIdx = children.indexOf(getByTestId("rail-row-project-chip-i-1"));
+    const typeChipIdx = children.findIndex((el) =>
+      (el.getAttribute("class") ?? "").toLowerCase().includes("type"),
+    );
+    expect(chipIdx).toBeGreaterThanOrEqual(0);
+    expect(typeChipIdx).toBeGreaterThan(chipIdx);
+  });
+
+  it("does not render a ProjectChip when projects list is empty", () => {
+    useProjectsMock.mockReturnValue({ data: [] });
+    const { queryByTestId } = renderRow(makeRecord({ projectId: null }));
+    expect(queryByTestId("rail-row-project-chip-i-1")).toBeNull();
   });
 });

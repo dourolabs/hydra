@@ -1,7 +1,9 @@
 import { Avatar, TypeChip, type PreviewCardTone } from "@hydra/ui";
 import { useIssue } from "../../issues/useIssue";
 import { principalAvatarKind, principalDisplayName } from "../../principal/formatPrincipal";
+import { ProjectChip } from "../../projects/ProjectChip";
 import { StatusChip } from "../../projects/StatusChip";
+import { useProjects } from "../../projects/useProjects";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import {
   FallbackPreviewCard,
@@ -29,6 +31,7 @@ interface IssuePreviewCardProps {
 
 export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
   const { data, isLoading, isError } = useIssue(id);
+  const { data: projects } = useProjects();
   const to = `/issues/${id}`;
 
   if (isLoading) {
@@ -44,6 +47,9 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
   const assignee = issue.assignee ?? null;
   const assigneeName = assignee ? principalDisplayName(assignee) : null;
   const title = issue.title || id;
+  const projectKey = issue.project_id
+    ? projects?.find((p) => p.project_id === issue.project_id)?.project.key ?? null
+    : projects?.find((p) => p.project.key === "default")?.project.key ?? null;
 
   return (
     <NavigatingPreviewCard
@@ -53,6 +59,12 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
       topRow={
         <>
           <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
+          {projectKey && (
+            <ProjectChip
+              projectKey={projectKey}
+              data-testid={`issue-preview-project-chip-${id}`}
+            />
+          )}
           <MonoId id={id} />
         </>
       }
