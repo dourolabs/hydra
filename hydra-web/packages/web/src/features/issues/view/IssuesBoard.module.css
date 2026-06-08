@@ -94,6 +94,45 @@
   background: var(--bg-2);
 }
 
+.colSubHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  flex-shrink: 0;
+}
+
+.subHeadAssignee {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.subHeadName {
+  font-family: var(--f-sans);
+  font-size: var(--t-xxs);
+  color: var(--fg-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modeBadge {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+  margin-left: auto;
+}
+
 .colCount {
   font-family: var(--f-mono);
   font-size: var(--t-xxs);
