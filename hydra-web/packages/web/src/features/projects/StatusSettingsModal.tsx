@@ -24,23 +24,32 @@ import {
   PROJECTS_QUERY_KEY,
   applyOptimisticUpsert,
 } from "./projectCache";
+import { blankStatus, validateStatusKey } from "./statusDefaults";
 import styles from "./StatusSettingsModal.module.css";
 
 export interface StatusSettingsModalProps {
   open: boolean;
   onClose: () => void;
   projectRecord: ProjectRecord;
-  statusKey: string;
-  issueCount: number;
+  /** Defaults to "edit". In "new" mode `statusKey`/`issueCount` are ignored. */
+  mode?: "edit" | "new";
+  /** Required in edit mode; ignored in new mode. */
+  statusKey?: string;
+  /** Required in edit mode; ignored in new mode. */
+  issueCount?: number;
 }
 
 export function StatusSettingsModal({
   open,
   onClose,
   projectRecord,
-  statusKey,
-  issueCount,
+  mode: modeProp,
+  statusKey: statusKeyProp,
+  issueCount: issueCountProp,
 }: StatusSettingsModalProps) {
+  const mode: "edit" | "new" = modeProp ?? "edit";
+  const statusKey = statusKeyProp ?? "";
+  const issueCount = issueCountProp ?? 0;
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const { data: agents } = useAgents();
@@ -48,13 +57,14 @@ export function StatusSettingsModal({
 
   const statuses = projectRecord.project.statuses;
   const initialStatus = useMemo(() => {
+    if (mode === "new") return null;
     const i = statuses.findIndex((s) => s.key === statusKey);
     return i >= 0 ? { status: statuses[i], index: i } : null;
-  }, [statuses, statusKey]);
+  }, [mode, statuses, statusKey]);
   const index = initialStatus?.index ?? -1;
 
-  const [draft, setDraft] = useState<StatusDefinition | null>(
-    initialStatus?.status ?? null,
+  const [draft, setDraft] = useState<StatusDefinition | null>(() =>
+    mode === "new" ? blankStatus(statuses.length) : initialStatus?.status ?? null,
   );
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
@@ -62,9 +72,11 @@ export function StatusSettingsModal({
   // status (gear click on another column reuses the same component instance).
   useEffect(() => {
     if (!open) return;
-    setDraft(initialStatus?.status ?? null);
+    setDraft(
+      mode === "new" ? blankStatus(statuses.length) : initialStatus?.status ?? null,
+    );
     setConfirmingDelete(false);
-  }, [open, initialStatus]);
+  }, [open, mode, statuses.length, initialStatus]);
 
   const projectId = projectRecord.project_id;
 
@@ -115,13 +127,43 @@ export function StatusSettingsModal({
     ? `Cannot delete a status with ${issueCount} open issues; move them first`
     : "";
 
+  const existingKeysExceptDraft = useMemo(
+    () => new Set(statuses.map((s) => s.key as string)),
+    [statuses],
+  );
+
+  const newModeError = useMemo(() => {
+    if (mode !== "new" || !draft) return null;
+    const keyErr = validateStatusKey(draft.key, existingKeysExceptDraft);
+    if (keyErr) return keyErr;
+    if (!draft.label.trim()) return "Status label is required";
+    return null;
+  }, [mode, draft, existingKeysExceptDraft]);
+
   const handleSave = useCallback(() => {
-    if (!draft || index < 0) return;
+    if (!draft) return;
     const trimmedPromptPath = draft.prompt_path?.trim() ?? "";
     const normalized: StatusDefinition = {
       ...draft,
+      key: draft.key.trim(),
+      label: draft.label.trim(),
       prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
     };
+    if (mode === "new") {
+      if (newModeError) {
+        addToast(newModeError, "error");
+        return;
+      }
+      const next = [...statuses, normalized];
+      saveMutation.mutate(next, {
+        onSuccess: () => {
+          addToast("Status added", "success");
+          onClose();
+        },
+      });
+      return;
+    }
+    if (index < 0) return;
     const next = statuses.map((s, i) => (i === index ? normalized : s));
     saveMutation.mutate(next, {
       onSuccess: () => {
@@ -129,7 +171,7 @@ export function StatusSettingsModal({
         onClose();
       },
     });
-  }, [draft, index, statuses, saveMutation, addToast, onClose]);
+  }, [draft, mode, newModeError, index, statuses, saveMutation, addToast, onClose]);
 
   // Move stays inside the modal: persist the swap but do NOT close, so the
   // user can keep nudging the column without reopening the gear each time.
@@ -160,7 +202,7 @@ export function StatusSettingsModal({
     });
   }, [canDelete, index, statuses, saveMutation, addToast, onClose]);
 
-  if (!draft || index < 0) {
+  if (!draft || (mode === "edit" && index < 0)) {
     return (
       <Modal open={open} onClose={onClose} title="Status settings">
         <div className={styles.body}>
@@ -175,12 +217,13 @@ export function StatusSettingsModal({
     );
   }
 
+  const title =
+    mode === "new"
+      ? `New status · ${projectRecord.project.name}`
+      : `Status — ${draft.label || draft.key}`;
+
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={`Status — ${draft.label || draft.key}`}
-    >
+    <Modal open={open} onClose={onClose} title={title}>
       <StatusForm
         draft={draft}
         setDraft={setDraft}
@@ -192,43 +235,51 @@ export function StatusSettingsModal({
         count={statuses.length}
         onMove={handleMove}
         saving={saveMutation.isPending}
+        mode={mode}
       />
+
+      {mode === "new" && newModeError && (
+        <span className={styles.error} data-testid="status-settings-new-error">
+          {newModeError}
+        </span>
+      )}
 
       <div className={styles.actions} data-testid="status-settings-actions">
         <div className={styles.actionsLeft}>
-          {confirmingDelete ? (
-            <>
-              <span className={styles.label}>Delete this status?</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setConfirmingDelete(false)}
-                disabled={saveMutation.isPending}
+          {mode === "edit" &&
+            (confirmingDelete ? (
+              <>
+                <span className={styles.label}>Delete this status?</span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={saveMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleDelete}
+                  disabled={saveMutation.isPending}
+                  data-testid="status-settings-delete-confirm"
+                >
+                  {saveMutation.isPending ? "Deleting…" : "Confirm delete"}
+                </Button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className={`${styles.miniButton} ${styles.miniButtonDanger}`}
+                onClick={() => setConfirmingDelete(true)}
+                disabled={!canDelete || saveMutation.isPending}
+                title={deleteTooltip || undefined}
+                data-testid="status-settings-delete"
               >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={handleDelete}
-                disabled={saveMutation.isPending}
-                data-testid="status-settings-delete-confirm"
-              >
-                {saveMutation.isPending ? "Deleting…" : "Confirm delete"}
-              </Button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className={`${styles.miniButton} ${styles.miniButtonDanger}`}
-              onClick={() => setConfirmingDelete(true)}
-              disabled={!canDelete || saveMutation.isPending}
-              title={deleteTooltip || undefined}
-              data-testid="status-settings-delete"
-            >
-              Delete status
-            </button>
-          )}
+                Delete status
+              </button>
+            ))}
         </div>
         <div className={styles.actionsRight}>
           <Button
@@ -243,15 +294,22 @@ export function StatusSettingsModal({
             variant="primary"
             size="md"
             onClick={handleSave}
-            disabled={saveMutation.isPending}
+            disabled={
+              saveMutation.isPending || (mode === "new" && !!newModeError)
+            }
             data-testid="status-settings-save"
           >
-            {saveMutation.isPending ? "Saving…" : "Save"}
+            {saveButtonLabel(mode, saveMutation.isPending)}
           </Button>
         </div>
       </div>
     </Modal>
   );
+}
+
+function saveButtonLabel(mode: "edit" | "new", pending: boolean): string {
+  if (mode === "new") return pending ? "Adding…" : "Add status";
+  return pending ? "Saving…" : "Save";
 }
 
 interface StatusFormProps {
@@ -265,6 +323,7 @@ interface StatusFormProps {
   count: number;
   onMove: (delta: number) => void;
   saving: boolean;
+  mode: "edit" | "new";
 }
 
 function StatusForm({
@@ -278,6 +337,7 @@ function StatusForm({
   count,
   onMove,
   saving,
+  mode,
 }: StatusFormProps) {
   const onEnter = draft.on_enter ?? null;
   const assignKind = principalKind(onEnter?.assign_to ?? null);
@@ -354,45 +414,58 @@ function StatusForm({
 
   return (
     <div className={styles.body} data-testid="status-settings-form">
-      <div className={styles.header}>
-        <button
-          type="button"
-          className={styles.miniButton}
-          onClick={() => onMove(-1)}
-          disabled={index === 0 || saving}
-          aria-label="Move left"
-          data-testid="status-settings-move-left"
-        >
-          ← Move left
-        </button>
-        <button
-          type="button"
-          className={styles.miniButton}
-          onClick={() => onMove(1)}
-          disabled={index === count - 1 || saving}
-          aria-label="Move right"
-          data-testid="status-settings-move-right"
-        >
-          Move right →
-        </button>
-        <span style={{ flex: 1 }} />
-        <span className={styles.label}>
-          Position {index + 1} of {count}
-        </span>
-      </div>
+      {mode === "edit" && (
+        <div className={styles.header}>
+          <button
+            type="button"
+            className={styles.miniButton}
+            onClick={() => onMove(-1)}
+            disabled={index === 0 || saving}
+            aria-label="Move left"
+            data-testid="status-settings-move-left"
+          >
+            ← Move left
+          </button>
+          <button
+            type="button"
+            className={styles.miniButton}
+            onClick={() => onMove(1)}
+            disabled={index === count - 1 || saving}
+            aria-label="Move right"
+            data-testid="status-settings-move-right"
+          >
+            Move right →
+          </button>
+          <span style={{ flex: 1 }} />
+          <span className={styles.label}>
+            Position {index + 1} of {count}
+          </span>
+        </div>
+      )}
 
       <div className={styles.statusInputs}>
-        <div>
+        {mode === "new" ? (
           <Input
             label="Key"
             value={draft.key}
-            disabled
+            onChange={(e) => patch({ key: e.target.value })}
+            placeholder="in-progress"
+            required
             data-testid="status-settings-key"
           />
-          <span className={styles.readOnlyNote}>
-            Key rename is not yet supported (orphans live issues).
-          </span>
-        </div>
+        ) : (
+          <div>
+            <Input
+              label="Key"
+              value={draft.key}
+              disabled
+              data-testid="status-settings-key"
+            />
+            <span className={styles.readOnlyNote}>
+              Key rename is not yet supported (orphans live issues).
+            </span>
+          </div>
+        )}
         <Input
           label="Label"
           value={draft.label}

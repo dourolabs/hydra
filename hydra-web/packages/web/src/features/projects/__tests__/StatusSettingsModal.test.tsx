@@ -510,6 +510,170 @@ describe("StatusSettingsModal", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  describe("new mode", () => {
+    it("opens with a blank draft and an editable Key field", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      const key = screen.getByTestId("status-settings-key") as HTMLInputElement;
+      expect(key.disabled).toBe(false);
+      // blankStatus(2) → key === "status-3" because there are already 2 statuses.
+      expect(key.value).toBe("status-3");
+
+      const label = screen.getByTestId("status-settings-label") as HTMLInputElement;
+      expect(label.value).toBe("");
+    });
+
+    it("default color cycles from LABEL_COLOR_PALETTE by statuses.length", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+      // ColorPicker is mocked to render `data-testid="color-<value>"`.
+      // Mocked palette = ["#111", "#222", "#333", "#444", "#555", "#666"].
+      // With 2 existing statuses, blankStatus(2) picks index 2 → "#333".
+      expect(screen.getByTestId("color-#333")).toBeDefined();
+    });
+
+    it("hides the move and delete controls in new mode", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      expect(screen.queryByTestId("status-settings-move-left")).toBeNull();
+      expect(screen.queryByTestId("status-settings-move-right")).toBeNull();
+      expect(screen.queryByTestId("status-settings-delete")).toBeNull();
+    });
+
+    it("Save appends the new status to the project's statuses array", () => {
+      const project = makeProject([
+        makeStatus("open", { label: "Open" }),
+        makeStatus("in-progress", { label: "In progress" }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-key"), {
+        target: { value: "blocked" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
+        target: { value: "Blocked" },
+      });
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      expect(mutateSpy).toHaveBeenCalledTimes(1);
+      const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
+      expect(next.map((s) => s.key)).toEqual(["open", "in-progress", "blocked"]);
+      expect(next[2].label).toBe("Blocked");
+    });
+
+    it("disables Save and shows error when key collides with an existing status", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-key"), {
+        target: { value: "open" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
+        target: { value: "Open" },
+      });
+
+      const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(screen.getByTestId("status-settings-new-error").textContent).toContain(
+        "already exists",
+      );
+    });
+
+    it("rejects invalid key characters", () => {
+      const project = makeProject([makeStatus("open")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-key"), {
+        target: { value: "Has Spaces" },
+      });
+      const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(screen.getByTestId("status-settings-new-error").textContent).toContain(
+        "lowercase letters",
+      );
+    });
+
+    it("closes after a successful save", async () => {
+      const project = makeProject([makeStatus("open")]);
+      const onClose = vi.fn();
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={onClose}
+          projectRecord={project}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-key"), {
+        target: { value: "blocked" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
+        target: { value: "Blocked" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("setKind('user') is a no-op when no users are loaded", () => {
     const project = makeProject([
       makeStatus("open"),

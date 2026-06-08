@@ -14,6 +14,7 @@ import {
 import { StatusChip } from "../../projects/StatusChip";
 import { ProjectChip } from "../../projects/ProjectChip";
 import { ProjectSettingsModal } from "../../projects/ProjectSettingsModal";
+import { ProjectCreateModal } from "../../projects/ProjectCreateModal";
 import { StatusSettingsModal } from "../../projects/StatusSettingsModal";
 import { useProjects, useProjectStatuses } from "../../projects/useProjects";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
@@ -147,6 +148,14 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
     issueCount: number;
   } | null>(null);
 
+  // "+ Add status" target: tracked by projectId for the same freshness
+  // reason as gearTarget — the new-status modal needs to see the live
+  // statuses array when computing the next default colour.
+  const [newStatusProjectId, setNewStatusProjectId] = useState<string | null>(
+    null,
+  );
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+
   const handleCardClick = (id: string) => {
     const params = new URLSearchParams({
       from: "dashboard",
@@ -184,6 +193,12 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
     ? projectRecordById.get(gearTarget.projectId) ?? null
     : null;
 
+  const newStatusProjectRecord = newStatusProjectId
+    ? projectRecordById.get(newStatusProjectId) ?? null
+    : null;
+
+  const showNewProjectRow = !baseFilters.project_id;
+
   return (
     <div className={styles.kanban}>
       {projects.map((project) => {
@@ -207,9 +222,20 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
             onCardClick={handleCardClick}
             onOpenSettings={setSettingsProjectId}
             onGearClick={handleGearClick}
+            onAddStatus={setNewStatusProjectId}
           />
         );
       })}
+      {showNewProjectRow && (
+        <button
+          type="button"
+          className={styles.newProjectGhost}
+          onClick={() => setNewProjectOpen(true)}
+          data-testid="board-new-project"
+        >
+          + New project
+        </button>
+      )}
       {settingsProject && (
         <ProjectSettingsModal
           open
@@ -224,6 +250,20 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
           projectRecord={gearProjectRecord}
           statusKey={gearTarget.statusKey}
           issueCount={gearTarget.issueCount}
+        />
+      )}
+      {newStatusProjectRecord && (
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => setNewStatusProjectId(null)}
+          projectRecord={newStatusProjectRecord}
+        />
+      )}
+      {showNewProjectRow && newProjectOpen && (
+        <ProjectCreateModal
+          open
+          onClose={() => setNewProjectOpen(false)}
         />
       )}
     </div>
@@ -243,6 +283,7 @@ interface ProjectSectionProps {
     statusKey: string,
     cell: BoardCellQuery | undefined,
   ) => void;
+  onAddStatus: (projectId: string) => void;
 }
 
 function ProjectSection({
@@ -254,6 +295,7 @@ function ProjectSection({
   onCardClick,
   onOpenSettings,
   onGearClick,
+  onAddStatus,
 }: ProjectSectionProps) {
   return (
     <section
@@ -309,6 +351,17 @@ function ProjectSection({
             />
           );
         })}
+        {projectRecord && (
+          <button
+            type="button"
+            className={styles.colGhost}
+            onClick={() => onAddStatus(projectRecord.project_id)}
+            aria-label={`Add status to ${project.name}`}
+            data-testid={`board-col-add-${project.key}`}
+          >
+            + Add status
+          </button>
+        )}
       </div>
     </section>
   );

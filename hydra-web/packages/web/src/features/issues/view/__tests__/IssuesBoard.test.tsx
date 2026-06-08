@@ -90,6 +90,12 @@ vi.mock("../../../../components/LargeModal.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+// ProjectCreateModal calls useUsername(); render it as "alice" so the
+// modal renders its inner ProjectEditor sentinel.
+vi.mock("../../../auth/useUsername", () => ({
+  useUsername: () => "alice",
+}));
+
 // Replace ProjectEditor with a sentinel that captures the props received,
 // so the modal-side assertions stay focused on wiring (which project's
 // data is in the modal, not the editor internals).
@@ -118,6 +124,7 @@ const lastModalProps: {
   statusKey?: string;
   issueCount?: number;
   open?: boolean;
+  mode?: "edit" | "new";
 } = {};
 vi.mock("../../../projects/StatusSettingsModal", () => ({
   StatusSettingsModal: ({
@@ -125,21 +132,24 @@ vi.mock("../../../projects/StatusSettingsModal", () => ({
     projectRecord,
     statusKey,
     issueCount,
+    mode,
     onClose,
   }: {
     open: boolean;
     projectRecord: ProjectRecord;
-    statusKey: string;
-    issueCount: number;
+    statusKey?: string;
+    issueCount?: number;
+    mode?: "edit" | "new";
     onClose: () => void;
   }) => {
     lastModalProps.open = open;
     lastModalProps.projectRecord = projectRecord;
     lastModalProps.statusKey = statusKey;
     lastModalProps.issueCount = issueCount;
+    lastModalProps.mode = mode ?? "edit";
     return open ? (
-      <div data-testid="status-settings-modal">
-        modal:{projectRecord.project_id}:{statusKey}:{issueCount}
+      <div data-testid="status-settings-modal" data-mode={mode ?? "edit"}>
+        modal:{projectRecord.project_id}:{statusKey ?? ""}:{issueCount ?? 0}
         <button data-testid="status-modal-close" onClick={onClose}>
           x
         </button>
@@ -420,5 +430,93 @@ describe("IssuesBoard column gear", () => {
     fireEvent.click(screen.getByTestId("board-col-gear-engineering-open"));
     // hasNextPage forces a sentinel positive count so the modal disables delete.
     expect(lastModalProps.issueCount).toBeGreaterThan(0);
+  });
+});
+
+describe("IssuesBoard '+ Add status' ghost column", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+    ];
+    defaultStatusesData = {
+      statuses: DEFAULT_STATUSES,
+      default_status_key: "open",
+    };
+  });
+
+  it("renders the '+ Add status' ghost column for real projects", () => {
+    renderBoard();
+    expect(screen.getByTestId("board-col-add-engineering")).toBeDefined();
+  });
+
+  it("suppresses the ghost column for the synthesized default-project section", () => {
+    renderBoard();
+    expect(screen.getByTestId("board-project-default")).toBeDefined();
+    expect(screen.queryByTestId("board-col-add-default")).toBeNull();
+  });
+
+  it("opens StatusSettingsModal in 'new' mode for the clicked project", () => {
+    renderBoard();
+    expect(screen.queryByTestId("status-settings-modal")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("board-col-add-engineering"));
+
+    const modal = screen.getByTestId("status-settings-modal");
+    expect(modal.getAttribute("data-mode")).toBe("new");
+    expect(lastModalProps.mode).toBe("new");
+    expect(lastModalProps.projectRecord?.project_id).toBe("j-eng");
+    expect(lastModalProps.statusKey).toBeUndefined();
+  });
+
+  it("dismisses the new-status modal when close is invoked", () => {
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-col-add-engineering"));
+    expect(screen.getByTestId("status-settings-modal")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("status-modal-close"));
+    expect(screen.queryByTestId("status-settings-modal")).toBeNull();
+  });
+});
+
+describe("IssuesBoard '+ New project' ghost row", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+    ];
+    defaultStatusesData = {
+      statuses: DEFAULT_STATUSES,
+      default_status_key: "open",
+    };
+  });
+
+  it("renders the '+ New project' row at the end of the board when not scoped", () => {
+    renderBoard();
+    expect(screen.getByTestId("board-new-project")).toBeDefined();
+  });
+
+  it("is suppressed when the board is scoped to a single project", () => {
+    render(
+      <MemoryRouter>
+        <IssuesBoard
+          baseFilters={{ project_id: "j-eng" }}
+          username="alice"
+          filterRootId={null}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId("board-new-project")).toBeNull();
+  });
+
+  it("opens ProjectCreateModal (a Modal containing the ProjectEditor sentinel) on click", () => {
+    renderBoard();
+    expect(screen.queryByTestId("project-editor")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("board-new-project"));
+
+    const editor = screen.getByTestId("project-editor");
+    // ProjectCreateModal omits projectId/initial — it's a "create" form.
+    expect(editor.getAttribute("data-project-id")).toBe("");
+    expect(editor.getAttribute("data-project-key")).toBe("");
+    expect(editor.getAttribute("data-creator")).toBe("alice");
   });
 });
