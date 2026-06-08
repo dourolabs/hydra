@@ -14,6 +14,7 @@ import {
 import { StatusChip } from "../../projects/StatusChip";
 import { ProjectChip } from "../../projects/ProjectChip";
 import { ProjectSettingsModal } from "../../projects/ProjectSettingsModal";
+import { StatusSettingsModal } from "../../projects/StatusSettingsModal";
 import { useProjects, useProjectStatuses } from "../../projects/useProjects";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import {
@@ -124,6 +125,28 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
 
   const { childStatusMap } = usePageIssueTrees(boardIssuesUnion, username);
 
+  // Real-ProjectRecord lookup by project_id for the gear button. The
+  // synthesized default project (project_id === null) intentionally has
+  // no entry — the gear is suppressed there because there's no record to
+  // mutate via apiClient.updateProject.
+  const projectRecordById = useMemo(() => {
+    const map = new Map<string, ProjectRecord>();
+    for (const rec of allProjects ?? []) {
+      map.set(rec.project_id, rec);
+    }
+    return map;
+  }, [allProjects]);
+
+  // Track the gear target by projectId, not by the ProjectRecord itself.
+  // The modal stays open across Move clicks; we need it to re-render
+  // against the freshest ProjectRecord (post optimistic-update) rather
+  // than a stale snapshot captured at click time.
+  const [gearTarget, setGearTarget] = useState<{
+    projectId: string;
+    statusKey: string;
+    issueCount: number;
+  } | null>(null);
+
   const handleCardClick = (id: string) => {
     const params = new URLSearchParams({
       from: "dashboard",
@@ -139,6 +162,28 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
     );
   }, [allProjects, settingsProjectId]);
 
+  const handleGearClick = (
+    projectRecord: ProjectRecord,
+    statusKey: string,
+    cell: BoardCellQuery | undefined,
+  ) => {
+    // The loaded `cell.issues.length` only reflects fetched pages. If
+    // there's another page on the server, treat the column as non-empty
+    // for the delete-safety check by passing a positive sentinel — we
+    // can't know how many issues live beyond the loaded window.
+    const loaded = cell?.issues.length ?? 0;
+    const issueCount = cell?.hasNextPage ? Math.max(loaded, 1) : loaded;
+    setGearTarget({
+      projectId: projectRecord.project_id,
+      statusKey,
+      issueCount,
+    });
+  };
+
+  const gearProjectRecord = gearTarget
+    ? projectRecordById.get(gearTarget.projectId) ?? null
+    : null;
+
   return (
     <div className={styles.kanban}>
       {projects.map((project) => {
@@ -147,15 +192,21 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
           const cell = perStatus?.get(s.key);
           return acc + (cell?.issues.length ?? 0);
         }, 0);
+        const projectRecord =
+          project.project_id !== null
+            ? projectRecordById.get(project.project_id) ?? null
+            : null;
         return (
           <ProjectSection
             key={project.project_id ?? "__default__"}
             project={project}
+            projectRecord={projectRecord}
             perStatus={perStatus}
             projectIssueCount={projectIssueCount}
             childStatusMap={childStatusMap}
             onCardClick={handleCardClick}
             onOpenSettings={setSettingsProjectId}
+            onGearClick={handleGearClick}
           />
         );
       })}
@@ -166,26 +217,43 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
           project={settingsProject}
         />
       )}
+      {gearTarget && gearProjectRecord && (
+        <StatusSettingsModal
+          open={true}
+          onClose={() => setGearTarget(null)}
+          projectRecord={gearProjectRecord}
+          statusKey={gearTarget.statusKey}
+          issueCount={gearTarget.issueCount}
+        />
+      )}
     </div>
   );
 }
 
 interface ProjectSectionProps {
   project: BoardProjectDescriptor;
+  projectRecord: ProjectRecord | null;
   perStatus: Map<string, BoardCellQuery> | undefined;
   projectIssueCount: number;
   childStatusMap: Map<string, ChildStatus[]>;
   onCardClick: (id: string) => void;
   onOpenSettings: (id: ProjectId) => void;
+  onGearClick: (
+    projectRecord: ProjectRecord,
+    statusKey: string,
+    cell: BoardCellQuery | undefined,
+  ) => void;
 }
 
 function ProjectSection({
   project,
+  projectRecord,
   perStatus,
   projectIssueCount,
   childStatusMap,
   onCardClick,
   onOpenSettings,
+  onGearClick,
 }: ProjectSectionProps) {
   return (
     <section
@@ -232,10 +300,12 @@ function ProjectSection({
             <BoardColumn
               key={status.key}
               project={project}
+              projectRecord={projectRecord}
               status={status}
               cell={cell}
               childStatusMap={childStatusMap}
               onCardClick={onCardClick}
+              onGearClick={onGearClick}
             />
           );
         })}
@@ -246,18 +316,26 @@ function ProjectSection({
 
 interface BoardColumnProps {
   project: BoardProjectDescriptor;
+  projectRecord: ProjectRecord | null;
   status: StatusDefinition;
   cell: BoardCellQuery | undefined;
   childStatusMap: Map<string, ChildStatus[]>;
   onCardClick: (id: string) => void;
+  onGearClick: (
+    projectRecord: ProjectRecord,
+    statusKey: string,
+    cell: BoardCellQuery | undefined,
+  ) => void;
 }
 
 function BoardColumn({
   project,
+  projectRecord,
   status,
   cell,
   childStatusMap,
   onCardClick,
+  onGearClick,
 }: BoardColumnProps) {
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
@@ -270,6 +348,18 @@ function BoardColumn({
         <StatusChip definition={status} />
         {isDefaultStatus && <span className={styles.defaultChip}>DEFAULT</span>}
         <span className={styles.colCount}>{colIssues.length}</span>
+        {projectRecord && (
+          <button
+            type="button"
+            className={styles.colGear}
+            onClick={() => onGearClick(projectRecord, status.key, cell)}
+            aria-label={`Settings for ${status.label || status.key}`}
+            title="Status settings"
+            data-testid={`board-col-gear-${project.key}-${status.key}`}
+          >
+            ⚙
+          </button>
+        )}
       </div>
       <div
         className={styles.colSubHead}
