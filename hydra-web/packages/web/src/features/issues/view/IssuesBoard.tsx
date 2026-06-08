@@ -16,11 +16,13 @@ import {
   horizontalListSortingStrategy,
   sortableKeyboardCoordinates,
   useSortable,
+  verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { Avatar, Icons, TypeChip } from "@hydra/ui";
 import type {
   IssueSummaryRecord,
   ListProjectsResponse,
+  Project,
   ProjectId,
   ProjectRecord,
   StatusDefinition,
@@ -73,6 +75,32 @@ function progressFraction(children: ChildStatus[] | undefined): number {
   return Math.round((done / total) * 100);
 }
 
+// Step used at the ends of the list when there is no opposite neighbor to
+// midpoint against. Large enough to leave headroom for many subsequent
+// inserts before float precision forces a renumber.
+const PROJECT_PRIORITY_STEP = 1024;
+
+// Pick a new `priority` for a project that just landed between `left` and
+// `right` after a drag-and-drop. Mid-points between neighbors give O(1)
+// reorders; ends extend by a fixed step.
+function computeReorderPriority(
+  left: ProjectRecord | undefined,
+  right: ProjectRecord | undefined,
+): number {
+  if (left && right) {
+    return (left.project.priority + right.project.priority) / 2;
+  }
+  if (right) return right.project.priority - PROJECT_PRIORITY_STEP;
+  if (left) return left.project.priority + PROJECT_PRIORITY_STEP;
+  return 0;
+}
+
+function sortProjectsByPriority(list: ProjectRecord[]): ProjectRecord[] {
+  return list
+    .slice()
+    .sort((a, b) => a.project.priority - b.project.priority);
+}
+
 export function IssuesBoard({
   baseFilters,
   username,
@@ -80,6 +108,8 @@ export function IssuesBoard({
   hideIssues = false,
 }: IssuesBoardProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { addToast } = useToast();
   const { data: allProjects } = useProjects();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
 
@@ -212,32 +242,129 @@ export function IssuesBoard({
     : null;
 
   const showNewProjectRow = !baseFilters.project_id;
+  // Only mount the project-reorder DnD when there's more than one project
+  // to reorder *and* the board isn't scoped to a single project.
+  const allowProjectReorder = !baseFilters.project_id && projects.length > 1;
+
+  const projectReorder = useMutation({
+    mutationFn: async ({
+      projectRecord,
+      priority,
+    }: {
+      projectRecord: ProjectRecord;
+      priority: number;
+    }) => {
+      return apiClient.updateProject(projectRecord.project_id, {
+        project: { ...projectRecord.project, priority },
+      });
+    },
+    onMutate: async ({ projectRecord, priority }) => {
+      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
+      const previous =
+        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        const nextProject: Project = { ...projectRecord.project, priority };
+        const upserted = applyOptimisticUpsert(
+          previous.projects,
+          projectRecord.project_id,
+          nextProject,
+        );
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, {
+          projects: sortProjectsByPriority(upserted),
+        });
+      }
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+      }
+      addToast(
+        err instanceof Error ? err.message : "Failed to reorder projects",
+        "error",
+      );
+    },
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
+    },
+  });
+
+  const projectSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const projectSortableIds = useMemo(
+    () => projects.map((p) => p.project_id),
+    [projects],
+  );
+
+  const handleProjectDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const ordered = projects
+        .map((p) => projectRecordById.get(p.project_id))
+        .filter((rec): rec is ProjectRecord => Boolean(rec));
+      const oldIdx = ordered.findIndex((r) => r.project_id === active.id);
+      const newIdx = ordered.findIndex((r) => r.project_id === over.id);
+      if (oldIdx < 0 || newIdx < 0) return;
+      const moved = ordered[oldIdx];
+      const next = arrayMove(ordered, oldIdx, newIdx);
+      const priority = computeReorderPriority(
+        next[newIdx - 1],
+        next[newIdx + 1],
+      );
+      projectReorder.mutate({ projectRecord: moved, priority });
+    },
+    [projects, projectRecordById, projectReorder],
+  );
+
+  const sections = projects.map((project) => {
+    const perStatus = cells.get(project.project_id);
+    const projectIssueCount = project.statuses.reduce((acc, s) => {
+      const cell = perStatus?.get(s.key);
+      return acc + (cell?.issues.length ?? 0);
+    }, 0);
+    const projectRecord = projectRecordById.get(project.project_id)!;
+    const sectionProps: ProjectSectionProps = {
+      project,
+      projectRecord,
+      perStatus,
+      projectIssueCount,
+      childStatusMap,
+      hideIssues,
+      onCardClick: handleCardClick,
+      onOpenSettings: setSettingsProjectId,
+      onGearClick: handleGearClick,
+      onAddStatus: setNewStatusProjectId,
+    };
+    return allowProjectReorder ? (
+      <SortableProjectSection key={project.project_id} {...sectionProps} />
+    ) : (
+      <ProjectSection key={project.project_id} {...sectionProps} />
+    );
+  });
 
   return (
     <div className={styles.kanban}>
-      {projects.map((project) => {
-        const perStatus = cells.get(project.project_id);
-        const projectIssueCount = project.statuses.reduce((acc, s) => {
-          const cell = perStatus?.get(s.key);
-          return acc + (cell?.issues.length ?? 0);
-        }, 0);
-        const projectRecord = projectRecordById.get(project.project_id)!;
-        return (
-          <ProjectSection
-            key={project.project_id}
-            project={project}
-            projectRecord={projectRecord}
-            perStatus={perStatus}
-            projectIssueCount={projectIssueCount}
-            childStatusMap={childStatusMap}
-            hideIssues={hideIssues}
-            onCardClick={handleCardClick}
-            onOpenSettings={setSettingsProjectId}
-            onGearClick={handleGearClick}
-            onAddStatus={setNewStatusProjectId}
-          />
-        );
-      })}
+      {allowProjectReorder ? (
+        <DndContext
+          sensors={projectSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleProjectDragEnd}
+        >
+          <SortableContext
+            items={projectSortableIds}
+            strategy={verticalListSortingStrategy}
+          >
+            {sections}
+          </SortableContext>
+        </DndContext>
+      ) : (
+        sections
+      )}
       {showNewProjectRow && (
         <button
           type="button"
@@ -299,6 +426,32 @@ interface ProjectSectionProps {
   onAddStatus: (projectId: string) => void;
 }
 
+interface SortableSectionHandleProps {
+  sortableSetNodeRef?: (node: HTMLElement | null) => void;
+  sortableStyle?: React.CSSProperties;
+  sortableIsDragging?: boolean;
+  sortableDragHandleProps?: React.HTMLAttributes<HTMLElement>;
+}
+
+function SortableProjectSection(props: ProjectSectionProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: props.project.project_id });
+  const style: React.CSSProperties = {
+    transform: transformToCss(transform),
+    transition: transition ?? undefined,
+    opacity: isDragging ? 0.6 : undefined,
+  };
+  return (
+    <ProjectSection
+      {...props}
+      sortableSetNodeRef={setNodeRef}
+      sortableStyle={style}
+      sortableIsDragging={isDragging}
+      sortableDragHandleProps={{ ...attributes, ...listeners }}
+    />
+  );
+}
+
 function ProjectSection({
   project,
   projectRecord,
@@ -310,7 +463,11 @@ function ProjectSection({
   onOpenSettings,
   onGearClick,
   onAddStatus,
-}: ProjectSectionProps) {
+  sortableSetNodeRef,
+  sortableStyle,
+  sortableIsDragging,
+  sortableDragHandleProps,
+}: ProjectSectionProps & SortableSectionHandleProps) {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const reorderMutation = useMutation({
@@ -411,12 +568,23 @@ function ProjectSection({
     </div>
   );
 
+  const sectionClasses = [styles.projectGroup];
+  if (sortableIsDragging) sectionClasses.push(styles.projectGroupDragging);
+  const barClasses = [styles.projectBar];
+  if (sortableDragHandleProps) barClasses.push(styles.projectBarDraggable);
+
   return (
     <section
-      className={styles.projectGroup}
+      ref={sortableSetNodeRef}
+      style={sortableStyle}
+      className={sectionClasses.join(" ")}
       data-testid={`board-project-${project.key}`}
     >
-      <div className={styles.projectBar}>
+      <div
+        className={barClasses.join(" ")}
+        data-testid={`board-project-bar-${project.key}`}
+        {...(sortableDragHandleProps ?? {})}
+      >
         <div className={styles.projectBarLeft}>
           <ProjectChip
             projectKey={project.key}

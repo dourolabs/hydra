@@ -40,11 +40,16 @@ vi.mock("../../../dashboard/usePageIssueTrees", () => ({
   }),
 }));
 
-// Capture the DnD onDragEnd handler so tests can synthesize drops without
+// Capture the DnD onDragEnd handlers so tests can synthesize drops without
 // driving a real pointer/keyboard event flow. Mocking out the dnd-kit
 // runtime here also keeps `useSortable` from requiring a real DOM measurer.
+// `lastDragEndHandler` and `lastSortableItems` keep the historical
+// "last-rendered" semantics (= innermost = status-level when sections
+// present). For project-level (outer) drag tests, use the parallel arrays.
 let lastDragEndHandler: ((event: unknown) => void) | null = null;
 let lastSortableItems: unknown[] = [];
+let dragEndHandlers: Array<(event: unknown) => void> = [];
+let sortableItemsList: unknown[][] = [];
 vi.mock("@dnd-kit/core", () => ({
   DndContext: ({
     children,
@@ -53,7 +58,10 @@ vi.mock("@dnd-kit/core", () => ({
     children: React.ReactNode;
     onDragEnd?: (event: unknown) => void;
   }) => {
-    lastDragEndHandler = onDragEnd ?? null;
+    if (onDragEnd) {
+      dragEndHandlers.push(onDragEnd);
+      lastDragEndHandler = onDragEnd;
+    }
     return <>{children}</>;
   },
   PointerSensor: function PointerSensor() {},
@@ -71,6 +79,7 @@ vi.mock("@dnd-kit/sortable", () => ({
     children: React.ReactNode;
     items: unknown[];
   }) => {
+    sortableItemsList.push(items);
     lastSortableItems = items;
     return <>{children}</>;
   },
@@ -89,6 +98,7 @@ vi.mock("@dnd-kit/sortable", () => ({
     return next;
   },
   horizontalListSortingStrategy: function strategy() {},
+  verticalListSortingStrategy: function vstrategy() {},
   sortableKeyboardCoordinates: function coords() {},
 }));
 
@@ -312,6 +322,8 @@ beforeEach(() => {
   lastModalProps.issueCount = undefined;
   lastDragEndHandler = null;
   lastSortableItems = [];
+  dragEndHandlers = [];
+  sortableItemsList = [];
   mockUpdateProject.mockReset();
   mockUpdateProject.mockResolvedValue({ project_id: "j-eng", version: 2 });
   mockAddToast.mockReset();
@@ -727,5 +739,196 @@ describe("IssuesBoard hideIssues (Projects tab)", () => {
     expect(
       within(cols[1]).getByTestId("board-col-head-engineering-in-progress"),
     ).toBeDefined();
+  });
+});
+
+describe("IssuesBoard project drag-and-drop reordering", () => {
+  function makeProjectWithPriority(
+    id: string,
+    key: string,
+    priority: number,
+  ): ProjectRecord {
+    const rec = makeProject(id, key, DEFAULT_STATUSES, key);
+    rec.project.priority = priority;
+    return rec;
+  }
+
+  beforeEach(() => {
+    projectsData = [
+      makeProjectWithPriority("j-a", "alpha", 1000),
+      makeProjectWithPriority("j-b", "beta", 2000),
+      makeProjectWithPriority("j-c", "gamma", 3000),
+    ];
+  });
+
+  // The board renders the project-reorder DndContext first, before each
+  // ProjectSection's status-reorder DndContext. That puts the project
+  // handler at index 0 of `dragEndHandlers`.
+  function projectDragEndHandler(): (event: unknown) => void {
+    expect(dragEndHandlers.length).toBeGreaterThan(0);
+    return dragEndHandlers[0]!;
+  }
+
+  it("registers a SortableContext over project ids when there's more than one project", () => {
+    renderBoard();
+    // First-rendered SortableContext is the project-level one. Status-level
+    // contexts are rendered later by each ProjectSection.
+    expect(sortableItemsList[0]).toEqual(["j-a", "j-b", "j-c"]);
+  });
+
+  it("decorates the project bar with the drag-handle marker when reorder is allowed", () => {
+    renderBoard();
+    expect(
+      screen.getByTestId("board-project-bar-alpha").getAttribute(
+        "data-sortable-handle",
+      ),
+    ).toBe("true");
+  });
+
+  it("skips the project DndContext when scoped to a single project", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <IssuesBoard
+            baseFilters={{ project_id: "j-a" }}
+            username="alice"
+            filterRootId={null}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    // Only the status-level SortableContext should be registered.
+    expect(sortableItemsList).toHaveLength(1);
+    expect(sortableItemsList[0]).toEqual(["open"]);
+    // The single project's bar shouldn't be a drag handle.
+    expect(
+      screen.getByTestId("board-project-bar-alpha").getAttribute(
+        "data-sortable-handle",
+      ),
+    ).toBeNull();
+  });
+
+  it("skips the project DndContext when only one project exists", () => {
+    projectsData = [makeProjectWithPriority("j-a", "alpha", 1000)];
+    renderBoard();
+    // Only the status-level SortableContext should be registered.
+    expect(sortableItemsList).toHaveLength(1);
+    expect(sortableItemsList[0]).toEqual(["open"]);
+    expect(
+      screen.getByTestId("board-project-bar-alpha").getAttribute(
+        "data-sortable-handle",
+      ),
+    ).toBeNull();
+  });
+
+  it("on drop between two neighbors sets priority to their midpoint", async () => {
+    renderBoard();
+    // Move 'gamma' (3000) to where 'alpha' (1000) was — between alpha and
+    // beta in the new order. New neighbors after move: alpha (1000) and
+    // beta (2000). Midpoint = 1500.
+    act(() => {
+      projectDragEndHandler()({
+        active: { id: "j-c" },
+        over: { id: "j-b" },
+      });
+    });
+
+    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
+    const [projectId, body] = mockUpdateProject.mock.calls[0];
+    expect(projectId).toBe("j-c");
+    expect(body.project.priority).toBe(1500);
+    // Other project fields should be preserved.
+    expect(body.project.key).toBe("gamma");
+  });
+
+  it("on drop at the top sets priority below the first neighbor's", async () => {
+    renderBoard();
+    // Drop gamma onto alpha — gamma ends up first, alpha shifts down.
+    act(() => {
+      projectDragEndHandler()({
+        active: { id: "j-c" },
+        over: { id: "j-a" },
+      });
+    });
+
+    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
+    const [, body] = mockUpdateProject.mock.calls[0];
+    // alpha's priority is 1000; gamma at top = 1000 - 1024 = -24.
+    expect(body.project.priority).toBe(-24);
+  });
+
+  it("on drop at the bottom sets priority above the last neighbor's", async () => {
+    renderBoard();
+    // Drop alpha onto gamma — alpha ends up last.
+    act(() => {
+      projectDragEndHandler()({
+        active: { id: "j-a" },
+        over: { id: "j-c" },
+      });
+    });
+
+    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
+    const [, body] = mockUpdateProject.mock.calls[0];
+    // gamma's priority is 3000; alpha at bottom = 3000 + 1024 = 4024.
+    expect(body.project.priority).toBe(4024);
+  });
+
+  it("is a no-op when the drop target equals the dragged project", () => {
+    renderBoard();
+    act(() => {
+      projectDragEndHandler()({
+        active: { id: "j-a" },
+        over: { id: "j-a" },
+      });
+    });
+    expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+
+  it("optimistically reorders the projects cache and rolls back on save error", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const before: ListProjectsResponse = { projects: [...projectsData!] };
+    client.setQueryData(["projects"], before);
+
+    let rejectUpdate: ((err: Error) => void) | null = null;
+    mockUpdateProject.mockReturnValueOnce(
+      new Promise<never>((_, reject) => {
+        rejectUpdate = reject;
+      }),
+    );
+
+    renderBoard(client);
+
+    // Move gamma to between alpha and beta — priority becomes 1500,
+    // sorting it into the middle position.
+    act(() => {
+      projectDragEndHandler()({
+        active: { id: "j-c" },
+        over: { id: "j-b" },
+      });
+    });
+
+    await waitFor(() => {
+      const snapshot = client.getQueryData<ListProjectsResponse>(["projects"]);
+      const ids = snapshot?.projects.map((p) => p.project_id);
+      expect(ids).toEqual(["j-a", "j-c", "j-b"]);
+      const gamma = snapshot?.projects.find((p) => p.project_id === "j-c");
+      expect(gamma?.project.priority).toBe(1500);
+    });
+
+    act(() => {
+      rejectUpdate!(new Error("nope"));
+    });
+
+    await waitFor(() => {
+      const snapshot = client.getQueryData<ListProjectsResponse>(["projects"]);
+      const ids = snapshot?.projects.map((p) => p.project_id);
+      expect(ids).toEqual(["j-a", "j-b", "j-c"]);
+    });
+    expect(mockAddToast).toHaveBeenCalledWith("nope", "error");
   });
 });
