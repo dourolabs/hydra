@@ -1,8 +1,26 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
 import { Avatar, Icons, TypeChip } from "@hydra/ui";
 import type {
   IssueSummaryRecord,
+  ListProjectsResponse,
   ProjectId,
   ProjectRecord,
   StatusDefinition,
@@ -17,6 +35,12 @@ import { ProjectSettingsModal } from "../../projects/ProjectSettingsModal";
 import { ProjectCreateModal } from "../../projects/ProjectCreateModal";
 import { StatusSettingsModal } from "../../projects/StatusSettingsModal";
 import { useProjects, useProjectStatuses } from "../../projects/useProjects";
+import {
+  PROJECTS_QUERY_KEY,
+  applyOptimisticUpsert,
+} from "../../projects/projectCache";
+import { apiClient } from "../../../api/client";
+import { useToast } from "../../toast/useToast";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import {
   useBoardIssuesByProject,
@@ -297,6 +321,129 @@ function ProjectSection({
   onGearClick,
   onAddStatus,
 }: ProjectSectionProps) {
+  // Hook calls must be unconditional. The default-project section
+  // (projectRecord === null) skips DnD entirely, but the mutation/sensor
+  // hooks below are cheap to declare and harmless when unused.
+  const queryClient = useQueryClient();
+  const { addToast } = useToast();
+  const reorderMutation = useMutation({
+    mutationFn: async (nextStatuses: StatusDefinition[]) => {
+      if (!projectRecord) {
+        throw new Error("Cannot reorder columns on the default project");
+      }
+      return apiClient.updateProject(projectRecord.project_id, {
+        project: { ...projectRecord.project, statuses: nextStatuses },
+      });
+    },
+    onMutate: async (nextStatuses) => {
+      if (!projectRecord) return { previous: undefined };
+      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
+      const previous =
+        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        const nextProject = {
+          ...projectRecord.project,
+          statuses: nextStatuses,
+        };
+        const next: ListProjectsResponse = {
+          projects: applyOptimisticUpsert(
+            previous.projects,
+            projectRecord.project_id,
+            nextProject,
+          ),
+        };
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
+      }
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+      }
+      addToast(
+        err instanceof Error ? err.message : "Failed to reorder columns",
+        "error",
+      );
+    },
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
+      queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
+    },
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const sortableIds = useMemo(
+    () => project.statuses.map((s) => s.key),
+    [project.statuses],
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (!projectRecord) return;
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const statuses = projectRecord.project.statuses;
+      const oldIdx = statuses.findIndex((s) => s.key === active.id);
+      const newIdx = statuses.findIndex((s) => s.key === over.id);
+      if (oldIdx < 0 || newIdx < 0) return;
+      const next = arrayMove(statuses, oldIdx, newIdx);
+      reorderMutation.mutate(next);
+    },
+    [projectRecord, reorderMutation],
+  );
+
+  const columns = project.statuses.map((status) => {
+    const cell = perStatus?.get(status.key);
+    if (projectRecord) {
+      return (
+        <SortableBoardColumn
+          key={status.key}
+          project={project}
+          projectRecord={projectRecord}
+          status={status}
+          cell={cell}
+          childStatusMap={childStatusMap}
+          onCardClick={onCardClick}
+          onGearClick={onGearClick}
+        />
+      );
+    }
+    return (
+      <BoardColumn
+        key={status.key}
+        project={project}
+        projectRecord={null}
+        status={status}
+        cell={cell}
+        childStatusMap={childStatusMap}
+        onCardClick={onCardClick}
+        onGearClick={onGearClick}
+      />
+    );
+  });
+
+  const columnsRow = (
+    <div className={styles.projectColumns}>
+      {columns}
+      {projectRecord && (
+        <button
+          type="button"
+          className={styles.colGhost}
+          onClick={() => onAddStatus(projectRecord.project_id)}
+          aria-label={`Add status to ${project.name}`}
+          data-testid={`board-col-add-${project.key}`}
+        >
+          + Add status
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <section
       className={styles.projectGroup}
@@ -335,34 +482,22 @@ function ProjectSection({
           )}
         </div>
       </div>
-      <div className={styles.projectColumns}>
-        {project.statuses.map((status) => {
-          const cell = perStatus?.get(status.key);
-          return (
-            <BoardColumn
-              key={status.key}
-              project={project}
-              projectRecord={projectRecord}
-              status={status}
-              cell={cell}
-              childStatusMap={childStatusMap}
-              onCardClick={onCardClick}
-              onGearClick={onGearClick}
-            />
-          );
-        })}
-        {projectRecord && (
-          <button
-            type="button"
-            className={styles.colGhost}
-            onClick={() => onAddStatus(projectRecord.project_id)}
-            aria-label={`Add status to ${project.name}`}
-            data-testid={`board-col-add-${project.key}`}
+      {projectRecord ? (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={sortableIds}
+            strategy={horizontalListSortingStrategy}
           >
-            + Add status
-          </button>
-        )}
-      </div>
+            {columnsRow}
+          </SortableContext>
+        </DndContext>
+      ) : (
+        columnsRow
+      )}
     </section>
   );
 }
@@ -381,6 +516,47 @@ interface BoardColumnProps {
   ) => void;
 }
 
+interface SortableHandleProps {
+  setNodeRef?: (node: HTMLElement | null) => void;
+  style?: React.CSSProperties;
+  isDragging?: boolean;
+  dragHandleProps?: React.HTMLAttributes<HTMLElement>;
+}
+
+function transformToCss(
+  transform: { x: number; y: number; scaleX: number; scaleY: number } | null,
+): string | undefined {
+  if (!transform) return undefined;
+  return `translate3d(${transform.x}px, ${transform.y}px, 0) scaleX(${transform.scaleX}) scaleY(${transform.scaleY})`;
+}
+
+function SortableBoardColumn(props: BoardColumnProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id: props.status.key });
+  const style: React.CSSProperties = {
+    transform: transformToCss(transform),
+    transition: transition ?? undefined,
+    opacity: isDragging ? 0.6 : undefined,
+  };
+  return (
+    <BoardColumn
+      {...props}
+      setNodeRef={setNodeRef}
+      style={style}
+      isDragging={isDragging}
+      isOver={isOver}
+      dragHandleProps={{ ...attributes, ...listeners }}
+    />
+  );
+}
+
 function BoardColumn({
   project,
   projectRecord,
@@ -389,15 +565,36 @@ function BoardColumn({
   childStatusMap,
   onCardClick,
   onGearClick,
-}: BoardColumnProps) {
+  setNodeRef,
+  style,
+  isDragging,
+  isOver,
+  dragHandleProps,
+}: BoardColumnProps & SortableHandleProps & { isOver?: boolean }) {
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const isDefaultStatus = status.key === project.default_status_key;
   const assignTo = status.on_enter?.assign_to ?? null;
   const interactiveLabel = status.interactive === true ? "interactive" : "auto";
+  const colClasses = [styles.col];
+  if (isDragging) colClasses.push(styles.colDragging);
+  if (isOver && !isDragging) colClasses.push(styles.colDropOver);
   return (
-    <div className={styles.col} data-testid={`board-col-${project.key}-${status.key}`}>
-      <div className={styles.colHead}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={colClasses.join(" ")}
+      data-testid={`board-col-${project.key}-${status.key}`}
+    >
+      <div
+        className={
+          dragHandleProps
+            ? `${styles.colHead} ${styles.colHeadDraggable}`
+            : styles.colHead
+        }
+        data-testid={`board-col-head-${project.key}-${status.key}`}
+        {...(dragHandleProps ?? {})}
+      >
         <StatusChip definition={status} />
         {isDefaultStatus && <span className={styles.defaultChip}>DEFAULT</span>}
         <span className={styles.colCount}>{colIssues.length}</span>
