@@ -5,9 +5,10 @@ import type { IssueFilters } from "../usePaginatedIssues";
 import { FilterBar, type Filter, type FilterDefinitions } from "../../filters";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
+import { IssuesCards } from "./IssuesCards";
 import styles from "./IssuesView.module.css";
 
-export type IssuesLayout = "table" | "board";
+export type IssuesLayout = "table" | "board" | "cards";
 
 interface IssuesViewProps {
   layout: IssuesLayout;
@@ -97,11 +98,22 @@ export function IssuesView({
               <Icons.IconDot size={14} />
               Board
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={layout === "cards"}
+              className={layout === "cards" ? styles.segmentedActive : undefined}
+              onClick={() => onLayoutChange("cards")}
+              data-testid="issues-layout-cards"
+            >
+              <Icons.IconDoc size={14} />
+              Cards
+            </button>
           </div>
         </div>
       </div>
 
-      {layout === "table" && (
+      {(layout === "table" || layout === "cards") && (
         <div className={styles.toolbar}>
           <div className={styles.searchBox}>
             <span className={styles.searchIcon}>
@@ -140,6 +152,40 @@ export function IssuesView({
 
             {issues.length > 0 && (
               <IssuesTable
+                issues={issues}
+                childStatusMap={childStatusMap}
+                sessionsByIssue={sessionsByIssue}
+                filterRootId={filterRootId}
+              />
+            )}
+
+            {hasNextPage && (
+              <div className={styles.loadMore}>
+                <button
+                  type="button"
+                  className={styles.loadMoreButton}
+                  onClick={onLoadMore}
+                  disabled={isFetchingNextPage}
+                >
+                  {isFetchingNextPage ? "Loading…" : "Load more"}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {layout === "cards" && (
+          <>
+            {isLoading && issues.length === 0 && (
+              <div className={styles.empty}>Loading issues…</div>
+            )}
+
+            {!isLoading && issues.length === 0 && (
+              <div className={styles.empty}>No issues match the current filters.</div>
+            )}
+
+            {issues.length > 0 && (
+              <IssuesCards
                 issues={issues}
                 childStatusMap={childStatusMap}
                 sessionsByIssue={sessionsByIssue}
