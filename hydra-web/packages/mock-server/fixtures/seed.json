@@ -342,7 +342,6 @@
       "resolved_status": {
         "key": "inbox",
         "label": "Inbox",
-        "icon": "inbox",
         "color": "#6b7280",
         "unblocks_parents": false,
         "unblocks_dependents": false,
@@ -495,7 +494,6 @@
       "resolved_status": {
         "key": "in-development",
         "label": "In development",
-        "icon": "code",
         "color": "#3b82f6",
         "unblocks_parents": false,
         "unblocks_dependents": false,
@@ -713,7 +711,6 @@
       "resolved_status": {
         "key": "pending-release",
         "label": "Pending release",
-        "icon": "rocket",
         "color": "#10b981",
         "unblocks_parents": true,
         "unblocks_dependents": true,
@@ -735,7 +732,6 @@
       "resolved_status": {
         "key": "in-review",
         "label": "In review",
-        "icon": "eye",
         "color": "#8b5cf6",
         "unblocks_parents": false,
         "unblocks_dependents": false,
@@ -761,7 +757,6 @@
       "resolved_status": {
         "key": "backlog",
         "label": "Backlog",
-        "icon": "list",
         "color": "#94a3b8",
         "unblocks_parents": false,
         "unblocks_dependents": false,
@@ -878,7 +873,6 @@
       "resolved_status": {
         "key": "pending",
         "label": "Pending",
-        "icon": "clock",
         "color": "#f59e0b",
         "unblocks_parents": false,
         "unblocks_dependents": false,
@@ -3021,7 +3015,6 @@
         {
           "key": "inbox",
           "label": "Inbox",
-          "icon": "inbox",
           "color": "#6b7280",
           "unblocks_parents": false,
           "unblocks_dependents": false,
@@ -3031,7 +3024,6 @@
         {
           "key": "backlog",
           "label": "Backlog",
-          "icon": "list",
           "color": "#94a3b8",
           "unblocks_parents": false,
           "unblocks_dependents": false,
@@ -3042,7 +3034,6 @@
         {
           "key": "pending",
           "label": "Pending",
-          "icon": "clock",
           "color": "#f59e0b",
           "unblocks_parents": false,
           "unblocks_dependents": false,
@@ -3052,7 +3043,6 @@
         {
           "key": "in-development",
           "label": "In development",
-          "icon": "code",
           "color": "#3b82f6",
           "unblocks_parents": false,
           "unblocks_dependents": false,
@@ -3063,7 +3053,6 @@
         {
           "key": "in-review",
           "label": "In review",
-          "icon": "eye",
           "color": "#8b5cf6",
           "unblocks_parents": false,
           "unblocks_dependents": false,
@@ -3077,7 +3066,6 @@
         {
           "key": "pending-release",
           "label": "Pending release",
-          "icon": "rocket",
           "color": "#10b981",
           "unblocks_parents": true,
           "unblocks_dependents": true,

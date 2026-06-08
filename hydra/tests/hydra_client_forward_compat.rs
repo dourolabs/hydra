@@ -432,7 +432,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
                 {
                     "key": "open",
                     "label": "Open",
-                    "icon": "circle",
                     "color": "#abcdef",
                     "unblocks_parents": false,
                     "unblocks_dependents": false,
@@ -618,7 +617,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         vec![StatusDefinition::new(
             StatusKey::try_new("open").unwrap(),
             "Open".to_string(),
-            hydra_common::api::v1::projects::IconKey::try_new("circle").unwrap(),
             "#abcdef".parse().unwrap(),
             false,
             false,
@@ -832,7 +830,6 @@ fn forward_project_json(project_id: &ProjectId) -> Value {
                 {
                     "key": "open",
                     "label": "Open",
-                    "icon": "circle",
                     "color": "#abcdef",
                     "unblocks_parents": false,
                     "unblocks_dependents": false,

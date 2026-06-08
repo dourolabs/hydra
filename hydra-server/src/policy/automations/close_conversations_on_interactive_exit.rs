@@ -167,7 +167,7 @@ mod tests {
     use chrono::Utc;
     use hydra_common::api::v1::agents::AgentName;
     use hydra_common::api::v1::projects::{
-        IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+        Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
     };
     use hydra_common::api::v1::users::Username as ApiUsername;
     use std::sync::Arc;
@@ -208,7 +208,6 @@ mod tests {
         let mut interactive_def = StatusDefinition::new(
             interactive_key.clone(),
             "Interactive Design".to_string(),
-            IconKey::try_new("chat").unwrap(),
             "#3498db".parse().unwrap(),
             false,
             false,
@@ -219,7 +218,6 @@ mod tests {
         let backlog_def = StatusDefinition::new(
             backlog_key.clone(),
             "Backlog".to_string(),
-            IconKey::try_new("list").unwrap(),
             "#9b59b6".parse().unwrap(),
             false,
             false,

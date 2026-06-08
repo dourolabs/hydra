@@ -1191,7 +1191,7 @@ mod tests {
     #[tokio::test]
     async fn spawns_session_for_issue_with_custom_status() -> anyhow::Result<()> {
         use hydra_common::api::v1::projects::{
-            IconKey, Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+            Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
         };
         use hydra_common::principal::Principal;
 
@@ -1217,7 +1217,6 @@ mod tests {
             StatusDefinition::new(
                 StatusKey::try_new("backlog").unwrap(),
                 "Backlog".to_string(),
-                IconKey::try_new("circle").unwrap(),
                 "#abcdef".parse().unwrap(),
                 false,
                 false,
@@ -1227,7 +1226,6 @@ mod tests {
             StatusDefinition::new(
                 StatusKey::try_new("done").unwrap(),
                 "Done".to_string(),
-                IconKey::try_new("circle").unwrap(),
                 "#abcdef".parse().unwrap(),
                 true,
                 true,

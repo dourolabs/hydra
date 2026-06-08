@@ -25,7 +25,6 @@ function defaultProject(): Project {
       {
         key: "open",
         label: "Open",
-        icon: "circle",
         color: "#3498db",
         unblocks_parents: false,
         unblocks_dependents: false,
@@ -34,7 +33,6 @@ function defaultProject(): Project {
       {
         key: "in-progress",
         label: "In progress",
-        icon: "circle-dot",
         color: "#f1c40f",
         unblocks_parents: false,
         unblocks_dependents: false,
@@ -43,7 +41,6 @@ function defaultProject(): Project {
       {
         key: "closed",
         label: "Closed",
-        icon: "check-circle",
         color: "#2ecc71",
         unblocks_parents: true,
         unblocks_dependents: true,
@@ -52,7 +49,6 @@ function defaultProject(): Project {
       {
         key: "dropped",
         label: "Dropped",
-        icon: "x-circle",
         color: "#795548",
         unblocks_parents: true,
         unblocks_dependents: false,
@@ -61,7 +57,6 @@ function defaultProject(): Project {
       {
         key: "failed",
         label: "Failed",
-        icon: "alert-circle",
         color: "#e74c3c",
         unblocks_parents: true,
         unblocks_dependents: false,

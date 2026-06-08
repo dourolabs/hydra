@@ -418,12 +418,6 @@ function StatusEditor({
           placeholder="In progress"
           required
         />
-        <Input
-          label="Icon"
-          value={status.icon}
-          onChange={(e) => onChange({ icon: e.target.value })}
-          placeholder="circle"
-        />
       </div>
 
       <div className={styles.row}>
@@ -600,7 +594,6 @@ function blankStatus(index: number): StatusDefinition {
   return {
     key: `status-${index + 1}`,
     label: "",
-    icon: "circle",
     color: LABEL_COLOR_PALETTE[index % LABEL_COLOR_PALETTE.length],
     unblocks_parents: false,
     unblocks_dependents: false,
@@ -615,7 +608,6 @@ function defaultNewStatuses(): StatusDefinition[] {
     {
       key: "open",
       label: "Open",
-      icon: "circle",
       color: LABEL_COLOR_PALETTE[5],
       unblocks_parents: false,
       unblocks_dependents: false,
@@ -626,7 +618,6 @@ function defaultNewStatuses(): StatusDefinition[] {
     {
       key: "in-progress",
       label: "In progress",
-      icon: "circle-half",
       color: LABEL_COLOR_PALETTE[2],
       unblocks_parents: false,
       unblocks_dependents: false,
@@ -637,7 +628,6 @@ function defaultNewStatuses(): StatusDefinition[] {
     {
       key: "closed",
       label: "Closed",
-      icon: "check",
       color: LABEL_COLOR_PALETTE[3],
       unblocks_parents: true,
       unblocks_dependents: true,

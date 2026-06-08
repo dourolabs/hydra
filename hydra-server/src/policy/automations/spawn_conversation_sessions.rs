@@ -1426,7 +1426,7 @@ mod tests {
         use crate::app::test_helpers::issue_with_status;
         use crate::domain::issues::IssueStatus;
         use hydra_common::api::v1::projects::{
-            IconKey, Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
+            Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
         };
 
         let state = state_with_default_model("default-model");
@@ -1439,7 +1439,6 @@ mod tests {
             let mut def = StatusDefinition::new(
                 StatusKey::try_new("backlog").unwrap(),
                 "Backlog".to_string(),
-                IconKey::try_new("list").unwrap(),
                 "#9b59b6".parse().unwrap(),
                 false,
                 false,

@@ -306,9 +306,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
     use crate::test_utils::test_state;
-    use hydra_common::api::v1::projects::{
-        IconKey, Project, ProjectKey, StatusDefinition, StatusKey,
-    };
+    use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
     use hydra_common::api::v1::users::Username;
 
     fn sample_agent(name: &str) -> Agent {
@@ -328,7 +326,6 @@ mod tests {
         let mut def = StatusDefinition::new(
             StatusKey::try_new(key).unwrap(),
             key.to_string(),
-            IconKey::try_new("circle").unwrap(),
             "#abcdef".parse().unwrap(),
             false,
             false,

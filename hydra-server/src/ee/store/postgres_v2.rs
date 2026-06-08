@@ -10267,7 +10267,7 @@ mod tests {
     /// test.
     fn sample_project_pg() -> Project {
         use hydra_common::api::v1::projects::{
-            IconKey, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+            ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
         };
         use hydra_common::api::v1::users::Username as ApiUsername;
         use hydra_common::principal::Principal;
@@ -10276,7 +10276,6 @@ mod tests {
             StatusDefinition::new(
                 StatusKey::try_new("backlog").unwrap(),
                 "Backlog".to_string(),
-                IconKey::try_new("circle").unwrap(),
                 "#abcdef".parse().unwrap(),
                 false,
                 false,
@@ -10291,7 +10290,6 @@ mod tests {
             StatusDefinition::new(
                 StatusKey::try_new("done").unwrap(),
                 "Done".to_string(),
-                IconKey::try_new("check-circle").unwrap(),
                 "#00ff00".parse().unwrap(),
                 true,
                 true,

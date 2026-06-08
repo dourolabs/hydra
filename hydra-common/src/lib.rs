@@ -145,7 +145,6 @@ mod ts_export {
         // API v1: projects
         crate::projects::ProjectKey::export_all(&cfg).expect("ProjectKey");
         crate::projects::StatusKey::export_all(&cfg).expect("StatusKey");
-        crate::projects::IconKey::export_all(&cfg).expect("IconKey");
         crate::projects::StatusOnEnter::export_all(&cfg).expect("StatusOnEnter");
         crate::projects::StatusDefinition::export_all(&cfg).expect("StatusDefinition");
         crate::projects::Project::export_all(&cfg).expect("Project");

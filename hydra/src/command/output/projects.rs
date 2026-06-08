@@ -62,7 +62,6 @@ fn write_status_summary<W: Write>(
     indent: &str,
 ) -> Result<()> {
     writeln!(writer, "{indent}- {} ({})", status.key, status.label)?;
-    writeln!(writer, "{indent}  icon: {}", status.icon)?;
     writeln!(writer, "{indent}  color: {}", status.color)?;
     writeln!(
         writer,

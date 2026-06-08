@@ -193,16 +193,16 @@ const SEEDED_PROJECTS = [
 ];
 const ENG_V2_STATUSES = {
   statuses: [
-    { key: "inbox", label: "Inbox", icon: "i", color: "#aaa" },
-    { key: "backlog", label: "Backlog", icon: "b", color: "#bbb" },
-    { key: "pending", label: "Pending", icon: "p", color: "#ccc" },
+    { key: "inbox", label: "Inbox", color: "#aaa" },
+    { key: "backlog", label: "Backlog", color: "#bbb" },
+    { key: "pending", label: "Pending", color: "#ccc" },
   ],
   default_status_key: "inbox",
 };
 const DEFAULT_STATUSES = {
   statuses: [
-    { key: "open", label: "Open", icon: "o", color: "#111" },
-    { key: "in-progress", label: "In progress", icon: "i", color: "#222" },
+    { key: "open", label: "Open", color: "#111" },
+    { key: "in-progress", label: "In progress", color: "#222" },
   ],
   default_status_key: "open",
 };

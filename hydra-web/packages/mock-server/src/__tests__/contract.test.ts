@@ -1339,16 +1339,15 @@ describe("Seed data", () => {
 
   it("seed issues with project_id round-trip resolved_status through GET /v1/issues/:id", async () => {
     // i-seed00018 was seeded with project_id=j-engv2 and resolved_status for
-    // `in-review` (icon=eye, color=#8b5cf6). Both fields must survive the
-    // fixture → store → wire round trip so the frontend can render the
-    // project-specific status badge without a second round trip.
+    // `in-review` (color=#8b5cf6). Both fields must survive the fixture →
+    // store → wire round trip so the frontend can render the project-specific
+    // status badge without a second round trip.
     const inReview = await client.getIssue("i-seed00018");
     expect(inReview.issue.project_id).toBe("j-engv2");
     expect(inReview.issue.status).toBe("in-review");
     expect(inReview.issue.resolved_status).toMatchObject({
       key: "in-review",
       label: "In review",
-      icon: "eye",
       color: "#8b5cf6",
       unblocks_parents: false,
       unblocks_dependents: false,

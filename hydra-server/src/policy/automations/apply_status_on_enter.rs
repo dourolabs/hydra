@@ -260,7 +260,7 @@ mod tests {
     use crate::test_utils;
     use chrono::Utc;
     use hydra_common::api::v1::projects::{
-        IconKey, Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+        Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
     };
     use hydra_common::principal::Principal;
     use std::sync::Arc;
@@ -291,7 +291,6 @@ mod tests {
         StatusDefinition::new(
             StatusKey::try_new(key).unwrap(),
             key.to_string(),
-            IconKey::try_new("circle").unwrap(),
             "#abcdef".parse().unwrap(),
             unblocks_parents,
             unblocks_parents,

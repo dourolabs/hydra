@@ -35,7 +35,7 @@ pub fn load_body_file(path: &Path) -> Result<ProjectBodyFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hydra_common::api::v1::projects::{IconKey, StatusDefinition};
+    use hydra_common::api::v1::projects::StatusDefinition;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -53,7 +53,6 @@ mod tests {
                     {
                         "key": "open",
                         "label": "Open",
-                        "icon": "circle",
                         "color": "#abcdef",
                         "unblocks_parents": false,
                         "unblocks_dependents": false,
@@ -76,7 +75,6 @@ mod tests {
 statuses:
   - key: open
     label: Open
-    icon: circle
     color: "#abcdef"
     unblocks_parents: false
     unblocks_dependents: false
@@ -96,7 +94,6 @@ default_status_key: open
 statuses:
   - key: backlog
     label: Backlog
-    icon: list
     color: "#9b59b6"
     unblocks_parents: false
     unblocks_dependents: false
@@ -137,7 +134,6 @@ default_status_key: backlog
         let def = StatusDefinition::new(
             StatusKey::try_new("inbox").unwrap(),
             "Inbox".into(),
-            IconKey::try_new("inbox").unwrap(),
             "#ffaa00".parse().unwrap(),
             false,
             false,
@@ -166,7 +162,6 @@ default_status_key: backlog
 statuses:
   - key: backlog
     label: Backlog
-    icon: list
     color: "#9b59b6"
     unblocks_parents: false
     unblocks_dependents: false
@@ -174,7 +169,6 @@ statuses:
     prompt_path: /projects/engineering-v2/statuses/backlog.md
   - key: in-review
     label: In review
-    icon: eye
     color: "#f1c40f"
     unblocks_parents: false
     unblocks_dependents: false
@@ -205,7 +199,6 @@ default_status_key: backlog
 statuses:
   - key: pending-release
     label: Pending release
-    icon: package
     color: "#2ecc71"
     unblocks_parents: true
     unblocks_dependents: true

@@ -101,6 +101,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     seed_default_project_migration_backfills_null_project_ids(&pool).await?;
     seed_default_project_migration_is_idempotent(&pool).await?;
 
+    drop_status_icon_migration_strips_default_seed(&pool).await?;
+    drop_status_icon_migration_strips_custom_row(&pool).await?;
+    drop_status_icon_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -619,7 +623,6 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
         {
             "key": "todo",
             "label": "Todo",
-            "icon": "circle",
             "color": "#abcdef",
             "unblocks_parents": false,
             "unblocks_dependents": false,
@@ -1051,6 +1054,197 @@ async fn seed_default_project_migration_backfills_null_project_ids(
         bail!("expected 0 issues_v2 rows with NULL project_id post-backfill; got {count}");
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260608000000_drop_status_icon — assert that the migration strips the
+// `icon` key from every row's `projects.statuses` array (both the
+// already-seeded `j-defaul` row and a custom fixture row), and that the
+// migration body is idempotent on a second pass. The store-level read of
+// `j-iconfix` doubles as the parent-issue's `SqliteStore` round-trip
+// gate: the migrated JSON must deserialize into the new
+// `Vec<StatusDefinition>` (no `icon` field) without serde error and with
+// the expected `statuses.len()`. Covers [[i-jazguvll]] §E.
+// ---------------------------------------------------------------------------
+
+async fn drop_status_icon_migration_strips_default_seed(pool: &SqlitePool) -> Result<()> {
+    use hydra_common::ProjectId;
+
+    // Store-level smoke: read j-defaul through `SqliteStore::get_project`
+    // so any drift between the post-strip JSON shape and the typed
+    // `Vec<StatusDefinition>` (no `icon` field) deserializer fails loud.
+    // `seed_default_project_migration_inserts_row` already compares the
+    // Vec to `default_project_seed()`; this also exercises the
+    // `SqliteStore`-driven SELECT projection per [[i-jazguvll]] §E.
+    let store = SqliteStore::new(pool.clone());
+    let pid = ProjectId::from_str("j-defaul").context("parse 'j-defaul'")?;
+    let fetched = store
+        .get_project(&pid, false)
+        .await
+        .context("SqliteStore::get_project(j-defaul) post-drop_status_icon")?;
+    if fetched.item.statuses.len() != 5 {
+        bail!(
+            "j-defaul: expected 5 statuses post-drop_status_icon; got {}",
+            fetched.item.statuses.len()
+        );
+    }
+
+    // Belt-and-braces JSON-level check: confirm the raw column shape
+    // has no surviving `icon` keys, independent of the typed-serde path
+    // (e.g. a future `StatusDefinition` that silently ignores unknown
+    // fields wouldn't catch a regression).
+    let row = sqlx::query("SELECT statuses FROM projects WHERE id = 'j-defaul'")
+        .fetch_one(pool)
+        .await
+        .context("read j-defaul raw statuses post-drop_status_icon")?;
+    let statuses_text: String = row.try_get("statuses")?;
+    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
+        .context("decode j-defaul.statuses JSON post-drop_status_icon")?;
+    let arr = statuses_json
+        .as_array()
+        .context("expected j-defaul.statuses to be a JSON array")?;
+    for (i, elem) in arr.iter().enumerate() {
+        let obj = elem
+            .as_object()
+            .with_context(|| format!("j-defaul.statuses[{i}] is not a JSON object"))?;
+        if obj.contains_key("icon") {
+            bail!("j-defaul.statuses[{i}]: expected no `icon` key; got {elem}");
+        }
+    }
+    Ok(())
+}
+
+async fn drop_status_icon_migration_strips_custom_row(pool: &SqlitePool) -> Result<()> {
+    // The `j-iconfix` row was inserted by the
+    // `20260607000000__pre_drop_status_icon` baseline with three statuses
+    // that each carry `"icon": "<value>"`. Read back through
+    // `SqliteStore::get_project` so any drift between the migration's
+    // post-strip JSON shape and the Rust `StatusDefinition` serde impl
+    // fails loud here (the typed deserializer must accept the migrated
+    // rows). This is the §E "migration-roundtrip + serde" gate from
+    // [[i-jazguvll]].
+    let store = SqliteStore::new(pool.clone());
+    let pid = ProjectId::from_str("j-iconfix").context("parse 'j-iconfix'")?;
+    let fetched = store
+        .get_project(&pid, false)
+        .await
+        .context("SqliteStore::get_project(j-iconfix) post-drop_status_icon")?;
+
+    if fetched.item.key.as_str() != "iconfix" {
+        bail!(
+            "j-iconfix: expected key='iconfix'; got {:?}",
+            fetched.item.key
+        );
+    }
+    if fetched.item.name != "Icon Fixture" {
+        bail!(
+            "j-iconfix: expected name='Icon Fixture'; got {:?}",
+            fetched.item.name
+        );
+    }
+    if fetched.item.default_status_key.as_str() != "todo" {
+        bail!(
+            "j-iconfix: expected default_status_key='todo'; got {:?}",
+            fetched.item.default_status_key
+        );
+    }
+    if fetched.item.creator.as_str() != "jayantk" {
+        bail!(
+            "j-iconfix: expected creator='jayantk'; got {:?}",
+            fetched.item.creator.as_str()
+        );
+    }
+    if fetched.item.statuses.len() != 3 {
+        bail!(
+            "j-iconfix: expected 3 statuses; got {}",
+            fetched.item.statuses.len()
+        );
+    }
+    let expected_shapes: &[(&str, &str, &str, bool, bool, bool)] = &[
+        ("todo", "Todo", "#abcdef", false, false, false),
+        ("doing", "Doing", "#f1c40f", false, false, false),
+        ("done", "Done", "#2ecc71", true, true, false),
+    ];
+    for (i, (k, label, color, up, ud, ctc)) in expected_shapes.iter().enumerate() {
+        let s = &fetched.item.statuses[i];
+        if s.key.as_str() != *k
+            || s.label != *label
+            || s.color.as_ref() != *color
+            || s.unblocks_parents != *up
+            || s.unblocks_dependents != *ud
+            || s.cascades_to_children != *ctc
+        {
+            bail!(
+                "j-iconfix.statuses[{i}]: expected ({k}, {label}, {color}, {up}, {ud}, {ctc}); got {s:?}"
+            );
+        }
+    }
+
+    // Belt-and-braces JSON-level check on the raw column.
+    let row = sqlx::query("SELECT statuses FROM projects WHERE id = 'j-iconfix'")
+        .fetch_one(pool)
+        .await
+        .context("read j-iconfix raw statuses for icon-presence check")?;
+    let statuses_text: String = row.try_get("statuses")?;
+    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
+        .context("decode j-iconfix.statuses JSON post-drop_status_icon")?;
+    let arr = statuses_json
+        .as_array()
+        .context("expected j-iconfix.statuses to be a JSON array")?;
+    for (i, elem) in arr.iter().enumerate() {
+        let obj = elem
+            .as_object()
+            .with_context(|| format!("j-iconfix.statuses[{i}] is not a JSON object"))?;
+        if obj.contains_key("icon") {
+            bail!("j-iconfix.statuses[{i}]: expected no `icon` key post-strip; got {elem}");
+        }
+    }
+
+    Ok(())
+}
+
+async fn drop_status_icon_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // Re-execute the migration body verbatim. `json_remove(value,
+    // '$.icon')` is a no-op on entries that no longer carry the key, so
+    // a second pass must produce no change. Reading the file rather
+    // than hard-coding the SQL keeps this test honest if the migration's
+    // body ever changes shape.
+    let before = snapshot_status_arrays(pool).await?;
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260608000000_drop_status_icon.sql"),
+    )
+    .context("read sqlite drop_status_icon migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply sqlite drop_status_icon migration body")?;
+    let after = snapshot_status_arrays(pool).await?;
+    if before != after {
+        bail!(
+            "drop_status_icon: expected no change on re-apply; before={before:?}, after={after:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Read every `(id, statuses)` pair from `projects` and return it keyed
+/// by `id`. Used by the idempotency check above to compare the
+/// statuses JSON across re-applications.
+async fn snapshot_status_arrays(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashMap<String, String>> {
+    let rows = sqlx::query("SELECT id, statuses FROM projects")
+        .fetch_all(pool)
+        .await
+        .context("read all projects rows for statuses snapshot")?;
+    let mut snap = std::collections::HashMap::new();
+    for row in rows {
+        let id: String = row.try_get("id")?;
+        let statuses: String = row.try_get("statuses")?;
+        snap.insert(id, statuses);
+    }
+    Ok(snap)
 }
 
 async fn seed_default_project_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
