@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { Avatar, TypeChip } from "@hydra/ui";
-import type { IssueSummaryRecord, IssueVersionRecord } from "@hydra/api";
+import type { IssueVersionRecord } from "@hydra/api";
 import {
   principalAvatarKind,
   principalDisplayName,
@@ -66,10 +66,7 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
   const depRecords = useIssuesByIds(blockedOnIds);
   const blocked = useMemo(() => {
     if (blockedOnIds.length === 0) return false;
-    return computeBlockedStatus(
-      record as unknown as IssueSummaryRecord,
-      depRecords as unknown as Map<string, IssueSummaryRecord>,
-    ).blocked;
+    return computeBlockedStatus(record, depRecords).blocked;
   }, [record, depRecords, blockedOnIds]);
 
   return (
