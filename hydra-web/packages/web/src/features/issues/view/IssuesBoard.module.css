@@ -376,3 +376,36 @@
   outline: 1px solid var(--line-strong);
   outline-offset: 1px;
 }
+
+@media (max-width: 768px) {
+  .projectBar {
+    flex-wrap: wrap;
+  }
+
+  .projectBarRight {
+    margin-left: 0;
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+
+  .projectColumns {
+    scroll-snap-type: x mandatory;
+  }
+
+  .col {
+    width: 82vw;
+    flex: 0 0 82vw;
+    scroll-snap-align: start;
+  }
+
+  .colGhost {
+    width: 82vw;
+    flex: 0 0 82vw;
+    scroll-snap-align: start;
+  }
+
+  .newProjectGhost {
+    width: 82vw;
+    align-self: center;
+  }
+}
