@@ -1,4 +1,4 @@
-import type { IssueSummaryRecord, StatusKey } from "@hydra/api";
+import type { IssueSummary, StatusKey } from "@hydra/api";
 
 export interface BlockedStatus {
   blocked: boolean;
@@ -23,10 +23,10 @@ const HARD_BLOCKED_STATUSES: ReadonlySet<StatusKey> = new Set([
  *   whose status is "failed" or "dropped". Hard-blocked is always
  *   a subset of blocked.
  */
-export function computeBlockedStatus(
-  record: IssueSummaryRecord,
-  issueMap: Map<string, IssueSummaryRecord>,
-): BlockedStatus {
+export function computeBlockedStatus<
+  R extends { issue: Pick<IssueSummary, "dependencies"> },
+  T extends { issue: Pick<IssueSummary, "status"> },
+>(record: R, issueMap: Map<string, T>): BlockedStatus {
   const blockedBy: string[] = [];
   const hardBlockedBy: string[] = [];
 
