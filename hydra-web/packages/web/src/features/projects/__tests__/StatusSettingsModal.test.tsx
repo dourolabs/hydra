@@ -38,18 +38,34 @@ vi.mock("@tanstack/react-query", () => ({
     ) => {
       mutateSpy(vars);
       // Mirror react-query: await onMutate (so its inner awaits resolve)
-      // before either firing the success path or invoking onError.
+      // before either firing the success path or invoking onError. If no
+      // onMutate (e.g. moveAndDelete mutation), drive the success/error
+      // path off the mutationFn promise instead so the bulk move's per-
+      // issue API loop actually runs before onSuccess fires.
       void (async () => {
-        const ctx = await Promise.resolve(onMutate?.(vars));
-        if (simulateError) {
-          onError?.(simulateError, vars, ctx);
-          perCall?.onError?.(simulateError, vars, ctx);
+        if (onMutate) {
+          const ctx = await Promise.resolve(onMutate(vars));
+          if (simulateError) {
+            onError?.(simulateError, vars, ctx);
+            perCall?.onError?.(simulateError, vars, ctx);
+            return;
+          }
+          void mutationFn?.(vars);
+          const response = { project_id: "j-eng" };
+          onSuccess?.(response, vars);
+          perCall?.onSuccess?.(response, vars);
           return;
         }
-        void mutationFn?.(vars);
-        const response = { project_id: "j-eng" };
-        onSuccess?.(response, vars);
-        perCall?.onSuccess?.(response, vars);
+        try {
+          const response = (await mutationFn?.(vars)) ?? {
+            project_id: "j-eng",
+          };
+          onSuccess?.(response, vars);
+          perCall?.onSuccess?.(response, vars);
+        } catch (err) {
+          onError?.(err as Error, vars, undefined);
+          perCall?.onError?.(err as Error, vars, undefined);
+        }
       })();
     },
     isPending: mutationPending,
@@ -162,9 +178,43 @@ vi.mock("@hydra/ui", () => ({
 }));
 
 const updateProjectSpy = vi.fn(async (_id: string, req: unknown) => req);
+type ListIssuesMockResp = {
+  issues: Array<{ issue_id: string }>;
+  next_cursor: string | null;
+};
+const listIssuesSpy = vi.fn(
+  async (
+    query: Record<string, unknown>,
+  ): Promise<ListIssuesMockResp> => {
+    void query;
+    return { issues: [], next_cursor: null };
+  },
+);
+const getIssueSpy = vi.fn(async (id: string) => ({
+  issue_id: id,
+  version: 1,
+  timestamp: "2026-01-01T00:00:00Z",
+  creation_time: "2026-01-01T00:00:00Z",
+  issue: {
+    type: "task",
+    title: id,
+    description: "full description",
+    creator: "alice",
+    progress: "",
+    status: "in-progress",
+    project_id: "j-eng",
+    assignee: null,
+    dependencies: [],
+    patches: [],
+  },
+}));
+const updateIssueSpy = vi.fn(async (_id: string, req: unknown) => req);
 vi.mock("../../../api/client", () => ({
   apiClient: {
     updateProject: updateProjectSpy,
+    listIssues: listIssuesSpy,
+    getIssue: getIssueSpy,
+    updateIssue: updateIssueSpy,
   },
 }));
 
@@ -231,6 +281,13 @@ describe("StatusSettingsModal", () => {
     mutateSpy.mockReset();
     addToastSpy.mockReset();
     updateProjectSpy.mockClear();
+    listIssuesSpy.mockReset();
+    listIssuesSpy.mockImplementation(async () => ({
+      issues: [],
+      next_cursor: null,
+    }));
+    getIssueSpy.mockClear();
+    updateIssueSpy.mockClear();
     cancelQueriesSpy.mockClear();
     setQueryDataSpy.mockClear();
     invalidateQueriesSpy.mockClear();
@@ -333,10 +390,48 @@ describe("StatusSettingsModal", () => {
     expect(btn.disabled).toBe(true);
   });
 
-  it("Delete is disabled with tooltip when issueCount > 0", () => {
+  it("Delete on a non-empty column reveals the Move sub-step with a neighbor default", () => {
     const project = makeProject([
       makeStatus("open"),
       makeStatus("in-progress"),
+      makeStatus("closed"),
+    ]);
+    render(
+      <StatusSettingsModal
+        open={true}
+        onClose={() => {}}
+        projectRecord={project}
+        statusKey="in-progress"
+        issueCount={3}
+      />,
+    );
+
+    const del = screen.getByTestId("status-settings-delete") as HTMLButtonElement;
+    // PR-12: Delete is no longer disabled — it opens the Move sub-step.
+    expect(del.disabled).toBe(false);
+    fireEvent.click(del);
+
+    expect(screen.getByTestId("status-settings-move-block")).toBeDefined();
+    const select = screen.getByTestId(
+      "status-settings-move-target",
+    ) as HTMLSelectElement;
+    // Default neighbor for deleting "in-progress" is the left one ("open").
+    expect(select.value).toBe("open");
+    // Option list excludes the to-delete status.
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(["open", "closed"]);
+
+    const confirm = screen.getByTestId(
+      "status-settings-move-confirm",
+    ) as HTMLButtonElement;
+    expect(confirm.textContent).toBe("Move 3 and delete");
+  });
+
+  it("Move sub-step defaults to the right neighbor when deleting the leftmost status", () => {
+    const project = makeProject([
+      makeStatus("open"),
+      makeStatus("in-progress"),
+      makeStatus("closed"),
     ]);
     render(
       <StatusSettingsModal
@@ -344,15 +439,15 @@ describe("StatusSettingsModal", () => {
         onClose={() => {}}
         projectRecord={project}
         statusKey="open"
-        issueCount={3}
+        issueCount={2}
       />,
     );
 
-    const del = screen.getByTestId("status-settings-delete") as HTMLButtonElement;
-    expect(del.disabled).toBe(true);
-    expect(del.title).toBe(
-      "Cannot delete a status with 3 open issues; move them first",
-    );
+    fireEvent.click(screen.getByTestId("status-settings-delete"));
+    const select = screen.getByTestId(
+      "status-settings-move-target",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("in-progress");
   });
 
   it("Delete is disabled when the project has only one status", () => {
@@ -671,6 +766,198 @@ describe("StatusSettingsModal", () => {
         fireEvent.click(screen.getByTestId("status-settings-save"));
       });
       expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("Move-and-delete (PR-12)", () => {
+    it("moves every issue at the to-delete status, then drops the status", async () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+        makeStatus("closed"),
+      ]);
+      const onClose = vi.fn();
+      // Two pages of listIssues to exercise cursor iteration.
+      listIssuesSpy.mockImplementationOnce(async () => ({
+        issues: [{ issue_id: "i-aaa" }, { issue_id: "i-bbb" }],
+        next_cursor: "page-2",
+      }));
+      listIssuesSpy.mockImplementationOnce(async () => ({
+        issues: [{ issue_id: "i-ccc" }],
+        next_cursor: null,
+      }));
+
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={onClose}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={3}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("status-settings-delete"));
+      // Confirm with the default neighbor ("open").
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-move-confirm"));
+      });
+
+      expect(listIssuesSpy).toHaveBeenCalledTimes(2);
+      expect(listIssuesSpy.mock.calls[0][0]).toMatchObject({
+        project_id: "j-eng",
+        status: "in-progress",
+        limit: null,
+      });
+      expect(listIssuesSpy.mock.calls[1][0]).toMatchObject({
+        cursor: "page-2",
+      });
+
+      // Every issue's full body is fetched, then patched to "open".
+      expect(getIssueSpy.mock.calls.map((c) => c[0])).toEqual([
+        "i-aaa",
+        "i-bbb",
+        "i-ccc",
+      ]);
+      expect(updateIssueSpy).toHaveBeenCalledTimes(3);
+      const firstPatch = updateIssueSpy.mock.calls[0];
+      expect(firstPatch[0]).toBe("i-aaa");
+      expect(
+        (firstPatch[1] as { issue: { status: string } }).issue.status,
+      ).toBe("open");
+      // Description is preserved — sourced from the full getIssue body, not
+      // the truncated summary.
+      expect(
+        (firstPatch[1] as { issue: { description: string } }).issue.description,
+      ).toBe("full description");
+
+      // Project save fires after all issues moved.
+      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
+      const projectPayload = updateProjectSpy.mock.calls[0][1] as {
+        project: { statuses: StatusDefinition[]; default_status_key: string };
+      };
+      expect(projectPayload.project.statuses.map((s) => s.key)).toEqual([
+        "open",
+        "closed",
+      ]);
+      expect(projectPayload.project.default_status_key).toBe("open");
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("halts the move on a per-issue error and does NOT save the project", async () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+        makeStatus("closed"),
+      ]);
+      const onClose = vi.fn();
+      listIssuesSpy.mockImplementationOnce(async () => ({
+        issues: [{ issue_id: "i-good" }, { issue_id: "i-bad" }, { issue_id: "i-third" }],
+        next_cursor: null,
+      }));
+      updateIssueSpy.mockImplementationOnce(async (_id: string, req: unknown) => req);
+      updateIssueSpy.mockImplementationOnce(async () => {
+        throw new Error("server fell over");
+      });
+
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={onClose}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={3}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("status-settings-delete"));
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-move-confirm"));
+      });
+
+      // i-good succeeded, i-bad failed → halts before i-third.
+      expect(updateIssueSpy).toHaveBeenCalledTimes(2);
+      expect(updateProjectSpy).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      // Toast names the failed issue.
+      const failureCall = addToastSpy.mock.calls.find((c) =>
+        String(c[0]).includes("i-bad"),
+      );
+      expect(failureCall).toBeDefined();
+      expect(String(failureCall![0])).toContain("server fell over");
+      expect(failureCall![1]).toBe("error");
+    });
+
+    it("retargets default_status_key to the left neighbor when deleting the default", async () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+        makeStatus("closed"),
+      ]);
+      // Make "in-progress" the project's default so deleting it forces a
+      // reassign.
+      project.project.default_status_key = "in-progress" as never;
+      listIssuesSpy.mockImplementationOnce(async () => ({
+        issues: [{ issue_id: "i-aaa" }],
+        next_cursor: null,
+      }));
+
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={1}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("status-settings-delete"));
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-move-confirm"));
+      });
+
+      const payload = updateProjectSpy.mock.calls[0][1] as {
+        project: { default_status_key: string };
+      };
+      // Left neighbor of "in-progress" is "open".
+      expect(payload.project.default_status_key).toBe("open");
+    });
+
+    it("retargets default_status_key to the right neighbor when deleting the leftmost default", async () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+        makeStatus("closed"),
+      ]);
+      // Default is "open" (leftmost) and we delete it — fall back to the
+      // right neighbor.
+      listIssuesSpy.mockImplementationOnce(async () => ({
+        issues: [{ issue_id: "i-aaa" }],
+        next_cursor: null,
+      }));
+
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="open"
+          issueCount={1}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("status-settings-delete"));
+      // The default neighbor target for "open" is "in-progress", so we can
+      // confirm without changing the select.
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-move-confirm"));
+      });
+
+      const payload = updateProjectSpy.mock.calls[0][1] as {
+        project: { default_status_key: string };
+      };
+      expect(payload.project.default_status_key).toBe("in-progress");
     });
   });
 
