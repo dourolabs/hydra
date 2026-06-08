@@ -583,7 +583,6 @@ fn log_counts(counts: &Counts) {
 /// prefix as needed.
 const ACTOR_REF_TABLES_COMMON: &[&str] = &[
     "repositories_v2",
-    "actors_v2",
     "users_v2",
     "issues_v2",
     "patches_v2",
@@ -639,17 +638,6 @@ mod sqlite {
             pool,
             "conversations",
             "(id, version_number)",
-            &issue_to_actor,
-            &mut counts,
-        )
-        .await?;
-
-        // Bare `ActorId` column: `actors_v2.actor_id`.
-        rewrite_actor_id_column(
-            pool,
-            "actors_v2",
-            "actor_id",
-            "id",
             &issue_to_actor,
             &mut counts,
         )
@@ -766,41 +754,6 @@ mod sqlite {
                 Ok(())
             }
         }
-    }
-
-    async fn rewrite_actor_id_column(
-        pool: &SqlitePool,
-        table: &'static str,
-        column: &'static str,
-        pk_sql: &str,
-        issue_to_actor_id: &HashMap<String, Value>,
-        counts: &mut Counts,
-    ) -> Result<()> {
-        let select_sql = format!(
-            "SELECT {}, {column} AS payload FROM {table} \
-             WHERE {column} IS NOT NULL",
-            pk_cols_for(pk_sql).join(", ")
-        );
-        let rows = sqlx::query(&select_sql)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("scan {table}.{column}"))?;
-        for row in rows {
-            let actor_id: String = row.try_get("payload")?;
-            let parsed: Value = match serde_json::from_str(&actor_id) {
-                Ok(v) => v,
-                Err(_) => Value::String(actor_id.clone()),
-            };
-            let final_value =
-                match resolve_for_outer_slot(classify_actor_id(&parsed), issue_to_actor_id) {
-                    OuterResolution::NoOp => continue,
-                    OuterResolution::Value(v) => v,
-                };
-            let serialized = final_value.to_string();
-            exec_pk_update(pool, table, column, pk_sql, &row, &serialized).await?;
-            counts.rewrote(table);
-        }
-        Ok(())
     }
 
     async fn rewrite_form_response_column(
@@ -942,16 +895,6 @@ mod postgres {
         )
         .await?;
 
-        rewrite_actor_id_column(
-            pool,
-            "actors_v2",
-            "actor_id",
-            "id",
-            &issue_to_actor,
-            &mut counts,
-        )
-        .await?;
-
         // Embedded `actor: ActorId` inside `issues_v2.form_response`
         // JSONB. PK is the single-column `id`.
         rewrite_form_response_column(pool, &issue_to_actor, &mut counts).await?;
@@ -1047,36 +990,6 @@ mod postgres {
                 Ok(())
             }
         }
-    }
-
-    async fn rewrite_actor_id_column(
-        pool: &PgPool,
-        table: &'static str,
-        column: &'static str,
-        pk_sql: &str,
-        issue_to_actor_id: &HashMap<String, Value>,
-        counts: &mut Counts,
-    ) -> Result<()> {
-        let pk_cols = pk_cols_for(pk_sql);
-        let select_sql = format!(
-            "SELECT {} , {column} AS payload FROM metis.{table} WHERE {column} IS NOT NULL",
-            pk_cols.join(", ")
-        );
-        let rows = sqlx::query(&select_sql)
-            .fetch_all(pool)
-            .await
-            .with_context(|| format!("scan metis.{table}.{column}"))?;
-        for row in rows {
-            let actor_id: Value = row.try_get("payload")?;
-            let final_value =
-                match resolve_for_outer_slot(classify_actor_id(&actor_id), issue_to_actor_id) {
-                    OuterResolution::NoOp => continue,
-                    OuterResolution::Value(v) => v,
-                };
-            exec_pk_update(pool, table, column, &pk_cols, &row, final_value).await?;
-            counts.rewrote(table);
-        }
-        Ok(())
     }
 
     async fn rewrite_form_response_column(

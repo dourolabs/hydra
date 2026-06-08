@@ -615,23 +615,10 @@ pub async fn setup_local_auth(
         on_behalf_of: None,
     };
 
-    // Create or update the actor and user, always regenerating the auth token
-    // so the token file stays in sync with the DB even across re-init scenarios.
-    let actor_exists = match store.get_actor(&actor_name).await {
-        Ok(_) => true,
-        Err(StoreError::ActorNotFound(_)) => false,
-        Err(err) => return Err(err.into()),
-    };
-
-    let (actor, auth_token) = Actor::new_for_user(username.clone());
-
-    if actor_exists {
-        store.update_actor(actor.clone(), &system_actor).await?;
-        info!("local auth actor updated with fresh token");
-    } else {
-        store.add_actor(actor.clone(), &system_actor).await?;
-        info!("local auth actor created");
-    }
+    // Build the runtime `Actor` in memory; the auth middleware rebuilds
+    // the same shape from `auth_tokens.actor_name` + `creator` on every
+    // request.
+    let (_actor, auth_token) = Actor::new_for_user(username.clone());
 
     // Always rotate: clear any tokens still associated with this actor
     // and insert the freshly generated one. This keeps the re-init
@@ -642,7 +629,10 @@ pub async fn setup_local_auth(
         .context("local auth token unexpectedly missing actor name prefix")?;
     let token_hash = Actor::hash_auth_token(raw_token);
     store.delete_auth_tokens_for_actor(&actor_name).await?;
-    store.add_auth_token(&actor_name, &token_hash, None).await?;
+    store
+        .add_auth_token(&actor_name, &token_hash, None, &username)
+        .await?;
+    info!("local auth token rotated");
 
     // Ensure the user record exists (idempotent).
     let user = User::new(

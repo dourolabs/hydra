@@ -7,7 +7,7 @@ use crate::domain::conversations::{Conversation, ConversationStatus};
 use crate::store::status_to_db_str;
 use crate::{
     domain::{
-        actors::{Actor, ActorId, ActorRef},
+        actors::ActorRef,
         agents::Agent,
         documents::Document,
         issues::{Issue, IssueDependency, IssueDependencyType, IssueType, SessionSettings},
@@ -152,7 +152,6 @@ const TABLE_PATCHES_V2: &str = "metis.patches_v2";
 const TABLE_TASKS_V2: &str = "metis.tasks_v2";
 const TABLE_USERS_V2: &str = "metis.users_v2";
 const TABLE_REPOSITORIES_V2: &str = "metis.repositories_v2";
-const TABLE_ACTORS_V2: &str = "metis.actors_v2";
 const TABLE_DOCUMENTS_V2: &str = "metis.documents_v2";
 const TABLE_AGENTS: &str = "metis.agents";
 const TABLE_LABELS: &str = "metis.labels";
@@ -1213,58 +1212,6 @@ impl PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
-    // Actor helpers
-    // -------------------------------------------------------------------------
-
-    async fn insert_actor(
-        &self,
-        id: &str,
-        version_number: VersionNumber,
-        actor: &Actor,
-        acting_as: Option<&Value>,
-    ) -> Result<(), StoreError> {
-        let version_number = i64::try_from(version_number).map_err(|_| {
-            StoreError::Internal(format!("version number overflow for actor '{id}'"))
-        })?;
-
-        let actor_id_json = serde_json::to_value(&actor.actor_id)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize actor_id: {e}")))?;
-
-        let creator_str = actor.creator.to_string();
-
-        // The `auth_token_hash` / `auth_token_salt` columns are vestigial
-        // (the matching `Actor` fields and `verify_auth_token` consumer
-        // are gone). We write empty strings to keep the NOT-NULL DB
-        // schema satisfied until a follow-up migration drops the columns.
-        let query = format!(
-            "INSERT INTO {TABLE_ACTORS_V2} (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor)
-             VALUES ($1, $2, '', '', $3, $4, $5)"
-        );
-        sqlx::query(&query)
-            .bind(id)
-            .bind(version_number)
-            .bind(&actor_id_json)
-            .bind(&creator_str)
-            .bind(acting_as)
-            .execute(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        Ok(())
-    }
-
-    fn row_to_actor(&self, row: &ActorRow) -> Result<Actor, StoreError> {
-        let actor_id: ActorId = serde_json::from_value(row.actor_id.clone())
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize actor_id: {e}")))?;
-
-        Ok(Actor {
-            actor_id,
-            creator: Username::from(row.creator.as_str()),
-            session_id: None,
-        })
-    }
-
-    // -------------------------------------------------------------------------
     // Conversation helpers
     // -------------------------------------------------------------------------
 
@@ -1786,18 +1733,6 @@ struct UserRow {
     username: String,
     github_user_id: Option<i64>,
     deleted: bool,
-    actor: Option<Value>,
-    created_at: DateTime<Utc>,
-    #[allow(dead_code)]
-    updated_at: DateTime<Utc>,
-}
-
-#[derive(sqlx::FromRow)]
-struct ActorRow {
-    id: String,
-    version_number: i64,
-    actor_id: Value,
-    creator: String,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -3344,79 +3279,6 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
-    // Actor methods
-    // -------------------------------------------------------------------------
-
-    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
-        crate::store::validate_actor_name(name)?;
-        let query = format!(
-            "SELECT id, version_number, actor_id, creator, actor, created_at, updated_at
-             FROM {TABLE_ACTORS_V2}
-             WHERE id = $1
-             ORDER BY is_latest DESC, version_number DESC
-             LIMIT 1"
-        );
-        let row = sqlx::query_as::<_, ActorRow>(&query)
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let row = row.ok_or_else(|| StoreError::ActorNotFound(name.to_string()))?;
-        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid version number stored for actor '{}'",
-                row.id
-            ))
-        })?;
-        let actor = self.row_to_actor(&row)?;
-        Ok(Versioned::with_optional_actor(
-            actor,
-            version,
-            row.created_at,
-            parse_actor_json(row.actor)?,
-            row.created_at,
-        ))
-    }
-
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
-        let query = format!(
-            "SELECT id, version_number, actor_id, creator, actor, created_at, updated_at
-             FROM {TABLE_ACTORS_V2}
-             WHERE is_latest = true
-             ORDER BY id"
-        );
-        let rows = sqlx::query_as::<_, ActorRow>(&query)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        let mut actors = Vec::with_capacity(rows.len());
-        for row in rows {
-            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal(format!(
-                    "invalid version number stored for actor '{}'",
-                    row.id
-                ))
-            })?;
-            let actor = self.row_to_actor(&row)?;
-            actors.push((
-                row.id,
-                Versioned::with_optional_actor(
-                    actor,
-                    version,
-                    row.created_at,
-                    parse_actor_json(row.actor)?,
-                    row.created_at,
-                ),
-            ));
-        }
-
-        actors.sort_by(|(a, _), (b, _)| a.cmp(b));
-        Ok(actors)
-    }
-
-    // -------------------------------------------------------------------------
     // User methods
     // -------------------------------------------------------------------------
 
@@ -4135,15 +3997,15 @@ impl ReadOnlyStore for PostgresStoreV2 {
         token_hash: &str,
     ) -> Result<Option<AuthTokenRow>, StoreError> {
         let sql = format!(
-            "SELECT actor_name, session_id, is_revoked FROM {TABLE_AUTH_TOKENS} \
+            "SELECT actor_name, session_id, is_revoked, creator FROM {TABLE_AUTH_TOKENS} \
              WHERE token_hash = $1 LIMIT 1"
         );
-        let row = sqlx::query_as::<_, (String, Option<String>, bool)>(&sql)
+        let row = sqlx::query_as::<_, (String, Option<String>, bool, String)>(&sql)
             .bind(token_hash)
             .fetch_optional(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        let Some((actor_name, session_id, is_revoked)) = row else {
+        let Some((actor_name, session_id, is_revoked, creator)) = row else {
             return Ok(None);
         };
         let session_id = match session_id {
@@ -4156,6 +4018,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             actor_name,
             session_id,
             is_revoked,
+            creator: Username::from(creator),
         }))
     }
 
@@ -4888,58 +4751,6 @@ impl Store for PostgresStoreV2 {
     }
 
     // -------------------------------------------------------------------------
-    // Actor methods
-    // -------------------------------------------------------------------------
-
-    async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
-        let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists > 0 {
-            return Err(StoreError::ActorAlreadyExists(name));
-        }
-
-        let acting_as_json = actor_to_json(acting_as);
-        self.insert_actor(&name, 1, &actor, Some(&acting_as_json))
-            .await
-    }
-
-    async fn update_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
-        let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = $1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists == 0 {
-            return Err(StoreError::ActorNotFound(name));
-        }
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_ACTORS_V2, &name)
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("actor '{name}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for actor '{name}'"))
-        })?;
-
-        let acting_as_json = actor_to_json(acting_as);
-        self.insert_actor(&name, next_version, &actor, Some(&acting_as_json))
-            .await
-    }
-
-    // -------------------------------------------------------------------------
     // User methods
     // -------------------------------------------------------------------------
 
@@ -5353,16 +5164,18 @@ impl Store for PostgresStoreV2 {
         actor_name: &str,
         token_hash: &str,
         session_id: Option<&SessionId>,
+        creator: &Username,
     ) -> Result<(), StoreError> {
         let sql = format!(
-            "INSERT INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, session_id) \
-             VALUES ($1, $2, $3) \
+            "INSERT INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, session_id, creator) \
+             VALUES ($1, $2, $3, $4) \
              ON CONFLICT DO NOTHING"
         );
         sqlx::query(&sql)
             .bind(actor_name)
             .bind(token_hash)
             .bind(session_id.map(|s| s.to_string()))
+            .bind(creator.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -5814,7 +5627,6 @@ mod tests {
     use super::*;
     use crate::{
         domain::{
-            actors::Actor,
             documents::Document,
             issues::{
                 Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
@@ -7052,25 +6864,6 @@ mod tests {
         assert_eq!(fetched.item, user, "User must round-trip all fields");
     }
 
-    /// Round-trip serialization: add then get; fetched entity must equal original.
-    #[sqlx::test(migrations = "./migrations")]
-    #[ignore]
-    async fn actor_serialization_round_trip_v2(pool: PgStorePool) {
-        let store = PostgresStoreV2::new(pool);
-        let (actor, _token) = Actor::new_for_user(Username::from("actor_creator"));
-
-        store
-            .add_actor(actor.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let fetched = store.get_actor(&actor.name()).await.unwrap();
-        assert_eq!(
-            fetched.item, actor,
-            "Actor must round-trip all fields (creator, actor_id, etc.)"
-        );
-    }
-
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn document_search_only_matches_latest_version_v2(pool: PgStorePool) {
@@ -7673,12 +7466,14 @@ mod tests {
         assert!(hashes.is_empty());
 
         // ADD — two tokens for alice
+        let alice = Username::from("alice");
+        let bob = Username::from("bob");
         store
-            .add_auth_token("users/alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None, &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("users/alice", "hash2", None)
+            .add_auth_token("users/alice", "hash2", None, &alice)
             .await
             .unwrap();
 
@@ -7687,7 +7482,7 @@ mod tests {
 
         // ADD — duplicate insert is idempotent
         store
-            .add_auth_token("users/alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None, &alice)
             .await
             .unwrap();
         let hashes = store.get_auth_token_hashes("users/alice").await.unwrap();
@@ -7695,7 +7490,7 @@ mod tests {
 
         // ADD — token for a different actor
         store
-            .add_auth_token("users/bob", "hash3", None)
+            .add_auth_token("users/bob", "hash3", None, &bob)
             .await
             .unwrap();
         let bob_hashes = store.get_auth_token_hashes("users/bob").await.unwrap();
@@ -7725,14 +7520,15 @@ mod tests {
     async fn auth_token_session_id_round_trip_v2(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let sid = SessionId::new();
+        let alice = Username::from("alice");
 
         // Insert one token with a session_id and one without.
         store
-            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid), &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("users/alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None, &alice)
             .await
             .unwrap();
 
@@ -7743,6 +7539,7 @@ mod tests {
             .expect("session-spawned token should be found");
         assert_eq!(row.actor_name, "agents/swe");
         assert_eq!(row.session_id, Some(sid));
+        assert_eq!(row.creator, alice);
 
         let row = store
             .get_auth_token_by_hash("hash-user")
@@ -7751,6 +7548,7 @@ mod tests {
             .expect("user-login token should be found");
         assert_eq!(row.actor_name, "users/alice");
         assert_eq!(row.session_id, None);
+        assert_eq!(row.creator, alice);
 
         let missing = store.get_auth_token_by_hash("nope").await.unwrap();
         assert!(missing.is_none());
@@ -7766,17 +7564,18 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let sid = SessionId::new();
         let other_sid = SessionId::new();
+        let alice = Username::from("alice");
 
         store
-            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid), &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("agents/swe", "hash-other", Some(&other_sid))
+            .add_auth_token("agents/swe", "hash-other", Some(&other_sid), &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("users/alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None, &alice)
             .await
             .unwrap();
 

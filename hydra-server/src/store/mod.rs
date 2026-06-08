@@ -1,5 +1,5 @@
 use crate::domain::{
-    actors::{Actor, ActorError, ActorRef},
+    actors::ActorRef,
     agents::Agent,
     conversations::Conversation,
     documents::Document,
@@ -179,18 +179,19 @@ impl ObjectRelationship {
 /// `is_revoked` is flipped on by `sessions/kill` for every token from
 /// the killed session, and `require_auth` rejects any matched row whose
 /// `is_revoked` is true.
+///
+/// `creator` is the per-token denormalization of the originating user
+/// (the session's `creator` for session-minted tokens, the
+/// `users/<username>` itself for user CLI tokens). It is the source of
+/// truth for the runtime `Actor.creator` field used by the auth
+/// middleware — built so multiple session tokens sharing the same
+/// `ActorId::Agent` row resolve to distinct creators.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthTokenRow {
     pub actor_name: String,
     pub session_id: Option<SessionId>,
     pub is_revoked: bool,
-}
-
-pub(crate) fn validate_actor_name(name: &str) -> Result<(), StoreError> {
-    match Actor::parse_name(name) {
-        Ok(_) => Ok(()),
-        Err(ActorError::InvalidActorName(name)) => Err(StoreError::InvalidActorName(name)),
-    }
+    pub creator: Username,
 }
 
 /// Maps a `Status` enum variant to the string used in the database.
@@ -328,10 +329,6 @@ pub enum StoreError {
     UserAlreadyExists(Username),
     #[error("User not found for token")]
     UserNotFoundForToken,
-    #[error("Actor not found: {0}")]
-    ActorNotFound(String),
-    #[error("Actor already exists: {0}")]
-    ActorAlreadyExists(String),
     #[error("Invalid GitHub token: {0}")]
     GithubTokenInvalid(String),
     #[error("Invalid actor name: {0}")]
@@ -355,9 +352,9 @@ impl StoreError {
     /// unavailable") so callers don't leak internal error detail.
     pub fn auth_failure_message(&self) -> &'static str {
         match self {
-            StoreError::ActorNotFound(_)
-            | StoreError::InvalidActorName(_)
-            | StoreError::InvalidAuthToken => "authorization invalid",
+            StoreError::InvalidActorName(_) | StoreError::InvalidAuthToken => {
+                "authorization invalid"
+            }
             _ => "authorization unavailable",
         }
     }
@@ -525,10 +522,6 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         ids: &[SessionId],
     ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError>;
-
-    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError>;
-
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError>;
 
     /// Returns `StoreError::UserNotFound` for deleted users unless `include_deleted` is true.
     async fn get_user(
@@ -1064,12 +1057,6 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Adds a new actor to the store.
-    async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError>;
-
-    /// Updates an existing actor in the store.
-    async fn update_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError>;
-
     /// Adds a new user to the store.
     ///
     /// If a user with the same username exists but is deleted, this will
@@ -1272,11 +1259,17 @@ pub trait Store: ReadOnlyStore {
     /// `session_id` records the session that minted the token. It is
     /// `Some` for the session-spawn path in `create_actor_for_job` and
     /// `None` for user logins or any other non-session token issuance.
+    ///
+    /// `creator` is the denormalized originating user (the session's
+    /// `creator` for session-minted tokens; the matching `users/<name>`
+    /// for user CLI tokens). Stored on the row so the auth middleware
+    /// can resolve a token's effective creator in a single DB lookup.
     async fn add_auth_token(
         &self,
         actor_name: &str,
         token_hash: &str,
         session_id: Option<&SessionId>,
+        creator: &Username,
     ) -> Result<(), StoreError>;
 
     /// Deletes all auth tokens for the given actor.

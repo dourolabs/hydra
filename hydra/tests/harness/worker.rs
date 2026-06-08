@@ -208,7 +208,7 @@ async fn ensure_worker_env_vars(harness: &TestHarness, job_id: &SessionId) -> Re
         // only fire for Session/Issue actors.
         let (_actor, auth_token) = harness
             .state()
-            .create_actor_for_job(job_id.clone(), ActorRef::test())
+            .create_actor_for_job(job_id.clone())
             .await
             .context("failed to mint job-scoped auth token for worker subprocess")?;
         task.env_vars

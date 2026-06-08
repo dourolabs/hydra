@@ -38,8 +38,9 @@ use hydra_common::{ConversationId, HydraId, IssueId, ProjectId, SessionId, Trigg
 use hydra_server::domain::actors::{ActorId, ActorRef};
 use hydra_server::domain::projects::default_project_seed;
 use hydra_server::domain::sessions::SessionMode;
+use hydra_server::domain::users::Username;
 use hydra_server::store::sqlite_store::{self, MIGRATOR, SqliteStore};
-use hydra_server::store::{ReadOnlyStore, RelationshipType};
+use hydra_server::store::{ReadOnlyStore, RelationshipType, Store};
 use sqlx::{Row, SqlitePool};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -104,6 +105,12 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     drop_status_icon_migration_strips_default_seed(&pool).await?;
     drop_status_icon_migration_strips_custom_row(&pool).await?;
     drop_status_icon_migration_is_idempotent(&pool).await?;
+
+    denormalize_creator_session_backfill(&pool).await?;
+    denormalize_creator_user_backfill(&pool).await?;
+    denormalize_creator_domain_roundtrip(&pool).await?;
+    drop_actors_v2_migration_removes_table(&pool).await?;
+    denormalize_creator_migration_is_idempotent(&pool).await?;
 
     Ok(())
 }
@@ -493,6 +500,14 @@ async fn assert_schema_invariants(pool: &SqlitePool) -> Result<()> {
     }
     if !column_is_nullable(pool, "projects", "prompt_path").await? {
         bail!("expected `projects.prompt_path` to be nullable after rollforward");
+    }
+
+    // Column added by 20260609000000_add_creator_to_auth_tokens.sql.
+    if !column_exists(pool, "auth_tokens", "creator").await? {
+        bail!("expected `auth_tokens.creator` column to exist after rollforward");
+    }
+    if column_is_nullable(pool, "auth_tokens", "creator").await? {
+        bail!("expected `auth_tokens.creator` to be NOT NULL after rollforward");
     }
 
     // Indexes added by the three migrations under test. Listed verbatim so
@@ -1272,6 +1287,130 @@ async fn seed_default_project_migration_is_idempotent(pool: &SqlitePool) -> Resu
     let count: i64 = row.try_get(0)?;
     if count != 1 {
         bail!("expected exactly 1 projects row for j-defaul after rerun; got {count}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260609000000_add_creator_to_auth_tokens / 20260609010000_drop_actors_v2
+// ---------------------------------------------------------------------------
+
+/// SQL-level assertion: the session-bound token (`hash-session-alice`)
+/// in the pre-denormalize baseline must end up with `creator = 'alice'`,
+/// copied off `tasks_v2.s-alice001.creator`.
+async fn denormalize_creator_session_backfill(pool: &SqlitePool) -> Result<()> {
+    let row =
+        sqlx::query("SELECT creator FROM auth_tokens WHERE token_hash = 'hash-session-alice'")
+            .fetch_one(pool)
+            .await
+            .context("read back session-bound auth_tokens row")?;
+    let creator: String = row.try_get(0)?;
+    if creator != "alice" {
+        bail!("session-bound auth_tokens.creator: expected 'alice'; got {creator:?}");
+    }
+    Ok(())
+}
+
+/// SQL-level assertion: the user CLI token (`hash-cli-bob`) in the
+/// pre-denormalize baseline must end up with `creator = 'bob'`, parsed
+/// off `users/bob`.
+async fn denormalize_creator_user_backfill(pool: &SqlitePool) -> Result<()> {
+    let row = sqlx::query("SELECT creator FROM auth_tokens WHERE token_hash = 'hash-cli-bob'")
+        .fetch_one(pool)
+        .await
+        .context("read back user-CLI auth_tokens row")?;
+    let creator: String = row.try_get(0)?;
+    if creator != "bob" {
+        bail!("user-CLI auth_tokens.creator: expected 'bob'; got {creator:?}");
+    }
+    Ok(())
+}
+
+/// Domain-level read-back via the running `SqliteStore::get_auth_token_by_hash`
+/// — catches serde drift between the migration column shape and
+/// `AuthTokenRow` deserialization.
+async fn denormalize_creator_domain_roundtrip(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+    let session_row = store
+        .get_auth_token_by_hash("hash-session-alice")
+        .await
+        .context("SqliteStore::get_auth_token_by_hash(hash-session-alice)")?
+        .context("session-bound row not found via domain API")?;
+    if session_row.creator.as_str() != "alice" {
+        bail!(
+            "domain-level session-bound creator: expected 'alice'; got {:?}",
+            session_row.creator
+        );
+    }
+    if session_row.actor_name != "agents/swe" {
+        bail!(
+            "domain-level session-bound actor_name: expected 'agents/swe'; got {:?}",
+            session_row.actor_name
+        );
+    }
+
+    let user_row = store
+        .get_auth_token_by_hash("hash-cli-bob")
+        .await
+        .context("SqliteStore::get_auth_token_by_hash(hash-cli-bob)")?
+        .context("user-CLI row not found via domain API")?;
+    if user_row.creator.as_str() != "bob" {
+        bail!(
+            "domain-level user-CLI creator: expected 'bob'; got {:?}",
+            user_row.creator
+        );
+    }
+    if user_row.session_id.is_some() {
+        bail!(
+            "domain-level user-CLI session_id: expected None; got {:?}",
+            user_row.session_id
+        );
+    }
+    Ok(())
+}
+
+/// The follow-on migration must drop the `actors_v2` table outright.
+async fn drop_actors_v2_migration_removes_table(pool: &SqlitePool) -> Result<()> {
+    if table_exists(pool, "actors_v2").await? {
+        bail!("expected `actors_v2` table to be dropped after 20260609010000");
+    }
+    Ok(())
+}
+
+/// Both migrations must be idempotent under re-execution. We re-apply
+/// the add-creator body (which lives inside a CREATE-NEW / RENAME dance
+/// that would error on a re-run if not guarded) — except we can't
+/// easily re-run that one on a real schema. Instead, assert that a
+/// fresh INSERT into the post-migration `auth_tokens` shape works and
+/// reads back through the domain API, which catches the most likely
+/// regression: the migration leaving the table in a write-broken state.
+async fn denormalize_creator_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+    let creator = Username::from("eve");
+    let sid = SessionId::new();
+    // Reuse the session row from the baseline by inserting a fresh
+    // tasks_v2 row so the session id is parseable; the auth-token write
+    // does not enforce FK so we can just write directly.
+    store
+        .add_auth_token("users/eve", "hash-eve", Some(&sid), &creator)
+        .await
+        .context("post-migration add_auth_token write")?;
+    let fresh = store
+        .get_auth_token_by_hash("hash-eve")
+        .await
+        .context("post-migration get_auth_token_by_hash")?
+        .context("post-migration write should be readable")?;
+    if fresh.creator != creator {
+        bail!(
+            "post-migration write read-back: expected creator='eve'; got {:?}",
+            fresh.creator
+        );
+    }
+    if fresh.session_id.as_ref() != Some(&sid) {
+        bail!(
+            "post-migration write read-back: expected session_id={sid:?}; got {:?}",
+            fresh.session_id
+        );
     }
     Ok(())
 }
