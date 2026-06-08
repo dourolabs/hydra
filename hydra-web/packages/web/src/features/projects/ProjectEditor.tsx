@@ -29,6 +29,7 @@ import {
   applyOptimisticDelete,
   applyOptimisticUpsert,
 } from "./projectCache";
+import { blankStatus } from "./statusDefaults";
 import styles from "./ProjectEditor.module.css";
 
 interface ProjectEditorProps {
@@ -594,19 +595,6 @@ function isPromptPathValid(value: string): boolean {
 function normalizeStatusForSubmit(status: StatusDefinition): StatusDefinition {
   const trimmed = status.prompt_path?.trim() ?? "";
   return { ...status, prompt_path: trimmed ? trimmed : null };
-}
-
-function blankStatus(index: number): StatusDefinition {
-  return {
-    key: `status-${index + 1}`,
-    label: "",
-    color: LABEL_COLOR_PALETTE[index % LABEL_COLOR_PALETTE.length],
-    unblocks_parents: false,
-    unblocks_dependents: false,
-    cascades_to_children: false,
-    on_enter: null,
-    prompt_path: null,
-  };
 }
 
 function defaultNewStatuses(): StatusDefinition[] {
