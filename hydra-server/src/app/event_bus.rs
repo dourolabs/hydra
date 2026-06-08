@@ -1,6 +1,6 @@
 use crate::domain::conversations::Conversation;
 use crate::domain::{
-    actors::{Actor, ActorRef},
+    actors::ActorRef,
     agents::Agent,
     documents::Document,
     issues::Issue,
@@ -1012,24 +1012,17 @@ impl StoreWithEvents {
         self.inner.delete_repository(name, &actor).await
     }
 
-    // ---- Actor mutations (inherent, with actor) ----
-
-    pub async fn add_actor(&self, actor: Actor, acting_as: ActorRef) -> Result<(), StoreError> {
-        self.inner.add_actor(actor, &acting_as).await
-    }
-
-    pub async fn update_actor(&self, actor: Actor, acting_as: ActorRef) -> Result<(), StoreError> {
-        self.inner.update_actor(actor, &acting_as).await
-    }
+    // ---- Auth token mutations (inherent, with actor) ----
 
     pub async fn add_auth_token(
         &self,
         actor_name: &str,
         token_hash: &str,
         session_id: Option<&SessionId>,
+        creator: &Username,
     ) -> Result<(), StoreError> {
         self.inner
-            .add_auth_token(actor_name, token_hash, session_id)
+            .add_auth_token(actor_name, token_hash, session_id, creator)
             .await
     }
 
@@ -1616,16 +1609,6 @@ impl ReadOnlyStore for StoreWithEvents {
         ids: &[SessionId],
     ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
         self.inner.get_status_logs(ids).await
-    }
-
-    // ---- Actor (read-only) ----
-
-    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
-        self.inner.get_actor(name).await
-    }
-
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
-        self.inner.list_actors().await
     }
 
     // ---- User (read-only) ----

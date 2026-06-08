@@ -1,7 +1,7 @@
 use crate::domain::conversations::Conversation;
 use crate::{
     domain::{
-        actors::{Actor, ActorRef},
+        actors::ActorRef,
         agents::Agent,
         documents::Document,
         issues::Issue,
@@ -211,15 +211,6 @@ impl ReadOnlyStore for FailingStore {
         &self,
         _ids: &[SessionId],
     ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError> {
-        fail()
-    }
-
-    async fn get_actor(&self, _name: &str) -> Result<Versioned<Actor>, StoreError> {
-        crate::store::validate_actor_name(_name)?;
-        fail()
-    }
-
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
         fail()
     }
 
@@ -557,14 +548,6 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn add_actor(&self, _actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
-        fail()
-    }
-
-    async fn update_actor(&self, _actor: Actor, _acting_as: &ActorRef) -> Result<(), StoreError> {
-        fail()
-    }
-
     async fn add_user(&self, _user: User, _actor: &ActorRef) -> Result<(), StoreError> {
         fail()
     }
@@ -644,6 +627,7 @@ impl Store for FailingStore {
         _actor_name: &str,
         _token_hash: &str,
         _session_id: Option<&SessionId>,
+        _creator: &Username,
     ) -> Result<(), StoreError> {
         fail()
     }

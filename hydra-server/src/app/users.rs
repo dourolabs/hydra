@@ -97,7 +97,7 @@ impl AppState {
             deleted: false,
         };
 
-        let (actor, auth_token) = Actor::new_for_user(username);
+        let (actor, auth_token) = Actor::new_for_user(username.clone());
 
         if let Err(err) = self.store.add_user(user.clone(), login_actor.clone()).await {
             match err {
@@ -113,28 +113,15 @@ impl AppState {
         store_github_token_secrets(self, &user.username, &github_token, &github_refresh_token)
             .await;
 
-        if let Err(err) = self
-            .store
-            .add_actor(actor.clone(), login_actor.clone())
-            .await
-        {
-            match err {
-                StoreError::ActorAlreadyExists(_) => {
-                    // Actor already exists — don't overwrite the old token.
-                    // Just insert the new token into auth_tokens below.
-                }
-                other => return Err(LoginError::Store { source: other }),
-            }
-        }
-
-        // User logins are not session-scoped, so session_id is None.
+        // User logins are not session-scoped, so session_id is None and
+        // the denormalized `creator` is the user themselves.
         let token_hash = Actor::hash_auth_token(
             auth_token
                 .strip_prefix(&format!("{}:", actor.name()))
                 .expect("auth token should include actor name prefix"),
         );
         self.store
-            .add_auth_token(&actor.name(), &token_hash, None)
+            .add_auth_token(&actor.name(), &token_hash, None, &username)
             .await
             .map_err(|source| LoginError::Store { source })?;
 
@@ -144,27 +131,12 @@ impl AppState {
     pub async fn create_actor_for_job(
         &self,
         task_id: SessionId,
-        lifecycle_actor: ActorRef,
     ) -> Result<(Actor, String), StoreError> {
         let task = self.get_session(&task_id).await?;
         let creator = task.creator.clone();
         let actor_id = crate::domain::sessions::actor_id_of(&task, &task_id);
         let (actor, auth_token) =
-            Actor::new_from_actor_id(actor_id, creator, Some(task_id.clone()));
-        if let Err(err) = self
-            .store
-            .add_actor(actor.clone(), lifecycle_actor.clone())
-            .await
-        {
-            match err {
-                StoreError::ActorAlreadyExists(_) => {
-                    // Multiple sessions for the same agent share the same
-                    // ActorId::Agent and reuse the actor row; each session
-                    // gets its own auth token inserted below.
-                }
-                other => return Err(other),
-            }
-        }
+            Actor::new_from_actor_id(actor_id, creator.clone(), Some(task_id.clone()));
 
         let token_hash = Actor::hash_auth_token(
             auth_token
@@ -172,15 +144,10 @@ impl AppState {
                 .expect("auth token should include actor name prefix"),
         );
         self.store
-            .add_auth_token(&actor.name(), &token_hash, Some(&task_id))
+            .add_auth_token(&actor.name(), &token_hash, Some(&task_id), &creator)
             .await?;
 
         Ok((actor, auth_token))
-    }
-
-    pub async fn get_actor(&self, name: &str) -> Result<Actor, StoreError> {
-        let store = self.store.as_ref();
-        store.get_actor(name).await.map(|actor| actor.item)
     }
 
     pub async fn get_user(&self, username: &Username) -> Result<User, StoreError> {
@@ -233,8 +200,6 @@ mod tests {
 
         let store_read = handles.store.as_ref();
         let user = store_read.get_user(&Username::from("octo"), false).await?;
-        let actors = store_read.list_actors().await?;
-        assert_eq!(actors.len(), 1);
         assert_eq!(user.item.username.as_str(), "octo");
 
         Ok(())
@@ -343,10 +308,7 @@ mod tests {
             .await?;
 
         // Create a job actor
-        let (actor, auth_token) = handles
-            .state
-            .create_actor_for_job(session_id, ActorRef::test())
-            .await?;
+        let (actor, auth_token) = handles.state.create_actor_for_job(session_id).await?;
 
         // Verify token is in auth_tokens
         let parsed = AuthToken::parse(&auth_token)?;
@@ -408,10 +370,7 @@ mod tests {
             .add_session_with_actor(session, chrono::Utc::now(), ActorRef::test())
             .await?;
 
-        let (actor, _token) = handles
-            .state
-            .create_actor_for_job(session_id, ActorRef::test())
-            .await?;
+        let (actor, _token) = handles.state.create_actor_for_job(session_id).await?;
 
         assert_eq!(actor.actor_id, ActorId::Agent(agent_name));
         Ok(())
@@ -432,7 +391,7 @@ mod tests {
 
         let (actor, _token) = handles
             .state
-            .create_actor_for_job(session_id.clone(), ActorRef::test())
+            .create_actor_for_job(session_id.clone())
             .await?;
 
         assert_eq!(actor.actor_id, ActorId::Adhoc(session_id));

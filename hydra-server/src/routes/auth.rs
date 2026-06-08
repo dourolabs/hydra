@@ -36,15 +36,6 @@ pub async fn require_auth(
         }
     };
 
-    let stored_actor = match state.get_actor(auth_token.actor_name()).await {
-        Ok(actor) => actor,
-        Err(error) => {
-            let message = error.auth_failure_message();
-            info!(error = %error, "authorization rejected");
-            return Err(ApiError::unauthorized(message));
-        }
-    };
-
     let token_hash = Actor::hash_auth_token(auth_token.raw_token());
     let matched_row = state
         .store()
@@ -76,9 +67,24 @@ pub async fn require_auth(
         return Err(ApiError::unauthorized(message));
     }
 
+    // Build the runtime `Actor` straight from the matched token row.
+    // `actor_id` parses from the token's `actor_name`; `creator` is the
+    // per-token denormalization that fixes the multi-user attribution
+    // bug — distinct session tokens for the same `ActorId::Agent` no
+    // longer collapse onto a single creator.
+    let actor_id = match Actor::parse_name(auth_token.actor_name()) {
+        Ok(id) => id,
+        Err(error) => {
+            let store_error = StoreError::InvalidActorName(error.to_string());
+            let message = store_error.auth_failure_message();
+            info!(error = %store_error, "authorization rejected");
+            return Err(ApiError::unauthorized(message));
+        }
+    };
+
     let actor = Actor {
-        actor_id: stored_actor.actor_id,
-        creator: stored_actor.creator,
+        actor_id,
+        creator: matched_row.creator,
         session_id: matched_row.session_id,
     };
     info!(actor = %actor.name(), "authorization accepted");

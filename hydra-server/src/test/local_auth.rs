@@ -49,9 +49,11 @@ async fn setup_local_auth_creates_actor() -> anyhow::Result<()> {
     let sm = test_secret_manager();
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
-    // Actor should exist in the store.
-    let actor = store.as_ref().get_actor("users/local").await?;
-    assert_eq!(actor.item.name(), "users/local");
+    // Local auth seeds a `users/<name>` row plus an `auth_tokens` row
+    // pointing at that actor name (the actors table is gone — the auth
+    // middleware reconstructs the runtime `Actor` from the token row).
+    let hashes = store.get_auth_token_hashes("users/local").await?;
+    assert_eq!(hashes.len(), 1, "expected exactly one minted token");
 
     Ok(())
 }
@@ -72,9 +74,10 @@ async fn setup_local_auth_is_idempotent() -> anyhow::Result<()> {
     setup_local_auth(&config, store.as_ref(), &sm).await?;
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
-    // The actor in the store should still exist.
-    let actor = store.as_ref().get_actor("users/local").await?;
-    assert_eq!(actor.item.name(), "users/local");
+    // Token rotates on each call — after the second run there is exactly
+    // one token registered for the local user.
+    let hashes = store.get_auth_token_hashes("users/local").await?;
+    assert_eq!(hashes.len(), 1, "expected exactly one minted token");
 
     Ok(())
 }
@@ -121,9 +124,9 @@ async fn setup_local_auth_uses_custom_username() -> anyhow::Result<()> {
     let sm = test_secret_manager();
     setup_local_auth(&config, store.as_ref(), &sm).await?;
 
-    // Actor should exist under the custom username.
-    let actor = store.as_ref().get_actor("users/alice").await?;
-    assert_eq!(actor.item.name(), "users/alice");
+    // A token should be registered under the custom actor name.
+    let hashes = store.get_auth_token_hashes("users/alice").await?;
+    assert_eq!(hashes.len(), 1, "expected exactly one minted token");
 
     // User should also be stored under the custom username.
     let username = Username::from("alice");

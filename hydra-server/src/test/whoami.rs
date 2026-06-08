@@ -137,10 +137,7 @@ async fn whoami_returns_agent_identity_for_agent_session() -> anyhow::Result<()>
         .add_session(task, chrono::Utc::now(), &ActorRef::test())
         .await?;
 
-    let (_actor, auth_token) = handles
-        .state
-        .create_actor_for_job(session_id, ActorRef::test())
-        .await?;
+    let (_actor, auth_token) = handles.state.create_actor_for_job(session_id).await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;
     let client = client_with_token(&auth_token);
@@ -176,7 +173,7 @@ async fn whoami_returns_adhoc_identity_for_adhoc_session() -> anyhow::Result<()>
 
     let (_actor, auth_token) = handles
         .state
-        .create_actor_for_job(session_id.clone(), ActorRef::test())
+        .create_actor_for_job(session_id.clone())
         .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;

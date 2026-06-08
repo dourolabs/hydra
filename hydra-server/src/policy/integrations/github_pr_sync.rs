@@ -188,21 +188,24 @@ impl crate::policy::Automation for GithubPrSyncAutomation {
                 })?;
                 task.creator
             }
-            // The shared agent actor row carries the creator on the
-            // underlying `Actor` struct — no per-session lookup is
-            // needed because the patch event already came from an
-            // authenticated agent session.
+            // `agents/<name>` is a shared identity across sessions, so
+            // the creator has to come from the session that *minted*
+            // this auth token, not from the agent actor row (which used
+            // to pin to the first user to instantiate it). The
+            // authenticated `ActorRef` carries the originating session
+            // id end-to-end via `Actor::new_from_actor_id`.
             ActorId::Agent(_) => {
-                let actor = ctx
-                    .store
-                    .get_actor(&actor_id.to_string())
-                    .await
-                    .map_err(|e| {
-                        AutomationError::Other(anyhow::anyhow!(
-                            "github_pr_sync: failed to load actor '{actor_id}': {e}"
-                        ))
-                    })?;
-                actor.item.creator
+                let session_id = actor_ref.originating_session_id().ok_or_else(|| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: ActorId::Agent without originating session id for patch '{patch_id}'"
+                    ))
+                })?;
+                let session = ctx.app_state.get_session(session_id).await.map_err(|e| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "github_pr_sync: failed to load originating session '{session_id}': {e}"
+                    ))
+                })?;
+                session.creator
             }
             // `External` actors aren't constructed by any hydra-server
             // call site that emits patch events. Treat as unsupported

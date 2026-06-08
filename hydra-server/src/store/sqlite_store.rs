@@ -1,6 +1,6 @@
 use crate::domain::conversations::Conversation;
 use crate::domain::{
-    actors::{Actor, ActorId, ActorRef},
+    actors::ActorRef,
     agents::Agent,
     documents::Document,
     issues::{Issue, IssueDependency, IssueDependencyType, IssueType, SessionSettings},
@@ -43,7 +43,6 @@ use super::{
 };
 
 const TABLE_REPOSITORIES_V2: &str = "repositories_v2";
-const TABLE_ACTORS_V2: &str = "actors_v2";
 const TABLE_USERS_V2: &str = "users_v2";
 const TABLE_ISSUES_V2: &str = "issues_v2";
 const TABLE_PATCHES_V2: &str = "patches_v2";
@@ -168,18 +167,6 @@ struct RepositoryRow {
     default_image: Option<String>,
     deleted: bool,
     merge_policy: Option<String>,
-    actor: Option<String>,
-    created_at: String,
-    #[allow(dead_code)]
-    updated_at: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct ActorRow {
-    id: String,
-    version_number: i64,
-    actor_id: String,
-    creator: String,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -779,69 +766,6 @@ impl SqliteStore {
         repo.deleted = row.deleted;
         repo.merge_policy = merge_policy;
         Ok(repo)
-    }
-
-    // ---- Actor helpers ----
-
-    async fn insert_actor(
-        &self,
-        id: &str,
-        version_number: VersionNumber,
-        actor: &Actor,
-        acting_as: Option<&str>,
-    ) -> Result<(), StoreError> {
-        let version_number = i64::try_from(version_number).map_err(|_| {
-            StoreError::Internal(format!("version number overflow for actor '{id}'"))
-        })?;
-
-        let actor_id_json = serde_json::to_string(&actor.actor_id)
-            .map_err(|e| StoreError::Internal(format!("failed to serialize actor_id: {e}")))?;
-
-        let creator_str = actor.creator.to_string();
-
-        // Use a transaction to atomically clear the old is_latest and set the new one
-        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
-
-        // Clear is_latest on the previous latest version
-        sqlx::query("UPDATE actors_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx_error)?;
-
-        // Insert the new version with is_latest = 1.
-        //
-        // The `auth_token_hash` / `auth_token_salt` columns are vestigial
-        // (the matching `Actor` fields and `verify_auth_token` consumer
-        // are gone). We write empty strings to keep the NOT-NULL DB
-        // schema satisfied until a follow-up migration drops the columns.
-        sqlx::query(
-            "INSERT INTO actors_v2 (id, version_number, auth_token_hash, auth_token_salt, actor_id, creator, actor, is_latest)
-             VALUES (?1, ?2, '', '', ?3, ?4, ?5, 1)"
-        )
-        .bind(id)
-        .bind(version_number)
-        .bind(&actor_id_json)
-        .bind(&creator_str)
-        .bind(acting_as)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        tx.commit().await.map_err(map_sqlx_error)?;
-
-        Ok(())
-    }
-
-    fn row_to_actor(&self, row: &ActorRow) -> Result<Actor, StoreError> {
-        let actor_id: ActorId = serde_json::from_str(&row.actor_id)
-            .map_err(|e| StoreError::Internal(format!("failed to deserialize actor_id: {e}")))?;
-
-        Ok(Actor {
-            actor_id,
-            creator: Username::from(row.creator.as_str()),
-            session_id: None,
-        })
     }
 
     // ---- User helpers ----
@@ -3525,75 +3449,6 @@ impl ReadOnlyStore for SqliteStore {
         Ok(result)
     }
 
-    async fn get_actor(&self, name: &str) -> Result<Versioned<Actor>, StoreError> {
-        super::validate_actor_name(name)?;
-        let row = sqlx::query_as::<_, ActorRow>(
-            "SELECT id, version_number, actor_id, creator, actor, created_at, updated_at
-             FROM actors_v2
-             WHERE id = ?1
-             ORDER BY version_number DESC
-             LIMIT 1",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        let row = row.ok_or_else(|| StoreError::ActorNotFound(name.to_string()))?;
-        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-            StoreError::Internal(format!(
-                "invalid version number stored for actor '{}'",
-                row.id
-            ))
-        })?;
-        let timestamp = parse_sqlite_timestamp(&row.created_at)?;
-        let actor = self.row_to_actor(&row)?;
-        Ok(Versioned::with_optional_actor(
-            actor,
-            version,
-            timestamp,
-            parse_actor_json_string(row.actor.as_deref())?,
-            timestamp,
-        ))
-    }
-
-    async fn list_actors(&self) -> Result<Vec<(String, Versioned<Actor>)>, StoreError> {
-        let rows = sqlx::query_as::<_, ActorRow>(
-            "SELECT a.id, a.version_number, a.actor_id, a.creator, a.actor, a.created_at, a.updated_at
-             FROM actors_v2 a
-             WHERE a.is_latest = 1
-             ORDER BY a.id"
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        let mut actors = Vec::with_capacity(rows.len());
-        for row in rows {
-            let version = VersionNumber::try_from(row.version_number).map_err(|_| {
-                StoreError::Internal(format!(
-                    "invalid version number stored for actor '{}'",
-                    row.id
-                ))
-            })?;
-            let timestamp = parse_sqlite_timestamp(&row.created_at)?;
-            let actor = self.row_to_actor(&row)?;
-            actors.push((
-                row.id,
-                Versioned::with_optional_actor(
-                    actor,
-                    version,
-                    timestamp,
-                    parse_actor_json_string(row.actor.as_deref())?,
-                    timestamp,
-                ),
-            ));
-        }
-
-        actors.sort_by(|(a, _), (b, _)| a.cmp(b));
-        Ok(actors)
-    }
-
     async fn get_user(
         &self,
         username: &Username,
@@ -4366,15 +4221,15 @@ impl ReadOnlyStore for SqliteStore {
         token_hash: &str,
     ) -> Result<Option<AuthTokenRow>, StoreError> {
         let sql = format!(
-            "SELECT actor_name, session_id, is_revoked FROM {TABLE_AUTH_TOKENS} \
+            "SELECT actor_name, session_id, is_revoked, creator FROM {TABLE_AUTH_TOKENS} \
              WHERE token_hash = ?1 LIMIT 1"
         );
-        let row = sqlx::query_as::<_, (String, Option<String>, i64)>(&sql)
+        let row = sqlx::query_as::<_, (String, Option<String>, i64, String)>(&sql)
             .bind(token_hash)
             .fetch_optional(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
-        let Some((actor_name, session_id, is_revoked)) = row else {
+        let Some((actor_name, session_id, is_revoked, creator)) = row else {
             return Ok(None);
         };
         let session_id = match session_id {
@@ -4387,6 +4242,7 @@ impl ReadOnlyStore for SqliteStore {
             actor_name,
             session_id,
             is_revoked: is_revoked != 0,
+            creator: Username::from(creator),
         }))
     }
 
@@ -5098,54 +4954,6 @@ impl Store for SqliteStore {
         Ok(versioned.version)
     }
 
-    async fn add_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
-        let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = ?1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists > 0 {
-            return Err(StoreError::ActorAlreadyExists(name));
-        }
-
-        let acting_as_json = actor_to_json_string(acting_as);
-        self.insert_actor(&name, 1, &actor, Some(&acting_as_json))
-            .await
-    }
-
-    async fn update_actor(&self, actor: Actor, acting_as: &ActorRef) -> Result<(), StoreError> {
-        let name = actor.name();
-        let exists = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(1) FROM {TABLE_ACTORS_V2} WHERE id = ?1"
-        ))
-        .bind(&name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        if exists == 0 {
-            return Err(StoreError::ActorNotFound(name));
-        }
-
-        let latest_version = self
-            .fetch_latest_version_number(TABLE_ACTORS_V2, &name)
-            .await?
-            .ok_or_else(|| {
-                StoreError::Internal(format!("actor '{name}' was missing during update"))
-            })?;
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for actor '{name}'"))
-        })?;
-
-        let acting_as_json = actor_to_json_string(acting_as);
-        self.insert_actor(&name, next_version, &actor, Some(&acting_as_json))
-            .await
-    }
-
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         let existing = sqlx::query_as::<_, UserRow>(
             "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
@@ -5507,17 +5315,19 @@ impl Store for SqliteStore {
         actor_name: &str,
         token_hash: &str,
         session_id: Option<&SessionId>,
+        creator: &Username,
     ) -> Result<(), StoreError> {
         let now = Utc::now().to_rfc3339();
         let sql = format!(
-            "INSERT OR IGNORE INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, created_at, session_id) \
-             VALUES (?1, ?2, ?3, ?4)"
+            "INSERT OR IGNORE INTO {TABLE_AUTH_TOKENS} (actor_name, token_hash, created_at, session_id, creator) \
+             VALUES (?1, ?2, ?3, ?4, ?5)"
         );
         sqlx::query(&sql)
             .bind(actor_name)
             .bind(token_hash)
             .bind(&now)
             .bind(session_id.map(|s| s.to_string()))
+            .bind(creator.as_str())
             .execute(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
@@ -5972,7 +5782,7 @@ fn apply_pagination_sql_sqlite(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::actors::{ActorId, ActorRef};
+    use crate::domain::actors::ActorRef;
     use crate::domain::issues::IssueStatus;
     use chrono::Duration;
     use hydra_common::SessionId;
@@ -6345,151 +6155,6 @@ mod tests {
         assert_eq!(column.2, "TEXT", "merge_policy should be TEXT");
         assert_eq!(column.3, 0, "merge_policy should be nullable");
         assert_eq!(column.5, 0, "merge_policy should not be part of the PK");
-    }
-
-    // ---- Actor tests ----
-
-    #[tokio::test]
-    async fn add_and_get_actor_by_name() {
-        let store = create_test_store().await;
-        let actor = Actor {
-            actor_id: ActorId::User(Username::from("ada").into()),
-            creator: Username::from("ada"),
-            session_id: None,
-        };
-
-        let name = actor.name();
-        store
-            .add_actor(actor.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let fetched = store.get_actor(&name).await.unwrap();
-        assert_eq!(fetched.item, actor);
-        assert_eq!(fetched.version, 1);
-    }
-
-    #[tokio::test]
-    async fn add_actor_rejects_duplicate_name() {
-        let store = create_test_store().await;
-        let actor = Actor {
-            actor_id: ActorId::Adhoc(SessionId::new()),
-            creator: Username::from("creator"),
-            session_id: None,
-        };
-        let name = actor.name();
-
-        store
-            .add_actor(actor.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        let err = store.add_actor(actor, &ActorRef::test()).await.unwrap_err();
-
-        assert!(matches!(
-            err,
-            StoreError::ActorAlreadyExists(existing) if existing == name
-        ));
-    }
-
-    #[tokio::test]
-    async fn update_actor_overwrites_existing_entry() {
-        let store = create_test_store().await;
-        let task_id = SessionId::new();
-        let actor = Actor {
-            actor_id: ActorId::Adhoc(task_id),
-            creator: Username::from("creator"),
-            session_id: None,
-        };
-        let mut updated = actor.clone();
-        updated.creator = Username::from("rotated-creator");
-
-        store
-            .add_actor(actor.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        store
-            .update_actor(updated.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let fetched = store.get_actor(&updated.name()).await.unwrap();
-        assert_eq!(fetched.item, updated);
-        assert_eq!(fetched.version, 2);
-    }
-
-    #[tokio::test]
-    async fn update_actor_missing_returns_not_found() {
-        let store = create_test_store().await;
-        let actor = Actor {
-            actor_id: ActorId::User(Username::from("ada").into()),
-            creator: Username::from("ada"),
-            session_id: None,
-        };
-
-        let err = store
-            .update_actor(actor, &ActorRef::test())
-            .await
-            .unwrap_err();
-
-        assert!(matches!(
-            err,
-            StoreError::ActorNotFound(name) if name == "users/ada"
-        ));
-    }
-
-    #[tokio::test]
-    async fn get_actor_missing_returns_not_found() {
-        let store = create_test_store().await;
-        let task_id = SessionId::new();
-        let name = format!("adhoc/{task_id}");
-
-        let err = store.get_actor(&name).await.unwrap_err();
-
-        assert!(matches!(
-            err,
-            StoreError::ActorNotFound(missing) if missing == name
-        ));
-    }
-
-    #[tokio::test]
-    async fn get_actor_invalid_name_returns_error() {
-        let store = create_test_store().await;
-
-        let err = store.get_actor("u-").await.unwrap_err();
-
-        assert!(matches!(
-            err,
-            StoreError::InvalidActorName(name) if name == "u-"
-        ));
-    }
-
-    #[tokio::test]
-    async fn list_actors_returns_all() {
-        let store = create_test_store().await;
-        let actor1 = Actor {
-            actor_id: ActorId::User(Username::from("alice").into()),
-            creator: Username::from("alice"),
-            session_id: None,
-        };
-        let actor2 = Actor {
-            actor_id: ActorId::User(Username::from("bob").into()),
-            creator: Username::from("bob"),
-            session_id: None,
-        };
-
-        store
-            .add_actor(actor1.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-        store
-            .add_actor(actor2.clone(), &ActorRef::test())
-            .await
-            .unwrap();
-
-        let actors = store.list_actors().await.unwrap();
-        assert_eq!(actors.len(), 2);
-        assert_eq!(actors[0].1.item, actor1);
-        assert_eq!(actors[1].1.item, actor2);
     }
 
     // ---- User tests ----
@@ -9201,12 +8866,13 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_add_and_get() {
         let store = create_test_store().await;
+        let alice = Username::from("alice");
         store
-            .add_auth_token("users/alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None, &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("users/alice", "hash2", None)
+            .add_auth_token("users/alice", "hash2", None, &alice)
             .await
             .unwrap();
 
@@ -9224,12 +8890,13 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_delete_for_actor() {
         let store = create_test_store().await;
+        let alice = Username::from("alice");
         store
-            .add_auth_token("users/alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None, &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("users/alice", "hash2", None)
+            .add_auth_token("users/alice", "hash2", None, &alice)
             .await
             .unwrap();
         store
@@ -9244,12 +8911,13 @@ mod tests {
     #[tokio::test]
     async fn auth_tokens_duplicate_insert_is_idempotent() {
         let store = create_test_store().await;
+        let alice = Username::from("alice");
         store
-            .add_auth_token("users/alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None, &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("users/alice", "hash1", None)
+            .add_auth_token("users/alice", "hash1", None, &alice)
             .await
             .unwrap();
 
@@ -9261,8 +8929,9 @@ mod tests {
     async fn auth_tokens_by_hash_with_session_id_round_trips() {
         let store = create_test_store().await;
         let sid = SessionId::new();
+        let creator = Username::from("creator");
         store
-            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid), &creator)
             .await
             .unwrap();
 
@@ -9273,13 +8942,15 @@ mod tests {
             .expect("token row should exist");
         assert_eq!(row.actor_name, "agents/swe");
         assert_eq!(row.session_id, Some(sid));
+        assert_eq!(row.creator, creator);
     }
 
     #[tokio::test]
     async fn auth_tokens_by_hash_without_session_id_round_trips() {
         let store = create_test_store().await;
+        let alice = Username::from("alice");
         store
-            .add_auth_token("users/alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None, &alice)
             .await
             .unwrap();
 
@@ -9290,6 +8961,7 @@ mod tests {
             .expect("token row should exist");
         assert_eq!(row.actor_name, "users/alice");
         assert_eq!(row.session_id, None);
+        assert_eq!(row.creator, alice);
     }
 
     #[tokio::test]
@@ -9307,16 +8979,17 @@ mod tests {
         let store = create_test_store().await;
         let sid = SessionId::new();
         let other_sid = SessionId::new();
+        let alice = Username::from("alice");
         store
-            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid), &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("agents/swe", "hash-other", Some(&other_sid))
+            .add_auth_token("agents/swe", "hash-other", Some(&other_sid), &alice)
             .await
             .unwrap();
         store
-            .add_auth_token("users/alice", "hash-user", None)
+            .add_auth_token("users/alice", "hash-user", None, &alice)
             .await
             .unwrap();
 
@@ -9364,8 +9037,9 @@ mod tests {
     async fn revoke_auth_tokens_is_idempotent_and_handles_no_match() {
         let store = create_test_store().await;
         let sid = SessionId::new();
+        let alice = Username::from("alice");
         store
-            .add_auth_token("agents/swe", "hash-sess", Some(&sid))
+            .add_auth_token("agents/swe", "hash-sess", Some(&sid), &alice)
             .await
             .unwrap();
 

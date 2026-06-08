@@ -126,6 +126,22 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("drop_status_icon: idempotency on re-applied migration body")?;
 
+    denormalize_creator_session_backfill(&pool)
+        .await
+        .context("denormalize_creator: session-bound auth_tokens row backfilled")?;
+    denormalize_creator_user_backfill(&pool)
+        .await
+        .context("denormalize_creator: user-CLI auth_tokens row backfilled")?;
+    denormalize_creator_domain_roundtrip(&pool)
+        .await
+        .context("denormalize_creator: domain-level AuthTokenRow round-trip")?;
+    drop_actors_v2_migration_removes_table(&pool)
+        .await
+        .context("drop_actors_v2: metis.actors_v2 table is gone after rollforward")?;
+    denormalize_creator_migration_is_idempotent(&pool)
+        .await
+        .context("denormalize_creator: post-migration write/read works")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -222,6 +238,7 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         ("issues_v2", "assignee_principal"),
         ("auth_tokens", "session_id"),
         ("auth_tokens", "is_revoked"),
+        ("auth_tokens", "creator"),
         ("tasks_v2", "mount_spec"),
         ("tasks_v2", "agent_config"),
         ("tasks_v2", "mode"),
@@ -264,6 +281,7 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         "notifications",
         "conversation_session_state",
         "conversation_events_v2",
+        "actors_v2",
     ] {
         if table_exists(pool, table).await? {
             bail!("expected metis.{table} to be dropped after rollforward");
@@ -287,6 +305,12 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         if column_is_nullable(pool, "tasks_v2", col).await? {
             bail!("expected metis.tasks_v2.{col} to be NOT NULL after rollforward");
         }
+    }
+
+    // NOT NULL tightening on auth_tokens.creator landed by
+    // 20260609000000_add_creator_to_auth_tokens.sql.
+    if column_is_nullable(pool, "auth_tokens", "creator").await? {
+        bail!("expected metis.auth_tokens.creator to be NOT NULL after rollforward");
     }
 
     // Column added by 20260606010000_add_projects_prompt_path.sql.
@@ -2087,6 +2111,112 @@ async fn snapshot_status_arrays(pool: &PgPool) -> Result<HashMap<String, String>
         snap.insert(id, statuses);
     }
     Ok(snap)
+}
+
+// ---------------------------------------------------------------------------
+// 20260609000000_add_creator_to_auth_tokens / 20260609010000_drop_actors_v2
+// ---------------------------------------------------------------------------
+
+async fn denormalize_creator_session_backfill(pool: &PgPool) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT creator FROM metis.auth_tokens WHERE token_hash = 'hash-session-alice'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read back session-bound auth_tokens row")?;
+    let creator: String = row.try_get(0)?;
+    if creator != "alice" {
+        bail!("session-bound auth_tokens.creator: expected 'alice'; got {creator:?}");
+    }
+    Ok(())
+}
+
+async fn denormalize_creator_user_backfill(pool: &PgPool) -> Result<()> {
+    let row =
+        sqlx::query("SELECT creator FROM metis.auth_tokens WHERE token_hash = 'hash-cli-bob'")
+            .fetch_one(pool)
+            .await
+            .context("read back user-CLI auth_tokens row")?;
+    let creator: String = row.try_get(0)?;
+    if creator != "bob" {
+        bail!("user-CLI auth_tokens.creator: expected 'bob'; got {creator:?}");
+    }
+    Ok(())
+}
+
+async fn denormalize_creator_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    let store = PostgresStoreV2::new(pool.clone());
+    let session_row = store
+        .get_auth_token_by_hash("hash-session-alice")
+        .await
+        .context("PostgresStoreV2::get_auth_token_by_hash(hash-session-alice)")?
+        .context("session-bound row not found via domain API")?;
+    if session_row.creator.as_str() != "alice" {
+        bail!(
+            "domain-level session-bound creator: expected 'alice'; got {:?}",
+            session_row.creator
+        );
+    }
+    if session_row.actor_name != "agents/swe" {
+        bail!(
+            "domain-level session-bound actor_name: expected 'agents/swe'; got {:?}",
+            session_row.actor_name
+        );
+    }
+
+    let user_row = store
+        .get_auth_token_by_hash("hash-cli-bob")
+        .await
+        .context("PostgresStoreV2::get_auth_token_by_hash(hash-cli-bob)")?
+        .context("user-CLI row not found via domain API")?;
+    if user_row.creator.as_str() != "bob" {
+        bail!(
+            "domain-level user-CLI creator: expected 'bob'; got {:?}",
+            user_row.creator
+        );
+    }
+    if user_row.session_id.is_some() {
+        bail!(
+            "domain-level user-CLI session_id: expected None; got {:?}",
+            user_row.session_id
+        );
+    }
+    Ok(())
+}
+
+async fn drop_actors_v2_migration_removes_table(pool: &PgPool) -> Result<()> {
+    if table_exists(pool, "actors_v2").await? {
+        bail!("expected `metis.actors_v2` table to be dropped after 20260609010000");
+    }
+    Ok(())
+}
+
+async fn denormalize_creator_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    let store = PostgresStoreV2::new(pool.clone());
+    let creator = Username::from("eve");
+    let sid = SessionId::new();
+    store
+        .add_auth_token("users/eve", "hash-eve", Some(&sid), &creator)
+        .await
+        .context("post-migration add_auth_token write")?;
+    let fresh = store
+        .get_auth_token_by_hash("hash-eve")
+        .await
+        .context("post-migration get_auth_token_by_hash")?
+        .context("post-migration write should be readable")?;
+    if fresh.creator != creator {
+        bail!(
+            "post-migration write read-back: expected creator='eve'; got {:?}",
+            fresh.creator
+        );
+    }
+    if fresh.session_id.as_ref() != Some(&sid) {
+        bail!(
+            "post-migration write read-back: expected session_id={sid:?}; got {:?}",
+            fresh.session_id
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

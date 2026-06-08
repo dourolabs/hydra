@@ -983,20 +983,6 @@ mod tests {
         };
         add_repo_with_policy(&store, Some(policy)).await;
 
-        // Persist an agent actor row whose creator is `alice` — even
-        // though the agent is rooted to alice, the agent's matching
-        // identity for merge-policy purposes is `agents/swe`, not
-        // `users/alice`.
-        let (agent_actor_row, _token) = crate::domain::actors::Actor::new_from_actor_id(
-            ActorId::Agent(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
-            Username::from("alice"),
-            None,
-        );
-        store
-            .add_actor(agent_actor_row, &DomainActorRef::test())
-            .await
-            .expect("add agent actor");
-
         let r = MergeAuthorizationRestriction::new();
         let patch = make_patch_with(Vec::new(), "author");
         let old = old_open("author");

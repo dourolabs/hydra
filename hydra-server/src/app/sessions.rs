@@ -696,10 +696,7 @@ impl AppState {
         let cpu_request = job_config.cpu_request.clone();
         let memory_request = job_config.memory_request.clone();
 
-        let (task_actor, auth_token) = match self
-            .create_actor_for_job(session_id.clone(), actor.clone())
-            .await
-        {
+        let (task_actor, auth_token) = match self.create_actor_for_job(session_id.clone()).await {
             Ok(values) => values,
             Err(err) => {
                 let failure_reason = format!("Failed to create actor for task: {err}");

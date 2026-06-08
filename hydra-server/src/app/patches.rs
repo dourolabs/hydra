@@ -411,11 +411,6 @@ mod tests {
             .await?;
         store_github_token_secrets(&handles.state, &username, "token-123", "refresh-123").await;
         let (actor, _auth_token) = Actor::new_for_user(username);
-        handles
-            .store
-            .as_ref()
-            .add_actor(actor.clone(), &ActorRef::test())
-            .await?;
         let repo_name = RepoName::new("octo", "repo")?;
         add_repository(
             &handles.state,
@@ -544,11 +539,6 @@ mod tests {
             .await?;
         store_github_token_secrets(&handles.state, &username, "token-456", "refresh-456").await;
         let (actor, _auth_token) = Actor::new_for_user(username);
-        handles
-            .store
-            .as_ref()
-            .add_actor(actor.clone(), &ActorRef::test())
-            .await?;
         let repo_name = RepoName::new("octo", "repo")?;
         add_repository(
             &handles.state,
@@ -748,11 +738,6 @@ mod tests {
             creator_username.clone(),
             None,
         );
-        handles
-            .store
-            .as_ref()
-            .add_actor(actor.clone(), &ActorRef::test())
-            .await?;
 
         let patch = Patch::new(
             "Agent patch".to_string(),
