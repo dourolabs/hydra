@@ -1,0 +1,78 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pathRow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.pathField {
+  flex: 1;
+  min-width: 0;
+}
+
+.toggleButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  height: fit-content;
+}
+
+.toggleButton:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+}
+
+.textarea {
+  width: 100%;
+  min-height: 180px;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  resize: vertical;
+}
+
+.bodyActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.statusText {
+  flex: 1;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.errorBlock {
+  font-size: var(--font-size-sm);
+  color: var(--color-status-failed, #e74c3c);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-status-failed, #e74c3c);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+}
+
+.loading {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
