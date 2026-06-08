@@ -245,7 +245,7 @@ impl Issue {
             creator,
             progress,
             status,
-            project_id: None,
+            project_id: Some(crate::domain::projects::default_project_id()),
             assignee,
             session_settings: session_settings.unwrap_or_default(),
             dependencies,

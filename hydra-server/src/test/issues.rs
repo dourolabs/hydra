@@ -597,7 +597,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         let api_issue = hydra_common::api::v1::issues::Issue::from(issue);
         let mut summary = hydra_common::api::v1::issues::IssueSummary::from(&api_issue);
         summary.resolved_status = Some(
-            crate::domain::projects::default_project()
+            crate::domain::projects::default_project_seed()
                 .find_status(&api_issue.status)
                 .expect("default project covers all legacy IssueStatus values")
                 .clone(),

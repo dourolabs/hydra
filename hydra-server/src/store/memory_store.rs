@@ -101,7 +101,26 @@ pub struct MemoryStore {
 
 impl MemoryStore {
     /// Creates a new empty MemoryStore.
+    ///
+    /// Seeds the default project as version 1 so MemoryStore-backed
+    /// callers see the same row the `seed_default_project` SQL
+    /// migration installs for SqliteStore / PostgresStore. Without this
+    /// seed every status-resolution path that fetches
+    /// `default_project_id()` from the store would fail in tests.
     pub fn new() -> Self {
+        use crate::domain::projects::{default_project_id, default_project_seed};
+        let projects: DashMap<ProjectId, Vec<Versioned<Project>>> = DashMap::new();
+        let now = Utc::now();
+        projects.insert(
+            default_project_id(),
+            vec![Versioned::with_optional_actor(
+                default_project_seed(),
+                1,
+                now,
+                None,
+                now,
+            )],
+        );
         Self {
             tasks: DashMap::new(),
             issues: DashMap::new(),
@@ -121,7 +140,7 @@ impl MemoryStore {
             object_relationships: DashMap::new(),
             conversations: DashMap::new(),
             triggers: DashMap::new(),
-            projects: DashMap::new(),
+            projects,
             session_events: DashMap::new(),
             session_state: DashMap::new(),
             next_session_event_seq: AtomicU64::new(1),
@@ -9503,6 +9522,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_round_trip_create_get_list_update_delete() {
+        use crate::domain::projects::default_project_id;
         let store = MemoryStore::new();
         let (id, version) = store
             .add_project(sample_project(), &ActorRef::test())
@@ -9517,9 +9537,14 @@ mod tests {
         // `on_enter` must round-trip through the store unchanged.
         assert_eq!(fetched.item.statuses, sample_project().statuses);
 
+        // MemoryStore::new seeds the default project, so listing
+        // returns it alongside the newly-added engineering project.
+        let default_id = default_project_id();
         let listed = store.list_projects(false).await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].0, id);
+        assert_eq!(listed.len(), 2);
+        let ids: Vec<&ProjectId> = listed.iter().map(|(i, _)| i).collect();
+        assert!(ids.contains(&&id));
+        assert!(ids.contains(&&default_id));
 
         let mut updated = sample_project();
         updated.name = "Engineering Renamed".to_string();
@@ -9535,10 +9560,12 @@ mod tests {
 
         let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 3);
-        // List excludes deleted by default.
-        assert!(store.list_projects(false).await.unwrap().is_empty());
-        // List includes deleted on request.
-        assert_eq!(store.list_projects(true).await.unwrap().len(), 1);
+        // List excludes deleted by default — the default seed remains.
+        let after_delete = store.list_projects(false).await.unwrap();
+        assert_eq!(after_delete.len(), 1);
+        assert_eq!(after_delete[0].0, default_id);
+        // List includes deleted on request — engineering reappears.
+        assert_eq!(store.list_projects(true).await.unwrap().len(), 2);
         // Get without include_deleted returns NotFound.
         assert!(matches!(
             store.get_project(&id, false).await,

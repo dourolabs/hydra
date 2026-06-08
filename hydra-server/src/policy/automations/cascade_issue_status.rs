@@ -224,24 +224,20 @@ async fn child_project_has_key(
     child: &crate::domain::issues::Issue,
     target_key: &StatusKey,
 ) -> Result<bool, anyhow::Error> {
-    use crate::domain::projects::default_project;
+    use crate::domain::projects::default_project_id;
     use crate::store::StoreError;
-    match &child.project_id {
-        None => Ok(default_project().find_status(target_key).is_some()),
-        Some(project_id) => {
-            let store = app_state.store();
-            let project = match store.get_project(project_id, false).await {
-                Ok(versioned) => versioned.item,
-                Err(StoreError::ProjectNotFound(_)) => return Ok(false),
-                Err(err) => {
-                    return Err(anyhow::anyhow!(
-                        "store error reading project {project_id}: {err}"
-                    ));
-                }
-            };
-            Ok(project.find_status(target_key).is_some())
+    let project_id = child.project_id.clone().unwrap_or_else(default_project_id);
+    let store = app_state.store();
+    let project = match store.get_project(&project_id, false).await {
+        Ok(versioned) => versioned.item,
+        Err(StoreError::ProjectNotFound(_)) => return Ok(false),
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "store error reading project {project_id}: {err}"
+            ));
         }
-    }
+    };
+    Ok(project.find_status(target_key).is_some())
 }
 
 #[cfg(test)]
