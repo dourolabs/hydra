@@ -138,6 +138,10 @@ function seedVersionedEntity<T extends object>(
 function normalizeIssue(issue: Issue): Issue {
   return {
     ...issue,
+    // Backfill `project_id` for legacy seed fixtures that pre-date the
+    // wire-side NOT NULL tightening — the mirror of the
+    // `seed_default_project` backfill on real DBs.
+    project_id: issue.project_id ?? "j-defaul",
     dependencies: issue.dependencies ?? [],
     patches: issue.patches ?? [],
   };

@@ -32,6 +32,7 @@ function issueRecord(id: string, title: string, assignee?: string | null): Issue
       description: "",
       creator: "alice",
       status: "in-progress",
+      project_id: "j-defaul",
       // Phase 4b: tests pass a bare username; wrap as `Principal::Agent`
       // since sessions historically used the assignee as the agent name.
       assignee: assignee ? { Agent: { name: assignee } } : null,

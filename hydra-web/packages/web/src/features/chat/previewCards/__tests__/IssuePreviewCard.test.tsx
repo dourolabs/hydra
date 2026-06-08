@@ -59,7 +59,7 @@ function makeIssueRecord(opts?: {
       description: "Add a login button to the homepage",
       creator: "alice",
       status: "open",
-      project_id: opts?.projectId ?? null,
+      project_id: opts?.projectId ?? "j-defaul",
       resolved_status: {
         key: "open",
         label: opts?.statusLabel ?? "Open",

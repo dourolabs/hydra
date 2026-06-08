@@ -119,6 +119,11 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     drop_projects_default_status_key_migration_preserves_typed_read(&pool).await?;
     drop_projects_default_status_key_migration_is_idempotent(&pool).await?;
 
+    issues_v2_project_id_is_not_null(&pool).await?;
+    issues_v2_project_id_rejects_null_insert(&pool).await?;
+    issues_v2_project_id_not_null_migration_is_idempotent(&pool).await?;
+    issues_v2_project_id_not_null_migration_rejects_null_baseline().await?;
+
     Ok(())
 }
 
@@ -1584,4 +1589,123 @@ async fn drop_projects_default_status_key_migration_is_idempotent(pool: &SqliteP
         bail!("drop_projects_default_status_key: column reappeared after idempotency rerun");
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260612000000_issues_v2_project_id_not_null — assert the column is now
+// NOT NULL, the post-migration table rejects fresh NULL inserts, the
+// migration body is idempotent (table rebuild does not destabilize the
+// `issues_v2` schema on second pass), and the pre-flight guard refuses
+// to run when a stale NULL row remains in the table.
+// ---------------------------------------------------------------------------
+
+async fn issues_v2_project_id_is_not_null(pool: &SqlitePool) -> Result<()> {
+    if column_is_nullable(pool, "issues_v2", "project_id").await? {
+        bail!(
+            "expected `issues_v2.project_id` to be NOT NULL after \
+             20260612000000_issues_v2_project_id_not_null"
+        );
+    }
+    Ok(())
+}
+
+/// After the migration the table must reject fresh NULL `project_id`
+/// inserts — the typed `Issue` shape no longer permits None, but
+/// belt-and-braces verification at the SQL layer.
+async fn issues_v2_project_id_rejects_null_insert(pool: &SqlitePool) -> Result<()> {
+    let result = sqlx::query(
+        "INSERT INTO issues_v2 (id, version_number, issue_type, description, creator, project_id) \
+         VALUES ('i-nullchk', 99, 'task', 'null project_id insert must fail', 'system', NULL)",
+    )
+    .execute(pool)
+    .await;
+    match result {
+        Err(_) => Ok(()),
+        Ok(_) => bail!(
+            "expected NULL project_id INSERT to fail post-migration; \
+             the NOT NULL constraint was not applied"
+        ),
+    }
+}
+
+/// Re-execute the migration body verbatim. The pre-flight guard passes
+/// (no NULL rows survive) and the table rebuild rerun must produce the
+/// same schema invariants.
+async fn issues_v2_project_id_not_null_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260612000000_issues_v2_project_id_not_null.sql"),
+    )
+    .context("read sqlite issues_v2_project_id_not_null migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply sqlite issues_v2_project_id_not_null migration body")?;
+    if column_is_nullable(pool, "issues_v2", "project_id").await? {
+        bail!("expected `issues_v2.project_id` to stay NOT NULL after idempotency rerun");
+    }
+    for index in [
+        "issues_v2_status_idx",
+        "issues_v2_latest_idx",
+        "issues_v2_latest_id_idx",
+        "issues_v2_latest_pagination_idx",
+        "issues_v2_project_id_idx",
+        "issues_v2_updated_at_id_idx",
+    ] {
+        if !index_exists(pool, index).await? {
+            bail!(
+                "expected index `{index}` to survive the idempotent rerun of \
+                 20260612000000_issues_v2_project_id_not_null"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Pre-flight guard: against a fresh schema-at-baseline pool with a
+/// stranded NULL `project_id` row, the migration body must fail loud
+/// rather than silently coercing the row to the default project.
+async fn issues_v2_project_id_not_null_migration_rejects_null_baseline() -> Result<()> {
+    let pool = SqliteStore::init_pool("sqlite::memory:")
+        .await
+        .context("init in-memory sqlite pool for null-baseline rerun")?;
+
+    // Roll forward to the prior migration so `issues_v2.project_id` is
+    // still nullable.
+    sqlite_store::run_migrations(&pool, Some(20260611000000))
+        .await
+        .context("roll forward to 20260611000000 baseline for null-guard test")?;
+
+    // Seed a NULL `project_id` row.
+    sqlx::query(
+        "INSERT INTO issues_v2 (id, version_number, issue_type, description, creator, project_id) \
+         VALUES ('i-nullbase', 1, 'task', 'guard test row', 'system', NULL)",
+    )
+    .execute(&pool)
+    .await
+    .context("insert null project_id row")?;
+
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260612000000_issues_v2_project_id_not_null.sql"),
+    )
+    .context("read sqlite issues_v2_project_id_not_null migration body for null-baseline test")?;
+
+    let result = sqlx::raw_sql(&body).execute(&pool).await;
+    match result {
+        Err(err) => {
+            let msg = err.to_string();
+            // SQLite's NOT NULL constraint violation on the
+            // `issues_v2_new.project_id` column. The error message must
+            // name the column so an operator knows where to look.
+            if !msg.contains("project_id") {
+                bail!("expected the migration error to mention 'project_id'; got: {msg}");
+            }
+            Ok(())
+        }
+        Ok(_) => bail!(
+            "expected the migration body to fail loud on a NULL project_id \
+             row; instead it completed successfully"
+        ),
+    }
 }

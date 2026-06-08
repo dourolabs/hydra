@@ -648,7 +648,7 @@ async fn fetch_issues(
             bail!("Issue '{issue_id}' does not match the requested status.");
         }
         if let Some(ref expected_project) = project_id {
-            if record.issue.project_id.as_ref() != Some(expected_project) {
+            if &record.issue.project_id != expected_project {
                 bail!("Issue '{issue_id}' does not belong to project {expected_project}.");
             }
         }
@@ -703,7 +703,7 @@ async fn fetch_issues(
             );
         }
         if let Some(ref expected_project) = project_id {
-            if issue.issue.project_id.as_ref() != Some(expected_project) {
+            if &issue.issue.project_id != expected_project {
                 bail!(
                     "Issue {} does not belong to project {expected_project}.",
                     issue.issue_id
@@ -947,7 +947,7 @@ async fn create_issue(
         creator,
         progress,
         status,
-        project_id,
+        project_id.unwrap_or_else(ProjectId::default_project),
         assignee,
         job_settings,
         dependencies,
@@ -957,7 +957,7 @@ async fn create_issue(
         None,
         feedback,
     );
-    let mut request = UpsertIssueRequest::new(issue.clone(), None);
+    let mut request = UpsertIssueRequest::new(issue.clone().into(), None);
     let label_names: Vec<String> = labels
         .into_iter()
         .map(|s| s.trim().to_string())
@@ -1145,8 +1145,10 @@ async fn update_issue(
     let result = if issue_fields_changed {
         let project_id = match project_update {
             ProjectUpdate::Unchanged => current.issue.project_id,
-            ProjectUpdate::Set(id) => Some(id),
-            ProjectUpdate::Clear => None,
+            ProjectUpdate::Set(id) => id,
+            // Detach: every issue now lives in some project, so "clear"
+            // routes back to the seeded default project.
+            ProjectUpdate::Clear => ProjectId::default_project(),
         };
         let updated_issue = Issue::new(
             issue_type.unwrap_or(current.issue.issue_type),
@@ -1169,7 +1171,7 @@ async fn update_issue(
         let response = client
             .update_issue(
                 &issue_id,
-                &UpsertIssueRequest::new(updated_issue.clone(), None),
+                &UpsertIssueRequest::new(updated_issue.clone().into(), None),
             )
             .await
             .with_context(|| format!("failed to update issue '{issue_id}'"))?;
@@ -1352,7 +1354,7 @@ mod tests {
         Issue, IssueStatus, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse,
         SessionSettings, UpsertIssueRequest, UpsertIssueResponse,
     };
-    use hydra_common::{users::Username, PatchId, RepoName};
+    use hydra_common::{users::Username, PatchId, ProjectId, RepoName};
     use reqwest::Client as HttpClient;
     use std::str::FromStr;
 
@@ -1414,7 +1416,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 status.into(),
-                None,
+                ProjectId::default_project(),
                 assignee.map(user_principal),
                 None,
                 dependencies,
@@ -1446,7 +1448,7 @@ mod tests {
                     empty_user(),
                     String::new(),
                     IssueStatus::Open.into(),
-                    None,
+                    ProjectId::default_project(),
                     None,
                     None,
                     vec![],
@@ -1516,7 +1518,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::InProgress.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 None,
                 vec![],
@@ -1572,7 +1574,7 @@ mod tests {
                     empty_user(),
                     String::new(),
                     IssueStatus::Open.into(),
-                    None,
+                    ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
                     vec![],
@@ -1627,7 +1629,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed.into(),
-                None,
+                ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 None,
                 Vec::new(),
@@ -1636,7 +1638,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let create_mock = server.mock(|when, then| {
@@ -1697,7 +1700,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Closed.into(),
-                None,
+                ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 Some(job_settings.clone()),
                 Vec::new(),
@@ -1706,7 +1709,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let create_mock = server.mock(|when, then| {
@@ -1770,7 +1774,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
                 Vec::new(),
@@ -1797,7 +1801,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
                 Vec::new(),
@@ -1806,7 +1810,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let create_mock = server.mock(|when, then| {
@@ -1872,7 +1877,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
                 Vec::new(),
@@ -1905,7 +1910,7 @@ mod tests {
                 Username::from("creator-a"),
                 "Initial notes".into(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(expected_settings.clone()),
                 Vec::new(),
@@ -1914,7 +1919,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let create_mock = server.mock(|when, then| {
@@ -1973,7 +1979,7 @@ mod tests {
                 Username::from("creator-a"),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(job_settings.clone()),
                 Vec::new(),
@@ -1982,7 +1988,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let create_mock = server.mock(|when, then| {
@@ -2043,7 +2050,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
                 Vec::new(),
@@ -2070,7 +2077,7 @@ mod tests {
                 Username::from("creator-a"),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
                 Vec::new(),
@@ -2079,7 +2086,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let create_mock = server.mock(|when, then| {
@@ -2223,7 +2231,7 @@ mod tests {
                 empty_user(),
                 "New progress".into(),
                 IssueStatus::Closed.into(),
-                None,
+                ProjectId::default_project(),
                 Some(user_principal("owner-b")),
                 Some(job_settings.clone()),
                 vec![IssueDependency::new(
@@ -2235,7 +2243,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let get_mock = server.mock(|when, then| {
@@ -2311,7 +2320,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress.into(),
-                None,
+                ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
                 vec![IssueDependency::new(
@@ -2336,7 +2345,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::InProgress.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 None,
                 vec![],
@@ -2345,7 +2354,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let get_mock = server.mock(|when, then| {
@@ -2419,7 +2429,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress.into(),
-                None,
+                ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 Some(job_settings),
                 vec![IssueDependency::new(
@@ -2444,7 +2454,7 @@ mod tests {
                 empty_user(),
                 "Started work".into(),
                 IssueStatus::InProgress.into(),
-                None,
+                ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
                 vec![IssueDependency::new(
@@ -2456,7 +2466,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let get_mock = server.mock(|when, then| {
@@ -2529,7 +2540,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 None,
                 Vec::new(),
@@ -2553,7 +2564,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(expected_settings),
                 Vec::new(),
@@ -2562,7 +2573,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let get_mock = server.mock(|when, then| {
@@ -2637,7 +2649,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(existing_settings),
                 Vec::new(),
@@ -2659,7 +2671,7 @@ mod tests {
                 empty_user(),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some(SessionSettings::default()),
                 Vec::new(),
@@ -2668,7 +2680,8 @@ mod tests {
                 None,
                 None,
                 None,
-            ),
+            )
+            .into(),
             None,
         );
         let get_mock = server.mock(|when, then| {
@@ -2739,7 +2752,7 @@ mod tests {
                     empty_user(),
                     "Working on repro".into(),
                     IssueStatus::Open.into(),
-                    None,
+                    ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
                     vec![IssueDependency::new(
@@ -2767,7 +2780,7 @@ mod tests {
                     empty_user(),
                     String::new(),
                     IssueStatus::InProgress.into(),
-                    None,
+                    ProjectId::default_project(),
                     None,
                     None,
                     vec![],

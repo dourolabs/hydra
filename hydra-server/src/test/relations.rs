@@ -30,6 +30,7 @@ async fn create_issue(
                 default_user(),
                 String::new(),
                 IssueStatus::Open.into(),
+                crate::domain::projects::default_project_id(),
                 None,
                 None,
                 vec![],

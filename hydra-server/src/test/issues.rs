@@ -45,6 +45,7 @@ fn issue(
         creator,
         progress,
         status.into(),
+        crate::domain::projects::default_project_id(),
         assignee_principal,
         None,
         dependencies,
@@ -82,6 +83,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 default_user(),
                 "Initial progress".to_string(),
                 IssueStatus::Open.into(),
+                crate::domain::projects::default_project_id(),
                 None,
                 None,
                 vec![],
@@ -112,6 +114,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 default_user(),
                 "Updated progress".to_string(),
                 IssueStatus::InProgress.into(),
+                crate::domain::projects::default_project_id(),
                 None,
                 None,
                 vec![],
@@ -147,6 +150,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 default_user(),
                 "Initial progress".to_string(),
                 IssueStatus::Open.into(),
+                crate::domain::projects::default_project_id(),
                 None,
                 None,
                 vec![],
@@ -177,6 +181,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 default_user(),
                 "Updated progress".to_string(),
                 IssueStatus::InProgress.into(),
+                crate::domain::projects::default_project_id(),
                 None,
                 None,
                 vec![],
@@ -257,6 +262,7 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 default_user(),
                 "Initial progress".to_string(),
                 IssueStatus::Open.into(),
+                crate::domain::projects::default_project_id(),
                 None,
                 None,
                 vec![],
@@ -1291,7 +1297,7 @@ async fn create_issue_with_form(
 
     let created: UpsertIssueResponse = client
         .post(format!("{base_url}/v1/issues"))
-        .json(&UpsertIssueRequest::new(api_issue, None))
+        .json(&UpsertIssueRequest::new(api_issue.into(), None))
         .send()
         .await?
         .error_for_status()?
@@ -1977,7 +1983,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
                 creator: Username::from("test-creator"),
                 progress: String::new(),
                 status: IssueStatus::InProgress.into(),
-                project_id: None,
+                project_id: crate::domain::projects::default_project_id(),
                 assignee: None,
                 session_settings: Default::default(),
                 dependencies: Vec::new(),

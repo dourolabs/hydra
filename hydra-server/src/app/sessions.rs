@@ -317,7 +317,7 @@ impl AppState {
         hydra_common::api::v1::projects::Project,
         hydra_common::api::v1::projects::StatusDefinition,
     ) {
-        use crate::domain::projects::{default_project_id, no_project_sentinel};
+        use crate::domain::projects::no_project_sentinel;
 
         let Some(issue_id) = spawned_from else {
             return no_project_sentinel();
@@ -344,7 +344,7 @@ impl AppState {
                 return no_project_sentinel();
             }
         };
-        let project_id = issue.project_id.clone().unwrap_or_else(default_project_id);
+        let project_id = issue.project_id.clone();
         let project = match self.store.as_ref().get_project(&project_id, false).await {
             Ok(v) => v.item,
             Err(err) => {
@@ -1459,7 +1459,7 @@ mod tests {
                         creator: Username::from("creator"),
                         progress: String::new(),
                         status: IssueStatus::Open.into(),
-                        project_id: None,
+                        project_id: crate::domain::projects::default_project_id(),
                         assignee: None,
                         session_settings: session_settings.clone(),
                         dependencies: Vec::new(),
@@ -2018,7 +2018,7 @@ mod tests {
 
         // ---- Seed the issue, bound to the project at the `backlog` status.
         let mut issue = issue_with_status("v2 backlog issue", IssueStatus::Open, vec![]);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = StatusKey::try_new("backlog").unwrap();
         let (issue_id, _) = state
             .store
@@ -2160,7 +2160,7 @@ mod tests {
             .unwrap();
 
         let mut issue = issue_with_status("v2 in-review issue", IssueStatus::Open, vec![]);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = StatusKey::try_new("in-review").unwrap();
         let (issue_id, _) = state
             .store

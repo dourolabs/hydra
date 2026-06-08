@@ -131,6 +131,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             status.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),

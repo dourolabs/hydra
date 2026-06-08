@@ -19,6 +19,7 @@ function makeRecord(
       description: "",
       creator: "test",
       status: status as IssueSummaryRecord["issue"]["status"],
+      project_id: "j-defaul",
       progress: "",
       dependencies: dependencies as IssueSummaryRecord["issue"]["dependencies"],
       patches: [],
@@ -167,6 +168,7 @@ function makeWorkItem(
         description: "",
         creator: "test",
         status: "open" as IssueSummaryRecord["issue"]["status"],
+        project_id: "j-defaul",
         progress: "",
         dependencies:
           dependencies as IssueSummaryRecord["issue"]["dependencies"],
@@ -192,6 +194,7 @@ function makePatchWorkItem(
       creation_time: lastUpdated,
       patch: {
         status: "Open",
+        project_id: "j-defaul",
         title: "",
         is_automatic_backup: false,
         creator: "test",

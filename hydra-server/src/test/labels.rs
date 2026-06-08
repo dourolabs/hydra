@@ -80,6 +80,7 @@ async fn issue_labels_returned_from_all_routes() -> anyhow::Result<()> {
                 default_user(),
                 String::new(),
                 IssueStatus::Open.into(),
+                crate::domain::projects::default_project_id(),
                 None,
                 None,
                 vec![],

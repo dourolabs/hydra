@@ -444,7 +444,7 @@ mod tests {
     use hydra_common::issues::IssueVersionRecord;
     use hydra_common::users::Username;
     use hydra_common::versioning::Versioned;
-    use hydra_common::{ConversationId, IssueId, SessionId};
+    use hydra_common::{ConversationId, IssueId, ProjectId, SessionId};
     use std::str::FromStr;
 
     fn ts(secs: i64) -> DateTime<Utc> {
@@ -459,7 +459,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             status.into(),
-            None,
+            ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),
             Vec::new(),

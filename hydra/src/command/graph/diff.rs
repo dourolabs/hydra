@@ -514,7 +514,7 @@ mod tests {
     use hydra_common::issues::IssueVersionRecord;
     use hydra_common::users::Username;
     use hydra_common::versioning::Versioned;
-    use hydra_common::{ConversationId, IssueId};
+    use hydra_common::{ConversationId, IssueId, ProjectId};
 
     fn ts(secs: i64) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap() + chrono::Duration::seconds(secs)
@@ -528,7 +528,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             status.into(),
-            None,
+            ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),
             Vec::new(),

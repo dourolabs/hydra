@@ -538,7 +538,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         Username::from("creator"),
         "progress".to_string(),
         IssueStatus::Open.into(),
-        None,
+        ProjectId::default_project(),
         Some(hydra_common::principal::Principal::User {
             name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
         }),
@@ -550,7 +550,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         None,
         None,
     );
-    let issue_request = UpsertIssueRequest::new(issue, None);
+    let issue_request = UpsertIssueRequest::new(issue.into(), None);
 
     let created_issue = client.create_issue(&issue_request).await?;
     assert_eq!(created_issue.issue_id, issue_id);
@@ -805,6 +805,7 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
             "creator": "alice",
             "progress": "blocked",
             "status": "on-hold",
+            "project_id": "j-defaul",
             "assignee": {"Agent": {"name": "robot"}},
             "dependencies": [
                 { "type": "relates-to", "issue_id": dependency_id }

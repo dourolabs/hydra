@@ -22,7 +22,7 @@ export type IssueSummary = {
   description: string;
   creator: Username;
   status: StatusKey;
-  project_id?: ProjectId | null;
+  project_id: ProjectId;
   /**
    * Server-computed status definition; populated by the route handler
    * before serialization (omitted on requests).

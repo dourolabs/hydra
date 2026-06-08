@@ -135,7 +135,7 @@ function makeIssue(
       description: "",
       creator: "alice",
       status: "open",
-      project_id: null,
+      project_id: "j-defaul",
       assignee: null,
       progress: "",
       dependencies: [],
@@ -192,9 +192,9 @@ describe("IssuesTable grouping", () => {
     expect(screen.getByTestId("issues-list-row-i-c")).toBeDefined();
   });
 
-  it("places issues with null project_id under the default project section", () => {
+  it("places issues with the seeded default project_id under the default section", () => {
     renderTable({
-      issues: [makeIssue("i-null", { project_id: null, status: "open" })],
+      issues: [makeIssue("i-null", { project_id: "j-defaul", status: "open" })],
     });
 
     const defaultGroup = screen.getByTestId("issues-table-group-default");

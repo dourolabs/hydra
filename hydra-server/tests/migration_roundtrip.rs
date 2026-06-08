@@ -161,6 +161,21 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("drop_projects_default_status_key: idempotency on re-applied migration body")?;
 
+    issues_v2_project_id_is_not_null(&pool)
+        .await
+        .context("issues_v2_project_id_not_null: column is NOT NULL after rollforward")?;
+    issues_v2_project_id_rejects_null_insert(&pool)
+        .await
+        .context("issues_v2_project_id_not_null: NOT NULL rejects fresh NULL inserts")?;
+    issues_v2_project_id_not_null_migration_is_idempotent(&pool)
+        .await
+        .context("issues_v2_project_id_not_null: idempotency on re-applied body")?;
+    // The pre-flight NULL-guard test uses a fresh sqlite in-memory pool
+    // in the sister `migration_roundtrip_sqlite` runner; we don't repeat
+    // it here because the postgres path would have to reset and reroll
+    // the schema, and downstream idempotency assertions in this run
+    // depend on the seeded baseline data.
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -1439,6 +1454,7 @@ async fn smoke_create_issue(store: &PostgresStoreV2) -> Result<()> {
         Username::from("jayantk"),
         String::new(),
         IssueStatus::Open.into(),
+        hydra_server::domain::projects::default_project_id(),
         Some(Principal::Agent {
             name: agent.clone(),
         }),
@@ -2337,6 +2353,59 @@ async fn drop_projects_default_status_key_migration_is_idempotent(pool: &PgPool)
         .context("re-apply postgres drop_projects_default_status_key migration body")?;
     if column_exists(pool, "projects", "default_status_key").await? {
         bail!("drop_projects_default_status_key: column reappeared after idempotency rerun");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260612000000_issues_v2_project_id_not_null — Postgres parity for the
+// schema-tightening migration. Sister to
+// `migration_roundtrip_sqlite::issues_v2_project_id_*`. Asserts the
+// column is NOT NULL, fresh NULL inserts are rejected, and the body is
+// idempotent under re-execution. The pre-flight NULL-guard exercise
+// lives in the sister sqlite roundtrip — repeating it here would require
+// resetting the shared postgres database mid-test, which would invalidate
+// the downstream idempotency assertion at the end of the run.
+// ---------------------------------------------------------------------------
+
+async fn issues_v2_project_id_is_not_null(pool: &PgPool) -> Result<()> {
+    if column_is_nullable(pool, "issues_v2", "project_id").await? {
+        bail!(
+            "expected `metis.issues_v2.project_id` to be NOT NULL after \
+             20260612000000_issues_v2_project_id_not_null"
+        );
+    }
+    Ok(())
+}
+
+async fn issues_v2_project_id_rejects_null_insert(pool: &PgPool) -> Result<()> {
+    let result = sqlx::query(
+        "INSERT INTO metis.issues_v2 (id, version_number, issue_type, description, creator, project_id) \
+         VALUES ('i-nullchk', 99, 'task', 'null project_id insert must fail', 'system', NULL)",
+    )
+    .execute(pool)
+    .await;
+    match result {
+        Err(_) => Ok(()),
+        Ok(_) => bail!(
+            "expected NULL project_id INSERT to fail post-migration; \
+             the NOT NULL constraint was not applied"
+        ),
+    }
+}
+
+async fn issues_v2_project_id_not_null_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/20260612000000_issues_v2_project_id_not_null.sql"),
+    )
+    .context("read postgres issues_v2_project_id_not_null migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply postgres issues_v2_project_id_not_null migration body")?;
+    if column_is_nullable(pool, "issues_v2", "project_id").await? {
+        bail!("expected `metis.issues_v2.project_id` to stay NOT NULL after idempotency rerun");
     }
     Ok(())
 }

@@ -26,10 +26,14 @@ export type Issue = {
    */
   status: StatusKey;
   /**
-   * Optional project this issue belongs to. When None, the issue
-   * resolves through the synthesized default project.
+   * Project this issue belongs to. Always present on the wire — the
+   * `seed_default_project` migration backfilled every legacy NULL row
+   * to the seeded `j-defaul` project, and the
+   * `issues_v2_project_id_not_null` migration enforces NOT NULL at the
+   * DB layer. Create-side back-compat for older clients that omit
+   * `project_id` lives on [`IssueInput`].
    */
-  project_id?: ProjectId | null;
+  project_id: ProjectId;
   /**
    * Server-computed status definition (display props + dependency
    * flags) for [`Self::status`], resolved against the issue's project's

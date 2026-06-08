@@ -22,9 +22,9 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
   const [status, setStatus] = useState<StatusKey>(issue.status);
   const [progress, setProgress] = useState(issue.progress);
 
-  // Pull status options from the project, or DefaultProject when project_id is null.
-  // The hook caches per project for the session via React Query.
-  const { data: projectStatuses } = useProjectStatuses(issue.project_id ?? null);
+  // Pull status options from the issue's project. The hook caches per
+  // project for the session via React Query.
+  const { data: projectStatuses } = useProjectStatuses(issue.project_id);
   const statusOptions: SelectOption[] = useMemo(() => {
     const list = projectStatuses?.statuses ?? [];
     if (list.length === 0) {

@@ -363,6 +363,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::Agent {
                 name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
                     .expect("test agent name should validate"),
@@ -392,6 +393,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             status.into(),
+            crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::Agent {
                 name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
                     .expect("test agent name should validate"),
@@ -853,6 +855,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -967,6 +970,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -1033,6 +1037,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -1151,6 +1156,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -1227,6 +1233,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -1361,7 +1368,7 @@ mod tests {
             .await?;
 
         let mut issue = make_issue(agent_name, &repo_name);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = StatusKey::try_new("backlog").unwrap();
         let (issue_id, _) = handles
             .store

@@ -444,7 +444,7 @@ async fn log_l1_hides_description_change_visible_at_l3() -> Result<()> {
     let mut updated = existing.issue.clone();
     updated.description = "new description".to_string();
     client
-        .update_issue(&issue, &UpsertIssueRequest::new(updated, None))
+        .update_issue(&issue, &UpsertIssueRequest::new(updated.into(), None))
         .await?;
 
     let output_l1 = user

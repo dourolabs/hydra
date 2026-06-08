@@ -344,9 +344,8 @@ impl MemoryStore {
             }
 
             if let Some(expected_project) = project_filter {
-                match latest.item.project_id.as_ref() {
-                    Some(actual) if actual == expected_project => {}
-                    _ => return None,
+                if &latest.item.project_id != expected_project {
+                    return None;
                 }
             }
 
@@ -2880,6 +2879,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             dependencies,
@@ -5553,11 +5553,11 @@ mod tests {
         let project_b = ProjectId::new();
 
         let mut issue_a = sample_issue(vec![]);
-        issue_a.project_id = Some(project_a.clone());
+        issue_a.project_id = project_a.clone();
         let (id_a, _) = store.add_issue(issue_a, &ActorRef::test()).await.unwrap();
 
         let mut issue_b = sample_issue(vec![]);
-        issue_b.project_id = Some(project_b);
+        issue_b.project_id = project_b;
         store.add_issue(issue_b, &ActorRef::test()).await.unwrap();
 
         // Unscoped issue must not match a project_id filter.
@@ -7409,6 +7409,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -7426,6 +7427,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),

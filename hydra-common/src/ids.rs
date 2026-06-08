@@ -419,6 +419,14 @@ impl ProjectId {
     fn validate_str(value: &str) -> Result<(), HydraIdError> {
         validate_with_prefix(value, PROJECT_PREFIX)
     }
+
+    /// Returns the well-known [`ProjectId`] for the seeded default project
+    /// (`j-defaul`). Must stay byte-identical to the id inserted by
+    /// `hydra-server/sqlite-migrations/20260607000000_seed_default_project.sql`
+    /// (and the Postgres equivalent).
+    pub fn default_project() -> Self {
+        Self("j-defaul".to_string())
+    }
 }
 
 impl Default for ProjectId {

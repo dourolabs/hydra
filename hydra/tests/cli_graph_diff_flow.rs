@@ -262,7 +262,7 @@ async fn diff_l1_hides_change_visible_only_at_l3() -> Result<()> {
     updated.description = "new description".to_string();
     use hydra_common::issues::UpsertIssueRequest;
     client
-        .update_issue(&issue, &UpsertIssueRequest::new(updated, None))
+        .update_issue(&issue, &UpsertIssueRequest::new(updated.into(), None))
         .await?;
 
     let query = format!("{} | neighbors", issue.as_ref());

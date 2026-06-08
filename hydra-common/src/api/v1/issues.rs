@@ -255,10 +255,13 @@ pub struct Issue {
     /// `dropped`, `failed`) so older clients keep working.
     #[serde(default = "default_status_key")]
     pub status: StatusKey,
-    /// Optional project this issue belongs to. When None, the issue
-    /// resolves through the synthesized default project.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<ProjectId>,
+    /// Project this issue belongs to. Always present on the wire — the
+    /// `seed_default_project` migration backfilled every legacy NULL row
+    /// to the seeded `j-defaul` project, and the
+    /// `issues_v2_project_id_not_null` migration enforces NOT NULL at the
+    /// DB layer. Create-side back-compat for older clients that omit
+    /// `project_id` lives on [`IssueInput`].
+    pub project_id: ProjectId,
     /// Server-computed status definition (display props + dependency
     /// flags) for [`Self::status`], resolved against the issue's project's
     /// status list. Never stored: always populated on responses so
@@ -298,7 +301,7 @@ impl Issue {
         creator: Username,
         progress: String,
         status: StatusKey,
-        project_id: Option<ProjectId>,
+        project_id: ProjectId,
         assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
@@ -325,6 +328,77 @@ impl Issue {
             form,
             form_response,
             feedback,
+        }
+    }
+}
+
+/// Request shape for create / update issue endpoints.
+///
+/// Mirrors the wire [`Issue`] field set but with `project_id` as
+/// `Option<ProjectId>` so older clients that omit the field still
+/// deserialize. The route handler substitutes the seeded default
+/// project ID when None before handing off to the domain layer. Drops
+/// `resolved_status` (server-computed; never accepted on requests).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct IssueInput {
+    #[serde(rename = "type")]
+    pub issue_type: IssueType,
+    #[serde(default)]
+    pub title: String,
+    pub description: String,
+    pub creator: Username,
+    #[serde(default)]
+    pub progress: String,
+    #[serde(default = "default_status_key")]
+    pub status: StatusKey,
+    /// Optional on the wire for back-compat with clients that pre-date
+    /// the per-project issue-status work; the server substitutes the
+    /// seeded default project ID when None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub assignee: Option<Principal>,
+    #[serde(
+        default,
+        alias = "job_settings",
+        skip_serializing_if = "SessionSettings::is_default"
+    )]
+    pub session_settings: SessionSettings,
+    #[serde(default)]
+    pub dependencies: Vec<IssueDependency>,
+    #[serde(default)]
+    pub patches: Vec<PatchId>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<Form>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_response: Option<FormResponse>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub feedback: Option<String>,
+}
+
+impl From<Issue> for IssueInput {
+    fn from(value: Issue) -> Self {
+        Self {
+            issue_type: value.issue_type,
+            title: value.title,
+            description: value.description,
+            creator: value.creator,
+            progress: value.progress,
+            status: value.status,
+            project_id: Some(value.project_id),
+            assignee: value.assignee,
+            session_settings: value.session_settings,
+            dependencies: value.dependencies,
+            patches: value.patches,
+            deleted: value.deleted,
+            form: value.form,
+            form_response: value.form_response,
+            feedback: value.feedback,
         }
     }
 }
@@ -470,7 +544,7 @@ impl IssueVersionRecord {
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertIssueRequest {
-    pub issue: Issue,
+    pub issue: IssueInput,
     #[serde(skip_serializing_if = "Option::is_none", alias = "job_id")]
     pub session_id: Option<SessionId>,
     /// Label IDs to associate with this issue (replaces existing labels).
@@ -483,7 +557,7 @@ pub struct UpsertIssueRequest {
 }
 
 impl UpsertIssueRequest {
-    pub fn new(issue: Issue, session_id: Option<SessionId>) -> Self {
+    pub fn new(issue: IssueInput, session_id: Option<SessionId>) -> Self {
         Self {
             issue,
             session_id,
@@ -621,8 +695,7 @@ pub struct IssueSummary {
     pub creator: Username,
     #[serde(default = "default_status_key")]
     pub status: StatusKey,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<ProjectId>,
+    pub project_id: ProjectId,
     /// Server-computed status definition; populated by the route handler
     /// before serialization (omitted on requests).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1086,7 +1159,7 @@ mod tests {
             creator: Username::from("alice"),
             progress: String::new(),
             status: status_key("open"),
-            project_id: None,
+            project_id: default_test_project_id(),
             resolved_status: None,
             assignee: None,
             session_settings: Default::default(),
@@ -1121,7 +1194,7 @@ mod tests {
             creator: Username::from("alice"),
             progress: String::new(),
             status: status_key("open"),
-            project_id: None,
+            project_id: default_test_project_id(),
             resolved_status: None,
             assignee: None,
             session_settings: Default::default(),
@@ -1149,7 +1222,7 @@ mod tests {
             "issue_id": "i-test",
             "version": 1,
             "timestamp": "2024-01-01T00:00:00Z",
-            "issue": {"type": "task", "description": "test", "creator": "alice"},
+            "issue": {"type": "task", "description": "test", "creator": "alice", "project_id": "j-defaul"},
             "creation_time": "2024-01-01T00:00:00Z"
         }"#;
 
@@ -1162,6 +1235,10 @@ mod tests {
         StatusKey::try_new(value).expect("well-formed status key")
     }
 
+    fn default_test_project_id() -> ProjectId {
+        ProjectId::try_from("j-defaul".to_string()).expect("well-formed ProjectId")
+    }
+
     fn make_test_issue(description: &str) -> Issue {
         Issue {
             issue_type: IssueType::Task,
@@ -1170,7 +1247,7 @@ mod tests {
             creator: Username::from("alice"),
             progress: "some progress text".to_string(),
             status: status_key("in-progress"),
-            project_id: None,
+            project_id: default_test_project_id(),
             resolved_status: None,
             assignee: Some(Principal::User {
                 name: Username::from("bob"),
@@ -1282,7 +1359,7 @@ mod tests {
                 creator: Username::from("alice"),
                 progress: "started".to_string(),
                 status: super::status_key("in-progress"),
-                project_id: None,
+                project_id: super::default_test_project_id(),
                 resolved_status: None,
                 assignee: Some(Principal::User {
                     name: Username::from("bob"),

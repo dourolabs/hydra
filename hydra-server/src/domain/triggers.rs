@@ -258,6 +258,7 @@ async fn run_create_issue(
         creator.clone().into(),
         String::new(),
         action.status.unwrap_or(IssueStatus::Open).into(),
+        crate::domain::projects::default_project_id(),
         assignee,
         Some(action.session_settings.clone().into()),
         Vec::new(),

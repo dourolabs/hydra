@@ -18,6 +18,7 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     description: "Default issue description",
     creator: "testuser",
     status: "open",
+    project_id: "j-defaul",
     progress: "",
     dependencies: [],
     patches: [],
@@ -230,7 +231,7 @@ describe("Issue list filtering", () => {
     expect(data.issues).toHaveLength(2);
   });
 
-  it("filters by project_id and excludes issues without a project_id", async () => {
+  it("filters by project_id and excludes issues in other projects", async () => {
     store.create(
       "issues",
       "i-1",
@@ -243,7 +244,7 @@ describe("Issue list filtering", () => {
       makeIssue({ project_id: "design" }),
       "issue",
     );
-    // No project_id set — must NOT match a non-empty project_id filter.
+    // Default project (no override) — must NOT match the engineering-v2 filter.
     store.create("issues", "i-3", makeIssue(), "issue");
     store.create(
       "issues",
