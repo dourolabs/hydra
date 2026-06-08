@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  ListProjectsResponse,
   ProjectRecord,
   ProjectStatusesResponse,
   StatusDefinition,
@@ -40,6 +44,73 @@ vi.mock("../../../dashboard/usePageIssueTrees", () => ({
     sessionsByIssue: new Map(),
     isLoading: false,
   }),
+}));
+
+// Capture the DnD onDragEnd handler so tests can synthesize drops without
+// driving a real pointer/keyboard event flow. Mocking out the dnd-kit
+// runtime here also keeps `useSortable` from requiring a real DOM measurer.
+let lastDragEndHandler: ((event: unknown) => void) | null = null;
+let lastSortableItems: unknown[] = [];
+vi.mock("@dnd-kit/core", () => ({
+  DndContext: ({
+    children,
+    onDragEnd,
+  }: {
+    children: React.ReactNode;
+    onDragEnd?: (event: unknown) => void;
+  }) => {
+    lastDragEndHandler = onDragEnd ?? null;
+    return <>{children}</>;
+  },
+  PointerSensor: function PointerSensor() {},
+  KeyboardSensor: function KeyboardSensor() {},
+  useSensor: () => ({}),
+  useSensors: () => [],
+  closestCenter: () => [],
+}));
+
+vi.mock("@dnd-kit/sortable", () => ({
+  SortableContext: ({
+    children,
+    items,
+  }: {
+    children: React.ReactNode;
+    items: unknown[];
+  }) => {
+    lastSortableItems = items;
+    return <>{children}</>;
+  },
+  useSortable: () => ({
+    attributes: { "data-sortable-handle": "true", tabIndex: 0, role: "button" },
+    listeners: {},
+    setNodeRef: () => {},
+    transform: null,
+    transition: null,
+    isDragging: false,
+    isOver: false,
+  }),
+  arrayMove: <T,>(arr: T[], from: number, to: number) => {
+    const next = arr.slice();
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    return next;
+  },
+  horizontalListSortingStrategy: function strategy() {},
+  sortableKeyboardCoordinates: function coords() {},
+}));
+
+const mockUpdateProject = vi.fn();
+vi.mock("../../../../api/client", () => ({
+  apiClient: {
+    updateProject: (
+      projectId: string,
+      request: { project: { statuses: StatusDefinition[] } },
+    ) => mockUpdateProject(projectId, request),
+  },
+}));
+
+const mockAddToast = vi.fn();
+vi.mock("../../../toast/useToast", () => ({
+  useToast: () => ({ addToast: mockAddToast }),
 }));
 
 // --- @hydra/ui stubs ---
@@ -214,15 +285,22 @@ function emptyCell(overrides: Partial<BoardCellQuery> = {}): BoardCellQuery {
   };
 }
 
-function renderBoard() {
+function renderBoard(queryClient?: QueryClient) {
+  const client =
+    queryClient ??
+    new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
   return render(
-    <MemoryRouter>
-      <IssuesBoard
-        baseFilters={{}}
-        username="alice"
-        filterRootId={null}
-      />
-    </MemoryRouter>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <IssuesBoard
+          baseFilters={{}}
+          username="alice"
+          filterRootId={null}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -234,6 +312,11 @@ beforeEach(() => {
   lastModalProps.projectRecord = undefined;
   lastModalProps.statusKey = undefined;
   lastModalProps.issueCount = undefined;
+  lastDragEndHandler = null;
+  lastSortableItems = [];
+  mockUpdateProject.mockReset();
+  mockUpdateProject.mockResolvedValue({ project_id: "j-eng", version: 2 });
+  mockAddToast.mockReset();
 });
 
 afterEach(() => {
@@ -495,14 +578,19 @@ describe("IssuesBoard '+ New project' ghost row", () => {
   });
 
   it("is suppressed when the board is scoped to a single project", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
     render(
-      <MemoryRouter>
-        <IssuesBoard
-          baseFilters={{ project_id: "j-eng" }}
-          username="alice"
-          filterRootId={null}
-        />
-      </MemoryRouter>,
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <IssuesBoard
+            baseFilters={{ project_id: "j-eng" }}
+            username="alice"
+            filterRootId={null}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
     expect(screen.queryByTestId("board-new-project")).toBeNull();
   });
@@ -518,5 +606,127 @@ describe("IssuesBoard '+ New project' ghost row", () => {
     expect(editor.getAttribute("data-project-id")).toBe("");
     expect(editor.getAttribute("data-project-key")).toBe("");
     expect(editor.getAttribute("data-creator")).toBe("alice");
+  });
+});
+
+describe("IssuesBoard column drag-and-drop reordering", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+    ];
+    defaultStatusesData = {
+      statuses: DEFAULT_STATUSES,
+      default_status_key: "open",
+    };
+  });
+
+  it("registers a SortableContext over the real-project status keys", () => {
+    renderBoard();
+    expect(lastSortableItems).toEqual(["open", "in-progress"]);
+  });
+
+  it("renders the column head with draggable handle attributes for real projects", () => {
+    renderBoard();
+    const head = screen.getByTestId("board-col-head-engineering-open");
+    // The mocked useSortable returns a marker attribute the real component
+    // spreads onto the head; assert it lands there so the drag-handle wiring
+    // is actually plumbed through.
+    expect(head.getAttribute("data-sortable-handle")).toBe("true");
+  });
+
+  it("does NOT make the default-project column head draggable", () => {
+    const head = renderBoard().container.querySelector(
+      '[data-testid="board-col-head-default-open"]',
+    );
+    expect(head).not.toBeNull();
+    expect(head?.getAttribute("data-sortable-handle")).toBeNull();
+  });
+
+  it("on drop reorders statuses and calls apiClient.updateProject with the new order", async () => {
+    renderBoard();
+    expect(lastDragEndHandler).not.toBeNull();
+
+    act(() => {
+      lastDragEndHandler!({
+        active: { id: "open" },
+        over: { id: "in-progress" },
+      });
+    });
+
+    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
+    const [projectId, body] = mockUpdateProject.mock.calls[0];
+    expect(projectId).toBe("j-eng");
+    const keys = (body.project.statuses as StatusDefinition[]).map((s) => s.key);
+    expect(keys).toEqual(["in-progress", "open"]);
+    // Per-status fields must be preserved during reorder.
+    const moved = (body.project.statuses as StatusDefinition[]).find(
+      (s) => s.key === "in-progress",
+    );
+    expect(moved?.label).toBe("In progress");
+    expect(moved?.color).toBe("#f1c40f");
+  });
+
+  it("is a no-op when the drop target equals the dragged item", () => {
+    renderBoard();
+    act(() => {
+      lastDragEndHandler!({
+        active: { id: "open" },
+        over: { id: "open" },
+      });
+    });
+    expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+
+  it("optimistically reorders the projects cache and rolls back on save error", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const before: ListProjectsResponse = { projects: [...projectsData!] };
+    client.setQueryData(["projects"], before);
+
+    // Hold the mutation in-flight so we can observe the optimistic write
+    // before the failure resolves it back to the previous snapshot.
+    let rejectUpdate: ((err: Error) => void) | null = null;
+    mockUpdateProject.mockReturnValueOnce(
+      new Promise<never>((_, reject) => {
+        rejectUpdate = reject;
+      }),
+    );
+
+    renderBoard(client);
+
+    act(() => {
+      lastDragEndHandler!({
+        active: { id: "open" },
+        over: { id: "in-progress" },
+      });
+    });
+
+    // Optimistic write is visible while the mutation is still pending.
+    await waitFor(() => {
+      const snapshot = client.getQueryData<ListProjectsResponse>(["projects"]);
+      const keys = snapshot?.projects[0]?.project.statuses.map((s) => s.key);
+      expect(keys).toEqual(["in-progress", "open"]);
+    });
+
+    act(() => {
+      rejectUpdate!(new Error("boom"));
+    });
+
+    // Once the mutation rejects, onError restores the prior snapshot.
+    await waitFor(() => {
+      const snapshot = client.getQueryData<ListProjectsResponse>(["projects"]);
+      const keys = snapshot?.projects[0]?.project.statuses.map((s) => s.key);
+      expect(keys).toEqual(["open", "in-progress"]);
+    });
+    expect(mockAddToast).toHaveBeenCalledWith("boom", "error");
+  });
+
+  it("does not call updateProject when the only section is the default project", () => {
+    projectsData = [];
+    renderBoard();
+    // No real project means no DndContext was mounted, so no handler exists.
+    expect(lastDragEndHandler).toBeNull();
+    expect(mockUpdateProject).not.toHaveBeenCalled();
   });
 });

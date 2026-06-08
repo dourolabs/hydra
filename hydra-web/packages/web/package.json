@@ -13,6 +13,8 @@
     "visual-audit": "playwright test --config=playwright-visual-audit.config.ts"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
     "@hydra/api": "workspace:*",
     "@hydra/ui": "workspace:*",
     "@tanstack/react-query": "^5.90.21",
