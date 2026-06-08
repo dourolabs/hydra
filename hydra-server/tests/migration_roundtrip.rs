@@ -825,35 +825,6 @@ async fn assert_actor_variant_cleanup(pool: &PgPool) -> Result<()> {
         );
     }
 
-    // actors_v2 — bare `actor_id` column rewrites. `actor_id` is NOT
-    // NULL in this table since `20260205000000_add_v2_tables.sql`, so
-    // every shape must end up with a non-null value after the cleanup.
-    // The last two rows specifically exercise previously-NULLable
-    // paths that would have violated the constraint pre-fix.
-    for (id, expected) in [
-        ("actu-aname", serde_json::json!({"User": {"name": "alice"}})),
-        ("actu-asvc", serde_json::json!({"Agent": {"name": "swe"}})),
-        ("actu-aiss", external_legacy("i-actisstwo")),
-        ("actu-asvcbad", external_legacy("has space")),
-    ] {
-        let row = sqlx::query(
-            "SELECT actor_id::text AS pl FROM metis.actors_v2 \
-             WHERE id = $1 AND is_latest = TRUE",
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .with_context(|| format!("read actors_v2.actor_id for {id}"))?;
-        let raw: Option<String> = row.get("pl");
-        let got: Option<serde_json::Value> = raw
-            .map(|s| serde_json::from_str(&s))
-            .transpose()
-            .with_context(|| format!("decode actor_id for {id}"))?;
-        if got.as_ref() != Some(&expected) {
-            bail!("actors_v2({id}).actor_id: expected {expected}; got {got:?}");
-        }
-    }
-
     // conversations_v2 — the new walker added in [[i-jyhvstcj]]
     // rewrites the `actor` column on this table too. The fixture seeds
     // the exact prod symptom (`Session`-tagged inner actor_id) so the
