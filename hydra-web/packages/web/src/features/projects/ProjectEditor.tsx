@@ -30,6 +30,7 @@ import {
   applyOptimisticUpsert,
 } from "./projectCache";
 import { blankStatus } from "./statusDefaults";
+import { PromptDocumentEditor } from "./PromptDocumentEditor";
 import styles from "./ProjectEditor.module.css";
 
 interface ProjectEditorProps {
@@ -56,6 +57,15 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     initial?.default_status_key ?? statuses[0]?.key ?? "",
   );
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [projectPromptExpanded, setProjectPromptExpanded] = useState(false);
+  // Per-status expanded set keyed by index so each row's textarea stays
+  // unmounted until its own toggle fires — avoids fanning out one
+  // `getDocumentByPath` per status as soon as the editor opens.
+  const [expandedStatuses, setExpandedStatuses] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const projectKeyForPaths = (key.trim() || "<key>");
+  const projectPromptDefault = `/projects/${projectKeyForPaths}/prompt.md`;
 
   const defaultStatusOptions: SelectOption[] = useMemo(
     () => statuses.map((s) => ({ value: s.key, label: s.label || s.key })),
@@ -225,12 +235,15 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
         />
       </div>
       <div className={styles.row}>
-        <label className={styles.label}>Prompt path</label>
-        <Input
-          value={promptPath}
-          onChange={(e) => setPromptPath(e.target.value)}
+        <PromptDocumentEditor
+          path={promptPath || null}
+          defaultPath={projectPromptDefault}
+          onPathChange={setPromptPath}
+          expanded={projectPromptExpanded}
+          onToggleExpanded={() => setProjectPromptExpanded((v) => !v)}
+          label="Prompt path"
           placeholder="/projects/<key>/prompt.md"
-          data-testid="project-editor-prompt-path"
+          testId="project-editor-prompt-path"
         />
       </div>
 
@@ -248,6 +261,16 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
               onMove={(delta) => moveStatus(index, delta)}
               agents={agents?.map((a) => a.name) ?? []}
               users={users?.map((u) => u.username) ?? []}
+              projectKey={projectKeyForPaths}
+              promptExpanded={expandedStatuses.has(index)}
+              onTogglePromptExpanded={() =>
+                setExpandedStatuses((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(index)) next.delete(index);
+                  else next.add(index);
+                  return next;
+                })
+              }
             />
           ))}
         </div>
@@ -306,6 +329,9 @@ interface StatusEditorProps {
   onMove: (delta: number) => void;
   agents: string[];
   users: string[];
+  projectKey: string;
+  promptExpanded: boolean;
+  onTogglePromptExpanded: () => void;
 }
 
 function StatusEditor({
@@ -317,6 +343,9 @@ function StatusEditor({
   onMove,
   agents,
   users,
+  projectKey,
+  promptExpanded,
+  onTogglePromptExpanded,
 }: StatusEditorProps) {
   const onEnter = status.on_enter ?? null;
   const assignKind = principalKind(onEnter?.assign_to ?? null);
@@ -535,12 +564,17 @@ function StatusEditor({
         />
       </div>
 
-      <Input
+      <PromptDocumentEditor
+        path={status.prompt_path ?? null}
+        defaultPath={`/projects/${projectKey}/statuses/${
+          status.key.trim() || `status-${index + 1}`
+        }.md`}
+        onPathChange={(value) => onChange({ prompt_path: value })}
+        expanded={promptExpanded}
+        onToggleExpanded={onTogglePromptExpanded}
         label="Prompt path"
-        value={status.prompt_path ?? ""}
-        onChange={(e) => onChange({ prompt_path: e.target.value })}
         placeholder="/projects/<key>/statuses/<status-key>.md"
-        data-testid={`status-editor-prompt-path-${index}`}
+        testId={`status-editor-prompt-path-${index}`}
       />
     </div>
   );
