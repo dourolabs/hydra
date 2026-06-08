@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type {
   ProjectRecord,
@@ -40,6 +46,29 @@ vi.mock("@hydra/ui", () => ({
     <span data-testid={`avatar-${kind ?? "human"}`}>{name}</span>
   ),
   TypeChip: ({ type }: { type: string }) => <span>{type}</span>,
+  Modal: ({
+    open,
+    onClose,
+    title,
+    children,
+  }: {
+    open: boolean;
+    onClose: () => void;
+    title?: string;
+    children: React.ReactNode;
+  }) =>
+    open ? (
+      <div data-testid="modal" role="dialog" aria-label={title}>
+        <div data-testid="modal-title">{title}</div>
+        <button data-testid="modal-close" onClick={onClose}>
+          Close
+        </button>
+        <div>{children}</div>
+      </div>
+    ) : null,
+  Icons: {
+    IconSettings: () => <span data-testid="icon-settings" />,
+  },
 }));
 
 // Bypass CSS module proxies.
@@ -53,6 +82,33 @@ vi.mock("../../../projects/StatusChip.module.css", () => ({
 
 vi.mock("../../../projects/ProjectChip.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+vi.mock("../../../../components/LargeModal.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+// Replace ProjectEditor with a sentinel that captures the props received,
+// so the modal-side assertions stay focused on wiring (which project's
+// data is in the modal, not the editor internals).
+vi.mock("../../../projects/ProjectEditor", () => ({
+  ProjectEditor: ({
+    projectId,
+    initial,
+    creator,
+  }: {
+    projectId?: string | null;
+    initial?: { key: string; name: string };
+    creator: string;
+  }) => (
+    <div
+      data-testid="project-editor"
+      data-project-id={String(projectId ?? "")}
+      data-project-key={initial?.key ?? ""}
+      data-project-name={initial?.name ?? ""}
+      data-creator={creator}
+    />
+  ),
 }));
 
 const { IssuesBoard } = await import("../IssuesBoard");
@@ -71,17 +127,22 @@ function makeStatus(
   };
 }
 
+const DEFAULT_STATUSES: StatusDefinition[] = [
+  makeStatus({ key: "open", label: "Open" }),
+];
+
 function makeProject(
   id: string,
   key: string,
   statuses: StatusDefinition[],
+  name?: string,
 ): ProjectRecord {
   return {
     project_id: id,
     version: 1,
     project: {
       key,
-      name: key,
+      name: name ?? key,
       statuses,
       default_status_key: statuses[0]?.key ?? "open",
       creator: "alice",
@@ -105,6 +166,10 @@ function renderBoard() {
 beforeEach(() => {
   projectsData = [];
   defaultStatusesData = { statuses: [], default_status_key: "open" };
+});
+
+afterEach(() => {
+  cleanup();
 });
 
 describe("IssuesBoard column sub-row", () => {
@@ -175,5 +240,61 @@ describe("IssuesBoard column sub-row", () => {
     expect(within(subhead).queryByText("DEFAULT")).toBeNull();
     // DEFAULT chip lives elsewhere in the column (the top header row).
     expect(screen.getByText("DEFAULT")).toBeDefined();
+  });
+});
+
+describe("IssuesBoard project settings gear", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-altpro", "alpha", DEFAULT_STATUSES, "Alpha"),
+      makeProject("j-betpro", "beta", DEFAULT_STATUSES, "Beta"),
+    ];
+    defaultStatusesData = {
+      statuses: DEFAULT_STATUSES,
+      default_status_key: "open",
+    };
+  });
+
+  it("renders the gear button on each real project section", () => {
+    renderBoard();
+
+    expect(screen.getByTestId("board-project-settings-alpha")).toBeDefined();
+    expect(screen.getByTestId("board-project-settings-beta")).toBeDefined();
+  });
+
+  it("does NOT render the gear on the synthesized default-project section", () => {
+    renderBoard();
+
+    // The default section is synthesized from `defaultStatusesData` with
+    // project_id: null — it must not expose a gear because there is no
+    // real ProjectRecord to edit.
+    expect(screen.getByTestId("board-project-default")).toBeDefined();
+    expect(screen.queryByTestId("board-project-settings-default")).toBeNull();
+  });
+
+  it("opens the settings modal with the clicked project's data", () => {
+    renderBoard();
+
+    expect(screen.queryByTestId("modal")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("board-project-settings-alpha"));
+
+    const modal = screen.getByTestId("modal");
+    expect(modal).toBeDefined();
+    const editor = screen.getByTestId("project-editor");
+    expect(editor.getAttribute("data-project-id")).toBe("j-altpro");
+    expect(editor.getAttribute("data-project-key")).toBe("alpha");
+    expect(editor.getAttribute("data-project-name")).toBe("Alpha");
+    expect(editor.getAttribute("data-creator")).toBe("alice");
+  });
+
+  it("dismisses the modal when close is clicked", () => {
+    renderBoard();
+
+    fireEvent.click(screen.getByTestId("board-project-settings-beta"));
+    expect(screen.getByTestId("modal")).toBeDefined();
+
+    fireEvent.click(screen.getByTestId("modal-close"));
+    expect(screen.queryByTestId("modal")).toBeNull();
   });
 });

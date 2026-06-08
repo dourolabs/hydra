@@ -1,13 +1,19 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Avatar, TypeChip } from "@hydra/ui";
-import type { IssueSummaryRecord, StatusDefinition } from "@hydra/api";
+import { Avatar, Icons, TypeChip } from "@hydra/ui";
+import type {
+  IssueSummaryRecord,
+  ProjectId,
+  ProjectRecord,
+  StatusDefinition,
+} from "@hydra/api";
 import {
   principalAvatarKind,
   principalDisplayName,
 } from "../../principal/formatPrincipal";
 import { StatusChip } from "../../projects/StatusChip";
 import { ProjectChip } from "../../projects/ProjectChip";
+import { ProjectSettingsModal } from "../../projects/ProjectSettingsModal";
 import { useProjects, useProjectStatuses } from "../../projects/useProjects";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import {
@@ -42,6 +48,7 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
   const navigate = useNavigate();
   const { data: allProjects } = useProjects();
   const { data: defaultStatusesResponse } = useProjectStatuses(null);
+  const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
 
   // Build the section list: synthesized default project first, then any
   // user-defined projects (filtered by `baseFilters.project_id` if the page
@@ -125,6 +132,13 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
     navigate(`/issues/${id}?${params.toString()}`);
   };
 
+  const settingsProject: ProjectRecord | null = useMemo(() => {
+    if (!settingsProjectId) return null;
+    return (
+      (allProjects ?? []).find((p) => p.project_id === settingsProjectId) ?? null
+    );
+  }, [allProjects, settingsProjectId]);
+
   return (
     <div className={styles.kanban}>
       {projects.map((project) => {
@@ -141,9 +155,17 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
             projectIssueCount={projectIssueCount}
             childStatusMap={childStatusMap}
             onCardClick={handleCardClick}
+            onOpenSettings={setSettingsProjectId}
           />
         );
       })}
+      {settingsProject && (
+        <ProjectSettingsModal
+          open
+          onClose={() => setSettingsProjectId(null)}
+          project={settingsProject}
+        />
+      )}
     </div>
   );
 }
@@ -154,6 +176,7 @@ interface ProjectSectionProps {
   projectIssueCount: number;
   childStatusMap: Map<string, ChildStatus[]>;
   onCardClick: (id: string) => void;
+  onOpenSettings: (id: ProjectId) => void;
 }
 
 function ProjectSection({
@@ -162,6 +185,7 @@ function ProjectSection({
   projectIssueCount,
   childStatusMap,
   onCardClick,
+  onOpenSettings,
 }: ProjectSectionProps) {
   return (
     <section
@@ -183,13 +207,23 @@ function ProjectSection({
             {project.statuses.length === 1 ? "status" : "statuses"}
           </span>
         </div>
-        {/* Placeholder slot for the future ⚙ settings gear / Add status
-            button (deferred to follow-up PR). Empty div reserves the
-            layout slot without rendering dead UI. */}
         <div
           className={styles.projectBarRight}
           data-testid={`board-project-actions-${project.key}`}
-        />
+        >
+          {project.project_id !== null && (
+            <button
+              type="button"
+              className={styles.projectSettingsButton}
+              onClick={() => onOpenSettings(project.project_id as ProjectId)}
+              title="Project settings"
+              aria-label={`Project settings for ${project.name}`}
+              data-testid={`board-project-settings-${project.key}`}
+            >
+              <Icons.IconSettings size={14} />
+            </button>
+          )}
+        </div>
       </div>
       <div className={styles.projectColumns}>
         {project.statuses.map((status) => {
