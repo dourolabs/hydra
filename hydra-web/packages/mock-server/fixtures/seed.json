@@ -3011,6 +3011,7 @@
       "default_status_key": "open",
       "creator": "system",
       "prompt_path": "/projects/default/prompt.md",
+      "priority": 1000.0,
       "statuses": [
         {
           "key": "open",
@@ -3065,6 +3066,7 @@
       "default_status_key": "inbox",
       "creator": "alice",
       "prompt_path": "/projects/engineering-v2/prompt.md",
+      "priority": 2000.0,
       "statuses": [
         {
           "key": "inbox",
