@@ -102,3 +102,19 @@
 .miniButtonDanger {
   color: var(--color-status-failed, #e74c3c);
 }
+
+@media (max-width: 768px) {
+  .statusInputs {
+    grid-template-columns: 1fr;
+  }
+  .statusHeader {
+    flex-wrap: wrap;
+  }
+  .actions {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+  .actions > * {
+    flex: 1 1 auto;
+  }
+}
