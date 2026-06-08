@@ -166,14 +166,14 @@ vi.mock("../../../../components/LargeModal.module.css", () => ({
 }));
 
 // ProjectCreateModal calls useUsername(); render it as "alice" so the
-// modal renders its inner ProjectEditor sentinel.
+// modal renders.
 vi.mock("../../../auth/useUsername", () => ({
   useUsername: () => "alice",
 }));
 
-// Replace ProjectEditor with a sentinel that captures the props received,
-// so the modal-side assertions stay focused on wiring (which project's
-// data is in the modal, not the editor internals).
+// Replace ProjectEditor with a sentinel — the settings (edit) modal still
+// uses it. The new-project modal doesn't, so a separate sentinel covers
+// that route.
 vi.mock("../../../projects/ProjectEditor", () => ({
   ProjectEditor: ({
     projectId,
@@ -192,6 +192,11 @@ vi.mock("../../../projects/ProjectEditor", () => ({
       data-creator={creator}
     />
   ),
+}));
+
+vi.mock("../../../projects/ProjectCreateModal", () => ({
+  ProjectCreateModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="new-project-modal" /> : null,
 }));
 
 const lastModalProps: {
@@ -551,17 +556,13 @@ describe("IssuesBoard '+ New project' ghost row", () => {
     expect(screen.queryByTestId("board-new-project")).toBeNull();
   });
 
-  it("opens ProjectCreateModal (a Modal containing the ProjectEditor sentinel) on click", () => {
+  it("opens the new-project modal on click", () => {
     renderBoard();
-    expect(screen.queryByTestId("project-editor")).toBeNull();
+    expect(screen.queryByTestId("new-project-modal")).toBeNull();
 
     fireEvent.click(screen.getByTestId("board-new-project"));
 
-    const editor = screen.getByTestId("project-editor");
-    // ProjectCreateModal omits projectId/initial — it's a "create" form.
-    expect(editor.getAttribute("data-project-id")).toBe("");
-    expect(editor.getAttribute("data-project-key")).toBe("");
-    expect(editor.getAttribute("data-creator")).toBe("alice");
+    expect(screen.getByTestId("new-project-modal")).toBeDefined();
   });
 });
 

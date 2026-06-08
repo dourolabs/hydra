@@ -76,16 +76,22 @@ test.describe("Project editor interactive flag @projects:interactive-status", ()
   test("editor exposes an Interactive checkbox alongside existing status flags @projects:interactive-status", async ({
     authenticatedPage: page,
   }) => {
+    // The simplified new-project modal no longer exposes the full status
+    // editor; the Interactive flag lives in the per-project Settings modal.
     await page.goto("/projects");
-    await page.getByTestId("projects-list-add").click();
+    await page.getByTestId("board-project-settings-engineering-v2").click();
     await expect(page.getByRole("dialog")).toBeVisible();
 
-    // First default status ("open") has interactive: false initially.
     const interactive = page.getByTestId("status-editor-interactive-0");
     await expect(interactive).toBeVisible();
-    await expect(interactive).not.toBeChecked();
+    const initiallyChecked = await interactive.isChecked();
 
-    await interactive.check();
-    await expect(interactive).toBeChecked();
+    if (initiallyChecked) {
+      await interactive.uncheck();
+      await expect(interactive).not.toBeChecked();
+    } else {
+      await interactive.check();
+      await expect(interactive).toBeChecked();
+    }
   });
 });
