@@ -1,15 +1,19 @@
 import { useState } from "react";
 import { Button, Icons } from "@hydra/ui";
-import { ProjectsList } from "../features/projects/ProjectsList";
+import { actorDisplayName } from "../api/auth";
+import { useAuth } from "../features/auth/useAuth";
+import { IssuesBoard } from "../features/issues/view/IssuesBoard";
 import { ProjectCreateModal } from "../features/projects/ProjectCreateModal";
 import { useProjects } from "../features/projects/useProjects";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
-import styles from "./TriggersListPage.module.css";
+import styles from "./ProjectsListPage.module.css";
 
 export function ProjectsListPage() {
   useBreadcrumbs([{ label: "Workspace", to: "/" }], "Projects");
   const [createOpen, setCreateOpen] = useState(false);
   const { data: projects } = useProjects();
+  const { user } = useAuth();
+  const currentUser = user ? actorDisplayName(user.actor) : "";
   const count = projects?.length ?? 0;
   const label = count === 1 ? "1 PROJECT" : `${count} PROJECTS`;
 
@@ -33,7 +37,12 @@ export function ProjectsListPage() {
       </div>
 
       <div className={styles.body}>
-        <ProjectsList />
+        <IssuesBoard
+          baseFilters={{}}
+          username={currentUser}
+          filterRootId={null}
+          hideIssues
+        />
       </div>
 
       <ProjectCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />

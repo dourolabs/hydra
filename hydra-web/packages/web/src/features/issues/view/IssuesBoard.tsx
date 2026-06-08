@@ -56,6 +56,12 @@ interface IssuesBoardProps {
   baseFilters: IssueFilters;
   username: string;
   filterRootId: string | null;
+  // Projects-tab variant: render the same board chrome (project bars,
+  // status columns, ghost rows) but skip per-cell issue fetches and
+  // suppress everything that's about issues — counts, "No issues"
+  // placeholders, the project bar's "N issues" pill. The card bodies stay
+  // empty by virtue of the fetch being disabled.
+  hideIssues?: boolean;
 }
 
 function progressFraction(children: ChildStatus[] | undefined): number {
@@ -67,7 +73,12 @@ function progressFraction(children: ChildStatus[] | undefined): number {
   return Math.round((done / total) * 100);
 }
 
-export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoardProps) {
+export function IssuesBoard({
+  baseFilters,
+  username,
+  filterRootId,
+  hideIssues = false,
+}: IssuesBoardProps) {
   const navigate = useNavigate();
   const { data: allProjects } = useProjects();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
@@ -106,7 +117,7 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
     return out;
   }, [allProjects, baseFilters.project_id]);
 
-  const cells = useBoardIssuesByProject(baseFilters, projects);
+  const cells = useBoardIssuesByProject(baseFilters, projects, !hideIssues);
 
   // Union of all visible issues for tree resolution.
   const boardIssuesUnion = useMemo(() => {
@@ -128,7 +139,10 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
     return out;
   }, [projects, cells]);
 
-  const { childStatusMap } = usePageIssueTrees(boardIssuesUnion, username);
+  const { childStatusMap } = usePageIssueTrees(
+    hideIssues ? [] : boardIssuesUnion,
+    username,
+  );
 
   const projectRecordById = useMemo(() => {
     const map = new Map<string, ProjectRecord>();
@@ -216,6 +230,7 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
             perStatus={perStatus}
             projectIssueCount={projectIssueCount}
             childStatusMap={childStatusMap}
+            hideIssues={hideIssues}
             onCardClick={handleCardClick}
             onOpenSettings={setSettingsProjectId}
             onGearClick={handleGearClick}
@@ -273,6 +288,7 @@ interface ProjectSectionProps {
   perStatus: Map<string, BoardCellQuery> | undefined;
   projectIssueCount: number;
   childStatusMap: Map<string, ChildStatus[]>;
+  hideIssues: boolean;
   onCardClick: (id: string) => void;
   onOpenSettings: (id: ProjectId) => void;
   onGearClick: (
@@ -289,6 +305,7 @@ function ProjectSection({
   perStatus,
   projectIssueCount,
   childStatusMap,
+  hideIssues,
   onCardClick,
   onOpenSettings,
   onGearClick,
@@ -372,6 +389,7 @@ function ProjectSection({
         status={status}
         cell={cell}
         childStatusMap={childStatusMap}
+        hideIssues={hideIssues}
         onCardClick={onCardClick}
         onGearClick={onGearClick}
       />
@@ -405,9 +423,11 @@ function ProjectSection({
             name={project.name}
             data-testid={`board-project-chip-${project.key}`}
           />
-          <span className={styles.projectMeta}>
-            {projectIssueCount} {projectIssueCount === 1 ? "issue" : "issues"}
-          </span>
+          {!hideIssues && (
+            <span className={styles.projectMeta}>
+              {projectIssueCount} {projectIssueCount === 1 ? "issue" : "issues"}
+            </span>
+          )}
           <span className={styles.projectMeta}>
             {project.statuses.length}{" "}
             {project.statuses.length === 1 ? "status" : "statuses"}
@@ -451,6 +471,7 @@ interface BoardColumnProps {
   status: StatusDefinition;
   cell: BoardCellQuery | undefined;
   childStatusMap: Map<string, ChildStatus[]>;
+  hideIssues: boolean;
   onCardClick: (id: string) => void;
   onGearClick: (
     projectRecord: ProjectRecord,
@@ -506,6 +527,7 @@ function BoardColumn({
   status,
   cell,
   childStatusMap,
+  hideIssues,
   onCardClick,
   onGearClick,
   setNodeRef,
@@ -540,7 +562,9 @@ function BoardColumn({
       >
         <StatusChip definition={status} />
         {isDefaultStatus && <span className={styles.defaultChip}>DEFAULT</span>}
-        <span className={styles.colCount}>{colIssues.length}</span>
+        {!hideIssues && (
+          <span className={styles.colCount}>{colIssues.length}</span>
+        )}
         <button
           type="button"
           className={styles.colGear}
@@ -576,10 +600,10 @@ function BoardColumn({
         </span>
       </div>
       <div className={styles.colBody}>
-        {showInitialLoading && (
+        {!hideIssues && showInitialLoading && (
           <div className={styles.colEmpty}>Loading…</div>
         )}
-        {!showInitialLoading && colIssues.length === 0 && (
+        {!hideIssues && !showInitialLoading && colIssues.length === 0 && (
           <div className={styles.colEmpty}>No issues</div>
         )}
         {colIssues.map((rec) => {
