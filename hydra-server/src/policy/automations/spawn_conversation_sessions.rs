@@ -1455,6 +1455,7 @@ mod tests {
             StatusKey::try_new("backlog").unwrap(),
             hydra_common::api::v1::users::Username::from("alice"),
             false,
+            0.0,
         );
         project.prompt_path = Some(project_prompt_path.to_string());
         let (project_id, _) = state

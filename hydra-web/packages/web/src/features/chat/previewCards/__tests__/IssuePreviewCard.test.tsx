@@ -29,6 +29,7 @@ const SEEDED_PROJECTS: ProjectRecord[] = [
       statuses: [],
       default_status_key: "open",
       creator: "system",
+      priority: 0,
     },
   },
   {
@@ -40,6 +41,7 @@ const SEEDED_PROJECTS: ProjectRecord[] = [
       statuses: [],
       default_status_key: "inbox",
       creator: "alice",
+      priority: 0,
     },
   },
 ];

@@ -1354,6 +1354,7 @@ mod tests {
             StatusKey::try_new("backlog").unwrap(),
             hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
             false,
+            0.0,
         );
         let (project_id, _) = handles
             .store

@@ -118,6 +118,7 @@ pub fn default_project_seed() -> Project {
         status_key("open"),
         Username::try_new(SYSTEM_USERNAME).expect("system username is well-formed"),
         false,
+        1000.0,
     );
     project.prompt_path = Some("/projects/default/prompt.md".to_string());
     project
@@ -147,6 +148,7 @@ pub fn no_project_sentinel() -> (Project, StatusDefinition) {
         status_key(NO_PROJECT_SENTINEL_STATUS_KEY),
         Username::try_new(SYSTEM_USERNAME).expect("system username is well-formed"),
         false,
+        0.0,
     );
     (project, status)
 }
@@ -265,6 +267,24 @@ mod tests {
     fn no_project_sentinel_status_is_not_interactive() {
         let (_, status) = no_project_sentinel();
         assert!(!status.interactive);
+    }
+
+    /// Locks the default-project priority to `1000.0`. The seed migration
+    /// in `20260607000000_seed_default_project.sql` predates the priority
+    /// column, so the value is supplied by the rank backfill in
+    /// `20260610000000_add_projects_priority.sql`; the Rust seed and the
+    /// migrated row must agree.
+    #[test]
+    fn default_project_seed_priority_is_one_thousand() {
+        assert_eq!(default_project_seed().priority, 1000.0);
+    }
+
+    /// The no-project sentinel is synthetic and never listed, so its
+    /// priority is irrelevant — but pin it to `0.0` so any drift is loud.
+    #[test]
+    fn no_project_sentinel_priority_is_zero() {
+        let (project, _) = no_project_sentinel();
+        assert_eq!(project.priority, 0.0);
     }
 
     /// Locks the per-layer `prompt_path` references for the default project.

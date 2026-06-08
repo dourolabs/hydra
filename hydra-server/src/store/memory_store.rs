@@ -1500,7 +1500,17 @@ impl ReadOnlyStore for MemoryStore {
                 Some((entry.key().clone(), versioned))
             })
             .collect();
-        items.sort_by(|a, b| b.1.creation_time.cmp(&a.1.creation_time));
+        // Sort by `priority ASC` first, then `creation_time DESC` as a
+        // stable tiebreak — mirroring the SQL stores' `ORDER BY p.priority
+        // ASC, p.created_at DESC, p.id DESC`. `f64` is not `Ord`; treat
+        // NaN as equal to keep the comparator total.
+        items.sort_by(|a, b| {
+            a.1.item
+                .priority
+                .partial_cmp(&b.1.item.priority)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.1.creation_time.cmp(&a.1.creation_time))
+        });
         Ok(items)
     }
 
@@ -9377,6 +9387,7 @@ mod tests {
             StatusKey::try_new("backlog").unwrap(),
             ApiUsername::from("alice"),
             false,
+            0.0,
         )
     }
 

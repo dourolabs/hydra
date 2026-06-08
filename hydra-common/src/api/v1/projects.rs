@@ -207,7 +207,8 @@ impl StatusDefinition {
 
 /// A project owns an ordered list of [`StatusDefinition`]s plus an explicit
 /// [`Self::default_status_key`] for new issues.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `priority` is `f64`. Use `PartialEq` for value equality.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -224,6 +225,11 @@ pub struct Project {
     /// `None` contributes an empty slice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_path: Option<String>,
+    /// Sort key for project ordering. Smaller values appear earlier.
+    /// Default 0.0; drag-and-drop UI (follow-up) sets explicit values to
+    /// reorder.
+    #[serde(default)]
+    pub priority: f64,
 }
 
 /// Validation failure for [`Project::validate`].
@@ -263,6 +269,7 @@ impl Project {
         default_status_key: StatusKey,
         creator: Username,
         deleted: bool,
+        priority: f64,
     ) -> Self {
         Self {
             key,
@@ -272,6 +279,7 @@ impl Project {
             creator,
             deleted,
             prompt_path: None,
+            priority,
         }
     }
 
@@ -315,7 +323,8 @@ pub enum ProjectScope {
 }
 
 /// Request body for `POST /v1/projects` and `PUT /v1/projects/:id`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// No `Eq` derive: contains a `Project`, whose `priority` is `f64`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -349,7 +358,8 @@ impl UpsertProjectResponse {
 }
 
 /// Response body for `GET /v1/projects/:id`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// No `Eq` derive: contains a `Project`, whose `priority` is `f64`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -370,7 +380,8 @@ impl ProjectRecord {
 }
 
 /// Response body for `GET /v1/projects`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// No `Eq` derive: contains a `Project`, whose `priority` is `f64`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -469,6 +480,7 @@ mod tests {
             StatusKey::try_new(default_key).unwrap(),
             Username::try_new("jayantk").unwrap(),
             false,
+            0.0,
         )
     }
 
@@ -727,5 +739,36 @@ mod tests {
         let proj = project("open", vec![status("open", "Open")]);
         let key = StatusKey::try_new("nope").unwrap();
         assert!(proj.find_status(&key).is_none());
+    }
+
+    #[test]
+    fn project_serializes_priority() {
+        let mut proj = project("open", vec![status("open", "Open")]);
+        proj.priority = 1000.0;
+        let value = serde_json::to_value(&proj).unwrap();
+        assert_eq!(value.get("priority"), Some(&serde_json::json!(1000.0)));
+    }
+
+    #[test]
+    fn project_deserializes_legacy_wire_payload_with_default_priority() {
+        // Older payloads (pre-priority) had no `priority`; deserialize to `0.0`.
+        let legacy = serde_json::json!({
+            "key": "eng",
+            "name": "Engineering",
+            "statuses": [
+                {
+                    "key": "open",
+                    "label": "Open",
+                    "color": "#abcdef",
+                    "unblocks_parents": false,
+                    "unblocks_dependents": false,
+                    "cascades_to_children": false,
+                }
+            ],
+            "default_status_key": "open",
+            "creator": "jayantk",
+        });
+        let parsed: Project = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.priority, 0.0);
     }
 }

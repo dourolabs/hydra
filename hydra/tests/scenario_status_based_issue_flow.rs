@@ -143,6 +143,7 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
         StatusKey::try_new("backlog").unwrap(),
         Username::try_new("default").unwrap(),
         false,
+        0.0,
     );
     let project_resp = user
         .client()

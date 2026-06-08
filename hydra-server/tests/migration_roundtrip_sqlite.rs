@@ -112,6 +112,9 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     drop_actors_v2_migration_removes_table(&pool).await?;
     denormalize_creator_migration_is_idempotent(&pool).await?;
 
+    add_projects_priority_backfill_sql_level(&pool).await?;
+    add_projects_priority_backfill_domain_roundtrip(&pool).await?;
+
     Ok(())
 }
 
@@ -1411,6 +1414,83 @@ async fn denormalize_creator_migration_is_idempotent(pool: &SqlitePool) -> Resul
             "post-migration write read-back: expected session_id={sid:?}; got {:?}",
             fresh.session_id
         );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260610000000_add_projects_priority — assert that the new `priority`
+// column is backfilled to `rank * 1000.0` over the latest-version rows
+// (ranked by `created_at DESC, id DESC`), and that the
+// `SqliteStore::list_projects` typed read path surfaces the backfilled
+// value (this catches the `#[sqlx(default)]` / SELECT-projection
+// foot-gun that the parent issue calls out: if `priority` is missing
+// from the SELECT, the round-trip surfaces a `0.0` instead of the
+// backfilled value).
+// ---------------------------------------------------------------------------
+
+async fn add_projects_priority_backfill_sql_level(pool: &SqlitePool) -> Result<()> {
+    // The three baseline rows (j-prione, j-pritwo, j-pritri) have
+    // explicit `created_at` values in 2027 — far ahead of any other
+    // row's wall-clock timestamp — so they take ranks 1 / 2 / 3 and
+    // come out with priorities 1000 / 2000 / 3000 respectively.
+    let expected: &[(&str, f64)] = &[
+        ("j-prione", 1000.0),
+        ("j-pritwo", 2000.0),
+        ("j-pritri", 3000.0),
+    ];
+    for (id, want) in expected {
+        let row = sqlx::query(
+            "SELECT priority FROM projects \
+             WHERE id = ?1 AND is_latest = 1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read projects.priority for {id}"))?;
+        let got: f64 = row.try_get("priority")?;
+        if got != *want {
+            bail!("projects({id}).priority: expected {want}; got {got}");
+        }
+    }
+    Ok(())
+}
+
+async fn add_projects_priority_backfill_domain_roundtrip(pool: &SqlitePool) -> Result<()> {
+    // Round-trip through `SqliteStore::list_projects` so any drift
+    // between the migration's column shape and the typed `ProjectRow` /
+    // `row_to_project` projection fails loud. The list is sorted by
+    // `priority ASC, created_at DESC, id DESC`; we filter to just the
+    // three baseline rows to keep the assertion stable against unrelated
+    // smoke inserts in `assert_recent_migration_store_smoke` that land
+    // at the default `priority = 0.0`.
+    let store = SqliteStore::new(pool.clone());
+    let listed = store
+        .list_projects(false)
+        .await
+        .context("SqliteStore::list_projects(include_deleted = false)")?;
+
+    let want: &[(&str, f64)] = &[
+        ("j-prione", 1000.0),
+        ("j-pritwo", 2000.0),
+        ("j-pritri", 3000.0),
+    ];
+    // list_projects is already sorted by priority ASC; filter preserves
+    // order. Filter to just the baseline rows and compare directly.
+    let got: Vec<(String, f64)> = listed
+        .iter()
+        .filter_map(|(id, v)| {
+            let id_str = id.as_ref().to_string();
+            if want.iter().any(|(w, _)| *w == id_str.as_str()) {
+                Some((id_str, v.item.priority))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let want_owned: Vec<(String, f64)> = want.iter().map(|(s, p)| (s.to_string(), *p)).collect();
+    if got != want_owned {
+        bail!("list_projects filtered to baseline rows: expected {want_owned:?}; got {got:?}");
     }
     Ok(())
 }

@@ -18,6 +18,7 @@ function makeProject(id: string, key: string, name: string): ProjectRecord {
       statuses: [],
       default_status_key: "open",
       creator: "alice",
+      priority: 0,
     },
   } as ProjectRecord;
 }

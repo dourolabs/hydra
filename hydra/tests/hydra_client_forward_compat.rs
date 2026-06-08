@@ -626,6 +626,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         StatusKey::try_new("open").unwrap(),
         Username::from("test-creator"),
         false,
+        0.0,
     );
     let upsert_project = UpsertProjectRequest::new(project);
 

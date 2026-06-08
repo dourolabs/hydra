@@ -150,6 +150,9 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       creator,
       deleted: false,
       prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
+      // Preserve the existing project's priority on edit; new projects
+      // get `0` (sort-to-top).
+      priority: initial?.priority ?? 0,
     };
     mutation.mutate({ project });
   }, [

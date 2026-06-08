@@ -66,6 +66,7 @@ function defaultProject(): Project {
     default_status_key: "open",
     creator: "system",
     deleted: false,
+    priority: 1000,
   };
 }
 

@@ -142,6 +142,13 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("denormalize_creator: post-migration write/read works")?;
 
+    add_projects_priority_backfill_sql_level(&pool)
+        .await
+        .context("add_projects_priority: SQL-level rank backfill")?;
+    add_projects_priority_backfill_domain_roundtrip(&pool)
+        .await
+        .context("add_projects_priority: domain-level list_projects round-trip")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -2186,6 +2193,70 @@ async fn denormalize_creator_migration_is_idempotent(pool: &PgPool) -> Result<()
             "post-migration write read-back: expected session_id={sid:?}; got {:?}",
             fresh.session_id
         );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260610000000_add_projects_priority — assert that the new `priority`
+// column is backfilled to `rank * 1000.0` over the latest-version rows
+// (ranked by `created_at DESC, id DESC`), and that the
+// `PostgresStoreV2::list_projects` typed read path surfaces the
+// backfilled value. Sister to the SQLite assertion in
+// `migration_roundtrip_sqlite.rs`; both catch the
+// `#[sqlx(default)]` / SELECT-projection foot-gun the parent issue
+// calls out.
+// ---------------------------------------------------------------------------
+
+async fn add_projects_priority_backfill_sql_level(pool: &PgPool) -> Result<()> {
+    let expected: &[(&str, f64)] = &[
+        ("j-prione", 1000.0),
+        ("j-pritwo", 2000.0),
+        ("j-pritri", 3000.0),
+    ];
+    for (id, want) in expected {
+        let row = sqlx::query(
+            "SELECT priority FROM metis.projects \
+             WHERE id = $1 AND is_latest = true",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read metis.projects.priority for {id}"))?;
+        let got: f64 = row.try_get("priority")?;
+        if got != *want {
+            bail!("metis.projects({id}).priority: expected {want}; got {got}");
+        }
+    }
+    Ok(())
+}
+
+async fn add_projects_priority_backfill_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    let store = PostgresStoreV2::new(pool.clone());
+    let listed = store
+        .list_projects(false)
+        .await
+        .context("PostgresStoreV2::list_projects(include_deleted = false)")?;
+
+    let want: &[(&str, f64)] = &[
+        ("j-prione", 1000.0),
+        ("j-pritwo", 2000.0),
+        ("j-pritri", 3000.0),
+    ];
+    let got: Vec<(String, f64)> = listed
+        .iter()
+        .filter_map(|(id, v)| {
+            let id_str = id.as_ref().to_string();
+            if want.iter().any(|(w, _)| *w == id_str.as_str()) {
+                Some((id_str, v.item.priority))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let want_owned: Vec<(String, f64)> = want.iter().map(|(s, p)| (s.to_string(), *p)).collect();
+    if got != want_owned {
+        bail!("list_projects filtered to baseline rows: expected {want_owned:?}; got {got:?}");
     }
     Ok(())
 }

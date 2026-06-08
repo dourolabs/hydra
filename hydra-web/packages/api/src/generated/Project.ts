@@ -21,4 +21,10 @@ export type Project = {
    * `None` contributes an empty slice.
    */
   prompt_path?: string | null;
+  /**
+   * Sort key for project ordering. Smaller values appear earlier.
+   * Default 0.0; drag-and-drop UI (follow-up) sets explicit values to
+   * reorder.
+   */
+  priority: number;
 };

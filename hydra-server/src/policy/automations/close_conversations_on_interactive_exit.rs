@@ -231,6 +231,7 @@ mod tests {
             backlog_key.clone(),
             ApiUsername::from("alice"),
             false,
+            0.0,
         );
         let (project_id, _) = state
             .store
