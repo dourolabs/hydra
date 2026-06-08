@@ -4,6 +4,7 @@ import { Button, Input, Modal, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type {
   DocumentPath,
+  ListProjectsResponse,
   Principal,
   ProjectRecord,
   StatusDefinition,
@@ -19,6 +20,10 @@ import {
   pathToPrincipal,
   type AssignKind,
 } from "./principalAssign";
+import {
+  PROJECTS_QUERY_KEY,
+  applyOptimisticUpsert,
+} from "./projectCache";
 import styles from "./StatusSettingsModal.module.css";
 
 export interface StatusSettingsModalProps {
@@ -42,38 +47,62 @@ export function StatusSettingsModal({
   const { data: users } = useUsers();
 
   const statuses = projectRecord.project.statuses;
-  const index = statuses.findIndex((s) => s.key === statusKey);
-  const initialStatus = index >= 0 ? statuses[index] : null;
+  const initialStatus = useMemo(() => {
+    const i = statuses.findIndex((s) => s.key === statusKey);
+    return i >= 0 ? { status: statuses[i], index: i } : null;
+  }, [statuses, statusKey]);
+  const index = initialStatus?.index ?? -1;
 
-  const [draft, setDraft] = useState<StatusDefinition | null>(initialStatus);
+  const [draft, setDraft] = useState<StatusDefinition | null>(
+    initialStatus?.status ?? null,
+  );
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Resync local draft whenever the modal is opened against a different
   // status (gear click on another column reuses the same component instance).
   useEffect(() => {
-    setDraft(initialStatus);
+    if (!open) return;
+    setDraft(initialStatus?.status ?? null);
     setConfirmingDelete(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, projectRecord.project_id, statusKey, projectRecord.version]);
+  }, [open, initialStatus]);
+
+  const projectId = projectRecord.project_id;
 
   const saveMutation = useMutation({
     mutationFn: async (nextStatuses: StatusDefinition[]) => {
-      return apiClient.updateProject(projectRecord.project_id, {
+      return apiClient.updateProject(projectId, {
         project: { ...projectRecord.project, statuses: nextStatuses },
       });
     },
-    onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
-      queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
-      queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
-      addToast("Status updated", "success");
-      onClose();
+    onMutate: async (nextStatuses) => {
+      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
+      const previous =
+        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        const nextProject = {
+          ...projectRecord.project,
+          statuses: nextStatuses,
+        };
+        const next: ListProjectsResponse = {
+          projects: applyOptimisticUpsert(previous.projects, projectId, nextProject),
+        };
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
+      }
+      return { previous };
     },
-    onError: (err) => {
+    onError: (err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+      }
       addToast(
         err instanceof Error ? err.message : "Failed to update status",
         "error",
       );
+    },
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
+      queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
     },
   });
 
@@ -94,9 +123,16 @@ export function StatusSettingsModal({
       prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
     };
     const next = statuses.map((s, i) => (i === index ? normalized : s));
-    saveMutation.mutate(next);
-  }, [draft, index, statuses, saveMutation]);
+    saveMutation.mutate(next, {
+      onSuccess: () => {
+        addToast("Status updated", "success");
+        onClose();
+      },
+    });
+  }, [draft, index, statuses, saveMutation, addToast, onClose]);
 
+  // Move stays inside the modal: persist the swap but do NOT close, so the
+  // user can keep nudging the column without reopening the gear each time.
   const handleMove = useCallback(
     (delta: number) => {
       if (index < 0) return;
@@ -106,16 +142,23 @@ export function StatusSettingsModal({
       const tmp = next[index];
       next[index] = next[target];
       next[target] = tmp;
-      saveMutation.mutate(next);
+      saveMutation.mutate(next, {
+        onSuccess: () => addToast("Status moved", "success"),
+      });
     },
-    [index, statuses, saveMutation],
+    [index, statuses, saveMutation, addToast],
   );
 
   const handleDelete = useCallback(() => {
     if (!canDelete || index < 0) return;
     const next = statuses.filter((_, i) => i !== index);
-    saveMutation.mutate(next);
-  }, [canDelete, index, statuses, saveMutation]);
+    saveMutation.mutate(next, {
+      onSuccess: () => {
+        addToast("Status deleted", "success");
+        onClose();
+      },
+    });
+  }, [canDelete, index, statuses, saveMutation, addToast, onClose]);
 
   if (!draft || index < 0) {
     return (
@@ -143,6 +186,8 @@ export function StatusSettingsModal({
         setDraft={setDraft}
         agents={agents?.map((a) => a.name) ?? []}
         users={users?.map((u) => u.username) ?? []}
+        agentsLoaded={agents !== undefined}
+        usersLoaded={users !== undefined}
         index={index}
         count={statuses.length}
         onMove={handleMove}
@@ -214,6 +259,8 @@ interface StatusFormProps {
   setDraft: (next: StatusDefinition) => void;
   agents: string[];
   users: string[];
+  agentsLoaded: boolean;
+  usersLoaded: boolean;
   index: number;
   count: number;
   onMove: (delta: number) => void;
@@ -225,6 +272,8 @@ function StatusForm({
   setDraft,
   agents,
   users,
+  agentsLoaded,
+  usersLoaded,
   index,
   count,
   onMove,
@@ -254,12 +303,17 @@ function StatusForm({
     ],
     [agents],
   );
-  const kindOptions: SelectOption[] = [
-    { value: "none", label: "— none —" },
-    { value: "user", label: "User" },
-    { value: "agent", label: "Agent" },
-    { value: "external", label: "External" },
-  ];
+  const hasUsers = usersLoaded && users.length > 0;
+  const hasAgents = agentsLoaded && agents.length > 0;
+  const kindOptions: SelectOption[] = useMemo(
+    () => [
+      { value: "none", label: "— none —" },
+      { value: "user", label: hasUsers ? "User" : "User (none available)" },
+      { value: "agent", label: hasAgents ? "Agent" : "Agent (none available)" },
+      { value: "external", label: "External" },
+    ],
+    [hasUsers, hasAgents],
+  );
 
   const setAssign = (next: Principal | null) => {
     const nextForm = onEnter?.attach_form ?? null;
@@ -282,8 +336,17 @@ function StatusForm({
 
   const setKind = (kind: AssignKind) => {
     if (kind === "none") return setAssign(null);
-    if (kind === "user") return setAssign({ User: { name: users[0] ?? "" } });
-    if (kind === "agent") return setAssign({ Agent: { name: agents[0] ?? "" } });
+    // Don't seed an empty Principal name — Principal::{User,Agent}.name must
+    // always be a real handle. If the list isn't loaded yet (or is empty),
+    // leave the existing assignment alone so the user can pick once it loads.
+    if (kind === "user") {
+      if (!hasUsers) return;
+      return setAssign({ User: { name: users[0] } });
+    }
+    if (kind === "agent") {
+      if (!hasAgents) return;
+      return setAssign({ Agent: { name: agents[0] } });
+    }
     setAssign({
       External: { system: external?.system ?? "", username: external?.username ?? "" },
     });

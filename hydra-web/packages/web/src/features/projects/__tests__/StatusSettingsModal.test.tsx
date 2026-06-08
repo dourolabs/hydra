@@ -1,31 +1,68 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { ProjectRecord, StatusDefinition } from "@hydra/api";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type {
+  ListProjectsResponse,
+  ProjectRecord,
+  StatusDefinition,
+} from "@hydra/api";
 import type { ReactNode } from "react";
 
 const mutateSpy = vi.fn();
 const addToastSpy = vi.fn();
 let mutationPending = false;
+let simulateError: Error | null = null;
+const cancelQueriesSpy = vi.fn(async () => {});
+const setQueryDataSpy = vi.fn();
+const invalidateQueriesSpy = vi.fn();
+let queryDataByKey: Map<string, unknown> = new Map();
 
 vi.mock("@tanstack/react-query", () => ({
   useMutation: ({
+    mutationFn,
+    onMutate,
     onSuccess,
+    onError,
   }: {
-    onSuccess?: (response: { project_id: string }) => void;
+    mutationFn?: (vars: unknown) => Promise<{ project_id: string }>;
+    onMutate?: (vars: unknown) => Promise<unknown> | unknown;
+    onSuccess?: (response: { project_id: string }, vars: unknown) => void;
+    onError?: (err: Error, vars: unknown, context: unknown) => void;
   }) => ({
-    mutate: (vars: unknown) => {
+    mutate: (
+      vars: unknown,
+      perCall?: {
+        onSuccess?: (response: { project_id: string }, vars: unknown) => void;
+        onError?: (err: Error, vars: unknown, context: unknown) => void;
+      },
+    ) => {
       mutateSpy(vars);
-      // Synchronously fire success so onClose / invalidate run in tests.
-      onSuccess?.({ project_id: "j-eng" });
+      // Mirror react-query: await onMutate (so its inner awaits resolve)
+      // before either firing the success path or invoking onError.
+      void (async () => {
+        const ctx = await Promise.resolve(onMutate?.(vars));
+        if (simulateError) {
+          onError?.(simulateError, vars, ctx);
+          perCall?.onError?.(simulateError, vars, ctx);
+          return;
+        }
+        void mutationFn?.(vars);
+        const response = { project_id: "j-eng" };
+        onSuccess?.(response, vars);
+        perCall?.onSuccess?.(response, vars);
+      })();
     },
     isPending: mutationPending,
   }),
   useQueryClient: () => ({
-    cancelQueries: vi.fn(),
-    getQueryData: vi.fn(),
-    setQueryData: vi.fn(),
-    invalidateQueries: vi.fn(),
+    cancelQueries: cancelQueriesSpy,
+    getQueryData: (key: readonly unknown[]) =>
+      queryDataByKey.get(JSON.stringify(key)),
+    setQueryData: (key: readonly unknown[], value: unknown) => {
+      queryDataByKey.set(JSON.stringify(key), value);
+      setQueryDataSpy(key, value);
+    },
+    invalidateQueries: invalidateQueriesSpy,
   }),
 }));
 
@@ -194,7 +231,12 @@ describe("StatusSettingsModal", () => {
     mutateSpy.mockReset();
     addToastSpy.mockReset();
     updateProjectSpy.mockClear();
+    cancelQueriesSpy.mockClear();
+    setQueryDataSpy.mockClear();
+    invalidateQueriesSpy.mockClear();
+    queryDataByKey = new Map();
     mutationPending = false;
+    simulateError = null;
   });
 
   afterEach(() => {
@@ -352,5 +394,143 @@ describe("StatusSettingsModal", () => {
     expect(mutateSpy).toHaveBeenCalledTimes(1);
     const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
     expect(next.map((s) => s.key)).toEqual(["open", "closed"]);
+  });
+
+  it("Save applies an optimistic update to the projects cache", async () => {
+    const project = makeProject([
+      makeStatus("open", { label: "Open" }),
+      makeStatus("in-progress", { label: "In progress" }),
+    ]);
+    queryDataByKey.set(
+      JSON.stringify(["projects"]),
+      { projects: [project] } as ListProjectsResponse,
+    );
+    render(
+      <StatusSettingsModal
+        open={true}
+        onClose={() => {}}
+        projectRecord={project}
+        statusKey="in-progress"
+        issueCount={0}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("status-settings-label"), {
+      target: { value: "Doing" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+    });
+
+    expect(cancelQueriesSpy).toHaveBeenCalled();
+    expect(setQueryDataSpy).toHaveBeenCalled();
+    const lastSet = setQueryDataSpy.mock.calls.find(
+      (call) => JSON.stringify(call[0]) === JSON.stringify(["projects"]),
+    );
+    expect(lastSet).toBeDefined();
+    const cached = lastSet![1] as ListProjectsResponse;
+    expect(cached.projects).toHaveLength(1);
+    expect(cached.projects[0].project.statuses[1].label).toBe("Doing");
+    expect(cached.projects[0].version).toBe(2);
+  });
+
+  it("rolls back the projects cache when the save mutation errors", async () => {
+    const project = makeProject([
+      makeStatus("open"),
+      makeStatus("in-progress"),
+    ]);
+    const previous = { projects: [project] } as ListProjectsResponse;
+    queryDataByKey.set(JSON.stringify(["projects"]), previous);
+    simulateError = new Error("boom");
+
+    render(
+      <StatusSettingsModal
+        open={true}
+        onClose={() => {}}
+        projectRecord={project}
+        statusKey="in-progress"
+        issueCount={0}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+    });
+
+    // The last setQueryData for ["projects"] should restore the snapshot.
+    const projectsCalls = setQueryDataSpy.mock.calls.filter(
+      (call) => JSON.stringify(call[0]) === JSON.stringify(["projects"]),
+    );
+    expect(projectsCalls.length).toBeGreaterThanOrEqual(2);
+    expect(projectsCalls[projectsCalls.length - 1][1]).toBe(previous);
+    expect(addToastSpy).toHaveBeenCalledWith("boom", "error");
+  });
+
+  it("Move does NOT close the modal (user can keep nudging the column)", () => {
+    const project = makeProject([
+      makeStatus("open"),
+      makeStatus("in-progress"),
+      makeStatus("closed"),
+    ]);
+    const onClose = vi.fn();
+    render(
+      <StatusSettingsModal
+        open={true}
+        onClose={onClose}
+        projectRecord={project}
+        statusKey="open"
+        issueCount={0}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("status-settings-move-right"));
+    expect(mutateSpy).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("Save closes the modal after a successful mutation", async () => {
+    const project = makeProject([
+      makeStatus("open"),
+      makeStatus("in-progress"),
+    ]);
+    const onClose = vi.fn();
+    render(
+      <StatusSettingsModal
+        open={true}
+        onClose={onClose}
+        projectRecord={project}
+        statusKey="open"
+        issueCount={0}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("setKind('user') is a no-op when no users are loaded", () => {
+    const project = makeProject([
+      makeStatus("open"),
+      makeStatus("in-progress"),
+    ]);
+    render(
+      <StatusSettingsModal
+        open={true}
+        onClose={() => {}}
+        projectRecord={project}
+        statusKey="open"
+        issueCount={0}
+      />,
+    );
+    // useUsers is mocked to return [] above, so flipping to "user" should
+    // not produce an on_enter assignment with an empty Principal name.
+    fireEvent.change(screen.getByTestId("status-settings-assign-kind"), {
+      target: { value: "user" },
+    });
+    fireEvent.click(screen.getByTestId("status-settings-save"));
+    const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
+    expect(next[0].on_enter).toBeNull();
   });
 });

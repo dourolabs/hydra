@@ -9,7 +9,6 @@ import type {
   Principal,
   Project,
   ProjectId,
-  ProjectRecord,
   StatusDefinition,
   UpsertProjectRequest,
 } from "@hydra/api";
@@ -25,6 +24,11 @@ import {
   pathToPrincipal,
   type AssignKind,
 } from "./principalAssign";
+import {
+  PROJECTS_QUERY_KEY,
+  applyOptimisticDelete,
+  applyOptimisticUpsert,
+} from "./projectCache";
 import styles from "./ProjectEditor.module.css";
 
 interface ProjectEditorProps {
@@ -32,8 +36,6 @@ interface ProjectEditorProps {
   initial?: Project;
   creator: string;
 }
-
-const PROJECTS_QUERY_KEY = ["projects"] as const;
 
 export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProps) {
   const navigate = useNavigate();
@@ -104,7 +106,7 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       const previous = queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
       if (previous && projectId) {
         const next: ListProjectsResponse = {
-          projects: previous.projects.filter((p) => p.project_id !== projectId),
+          projects: applyOptimisticDelete(previous.projects, projectId),
         };
         queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
       }
@@ -640,24 +642,4 @@ function defaultNewStatuses(): StatusDefinition[] {
       prompt_path: null,
     },
   ];
-}
-
-function applyOptimisticUpsert(
-  list: ProjectRecord[],
-  projectId: ProjectId | null,
-  project: Project,
-): ProjectRecord[] {
-  if (projectId) {
-    return list.map((rec) =>
-      rec.project_id === projectId
-        ? { ...rec, project, version: rec.version + 1 }
-        : rec,
-    );
-  }
-  const placeholder: ProjectRecord = {
-    project_id: `optimistic:${project.key}`,
-    version: 1,
-    project,
-  };
-  return [...list, placeholder];
 }
