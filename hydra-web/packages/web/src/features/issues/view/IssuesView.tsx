@@ -185,12 +185,7 @@ export function IssuesView({
             )}
 
             {issues.length > 0 && (
-              <IssuesCards
-                issues={issues}
-                childStatusMap={childStatusMap}
-                sessionsByIssue={sessionsByIssue}
-                filterRootId={filterRootId}
-              />
+              <IssuesCards issues={issues} filterRootId={filterRootId} />
             )}
 
             {hasNextPage && (

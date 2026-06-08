@@ -155,8 +155,6 @@ function renderCards(props: {
     <MemoryRouter>
       <IssuesCards
         issues={props.issues}
-        childStatusMap={new Map()}
-        sessionsByIssue={new Map()}
         filterRootId={props.filterRootId ?? null}
       />
     </MemoryRouter>,

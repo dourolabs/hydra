@@ -400,11 +400,13 @@ export function IssuesListPage() {
 
   const displayCount = totalCount ?? issues.length;
 
-  // Table + cards layouts use the flat issue list for tree expansion. In
-  // board layout the board owns its own tree expansion over the per-column
-  // issue union.
+  // Only the table layout actually reads childStatusMap / sessionsByIssue
+  // (progress column + runtime cell). Cards consume the same flat issue list
+  // but render none of the tree-derived data, so keep the tree fetch gated on
+  // `table` to avoid three wasted backend calls per Cards render. Board owns
+  // its own tree expansion over the per-column issue union.
   const { childStatusMap, sessionsByIssue } = usePageIssueTrees(
-    isFlatList ? issues : [],
+    layout === "table" ? issues : [],
     currentUser,
   );
 
