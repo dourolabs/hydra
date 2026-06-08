@@ -34,7 +34,7 @@ import { ProjectChip } from "../../projects/ProjectChip";
 import { ProjectSettingsModal } from "../../projects/ProjectSettingsModal";
 import { ProjectCreateModal } from "../../projects/ProjectCreateModal";
 import { StatusSettingsModal } from "../../projects/StatusSettingsModal";
-import { useProjects, useProjectStatuses } from "../../projects/useProjects";
+import { useProjects } from "../../projects/useProjects";
 import {
   PROJECTS_QUERY_KEY,
   applyOptimisticUpsert,
@@ -67,24 +67,13 @@ function progressFraction(children: ChildStatus[] | undefined): number {
   return Math.round((done / total) * 100);
 }
 
-const DEFAULT_PROJECT_KEY = "default";
-const DEFAULT_PROJECT_NAME = "Default";
-
 export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoardProps) {
   const navigate = useNavigate();
   const { data: allProjects } = useProjects();
-  const { data: defaultStatusesResponse } = useProjectStatuses(null);
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
 
-  // Build the section list: synthesized default project first, then any
-  // user-defined projects (filtered by `baseFilters.project_id` if the page
-  // is scoped to a single project). Once [[i-vstbajos]] lands and the
-  // default project becomes a real ProjectRecord, the synthesized branch
-  // becomes dead and can be removed.
   const projects: BoardProjectDescriptor[] = useMemo(() => {
     const out: BoardProjectDescriptor[] = [];
-    const defaultStatuses = defaultStatusesResponse?.statuses ?? [];
-    const defaultStatusKey = defaultStatusesResponse?.default_status_key ?? "open";
     const realProjects = (allProjects ?? []).filter(
       (record) => !record.project.deleted,
     );
@@ -105,15 +94,6 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
       return out;
     }
 
-    if (defaultStatuses.length > 0) {
-      out.push({
-        project_id: null,
-        key: DEFAULT_PROJECT_KEY,
-        name: DEFAULT_PROJECT_NAME,
-        statuses: defaultStatuses,
-        default_status_key: defaultStatusKey,
-      });
-    }
     for (const record of realProjects) {
       out.push({
         project_id: record.project_id,
@@ -124,7 +104,7 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
       });
     }
     return out;
-  }, [allProjects, defaultStatusesResponse, baseFilters.project_id]);
+  }, [allProjects, baseFilters.project_id]);
 
   const cells = useBoardIssuesByProject(baseFilters, projects);
 
@@ -150,10 +130,6 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
 
   const { childStatusMap } = usePageIssueTrees(boardIssuesUnion, username);
 
-  // Real-ProjectRecord lookup by project_id for the gear button. The
-  // synthesized default project (project_id === null) intentionally has
-  // no entry — the gear is suppressed there because there's no record to
-  // mutate via apiClient.updateProject.
   const projectRecordById = useMemo(() => {
     const map = new Map<string, ProjectRecord>();
     for (const rec of allProjects ?? []) {
@@ -231,13 +207,10 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
           const cell = perStatus?.get(s.key);
           return acc + (cell?.issues.length ?? 0);
         }, 0);
-        const projectRecord =
-          project.project_id !== null
-            ? projectRecordById.get(project.project_id) ?? null
-            : null;
+        const projectRecord = projectRecordById.get(project.project_id)!;
         return (
           <ProjectSection
-            key={project.project_id ?? "__default__"}
+            key={project.project_id}
             project={project}
             projectRecord={projectRecord}
             perStatus={perStatus}
@@ -296,7 +269,7 @@ export function IssuesBoard({ baseFilters, username, filterRootId }: IssuesBoard
 
 interface ProjectSectionProps {
   project: BoardProjectDescriptor;
-  projectRecord: ProjectRecord | null;
+  projectRecord: ProjectRecord;
   perStatus: Map<string, BoardCellQuery> | undefined;
   projectIssueCount: number;
   childStatusMap: Map<string, ChildStatus[]>;
@@ -321,22 +294,15 @@ function ProjectSection({
   onGearClick,
   onAddStatus,
 }: ProjectSectionProps) {
-  // Hook calls must be unconditional. The default-project section
-  // (projectRecord === null) skips DnD entirely, but the mutation/sensor
-  // hooks below are cheap to declare and harmless when unused.
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const reorderMutation = useMutation({
     mutationFn: async (nextStatuses: StatusDefinition[]) => {
-      if (!projectRecord) {
-        throw new Error("Cannot reorder columns on the default project");
-      }
       return apiClient.updateProject(projectRecord.project_id, {
         project: { ...projectRecord.project, statuses: nextStatuses },
       });
     },
     onMutate: async (nextStatuses) => {
-      if (!projectRecord) return { previous: undefined };
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
       const previous =
         queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
@@ -384,7 +350,6 @@ function ProjectSection({
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      if (!projectRecord) return;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
       const statuses = projectRecord.project.statuses;
@@ -399,25 +364,11 @@ function ProjectSection({
 
   const columns = project.statuses.map((status) => {
     const cell = perStatus?.get(status.key);
-    if (projectRecord) {
-      return (
-        <SortableBoardColumn
-          key={status.key}
-          project={project}
-          projectRecord={projectRecord}
-          status={status}
-          cell={cell}
-          childStatusMap={childStatusMap}
-          onCardClick={onCardClick}
-          onGearClick={onGearClick}
-        />
-      );
-    }
     return (
-      <BoardColumn
+      <SortableBoardColumn
         key={status.key}
         project={project}
-        projectRecord={null}
+        projectRecord={projectRecord}
         status={status}
         cell={cell}
         childStatusMap={childStatusMap}
@@ -430,17 +381,15 @@ function ProjectSection({
   const columnsRow = (
     <div className={styles.projectColumns}>
       {columns}
-      {projectRecord && (
-        <button
-          type="button"
-          className={styles.colGhost}
-          onClick={() => onAddStatus(projectRecord.project_id)}
-          aria-label={`Add status to ${project.name}`}
-          data-testid={`board-col-add-${project.key}`}
-        >
-          + Add status
-        </button>
-      )}
+      <button
+        type="button"
+        className={styles.colGhost}
+        onClick={() => onAddStatus(projectRecord.project_id)}
+        aria-label={`Add status to ${project.name}`}
+        data-testid={`board-col-add-${project.key}`}
+      >
+        + Add status
+      </button>
     </div>
   );
 
@@ -468,43 +417,37 @@ function ProjectSection({
           className={styles.projectBarRight}
           data-testid={`board-project-actions-${project.key}`}
         >
-          {project.project_id !== null && (
-            <button
-              type="button"
-              className={styles.projectSettingsButton}
-              onClick={() => onOpenSettings(project.project_id as ProjectId)}
-              title="Project settings"
-              aria-label={`Project settings for ${project.name}`}
-              data-testid={`board-project-settings-${project.key}`}
-            >
-              <Icons.IconSettings size={14} />
-            </button>
-          )}
+          <button
+            type="button"
+            className={styles.projectSettingsButton}
+            onClick={() => onOpenSettings(project.project_id)}
+            title="Project settings"
+            aria-label={`Project settings for ${project.name}`}
+            data-testid={`board-project-settings-${project.key}`}
+          >
+            <Icons.IconSettings size={14} />
+          </button>
         </div>
       </div>
-      {projectRecord ? (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext
+          items={sortableIds}
+          strategy={horizontalListSortingStrategy}
         >
-          <SortableContext
-            items={sortableIds}
-            strategy={horizontalListSortingStrategy}
-          >
-            {columnsRow}
-          </SortableContext>
-        </DndContext>
-      ) : (
-        columnsRow
-      )}
+          {columnsRow}
+        </SortableContext>
+      </DndContext>
     </section>
   );
 }
 
 interface BoardColumnProps {
   project: BoardProjectDescriptor;
-  projectRecord: ProjectRecord | null;
+  projectRecord: ProjectRecord;
   status: StatusDefinition;
   cell: BoardCellQuery | undefined;
   childStatusMap: Map<string, ChildStatus[]>;
@@ -598,18 +541,16 @@ function BoardColumn({
         <StatusChip definition={status} />
         {isDefaultStatus && <span className={styles.defaultChip}>DEFAULT</span>}
         <span className={styles.colCount}>{colIssues.length}</span>
-        {projectRecord && (
-          <button
-            type="button"
-            className={styles.colGear}
-            onClick={() => onGearClick(projectRecord, status.key, cell)}
-            aria-label={`Settings for ${status.label || status.key}`}
-            title="Status settings"
-            data-testid={`board-col-gear-${project.key}-${status.key}`}
-          >
-            ⚙
-          </button>
-        )}
+        <button
+          type="button"
+          className={styles.colGear}
+          onClick={() => onGearClick(projectRecord, status.key, cell)}
+          aria-label={`Settings for ${status.label || status.key}`}
+          title="Status settings"
+          data-testid={`board-col-gear-${project.key}-${status.key}`}
+        >
+          ⚙
+        </button>
       </div>
       <div
         className={styles.colSubHead}
