@@ -60,10 +60,13 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
     authenticatedPage: page,
   }) => {
     // i-seed00001 has no project_id; the row should render the default
-    // project chip.
+    // project chip (project_id=j-defaul, key=default, name=Default — seeded
+    // in mock-server fixtures to mirror the real backend's
+    // `seed_default_project` migration row).
     await page.goto("/issues/i-seed00001");
     await page.getByTestId("issue-rail-tab-details").click();
     await expect(page.getByText("Project", { exact: true })).toBeVisible();
+    await expect(page.getByText("Default", { exact: true })).toBeVisible();
   });
 
   test("Details tab shows BLOCKED tag when blocked-on dep is open @issues:blocked-tag", async ({
