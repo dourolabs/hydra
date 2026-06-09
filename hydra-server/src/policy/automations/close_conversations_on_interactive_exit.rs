@@ -228,7 +228,7 @@ mod tests {
         let project = ApiProject::new(
             ProjectKey::try_new("engineering-v2").unwrap(),
             "Engineering v2".to_string(),
-            vec![interactive_def, backlog_def],
+            Vec::new(),
             ApiUsername::from("alice"),
             false,
             0.0,
@@ -238,6 +238,13 @@ mod tests {
             .add_project(project, &ActorRef::test())
             .await
             .unwrap();
+        for def in [interactive_def, backlog_def] {
+            state
+                .store
+                .add_status(&project_id, def, &ActorRef::test())
+                .await
+                .unwrap();
+        }
         (project_id, interactive_key, backlog_key)
     }
 

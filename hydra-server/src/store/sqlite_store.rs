@@ -6147,9 +6147,7 @@ impl Store for SqliteStore {
 
         let sequence = project_row.next_status_sequence;
         let new_next_seq = sequence.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!(
-                "next_status_sequence overflow for project '{id}'"
-            ))
+            StoreError::Internal(format!("next_status_sequence overflow for project '{id}'"))
         })?;
 
         Self::insert_status_row_in_tx(&mut tx, id.as_ref(), sequence, &status).await?;
@@ -13289,8 +13287,7 @@ mod tests {
     async fn get_project_by_key_round_trip_sqlite() {
         use hydra_common::api::v1::projects::ProjectKey;
         let store = create_test_store().await;
-        let (id, _) =
-            add_project_with_statuses(&store, sample_project(), &ActorRef::test()).await;
+        let (id, _) = add_project_with_statuses(&store, sample_project(), &ActorRef::test()).await;
 
         let key = ProjectKey::try_new("engineering").unwrap();
         let (resolved_id, versioned) = store
@@ -13531,10 +13528,8 @@ mod tests {
     #[tokio::test]
     async fn project_bound_issue_project_id_round_trips_sqlite() {
         let store = create_test_store().await;
-        let (project_id, _) = store
-            .add_project(sample_project(), &ActorRef::test())
-            .await
-            .unwrap();
+        let (project_id, _) =
+            add_project_with_statuses(&store, sample_project(), &ActorRef::test()).await;
 
         let mut issue = sample_issue(Vec::new());
         issue.project_id = project_id.clone();

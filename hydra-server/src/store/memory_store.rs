@@ -2868,7 +2868,11 @@ impl Store for MemoryStore {
         let statuses = self
             .statuses_indexes
             .get(id)
-            .map(|m| m.lock().expect("statuses index mutex poisoned").ordered_statuses())
+            .map(|m| {
+                m.lock()
+                    .expect("statuses index mutex poisoned")
+                    .ordered_statuses()
+            })
             .unwrap_or_default();
         let mut row = project;
         row.statuses = statuses;
@@ -2918,9 +2922,7 @@ impl Store for MemoryStore {
         }
         let sequence = idx.next_sequence;
         idx.next_sequence = idx.next_sequence.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!(
-                "next_status_sequence overflow for project '{id}'"
-            ))
+            StoreError::Internal(format!("next_status_sequence overflow for project '{id}'"))
         })?;
         idx.by_key.insert(status.key.clone(), sequence);
         idx.rows.insert(sequence, status.clone());
@@ -9872,8 +9874,7 @@ mod tests {
     async fn get_project_by_key_round_trip() {
         use hydra_common::api::v1::projects::ProjectKey;
         let store = MemoryStore::new();
-        let (id, _) =
-            add_project_with_statuses(&store, sample_project(), &ActorRef::test()).await;
+        let (id, _) = add_project_with_statuses(&store, sample_project(), &ActorRef::test()).await;
 
         let key = ProjectKey::try_new("engineering").unwrap();
         let (resolved_id, versioned) = store
@@ -10049,11 +10050,7 @@ mod tests {
         let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
         for k in ["a", "b", "c"] {
             store
-                .add_status(
-                    &project_id,
-                    cutover_status_def(k),
-                    &ActorRef::test(),
-                )
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
                 .await
                 .unwrap();
         }
@@ -10086,11 +10083,7 @@ mod tests {
         let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
         for k in ["a", "b", "c"] {
             store
-                .add_status(
-                    &project_id,
-                    cutover_status_def(k),
-                    &ActorRef::test(),
-                )
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
                 .await
                 .unwrap();
         }

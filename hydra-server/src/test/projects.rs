@@ -365,9 +365,7 @@ async fn delete_status_route_round_trip() -> anyhow::Result<()> {
 
     // Delete `released`, which has no issues against it — succeeds.
     let resp = client
-        .delete(format!(
-            "{base}/v1/projects/{project_id}/statuses/released"
-        ))
+        .delete(format!("{base}/v1/projects/{project_id}/statuses/released"))
         .send()
         .await?
         .error_for_status()?;
@@ -420,9 +418,7 @@ async fn delete_status_with_active_issue_returns_400() -> anyhow::Result<()> {
         .error_for_status()?;
 
     let resp = client
-        .delete(format!(
-            "{base}/v1/projects/{project_id}/statuses/backlog"
-        ))
+        .delete(format!("{base}/v1/projects/{project_id}/statuses/backlog"))
         .send()
         .await?;
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
@@ -665,9 +661,7 @@ async fn project_routes_accept_key_alongside_id() -> anyhow::Result<()> {
     let mut renamed = make_status("triage", "Backlog", "#3498db");
     renamed.key = StatusKey::try_new("triage").unwrap();
     let rename_resp: UpsertProjectStatusResponse = client
-        .put(format!(
-            "{base}/v1/projects/engineering/statuses/backlog"
-        ))
+        .put(format!("{base}/v1/projects/engineering/statuses/backlog"))
         .json(&renamed)
         .send()
         .await?

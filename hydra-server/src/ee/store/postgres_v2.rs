@@ -1880,6 +1880,7 @@ struct ProjectRow {
 #[derive(sqlx::FromRow)]
 struct StatusRow {
     project_id: String,
+    #[allow(dead_code)]
     sequence: i64,
     key: String,
     label: String,
@@ -5902,9 +5903,7 @@ impl Store for PostgresStoreV2 {
 
         let sequence = project_row.next_status_sequence;
         let new_next_seq = sequence.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!(
-                "next_status_sequence overflow for project '{id}'"
-            ))
+            StoreError::Internal(format!("next_status_sequence overflow for project '{id}'"))
         })?;
         Self::insert_status_row_in_tx(&mut tx, id.as_ref(), sequence, &status).await?;
 
@@ -11110,42 +11109,48 @@ mod tests {
         assert_eq!(status.key.as_str(), "open");
     }
 
-    // ---- Cutover-specific (post-20260614000000) ----
+    // ---- Per-status CRUD (post-cutover) ----
 
-    fn cutover_sample_project_pg(name: &str, keys: &[&str]) -> Project {
-        use hydra_common::api::v1::projects::{ProjectKey, StatusDefinition, StatusKey};
+    fn cutover_empty_project_pg(name: &str) -> Project {
+        use hydra_common::api::v1::projects::ProjectKey;
         use hydra_common::api::v1::users::Username as ApiUsername;
-        let statuses = keys
-            .iter()
-            .map(|k| {
-                StatusDefinition::new(
-                    StatusKey::try_new(*k).unwrap(),
-                    k.to_string(),
-                    "#cccccc".parse().unwrap(),
-                    false,
-                    false,
-                    false,
-                    None,
-                )
-            })
-            .collect::<Vec<_>>();
         Project::new(
             ProjectKey::try_new(name).unwrap(),
             name.to_string(),
-            statuses,
+            Vec::new(),
             ApiUsername::from("alice"),
             false,
             0.0,
         )
     }
 
+    fn cutover_status_def_pg(key: &str) -> hydra_common::api::v1::projects::StatusDefinition {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        StatusDefinition::new(
+            StatusKey::try_new(key).unwrap(),
+            key.to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        )
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn cutover_add_project_assigns_sequences_in_input_order_pg(pool: PgStorePool) {
+    async fn add_status_assigns_sequences_in_input_order_pg(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("abc", &["a", "b", "c"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("abc"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def_pg(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
         let rows: Vec<(i64, String)> = sqlx::query_as(
             "SELECT sequence, key FROM metis.statuses WHERE project_id = $1 ORDER BY sequence",
         )
@@ -11173,24 +11178,28 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn cutover_update_project_preserves_sequence_on_label_change_pg(pool: PgStorePool) {
-        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+    async fn update_status_edits_in_place_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("abc", &["a", "b", "c"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses[1] = StatusDefinition::new(
-            StatusKey::try_new("b").unwrap(),
-            "B Prime".to_string(),
-            "#cccccc".parse().unwrap(),
-            false,
-            false,
-            false,
-            None,
-        );
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("abc"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def_pg(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+        let mut updated = cutover_status_def_pg("b");
+        updated.label = "B Prime".to_string();
         store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("b").unwrap(),
+                updated,
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let row: (i64, String) = sqlx::query_as(
@@ -11205,16 +11214,25 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn cutover_high_water_mark_no_sequence_reuse_pg(pool: PgStorePool) {
-        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+    async fn delete_status_then_add_does_not_reuse_sequence_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("abc", &["a", "b", "c"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses.retain(|s| s.key.as_str() != "c");
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("abc"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def_pg(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
         store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .delete_status(
+                &project_id,
+                &StatusKey::try_new("c").unwrap(),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let next_seq: i64 = sqlx::query_scalar(
@@ -11226,18 +11244,8 @@ mod tests {
         .unwrap();
         assert_eq!(next_seq, 4);
 
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses.push(StatusDefinition::new(
-            StatusKey::try_new("x").unwrap(),
-            "x".to_string(),
-            "#cccccc".parse().unwrap(),
-            false,
-            false,
-            false,
-            None,
-        ));
         store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .add_status(&project_id, cutover_status_def_pg("x"), &ActorRef::test())
             .await
             .unwrap();
         let x_seq: i64 = sqlx::query_scalar(
@@ -11252,20 +11260,31 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn cutover_status_key_rename_does_not_orphan_issues_pg(pool: PgStorePool) {
+    async fn update_status_rename_does_not_orphan_issues_pg(pool: PgStorePool) {
         use crate::domain::issues::{Issue, IssueType};
         use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("rename", &["a", "b", "c"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        // Simulate the future rename CLI via direct UPDATE.
-        sqlx::query("UPDATE metis.statuses SET key = 'bb' WHERE project_id = $1 AND sequence = 2")
-            .bind(project_id.as_ref())
-            .execute(&pool)
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("rename"), &ActorRef::test())
             .await
             .unwrap();
-
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def_pg(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+        let mut renamed = cutover_status_def_pg("bb");
+        renamed.key = StatusKey::try_new("bb").unwrap();
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("b").unwrap(),
+                renamed,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
         let issue = Issue::new(
             IssueType::Task,
             "rename test".to_string(),
@@ -11301,12 +11320,20 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn cutover_update_project_rejects_status_removal_with_active_issue_pg(pool: PgStorePool) {
+    async fn delete_status_rejects_removal_with_active_issue_pg(pool: PgStorePool) {
         use crate::domain::issues::{Issue, IssueType};
         use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("rmproj", &["a", "b"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("rmproj"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b"] {
+            store
+                .add_status(&project_id, cutover_status_def_pg(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
         let issue = Issue::new(
             IssueType::Task,
             "test".to_string(),
@@ -11325,10 +11352,12 @@ mod tests {
         );
         store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses.retain(|s| s.key.as_str() != "b");
         let res = store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .delete_status(
+                &project_id,
+                &StatusKey::try_new("b").unwrap(),
+                &ActorRef::test(),
+            )
             .await;
         assert!(
             matches!(res, Err(StoreError::InvalidIssueStatus(_))),
@@ -11336,88 +11365,28 @@ mod tests {
         );
     }
 
-    // ---- rename_status (PR-3) ----
-
-    /// Renaming a status via the trait method must (a) flow through reads
-    /// as the new key, (b) preserve `metis.issues_v2.status_sequence` on
-    /// the issue row, and (c) bump the project's `version_number`. This
-    /// is the value-of-cutover assertion PR-2's model was designed to
-    /// enable.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn rename_status_preserves_issue_sequence_pg(pool: PgStorePool) {
-        use crate::domain::issues::{Issue, IssueType};
+    async fn update_status_rename_to_existing_key_returns_invalid_status_pg(pool: PgStorePool) {
         use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("rn", &["a", "b", "c"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        let issue = Issue::new(
-            IssueType::Task,
-            "rename".to_string(),
-            "test".to_string(),
-            hydra_common::api::v1::users::Username::from("alice").into(),
-            String::new(),
-            StatusKey::try_new("b").unwrap(),
-            project_id.clone(),
-            None,
-            None,
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
-        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
-        let before_seq: i64 = sqlx::query_scalar(
-            "SELECT status_sequence FROM metis.issues_v2 WHERE id = $1 AND is_latest = TRUE",
-        )
-        .bind(issue_id.as_ref())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-
-        let from = StatusKey::try_new("b").unwrap();
-        let to = StatusKey::try_new("bb").unwrap();
-        let v = store
-            .rename_status(&project_id, &from, &to, &ActorRef::test())
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("rn2"), &ActorRef::test())
             .await
             .unwrap();
-        assert_eq!(v, 2, "project version must bump on rename");
-
-        let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.status.as_str(), "bb");
-
-        let after_seq: i64 = sqlx::query_scalar(
-            "SELECT status_sequence FROM metis.issues_v2 WHERE id = $1 AND is_latest = TRUE",
-        )
-        .bind(issue_id.as_ref())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            after_seq, before_seq,
-            "rename must not change the issue's status_sequence"
-        );
-
-        let project = store.get_project(&project_id, false).await.unwrap().item;
-        let keys: Vec<&str> = project.statuses.iter().map(|s| s.key.as_str()).collect();
-        assert_eq!(keys, vec!["a", "bb", "c"]);
-    }
-
-    #[sqlx::test(migrations = "./migrations")]
-    #[ignore]
-    async fn rename_status_to_existing_key_returns_invalid_status_pg(pool: PgStorePool) {
-        use hydra_common::api::v1::projects::StatusKey;
-        let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("rn2", &["a", "b"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
+        for k in ["a", "b"] {
+            store
+                .add_status(&project_id, cutover_status_def_pg(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+        let mut renamed = cutover_status_def_pg("b");
+        renamed.key = StatusKey::try_new("b").unwrap();
         let res = store
-            .rename_status(
+            .update_status(
                 &project_id,
                 &StatusKey::try_new("a").unwrap(),
-                &StatusKey::try_new("b").unwrap(),
+                renamed,
                 &ActorRef::test(),
             )
             .await;
@@ -11426,17 +11395,18 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn rename_status_unknown_from_key_returns_invalid_status_pg(pool: PgStorePool) {
+    async fn update_status_unknown_key_returns_invalid_status_pg(pool: PgStorePool) {
         use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("rn3", &["a", "b"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("rn3"), &ActorRef::test())
+            .await
+            .unwrap();
         let res = store
-            .rename_status(
+            .update_status(
                 &project_id,
                 &StatusKey::try_new("nope").unwrap(),
-                &StatusKey::try_new("c").unwrap(),
+                cutover_status_def_pg("c"),
                 &ActorRef::test(),
             )
             .await;
@@ -11445,42 +11415,15 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn rename_status_same_from_and_to_is_noop_pg(pool: PgStorePool) {
-        use hydra_common::api::v1::projects::StatusKey;
-        let store = PostgresStoreV2::new(pool.clone());
-        let project = cutover_sample_project_pg("rn4", &["a"]);
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        let v = store
-            .rename_status(
-                &project_id,
-                &StatusKey::try_new("a").unwrap(),
-                &StatusKey::try_new("a").unwrap(),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(v, 1, "no-op rename must not bump version");
-
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metis.projects WHERE id = $1")
-            .bind(project_id.as_ref())
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 1, "no-op rename must not write a new version row");
-    }
-
-    #[sqlx::test(migrations = "./migrations")]
-    #[ignore]
-    async fn rename_status_project_not_found_pg(pool: PgStorePool) {
+    async fn update_status_project_not_found_pg(pool: PgStorePool) {
         use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
         let bogus = hydra_common::ProjectId::new();
         let res = store
-            .rename_status(
+            .update_status(
                 &bogus,
                 &StatusKey::try_new("a").unwrap(),
-                &StatusKey::try_new("b").unwrap(),
+                cutover_status_def_pg("a"),
                 &ActorRef::test(),
             )
             .await;

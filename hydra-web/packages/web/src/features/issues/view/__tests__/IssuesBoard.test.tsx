@@ -69,20 +69,16 @@ vi.mock("@dnd-kit/core", () => ({
     }
     return <>{children}</>;
   },
-  // <DragOverlay> renders into a portal in production; rendering its children
-  // inline here is enough for assertions that don't care about portal location.
-  DragOverlay: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DragOverlay: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   PointerSensor: function PointerSensor() {},
   KeyboardSensor: function KeyboardSensor() {},
   useSensor: () => ({}),
   useSensors: () => [],
   closestCenter: () => [],
-  // IssuesBoard references `MeasuringStrategy.Always` as a runtime value,
-  // not a type — the mock must expose it for the module to evaluate.
   MeasuringStrategy: {
     Always: "always",
-    BeforeDragging: "before",
-    WhileDragging: "while",
+    BeforeDragging: "before-dragging",
+    WhileDragging: "while-dragging",
   },
 }));
 
@@ -120,15 +116,40 @@ vi.mock("@dnd-kit/sortable", () => ({
 const mockUpdateProject = vi.fn();
 const mockUpdateIssue = vi.fn();
 const mockGetIssue = vi.fn();
+const mockUpdateProjectStatus = vi.fn(
+  async (
+    projectId: string,
+    _statusKey: string,
+    status: StatusDefinition,
+  ): Promise<{
+    project_id: string;
+    version: number;
+    status: StatusDefinition;
+  }> => ({
+    project_id: projectId,
+    version: 1,
+    status,
+  }),
+);
 vi.mock("../../../../api/client", () => ({
   apiClient: {
     updateProject: (
       projectId: string,
-      request: { project: { statuses: StatusDefinition[] } },
+      request: {
+        key: string;
+        name: string;
+        prompt_path: string | null;
+        priority: number;
+      },
     ) => mockUpdateProject(projectId, request),
     updateIssue: (issueId: string, request: UpsertIssueRequest) =>
       mockUpdateIssue(issueId, request),
     getIssue: (issueId: string) => mockGetIssue(issueId),
+    updateProjectStatus: (
+      projectId: string,
+      statusKey: string,
+      status: StatusDefinition,
+    ) => mockUpdateProjectStatus(projectId, statusKey, status),
   },
 }));
 
@@ -362,6 +383,18 @@ beforeEach(() => {
   dragEndHandlers = [];
   sortableItemsList = [];
   mockUpdateProject.mockReset();
+  mockUpdateProjectStatus.mockClear();
+  mockUpdateProjectStatus.mockImplementation(
+    async (
+      projectId: string,
+      _statusKey: string,
+      status: StatusDefinition,
+    ) => ({
+      project_id: projectId,
+      version: 1,
+      status,
+    }),
+  );
   mockUpdateProject.mockResolvedValue({ project_id: "j-eng", version: 2 });
   mockUpdateIssue.mockReset();
   mockUpdateIssue.mockResolvedValue({ issue_id: "i-x", version: 2 });
@@ -700,7 +733,7 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     expect(head.getAttribute("data-sortable-handle")).toBe("true");
   });
 
-  it("on drop reorders statuses and calls apiClient.updateProject with the new order", async () => {
+  it("on drop reorders statuses and calls updateProjectStatus with new positions", async () => {
     renderBoard();
     expect(lastDragEndHandler).not.toBeNull();
 
@@ -711,17 +744,16 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
       });
     });
 
-    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
-    const [projectId, body] = mockUpdateProject.mock.calls[0];
-    expect(projectId).toBe("j-eng");
-    const keys = (body.project.statuses as StatusDefinition[]).map((s) => s.key);
-    expect(keys).toEqual(["in-progress", "open"]);
-    // Per-status fields must be preserved during reorder.
-    const moved = (body.project.statuses as StatusDefinition[]).find(
-      (s) => s.key === "in-progress",
-    );
-    expect(moved?.label).toBe("In progress");
-    expect(moved?.color).toBe("#f1c40f");
+    await waitFor(() => expect(mockUpdateProjectStatus).toHaveBeenCalledTimes(2));
+    const calls = mockUpdateProjectStatus.mock.calls.map((c) => ({
+      projectId: c[0] as string,
+      statusKey: c[1] as string,
+      position: (c[2] as StatusDefinition).position,
+    }));
+    expect(calls).toEqual([
+      { projectId: "j-eng", statusKey: "in-progress", position: 0 },
+      { projectId: "j-eng", statusKey: "open", position: 100 },
+    ]);
   });
 
   it("is a no-op when the drop target equals the dragged item", () => {
@@ -732,7 +764,7 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
         over: { id: "open" },
       });
     });
-    expect(mockUpdateProject).not.toHaveBeenCalled();
+    expect(mockUpdateProjectStatus).not.toHaveBeenCalled();
   });
 
   it("optimistically reorders the projects cache and rolls back on save error", async () => {
@@ -745,7 +777,7 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     // Hold the mutation in-flight so we can observe the optimistic write
     // before the failure resolves it back to the previous snapshot.
     let rejectUpdate: ((err: Error) => void) | null = null;
-    mockUpdateProject.mockReturnValueOnce(
+    mockUpdateProjectStatus.mockReturnValueOnce(
       new Promise<never>((_, reject) => {
         rejectUpdate = reject;
       }),
@@ -780,12 +812,12 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     expect(mockAddToast).toHaveBeenCalledWith("boom", "error");
   });
 
-  it("does not call updateProject when there are no projects", () => {
+  it("does not call updateProjectStatus when there are no projects", () => {
     projectsData = [];
     renderBoard();
     // No project sections means no DndContext was mounted.
     expect(lastDragEndHandler).toBeNull();
-    expect(mockUpdateProject).not.toHaveBeenCalled();
+    expect(mockUpdateProjectStatus).not.toHaveBeenCalled();
   });
 });
 
@@ -1030,9 +1062,9 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
     const [projectId, body] = mockUpdateProject.mock.calls[0];
     expect(projectId).toBe("j-c");
-    expect(body.project.priority).toBe(1500);
+    expect(body.priority).toBe(1500);
     // Other project fields should be preserved.
-    expect(body.project.key).toBe("gamma");
+    expect(body.key).toBe("gamma");
   });
 
   it("on drop at the top sets priority below the first neighbor's", async () => {
@@ -1048,7 +1080,7 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
     const [, body] = mockUpdateProject.mock.calls[0];
     // alpha's priority is 1000; gamma at top = 1000 - 1024 = -24.
-    expect(body.project.priority).toBe(-24);
+    expect(body.priority).toBe(-24);
   });
 
   it("on drop at the bottom sets priority above the last neighbor's", async () => {
@@ -1064,7 +1096,7 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
     const [, body] = mockUpdateProject.mock.calls[0];
     // gamma's priority is 3000; alpha at bottom = 3000 + 1024 = 4024.
-    expect(body.project.priority).toBe(4024);
+    expect(body.priority).toBe(4024);
   });
 
   it("is a no-op when the drop target equals the dragged project", () => {

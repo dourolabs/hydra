@@ -310,8 +310,12 @@ async fn update_project(
     let prompt_path = apply_prompt_path_arg(args.prompt_path, current.project.prompt_path.clone());
 
     let mut request = UpsertProjectRequest::new(
-        args.key.clone().unwrap_or_else(|| current.project.key.clone()),
-        args.name.clone().unwrap_or_else(|| current.project.name.clone()),
+        args.key
+            .clone()
+            .unwrap_or_else(|| current.project.key.clone()),
+        args.name
+            .clone()
+            .unwrap_or_else(|| current.project.name.clone()),
     );
     request.prompt_path = prompt_path.clone();
     request.priority = current.project.priority;

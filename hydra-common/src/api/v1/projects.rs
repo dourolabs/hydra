@@ -912,10 +912,11 @@ mod tests {
         let value = serde_json::to_value(&req).unwrap();
         let mapping = value.as_object().expect("upsert request is a JSON object");
         let keys: std::collections::BTreeSet<_> = mapping.keys().cloned().collect();
-        let expected: std::collections::BTreeSet<String> = ["key", "name", "prompt_path", "priority"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let expected: std::collections::BTreeSet<String> =
+            ["key", "name", "prompt_path", "priority"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
         assert_eq!(keys, expected);
         let parsed: UpsertProjectRequest = serde_json::from_value(value).unwrap();
         assert_eq!(parsed.key, req.key);

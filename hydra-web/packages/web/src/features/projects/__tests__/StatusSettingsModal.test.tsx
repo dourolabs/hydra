@@ -294,6 +294,33 @@ vi.mock("@hydra/ui", () => ({
 }));
 
 const updateProjectSpy = vi.fn(async (_id: string, req: unknown) => req);
+const createProjectStatusSpy = vi.fn(
+  async (
+    _id: string,
+    status: unknown,
+  ): Promise<{ project_id: string; version: number; status: unknown }> => ({
+    project_id: _id,
+    version: 1,
+    status,
+  }),
+);
+const updateProjectStatusSpy = vi.fn(
+  async (
+    _id: string,
+    _key: string,
+    status: unknown,
+  ): Promise<{ project_id: string; version: number; status: unknown }> => ({
+    project_id: _id,
+    version: 1,
+    status,
+  }),
+);
+const deleteProjectStatusSpy = vi.fn(
+  async (_id: string, _key: string): Promise<{ project_id: string; version: number }> => ({
+    project_id: _id,
+    version: 1,
+  }),
+);
 type ListIssuesMockResp = {
   issues: Array<{ issue_id: string }>;
   next_cursor: string | null;
@@ -338,6 +365,9 @@ vi.mock("../../../api/client", () => ({
   ApiError: ApiErrorMock,
   apiClient: {
     updateProject: updateProjectSpy,
+    createProjectStatus: createProjectStatusSpy,
+    updateProjectStatus: updateProjectStatusSpy,
+    deleteProjectStatus: deleteProjectStatusSpy,
     listIssues: listIssuesSpy,
     getIssue: getIssueSpy,
     updateIssue: updateIssueSpy,
@@ -415,6 +445,9 @@ describe("StatusSettingsModal", () => {
     mutateSpy.mockReset();
     addToastSpy.mockReset();
     updateProjectSpy.mockClear();
+    createProjectStatusSpy.mockClear();
+    updateProjectStatusSpy.mockClear();
+    deleteProjectStatusSpy.mockClear();
     listIssuesSpy.mockReset();
     listIssuesSpy.mockImplementation(async () => ({
       issues: [],
@@ -488,7 +521,12 @@ describe("StatusSettingsModal", () => {
     fireEvent.click(screen.getByTestId("status-settings-save"));
 
     expect(mutateSpy).toHaveBeenCalledTimes(1);
-    const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
+    const payload = mutateSpy.mock.calls[0][0] as {
+      nextStatuses: StatusDefinition[];
+      action: "edit" | "delete";
+    };
+    expect(payload.action).toBe("edit");
+    const next = payload.nextStatuses;
     expect(next).toHaveLength(2);
     expect(next[0].key).toBe("open");
     // Key follows the renamed name: "Doing" → "doing".
@@ -639,8 +677,12 @@ describe("StatusSettingsModal", () => {
     fireEvent.click(screen.getByTestId("status-settings-delete-confirm"));
 
     expect(mutateSpy).toHaveBeenCalledTimes(1);
-    const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
-    expect(next.map((s) => s.key)).toEqual(["open", "closed"]);
+    const payload = mutateSpy.mock.calls[0][0] as {
+      nextStatuses: StatusDefinition[];
+      action: "edit" | "delete";
+    };
+    expect(payload.action).toBe("delete");
+    expect(payload.nextStatuses.map((s) => s.key)).toEqual(["open", "closed"]);
   });
 
   it("Save applies an optimistic update to the projects cache", async () => {
@@ -799,19 +841,17 @@ describe("StatusSettingsModal", () => {
         fireEvent.click(screen.getByTestId("status-settings-save"));
       });
 
-      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
-      const projectPayload = updateProjectSpy.mock.calls[0][1] as {
-        project: { statuses: StatusDefinition[] };
-      };
-      expect(projectPayload.project.statuses.map((s) => s.key)).toEqual([
-        "open",
-        "in-progress",
-        "in-review",
-      ]);
-      const added = projectPayload.project.statuses[2];
-      expect(added.label).toBe("In Review");
+      expect(createProjectStatusSpy).toHaveBeenCalledTimes(1);
+      const [postedProjectId, postedStatus] =
+        createProjectStatusSpy.mock.calls[0] as unknown as [
+          string,
+          StatusDefinition,
+        ];
+      expect(postedProjectId).toBe("j-eng");
+      expect(postedStatus.key).toBe("in-review");
+      expect(postedStatus.label).toBe("In Review");
       // The status points at the derived auto path.
-      expect(added.prompt_path).toBe(
+      expect(postedStatus.prompt_path).toBe(
         "/projects/engineering/statuses/in-review.md",
       );
     });
@@ -873,7 +913,7 @@ describe("StatusSettingsModal", () => {
         "/projects/engineering/statuses/blocked.md",
       );
       expect(docPayload.document.body_markdown).toBe("Body text");
-      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
+      expect(createProjectStatusSpy).toHaveBeenCalledTimes(1);
     });
 
     it("skips the document write when the prompt body is empty", async () => {
@@ -897,10 +937,9 @@ describe("StatusSettingsModal", () => {
       expect(createDocumentSpy).not.toHaveBeenCalled();
       expect(updateDocumentSpy).not.toHaveBeenCalled();
       // The status still records the derived path so a later edit finds the doc.
-      const projectPayload = updateProjectSpy.mock.calls[0][1] as {
-        project: { statuses: StatusDefinition[] };
-      };
-      expect(projectPayload.project.statuses[1].prompt_path).toBe(
+      expect(createProjectStatusSpy).toHaveBeenCalledTimes(1);
+      const status = createProjectStatusSpy.mock.calls[0][1] as StatusDefinition;
+      expect(status.prompt_path).toBe(
         "/projects/engineering/statuses/blocked.md",
       );
     });
@@ -1050,15 +1089,10 @@ describe("StatusSettingsModal", () => {
         (firstPatch[1] as { issue: { description: string } }).issue.description,
       ).toBe("full description");
 
-      // Project save fires after all issues moved.
-      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
-      const projectPayload = updateProjectSpy.mock.calls[0][1] as {
-        project: { statuses: StatusDefinition[] };
-      };
-      expect(projectPayload.project.statuses.map((s) => s.key)).toEqual([
-        "open",
-        "closed",
-      ]);
+      // After all issues moved, the per-status DELETE fires.
+      expect(deleteProjectStatusSpy).toHaveBeenCalledTimes(1);
+      expect(deleteProjectStatusSpy.mock.calls[0][0]).toBe("j-eng");
+      expect(deleteProjectStatusSpy.mock.calls[0][1]).toBe("in-progress");
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
@@ -1249,8 +1283,10 @@ describe("StatusSettingsModal", () => {
         path: "/projects/engineering/statuses/in-progress.md",
       });
       // Project save still fires, recording the derived prompt_path.
-      const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
-      expect(next[1].prompt_path).toBe(
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(payload.nextStatuses[1].prompt_path).toBe(
         "/projects/engineering/statuses/in-progress.md",
       );
     });
@@ -1327,8 +1363,10 @@ describe("StatusSettingsModal", () => {
       const rows = within(menu).getAllByRole("menuitem");
       fireEvent.click(rows[0]);
       fireEvent.click(screen.getByTestId("status-settings-save"));
-      const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
-      expect(next[0].on_enter).toBeNull();
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(payload.nextStatuses[0].on_enter).toBeNull();
     });
   });
 });

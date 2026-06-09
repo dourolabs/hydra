@@ -1710,8 +1710,7 @@ impl HydraClient {
         status_key: &StatusKey,
         request: &StatusDefinition,
     ) -> Result<UpsertProjectStatusResponse> {
-        let url =
-            self.endpoint(&format!("/v1/projects/{project_ref}/statuses/{status_key}"))?;
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/statuses/{status_key}"))?;
         let response = self
             .authed(self.http.put(url))
             .json(request)
@@ -1736,8 +1735,7 @@ impl HydraClient {
         project_ref: &ProjectRef,
         status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse> {
-        let url =
-            self.endpoint(&format!("/v1/projects/{project_ref}/statuses/{status_key}"))?;
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/statuses/{status_key}"))?;
         let response = self
             .authed(self.http.delete(url))
             .send()

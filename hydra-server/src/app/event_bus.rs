@@ -1234,7 +1234,13 @@ impl StoreWithEvents {
         id: &ProjectId,
         status: hydra_common::api::v1::projects::StatusDefinition,
         actor: &ActorRef,
-    ) -> Result<(hydra_common::api::v1::projects::StatusDefinition, VersionNumber), StoreError> {
+    ) -> Result<
+        (
+            hydra_common::api::v1::projects::StatusDefinition,
+            VersionNumber,
+        ),
+        StoreError,
+    > {
         self.inner.add_status(id, status, actor).await
     }
 
@@ -1244,7 +1250,13 @@ impl StoreWithEvents {
         status_key: &hydra_common::api::v1::projects::StatusKey,
         status: hydra_common::api::v1::projects::StatusDefinition,
         actor: &ActorRef,
-    ) -> Result<(hydra_common::api::v1::projects::StatusDefinition, VersionNumber), StoreError> {
+    ) -> Result<
+        (
+            hydra_common::api::v1::projects::StatusDefinition,
+            VersionNumber,
+        ),
+        StoreError,
+    > {
         self.inner
             .update_status(id, status_key, status, actor)
             .await
