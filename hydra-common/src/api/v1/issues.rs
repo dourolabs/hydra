@@ -965,9 +965,9 @@ mod tests {
 
     #[test]
     fn search_issues_query_serializes_status_key_byte_identical_to_legacy() {
-        // Wire-contract check (option A): the on-the-wire string for the
-        // five legacy enum values must be unchanged after the
-        // `Vec<IssueStatus>` -> `Vec<StatusKey>` retype.
+        // Wire-contract check: these five status keys must serialize to
+        // their exact string form so existing clients and stored queries
+        // keep parsing.
         let query = SearchIssuesQuery {
             status: vec![
                 status_key("open"),

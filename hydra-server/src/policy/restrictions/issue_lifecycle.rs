@@ -42,9 +42,8 @@ impl Restriction for IssueLifecycleRestriction {
 
         // Only validate when the proposed status unblocks dependents — i.e.
         // the success-close lane. Dropped/Failed leave `unblocks_dependents`
-        // false, so this restriction lets those through (matching the
-        // legacy `closed`-only gate). Resolving via the cache also seeds
-        // `new`'s project so the loops below reuse it.
+        // false, so this restriction lets those through. Resolving via the
+        // cache also seeds `new`'s project so the loops below reuse it.
         let resolved_new = match resolve_status_with_cache(&mut project_cache, ctx.store, new).await
         {
             Ok(def) => def,
