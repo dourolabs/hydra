@@ -1,15 +1,17 @@
 use async_trait::async_trait;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
-use crate::domain::issues::IssueStatus;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::Status;
 
 const AUTOMATION_NAME: &str = "kill_tasks_on_issue_failure";
 
-/// When an issue's status changes to a terminal/failure status, kill all active
-/// tasks (Created/Pending/Running) for that issue.
+/// When an issue's status changes to a terminal status, kill all active
+/// tasks (Created/Pending/Running) for that issue. "Terminal" is data-driven
+/// via `StatusDefinition::unblocks_parents`, which covers the legacy
+/// Dropped/Failed pair plus any per-project status that opts in (and
+/// benignly fires on Closed, where the task has already exited).
 ///
 /// This automation should run after `cascade_issue_status` so that cascaded
 /// child/dependent issues also get their tasks killed via their own update events.
@@ -57,14 +59,24 @@ impl Automation for KillTasksOnFailureAutomation {
             "automation invoked",
         );
 
-        // Only trigger when the status changed to a terminal/failure status
+        // Only trigger when the status changed to a terminal status.
         if old.status == new.status {
             return Ok(());
         }
-        if !matches!(
-            new.status_as_legacy(),
-            Some(IssueStatus::Dropped | IssueStatus::Failed)
-        ) {
+        let resolved = match ctx.app_state.resolve_status(new).await {
+            Ok(def) => def,
+            Err(err) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    issue_id = %issue_id,
+                    status = %new.status,
+                    error = %err,
+                    "kill_tasks_on_issue_failure: failed to resolve new status; skipping"
+                );
+                return Ok(());
+            }
+        };
+        if !resolved.unblocks_parents {
             return Ok(());
         }
 
