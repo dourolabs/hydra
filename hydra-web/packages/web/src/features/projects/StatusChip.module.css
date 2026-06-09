@@ -29,20 +29,6 @@
   white-space: nowrap;
 }
 
-.interactiveTag {
-  margin-left: var(--space-1);
-  padding: 0 4px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--color-text-tertiary);
-  font-size: 9px;
-  font-weight: 500;
-  line-height: 1.4;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-secondary);
-}
-
 @keyframes statusChipPulse {
   50% {
     box-shadow: 0 0 0 5px transparent;
