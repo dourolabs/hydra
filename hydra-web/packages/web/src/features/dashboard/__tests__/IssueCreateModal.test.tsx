@@ -52,14 +52,16 @@ vi.mock("@hydra/ui", () => ({
     open,
     onToggle,
     children,
+    "data-testid": testId,
   }: {
     label: string;
     value: ReactNode;
     open: boolean;
     onToggle: () => void;
     children: ReactNode;
+    "data-testid"?: string;
   }) => (
-    <div data-testid={`picker-${label.toLowerCase()}`}>
+    <div data-testid={testId ?? `picker-${label.toLowerCase()}`}>
       <span>{label}</span>
       <button type="button" onClick={onToggle} aria-expanded={open} aria-label={label}>
         {value}
