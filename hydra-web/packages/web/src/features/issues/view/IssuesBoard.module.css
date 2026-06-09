@@ -3,9 +3,6 @@
   flex-direction: column;
   gap: 18px;
   padding: 14px 20px;
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
 }
 
 .projectGroup {
@@ -117,7 +114,6 @@
   width: 272px;
   flex: 0 0 272px;
   min-height: 200px;
-  max-height: 100%;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
@@ -135,8 +131,6 @@
   font-weight: 500;
   color: var(--fg-0);
   background: var(--bg-1);
-  position: sticky;
-  top: 0;
   flex-shrink: 0;
 }
 
@@ -247,9 +241,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  overflow-y: auto;
   flex: 1;
-  min-height: 0;
 }
 
 .card {
@@ -362,16 +354,20 @@
 }
 
 .colGhost {
+  /* Header-region placeholder: matches a status column's width but only the
+     header height, top-aligned so it doesn't stretch to full column height. */
+  flex: 0 0 272px;
+  align-self: flex-start;
+  height: 36px;
   display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  width: 272px;
-  flex: 0 0 272px;
-  min-height: 200px;
+  gap: 6px;
   padding: 0;
-  background: var(--bg-1);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
   color: var(--fg-2);
   font-family: var(--f-sans);
   font-size: var(--t-sm);
@@ -383,8 +379,8 @@
 }
 
 .colGhost:hover {
-  background: var(--bg-2);
-  border-color: var(--line-strong);
+  background: var(--bg-1);
+  border-color: var(--fg-3);
   color: var(--fg-0);
 }
 
