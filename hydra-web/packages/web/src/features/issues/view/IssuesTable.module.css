@@ -148,17 +148,21 @@
 
 /* Hover-revealed Restore action on archived rows. Matches the DocumentRow
    pattern (opacity transition) and also reveals on keyboard focus so a
-   tab-traversal user can find it. */
+   tab-traversal user can find it. `pointer-events: none` while hidden so
+   the invisible button can't be tapped on touch devices (no `:hover`),
+   which would otherwise silently fire a restore. */
 .restoreButton {
   margin-left: auto;
   flex-shrink: 0;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--tx-fast);
 }
 
 .archived:hover .restoreButton,
 .archived:focus-within .restoreButton {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .assignee {
