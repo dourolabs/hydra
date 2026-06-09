@@ -171,11 +171,11 @@ vi.mock("../../../auth/useUsername", () => ({
   useUsername: () => "alice",
 }));
 
-// Replace ProjectEditor with a sentinel — the settings (edit) modal still
-// uses it. The new-project modal doesn't, so a separate sentinel covers
-// that route.
-vi.mock("../../../projects/ProjectEditor", () => ({
-  ProjectEditor: ({
+// Replace ProjectForm with a sentinel — the settings (edit) modal renders it.
+// The new-project modal also uses it, but that route is mocked separately
+// below.
+vi.mock("../../../projects/ProjectForm", () => ({
+  ProjectForm: ({
     projectId,
     initial,
     creator,
@@ -185,7 +185,7 @@ vi.mock("../../../projects/ProjectEditor", () => ({
     creator: string;
   }) => (
     <div
-      data-testid="project-editor"
+      data-testid="project-form"
       data-project-id={String(projectId ?? "")}
       data-project-key={initial?.key ?? ""}
       data-project-name={initial?.name ?? ""}
@@ -421,7 +421,7 @@ describe("IssuesBoard project settings gear", () => {
 
     const modal = screen.getByTestId("modal");
     expect(modal).toBeDefined();
-    const editor = screen.getByTestId("project-editor");
+    const editor = screen.getByTestId("project-form");
     expect(editor.getAttribute("data-project-id")).toBe("j-altpro");
     expect(editor.getAttribute("data-project-key")).toBe("alpha");
     expect(editor.getAttribute("data-project-name")).toBe("Alpha");

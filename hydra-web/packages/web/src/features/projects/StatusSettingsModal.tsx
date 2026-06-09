@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Avatar,
   Button,
@@ -19,7 +19,7 @@ import type {
   ProjectRecord,
   StatusDefinition,
 } from "@hydra/api";
-import { ApiError, apiClient } from "../../api/client";
+import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { useAgents } from "../../hooks/useAgents";
 import { useUsers } from "../../hooks/useUsers";
@@ -29,6 +29,7 @@ import {
   applyOptimisticUpsert,
 } from "./projectCache";
 import { blankStatus, slugifyStatusKey } from "./statusDefaults";
+import { upsertPromptDoc, usePromptDocumentBody } from "./promptDocument";
 import styles from "./StatusSettingsModal.module.css";
 
 export interface StatusSettingsModalProps {
@@ -71,68 +72,6 @@ function deriveKeyAndError(
 function promptPathFor(projectKey: string, statusKey: string): string {
   if (!projectKey || !statusKey) return "";
   return `/projects/${projectKey}/statuses/${statusKey}.md`;
-}
-
-/**
- * Load the markdown body of the prompt document at `loadPath` so the inline
- * editor can be seeded with it. Seeds the local body exactly once per path so a
- * background refetch never clobbers in-progress edits. A 404 (no document yet)
- * seeds an empty body. `loadPath` should be a stable path (the status's path as
- * opened), not one that changes as the user renames — that would refetch and
- * discard their edits.
- */
-function usePromptDocumentBody(loadPath: string | null) {
-  const [body, setBody] = useState("");
-  const seededPathRef = useRef<string | null>(null);
-  const query = useQuery({
-    queryKey: ["documentByPath", loadPath],
-    queryFn: async () => {
-      if (!loadPath) return null;
-      try {
-        return await apiClient.getDocumentByPath(loadPath);
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return null;
-        throw err;
-      }
-    },
-    enabled: !!loadPath,
-  });
-
-  useEffect(() => {
-    if (!query.isSuccess) return;
-    if (seededPathRef.current === loadPath) return;
-    seededPathRef.current = loadPath;
-    setBody(query.data?.document.body_markdown ?? "");
-  }, [query.isSuccess, query.data, loadPath]);
-
-  return { body, setBody, loading: query.isLoading };
-}
-
-// Upsert the prompt document at `path` with `body`. Mirrors PromptDocumentEditor
-// / the new-project flow: 404 → createDocument, otherwise updateDocument.
-async function upsertPromptDoc(path: string, body: string) {
-  try {
-    const existing = await apiClient.getDocumentByPath(path);
-    await apiClient.updateDocument(existing.document_id, {
-      document: {
-        ...existing.document,
-        body_markdown: body,
-        path: path as DocumentPath,
-      },
-    });
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      await apiClient.createDocument({
-        document: {
-          title: path,
-          body_markdown: body,
-          path: path as DocumentPath,
-        },
-      });
-    } else {
-      throw err;
-    }
-  }
 }
 
 export function StatusSettingsModal(props: StatusSettingsModalProps) {
@@ -573,16 +512,16 @@ function EditStatusModal({
               </>
             )
           ) : (
-            <button
-              type="button"
-              className={`${styles.miniButton} ${styles.miniButtonDanger}`}
+            <Button
+              variant="danger-subtle"
+              size="sm"
               onClick={() => setConfirmingDelete(true)}
               disabled={!canDelete || saveMutation.isPending}
               title={deleteTooltip || undefined}
               data-testid="status-settings-delete"
             >
               Delete status
-            </button>
+            </Button>
           )}
         </div>
         <div className={styles.actionsRight}>

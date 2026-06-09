@@ -70,6 +70,20 @@
   border-color: var(--color-danger-bright);
 }
 
+/* Subtle danger: danger-colored text on a quiet background (delete triggers).
+ * Less prominent than `.danger`; fills in on hover to confirm the intent. */
+.danger-subtle {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-danger);
+}
+
+.danger-subtle:hover:not(:disabled) {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--fg-0);
+}
+
 /* Sizes */
 .sm {
   height: 24px;

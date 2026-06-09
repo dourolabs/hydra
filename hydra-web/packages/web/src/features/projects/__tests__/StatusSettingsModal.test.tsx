@@ -122,16 +122,23 @@ vi.mock("@hydra/ui", () => ({
     children,
     onClick,
     disabled,
+    title,
     "data-testid": testId,
   }: {
     children: ReactNode;
     onClick?: () => void;
     disabled?: boolean;
+    title?: string;
     variant?: string;
     size?: string;
     "data-testid"?: string;
   }) => (
-    <button onClick={onClick} disabled={disabled} data-testid={testId}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      data-testid={testId}
+    >
       {children}
     </button>
   ),
