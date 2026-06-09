@@ -270,14 +270,14 @@ impl MemoryStore {
         let mut existing_by_key: HashMap<StatusKey, i64> = idx.by_key.clone();
         let mut new_rows: BTreeMap<i64, StatusDefinition> = BTreeMap::new();
         let mut new_by_key: HashMap<StatusKey, i64> = HashMap::new();
+        let mut next_sequence_after = idx.next_sequence;
 
         for def in incoming {
             let seq = if let Some(s) = existing_by_key.remove(&def.key) {
                 s
             } else {
-                let s = idx.next_sequence;
-                idx.next_sequence = idx
-                    .next_sequence
+                let s = next_sequence_after;
+                next_sequence_after = next_sequence_after
                     .checked_add(1)
                     .ok_or_else(|| StoreError::Internal("status sequence overflow".to_string()))?;
                 s
@@ -310,6 +310,7 @@ impl MemoryStore {
 
         idx.rows = new_rows;
         idx.by_key = new_by_key;
+        idx.next_sequence = next_sequence_after;
         Ok(())
     }
 
@@ -9964,5 +9965,83 @@ mod tests {
             matches!(res, Err(StoreError::InvalidIssueStatus(_))),
             "expected rejection of removal-with-active-issue; got {res:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn cutover_apply_statuses_diff_rolls_back_next_sequence_on_validation_failure_memory() {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("rollback", &["a", "b"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let next_seq_before = store
+            .statuses_indexes
+            .get(&project_id)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .next_sequence;
+        assert_eq!(next_seq_before, 3);
+
+        let mut issue = sample_issue(vec![]);
+        issue.project_id = project_id.clone();
+        issue.status = StatusKey::try_new("b").unwrap();
+        store.add_issue(issue, &ActorRef::test()).await.unwrap();
+
+        // Removal of "b" must be rejected AND must leave next_sequence
+        // unchanged — even though the diff also adds a new key "c"
+        // that would otherwise consume sequence 3.
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses.retain(|s| s.key.as_str() != "b");
+        updated.statuses.push(StatusDefinition::new(
+            StatusKey::try_new("c").unwrap(),
+            "c".to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ));
+        let res = store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await;
+        assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
+        let next_seq_after_fail = store
+            .statuses_indexes
+            .get(&project_id)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .next_sequence;
+        assert_eq!(
+            next_seq_after_fail, next_seq_before,
+            "next_sequence must not advance on validation failure"
+        );
+
+        // A subsequent successful update adding a new key gets the
+        // sequence the failed call would have consumed.
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses.push(StatusDefinition::new(
+            StatusKey::try_new("c").unwrap(),
+            "c".to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ));
+        store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        let c_seq = store
+            .statuses_indexes
+            .get(&project_id)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .by_key
+            .get(&StatusKey::try_new("c").unwrap())
+            .copied();
+        assert_eq!(c_seq, Some(3));
     }
 }
