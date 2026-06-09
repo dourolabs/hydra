@@ -176,6 +176,32 @@ async fn migration_roundtrip() -> Result<()> {
     // the schema, and downstream idempotency assertions in this run
     // depend on the seeded baseline data.
 
+    create_statuses_migration_schema_invariants(&pool)
+        .await
+        .context("create_statuses: schema invariants on metis.statuses")?;
+    create_statuses_migration_backfills_default_seed(&pool)
+        .await
+        .context("create_statuses: j-defaul backfill matches default_project_seed()")?;
+    create_statuses_migration_backfills_custom_project(&pool)
+        .await
+        .context("create_statuses: j-stsfixt backfill covers full column shape")?;
+    add_issues_v2_status_sequence_schema_invariants(&pool)
+        .await
+        .context(
+            "add_issues_v2_status_sequence: status_sequence column exists as nullable BIGINT",
+        )?;
+    add_issues_v2_status_sequence_backfills_issues(&pool)
+        .await
+        .context(
+            "add_issues_v2_status_sequence: every issue's status_sequence resolves back to its key",
+        )?;
+    create_statuses_migration_is_idempotent(&pool)
+        .await
+        .context("create_statuses: re-applying body adds no duplicate rows")?;
+    add_issues_v2_status_sequence_migration_is_idempotent(&pool)
+        .await
+        .context("add_issues_v2_status_sequence: re-applying body does not overwrite sequences")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -328,6 +354,7 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         "session_state_v2",
         "triggers",
         "projects",
+        "statuses",
     ] {
         if !table_exists(pool, table).await? {
             bail!("expected metis.{table} to exist after rollforward");
@@ -2406,6 +2433,483 @@ async fn issues_v2_project_id_not_null_migration_is_idempotent(pool: &PgPool) ->
         .context("re-apply postgres issues_v2_project_id_not_null migration body")?;
     if column_is_nullable(pool, "issues_v2", "project_id").await? {
         bail!("expected `metis.issues_v2.project_id` to stay NOT NULL after idempotency rerun");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260613000000_create_statuses /
+// 20260613010000_add_issues_v2_status_sequence — assert the new
+// `metis.statuses` table exists with the expected PK and unique index,
+// that the seeded `j-defaul` project's status JSONB array backfills
+// into matching `metis.statuses` rows (sequence 1..=5 in JSONB array
+// order), that a custom-project baseline row covers the full column
+// shape (`on_enter`, `prompt_path`, `interactive`), that every
+// `metis.issues_v2` row has `status_sequence` populated and joins back
+// to the original status key, and that re-applying either migration
+// body is a no-op. Covers [[i-jvmpqwwe]] acceptance criteria (a)–(d).
+// ---------------------------------------------------------------------------
+
+async fn create_statuses_migration_schema_invariants(pool: &PgPool) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT array_agg(a.attname::text ORDER BY array_position(i.indkey, a.attnum)) AS cols \
+         FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indrelid \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey) \
+         WHERE n.nspname = 'metis' AND c.relname = 'statuses' AND i.indisprimary",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up metis.statuses primary key columns")?;
+    let pk_cols: Vec<String> = row.try_get("cols")?;
+    if pk_cols != vec!["project_id".to_string(), "sequence".to_string()] {
+        bail!("metis.statuses PK: expected [project_id, sequence]; got {pk_cols:?}");
+    }
+
+    let row = sqlx::query(
+        "SELECT array_agg(a.attname::text ORDER BY array_position(i.indkey, a.attnum)) AS cols \
+         FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indrelid \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey) \
+         JOIN pg_class ic ON ic.oid = i.indexrelid \
+         WHERE n.nspname = 'metis' AND c.relname = 'statuses' \
+           AND ic.relname = 'statuses_project_key_idx'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up metis.statuses_project_key_idx columns")?;
+    let idx_cols: Vec<String> = row.try_get("cols")?;
+    if idx_cols != vec!["project_id".to_string(), "key".to_string()] {
+        bail!(
+            "metis.statuses_project_key_idx columns: expected [project_id, key]; got {idx_cols:?}"
+        );
+    }
+    let row = sqlx::query(
+        "SELECT i.indisunique \
+         FROM pg_index i \
+         JOIN pg_class ic ON ic.oid = i.indexrelid \
+         WHERE ic.relname = 'statuses_project_key_idx'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read uniqueness flag for statuses_project_key_idx")?;
+    let is_unique: bool = row.try_get(0)?;
+    if !is_unique {
+        bail!("metis.statuses_project_key_idx: expected unique index; got non-unique");
+    }
+    Ok(())
+}
+
+async fn create_statuses_migration_backfills_default_seed(pool: &PgPool) -> Result<()> {
+    // The seeded j-defaul row has 5 statuses in this exact order. The
+    // backfill must produce sequence 1..=5 with the same column values,
+    // matching `default_project_seed()` byte-for-byte after the icon
+    // column was stripped by 20260608000000.
+    let expected_seed = default_project_seed().statuses;
+    let rows = sqlx::query(
+        "SELECT sequence, key, label, color, \
+                unblocks_parents, unblocks_dependents, cascades_to_children, \
+                on_enter::text AS on_enter_text, prompt_path, interactive \
+         FROM metis.statuses WHERE project_id = 'j-defaul' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read metis.statuses for j-defaul")?;
+    if rows.len() != 5 {
+        bail!(
+            "metis.statuses(j-defaul): expected 5 rows; got {}",
+            rows.len()
+        );
+    }
+    for (i, row) in rows.iter().enumerate() {
+        let sequence: i64 = row.try_get("sequence")?;
+        if sequence != (i + 1) as i64 {
+            bail!(
+                "metis.statuses(j-defaul)[{i}]: expected sequence={}; got {sequence}",
+                i + 1
+            );
+        }
+        let key: String = row.try_get("key")?;
+        let label: String = row.try_get("label")?;
+        let color: String = row.try_get("color")?;
+        let unblocks_parents: bool = row.try_get("unblocks_parents")?;
+        let unblocks_dependents: bool = row.try_get("unblocks_dependents")?;
+        let cascades_to_children: bool = row.try_get("cascades_to_children")?;
+        let on_enter_text: Option<String> = row.try_get("on_enter_text")?;
+        let prompt_path: Option<String> = row.try_get("prompt_path")?;
+        let interactive: bool = row.try_get("interactive")?;
+
+        let expected = &expected_seed[i];
+        if key != expected.key.as_str() {
+            bail!(
+                "metis.statuses(j-defaul)[{i}].key: expected {}; got {key}",
+                expected.key.as_str()
+            );
+        }
+        if label != expected.label {
+            bail!(
+                "metis.statuses(j-defaul)[{i}].label: expected {}; got {label}",
+                expected.label
+            );
+        }
+        if color != expected.color.as_ref() {
+            bail!(
+                "metis.statuses(j-defaul)[{i}].color: expected {}; got {color}",
+                expected.color
+            );
+        }
+        if unblocks_parents != expected.unblocks_parents
+            || unblocks_dependents != expected.unblocks_dependents
+            || cascades_to_children != expected.cascades_to_children
+        {
+            bail!(
+                "metis.statuses(j-defaul)[{i}] flags mismatch: \
+                 expected ({}, {}, {}); got ({unblocks_parents}, {unblocks_dependents}, {cascades_to_children})",
+                expected.unblocks_parents,
+                expected.unblocks_dependents,
+                expected.cascades_to_children
+            );
+        }
+        if prompt_path != expected.prompt_path {
+            bail!(
+                "metis.statuses(j-defaul)[{i}].prompt_path: expected {:?}; got {prompt_path:?}",
+                expected.prompt_path
+            );
+        }
+        if interactive != expected.interactive {
+            bail!(
+                "metis.statuses(j-defaul)[{i}].interactive: expected {}; got {interactive}",
+                expected.interactive
+            );
+        }
+        // The default seed has no on_enter on any status.
+        if on_enter_text.is_some() {
+            bail!(
+                "metis.statuses(j-defaul)[{i}].on_enter: expected NULL (default seed has none); got {on_enter_text:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn create_statuses_migration_backfills_custom_project(pool: &PgPool) -> Result<()> {
+    // The j-stsfixt baseline row's 3 statuses exercise the full column
+    // shape: draft (minimal), reviewing (on_enter + prompt_path +
+    // interactive), merged (unblocks_* flags set).
+    let rows = sqlx::query(
+        "SELECT sequence, key, label, color, \
+                unblocks_parents, unblocks_dependents, cascades_to_children, \
+                on_enter::text AS on_enter_text, prompt_path, interactive \
+         FROM metis.statuses WHERE project_id = 'j-stsfixt' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read metis.statuses for j-stsfixt")?;
+    if rows.len() != 3 {
+        bail!(
+            "metis.statuses(j-stsfixt): expected 3 rows; got {}",
+            rows.len()
+        );
+    }
+
+    struct Expected {
+        sequence: i64,
+        key: &'static str,
+        label: &'static str,
+        color: &'static str,
+        unblocks_parents: bool,
+        unblocks_dependents: bool,
+        cascades_to_children: bool,
+        on_enter: Option<serde_json::Value>,
+        prompt_path: Option<&'static str>,
+        interactive: bool,
+    }
+
+    let expectations: [Expected; 3] = [
+        Expected {
+            sequence: 1,
+            key: "draft",
+            label: "Draft",
+            color: "#cccccc",
+            unblocks_parents: false,
+            unblocks_dependents: false,
+            cascades_to_children: false,
+            on_enter: None,
+            prompt_path: None,
+            interactive: false,
+        },
+        Expected {
+            sequence: 2,
+            key: "reviewing",
+            label: "Reviewing",
+            color: "#f1c40f",
+            unblocks_parents: false,
+            unblocks_dependents: false,
+            cascades_to_children: false,
+            on_enter: Some(serde_json::json!({"assign_to": {"Agent": {"name": "reviewer"}}})),
+            prompt_path: Some("/projects/stsfixt/reviewing.md"),
+            interactive: true,
+        },
+        Expected {
+            sequence: 3,
+            key: "merged",
+            label: "Merged",
+            color: "#2ecc71",
+            unblocks_parents: true,
+            unblocks_dependents: true,
+            cascades_to_children: false,
+            on_enter: None,
+            prompt_path: None,
+            interactive: false,
+        },
+    ];
+
+    for (row, expected) in rows.iter().zip(expectations.iter()) {
+        let sequence: i64 = row.try_get("sequence")?;
+        let key: String = row.try_get("key")?;
+        let label: String = row.try_get("label")?;
+        let color: String = row.try_get("color")?;
+        let unblocks_parents: bool = row.try_get("unblocks_parents")?;
+        let unblocks_dependents: bool = row.try_get("unblocks_dependents")?;
+        let cascades_to_children: bool = row.try_get("cascades_to_children")?;
+        let on_enter_text: Option<String> = row.try_get("on_enter_text")?;
+        let on_enter_value = on_enter_text
+            .as_deref()
+            .map(serde_json::from_str::<serde_json::Value>)
+            .transpose()
+            .context("decode j-stsfixt.statuses.on_enter JSON")?;
+        let prompt_path: Option<String> = row.try_get("prompt_path")?;
+        let interactive: bool = row.try_get("interactive")?;
+
+        if sequence != expected.sequence
+            || key != expected.key
+            || label != expected.label
+            || color != expected.color
+            || unblocks_parents != expected.unblocks_parents
+            || unblocks_dependents != expected.unblocks_dependents
+            || cascades_to_children != expected.cascades_to_children
+            || on_enter_value != expected.on_enter
+            || prompt_path.as_deref() != expected.prompt_path
+            || interactive != expected.interactive
+        {
+            bail!(
+                "metis.statuses(j-stsfixt) sequence={sequence}: did not match expected\n  \
+                 got: (key={key}, label={label}, color={color}, \
+                 unblocks_parents={unblocks_parents}, unblocks_dependents={unblocks_dependents}, \
+                 cascades_to_children={cascades_to_children}, on_enter={on_enter_value:?}, \
+                 prompt_path={prompt_path:?}, interactive={interactive})\n  \
+                 expected: sequence={}, key={}",
+                expected.sequence,
+                expected.key
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_issues_v2_status_sequence_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "issues_v2", "status_sequence").await? {
+        bail!("expected metis.issues_v2.status_sequence column to exist after rollforward");
+    }
+    if !column_is_nullable(pool, "issues_v2", "status_sequence").await? {
+        bail!(
+            "expected metis.issues_v2.status_sequence to be nullable (FK + NOT NULL deferred to PR 3); \
+             got NOT NULL"
+        );
+    }
+    // Confirm the supporting index landed for the join in PR 2/3.
+    let row = sqlx::query(
+        "SELECT EXISTS(SELECT 1 FROM pg_indexes \
+         WHERE schemaname = 'metis' AND indexname = 'issues_v2_project_status_sequence_idx')",
+    )
+    .fetch_one(pool)
+    .await?;
+    let exists: bool = row.get(0);
+    if !exists {
+        bail!("expected metis.issues_v2_project_status_sequence_idx to exist after rollforward");
+    }
+    Ok(())
+}
+
+async fn add_issues_v2_status_sequence_backfills_issues(pool: &PgPool) -> Result<()> {
+    // Per-status default-project coverage: each baseline issue must
+    // round-trip `(project_id, status_sequence) → metis.statuses.key`.
+    let cases: &[(&str, &str, &str, i64)] = &[
+        ("i-stsopena", "j-defaul", "open", 1),
+        ("i-stsiprog", "j-defaul", "in-progress", 2),
+        ("i-stsclosd", "j-defaul", "closed", 3),
+        ("i-stsdropd", "j-defaul", "dropped", 4),
+        ("i-stsfaild", "j-defaul", "failed", 5),
+        ("i-stsrevwg", "j-stsfixt", "reviewing", 2),
+    ];
+    for (issue_id, project_id, status_key, expected_sequence) in cases {
+        let row = sqlx::query(
+            "SELECT i.status_sequence, s.key AS resolved_key \
+             FROM metis.issues_v2 i \
+             LEFT JOIN metis.statuses s \
+                ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE i.id = $1 AND i.is_latest = TRUE",
+        )
+        .bind(issue_id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read status_sequence for {issue_id}"))?;
+        let status_sequence: Option<i64> = row.try_get("status_sequence")?;
+        let resolved_key: Option<String> = row.try_get("resolved_key")?;
+        if status_sequence != Some(*expected_sequence) {
+            bail!(
+                "{issue_id} (project={project_id}, status={status_key}): \
+                 expected status_sequence={expected_sequence}; got {status_sequence:?}"
+            );
+        }
+        if resolved_key.as_deref() != Some(*status_key) {
+            bail!(
+                "{issue_id} (project={project_id}, status={status_key}): \
+                 join to metis.statuses must recover key; got {resolved_key:?}"
+            );
+        }
+    }
+
+    // Catch-all: no metis.issues_v2 row may remain with NULL status_sequence
+    // — the pre-flight guard in the migration body would have failed loud,
+    // so this is belt-and-braces verification post-rollforward.
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.issues_v2 WHERE status_sequence IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count NULL status_sequence rows post-rollforward")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!(
+            "expected 0 metis.issues_v2 rows with NULL status_sequence post-backfill; got {count}"
+        );
+    }
+    Ok(())
+}
+
+async fn create_statuses_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    // Re-applying the body must not produce duplicate `(project_id,
+    // sequence)` rows or duplicate `(project_id, key)` rows. (A new
+    // project inserted between runs — e.g. `j-rtrip` from
+    // `assert_recent_migration_data_shape` — *will* be picked up on
+    // re-apply, which is correct: that project's statuses weren't
+    // backfilled at initial migration time. Check for duplicates, not
+    // for a frozen row count.)
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/20260613000000_create_statuses.sql"),
+    )
+    .context("read postgres create_statuses migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply postgres create_statuses migration body")?;
+
+    let row = sqlx::query(
+        "SELECT COUNT(*) - COUNT(DISTINCT (project_id, sequence)) AS dup FROM metis.statuses",
+    )
+    .fetch_one(pool)
+    .await
+    .context("count duplicate (project_id, sequence) rows in metis.statuses")?;
+    let dup: i64 = row.try_get("dup")?;
+    if dup != 0 {
+        bail!("create_statuses re-apply produced {dup} duplicate (project_id, sequence) rows");
+    }
+    let row = sqlx::query(
+        "SELECT COUNT(*) - COUNT(DISTINCT (project_id, key)) AS dup FROM metis.statuses",
+    )
+    .fetch_one(pool)
+    .await
+    .context("count duplicate (project_id, key) rows in metis.statuses")?;
+    let dup: i64 = row.try_get("dup")?;
+    if dup != 0 {
+        bail!("create_statuses re-apply produced {dup} duplicate (project_id, key) rows");
+    }
+    Ok(())
+}
+
+async fn add_issues_v2_status_sequence_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    // Snapshot every (id, version_number, status_sequence) row whose
+    // status_sequence was already backfilled (non-NULL) so we can
+    // confirm the re-application does not overwrite an existing
+    // sequence. (Post-rollforward INSERTs through the smoke creates
+    // can land issues with NULL status_sequence — the re-apply
+    // legitimately backfills those; the snapshot subset isolates the
+    // overwrite-detection.)
+    let before_rows = sqlx::query(
+        "SELECT id, version_number, status_sequence FROM metis.issues_v2 \
+         WHERE status_sequence IS NOT NULL ORDER BY id, version_number",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot non-NULL metis.issues_v2.status_sequence before idempotency rerun")?;
+    let before: Vec<(String, i64, i64)> = before_rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("id").unwrap(),
+                r.try_get::<i64, _>("version_number").unwrap(),
+                r.try_get::<i64, _>("status_sequence").unwrap(),
+            )
+        })
+        .collect();
+
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/20260613010000_add_issues_v2_status_sequence.sql"),
+    )
+    .context("read postgres add_issues_v2_status_sequence migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply postgres add_issues_v2_status_sequence migration body")?;
+
+    // For the subset of rows that already had a non-NULL
+    // status_sequence before, the re-apply must leave the value
+    // untouched (the body's `WHERE status_sequence IS NULL` clause
+    // skips them).
+    let before_ids: Vec<String> = before.iter().map(|(id, _, _)| id.clone()).collect();
+    let before_versions: Vec<i64> = before.iter().map(|(_, v, _)| *v).collect();
+    let after_rows = sqlx::query(
+        "SELECT id, version_number, status_sequence FROM metis.issues_v2 \
+         WHERE (id, version_number) IN ( \
+             SELECT * FROM UNNEST($1::text[], $2::bigint[]) AS t(id, version_number) \
+         ) ORDER BY id, version_number",
+    )
+    .bind(&before_ids)
+    .bind(&before_versions)
+    .fetch_all(pool)
+    .await
+    .context("re-snapshot the same subset after idempotency rerun")?;
+    let after: Vec<(String, i64, Option<i64>)> = after_rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("id").unwrap(),
+                r.try_get::<i64, _>("version_number").unwrap(),
+                r.try_get::<Option<i64>, _>("status_sequence").unwrap(),
+            )
+        })
+        .collect();
+    for ((bid, bv, bs), (aid, av, ass)) in before.iter().zip(after.iter()) {
+        if bid != aid || bv != av || Some(*bs) != *ass {
+            bail!(
+                "add_issues_v2_status_sequence re-apply overwrote previously-backfilled rows: \
+                 ({bid}, {bv}, {bs}) → ({aid}, {av}, {ass:?})"
+            );
+        }
+    }
+
+    // Pre-flight guard: no metis.issues_v2 row may remain with NULL
+    // status_sequence after the re-apply (the body's RAISE EXCEPTION
+    // would have aborted otherwise, but verify the post-state directly).
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.issues_v2 WHERE status_sequence IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count NULL status_sequence rows after idempotency rerun")?;
+    let null_count: i64 = row.try_get(0)?;
+    if null_count != 0 {
+        bail!("add_issues_v2_status_sequence re-apply left {null_count} NULL status_sequence rows");
     }
     Ok(())
 }
