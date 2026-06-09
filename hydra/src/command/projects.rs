@@ -30,7 +30,7 @@ pub enum ProjectsCommand {
     /// Soft-delete a project.
     Delete(DeleteProjectArgs),
     /// List the status definitions for a project. Pass `default` for the
-    /// synthesized default project's statuses.
+    /// seeded default project's statuses.
     Statuses(StatusesProjectArgs),
     /// Operate on a single status within a project.
     Status {
@@ -146,7 +146,7 @@ pub struct DeleteProjectArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct StatusesProjectArgs {
-    /// Project id or the literal `default` for the synthesized default
+    /// Project id or the literal `default` for the seeded default
     /// project.
     #[arg(value_name = "PROJECT_ID_OR_DEFAULT")]
     pub project: ProjectIdOrDefault,

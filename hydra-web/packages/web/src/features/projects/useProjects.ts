@@ -18,9 +18,9 @@ export function useProject(projectId: string | null) {
 }
 
 /**
- * Fetch the status list for a project (or the synthesized default
- * project when `projectId` is null). Cached per project for the session
- * via React Query's default staleTime semantics.
+ * Fetch the status list for a project (or the seeded default project
+ * `j-defaul` when `projectId` is null). Cached per project for the
+ * session via React Query's default staleTime semantics.
  */
 export function useProjectStatuses(projectId: string | null | undefined) {
   return useQuery({

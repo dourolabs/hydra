@@ -196,7 +196,7 @@ async fn default_project_statuses_route_returns_legacy_status_list() -> anyhow::
     let keys: Vec<&str> = statuses.statuses.iter().map(|s| s.key.as_str()).collect();
     assert_eq!(keys, ["open", "in-progress", "closed", "dropped", "failed"]);
 
-    // Assert the synthesized default-project flag semantics:
+    // Assert the seeded default-project flag semantics:
     //   closed:  unblocks_parents=true,  unblocks_dependents=true,  cascades_to_children=false
     //   failed:  unblocks_parents=true,  unblocks_dependents=false, cascades_to_children=true
     //   dropped: unblocks_parents=true,  unblocks_dependents=false, cascades_to_children=true
@@ -394,7 +394,7 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
             .expect("resolved_status must be populated for default-project issues");
         assert_eq!(resolved.key.as_str(), status.as_str());
 
-        // Assert the synthesized default-project flag values:
+        // Assert the seeded default-project flag values:
         //   open/in-progress: unblocks_parents=false, unblocks_dependents=false, cascades_to_children=false
         //   closed:           unblocks_parents=true,  unblocks_dependents=true,  cascades_to_children=false
         //   dropped/failed:   unblocks_parents=true,  unblocks_dependents=false, cascades_to_children=true
