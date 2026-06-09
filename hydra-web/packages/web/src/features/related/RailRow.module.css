@@ -112,41 +112,6 @@
   white-space: nowrap;
 }
 
-.progressBar {
-  position: relative;
-  display: inline-block;
-  width: 80px;
-  height: 4px;
-  background: var(--bg-3);
-  border-radius: 4px;
-  overflow: visible;
-  flex-shrink: 0;
-}
-
-.progressFill {
-  display: block;
-  height: 100%;
-  background: var(--s-closed);
-  border-radius: 4px;
-  transition: width var(--tx-norm);
-}
-
-.progressFillActive {
-  background: var(--s-progress);
-  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
-  animation: progressGlow 1.6s ease-in-out infinite;
-}
-
-@keyframes progressGlow {
-  0%,
-  100% {
-    box-shadow: 0 0 4px 1px color-mix(in srgb, var(--s-progress) 25%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--s-progress) 45%, transparent);
-  }
-}
-
 .tokens {
   display: inline-flex;
   align-items: center;

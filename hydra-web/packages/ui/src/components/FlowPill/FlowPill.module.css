@@ -1,0 +1,71 @@
+/* Flow pill — children & blockers as one liquid gauge. */
+
+.flowpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+  flex-shrink: 0;
+  transition:
+    border-color var(--tx-fast),
+    background var(--tx-fast);
+}
+
+.flowpill svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.slash {
+  color: var(--fg-3);
+  margin: 0 1px;
+}
+
+.done {
+  color: var(--fg-0);
+}
+
+.num {
+  color: var(--fg-0);
+}
+
+.total {
+  color: var(--fg-2);
+}
+
+.flowpill[data-phase="blocked"] {
+  border-color: color-mix(in oklch, var(--s-blocked) 36%, var(--line));
+}
+.flowpill[data-phase="blocked"] .num {
+  color: var(--s-blocked);
+}
+.flowpill[data-phase="blocked"] .total {
+  color: color-mix(in oklch, var(--s-blocked) 68%, var(--fg-2));
+}
+
+.flowpill[data-phase="progress"] .done {
+  color: var(--acc-bright);
+}
+
+.flowpill[data-phase="done"] {
+  border-color: color-mix(in oklch, var(--s-closed) 36%, var(--line));
+  background: color-mix(in oklch, var(--s-closed) 12%, transparent);
+}
+.flowpill[data-phase="done"] .done,
+.flowpill[data-phase="done"] .total {
+  color: var(--s-closed);
+}

@@ -62,6 +62,9 @@ export type { SessionStatusIndicatorProps, SessionSummary, SessionStatus } from 
 export { StatusDot } from "./components/StatusDot/StatusDot";
 export type { StatusDotProps } from "./components/StatusDot/StatusDot";
 
+export { FlowPill } from "./components/FlowPill";
+export type { FlowPillProps, FlowPillPhase } from "./components/FlowPill";
+
 export { DiffViewer } from "./components/DiffViewer";
 export type { DiffViewerProps } from "./components/DiffViewer";
 

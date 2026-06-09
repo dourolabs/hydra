@@ -1,52 +1,31 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import type {
-  IssueSummaryRecord,
-  RelationResponse,
-  SessionSummaryRecord,
-} from "@hydra/api";
+import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
-import type { ChildStatus } from "./computeIssueProgress";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface IssueTreeData {
-  childStatuses: ChildStatus[];
-  isActive: boolean;
-}
-
-/** The complete collected set of data for building issue trees. */
-interface CollectedSet {
-  pageIssueIds: string[];
-  childRelations: RelationResponse[];
-  issueMap: Map<string, IssueSummaryRecord>;
-  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
-  username: string;
-}
+import type {
+  IssueNeighborhood,
+  NeighborStatus,
+} from "../issues/flowPill";
 
 // ---------------------------------------------------------------------------
 // Step 1 (Seed): Page issues come from the caller
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Step 2 (Expand): Collect all transitive descendants via child-of relations
+// Step 2 (Children): Direct children only — one hop along child-of. The
+// FlowPill operates on the immediate neighborhood, so there is no transitive
+// traversal here.
 // ---------------------------------------------------------------------------
 
-function useExpandedChildRelations(pageIssueIds: string[]) {
-  const sortedIds = useMemo(
-    () => [...pageIssueIds].sort(),
-    [pageIssueIds],
-  );
+function useChildRelations(pageIssueIds: string[]) {
+  const sortedIds = useMemo(() => [...pageIssueIds].sort(), [pageIssueIds]);
   const targetIds = sortedIds.join(",");
   return useQuery({
-    queryKey: ["relations", "child-of", "transitive", ...sortedIds],
+    queryKey: ["relations", "child-of", "direct", ...sortedIds],
     queryFn: () =>
       apiClient.listRelations({
         target_ids: targetIds,
         rel_type: "child-of",
-        transitive: true,
       }),
     enabled: pageIssueIds.length > 0,
     staleTime: 30_000,
@@ -56,16 +35,17 @@ function useExpandedChildRelations(pageIssueIds: string[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 (Sessions): Collect sessions for expanded set
+// Step 3 (Sessions): Fetch sessions spawned from the page issues so callers
+// can render runtime/duration. Sessions for descendants aren't needed under
+// the local-neighborhood model.
 // ---------------------------------------------------------------------------
 
-function useSessions(allIssueIds: string[]) {
-  const spawned_from_ids = allIssueIds.join(",");
+function useSessions(pageIssueIds: string[]) {
+  const spawned_from_ids = pageIssueIds.join(",");
   return useQuery({
     queryKey: ["sessions", "batch", spawned_from_ids],
-    queryFn: () =>
-      apiClient.listSessions({ spawned_from_ids }),
-    enabled: allIssueIds.length > 0,
+    queryFn: () => apiClient.listSessions({ spawned_from_ids }),
+    enabled: pageIssueIds.length > 0,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     select: (data) => data.sessions,
@@ -73,104 +53,20 @@ function useSessions(allIssueIds: string[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4 (Summary records): Fetch issue summaries for all descendants
+// Step 4 (Neighbor summaries): Fetch IssueSummary for every direct neighbor
+// (children + blockers) not already in the page set.
 // ---------------------------------------------------------------------------
 
-function useIssueSummaries(descendantIds: string[]) {
-  const ids = descendantIds.join(",");
+function useIssueSummaries(neighborIds: string[]) {
+  const ids = neighborIds.join(",");
   return useQuery({
     queryKey: ["issues", "batch", ids],
     queryFn: () => apiClient.listIssues({ ids }),
-    enabled: descendantIds.length > 0,
+    enabled: neighborIds.length > 0,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
     select: (data) => data.issues,
   });
-}
-
-// ---------------------------------------------------------------------------
-// Step 5 (Build trees): Pure function that builds tree data from collected set
-// ---------------------------------------------------------------------------
-
-function buildIssueTrees(set: CollectedSet): {
-  treeDataMap: Map<string, IssueTreeData>;
-  isActiveMap: Map<string, boolean>;
-  childStatusMap: Map<string, ChildStatus[]>;
-} {
-  const treeDataMap = new Map<string, IssueTreeData>();
-
-  // Build parent→children map from child-of relations
-  const childrenMap = new Map<string, string[]>();
-  for (const rel of set.childRelations) {
-    const children = childrenMap.get(rel.target_id) ?? [];
-    if (!children.includes(rel.source_id)) {
-      children.push(rel.source_id);
-    }
-    childrenMap.set(rel.target_id, children);
-  }
-
-  // Memoized active-session check
-  const activeCache = new Map<string, boolean>();
-  function isActive(issueId: string): boolean {
-    const cached = activeCache.get(issueId);
-    if (cached !== undefined) return cached;
-
-    const sessions = set.sessionsByIssue.get(issueId) ?? [];
-    if (
-      sessions.some(
-        (s) => s.session.status === "running" || s.session.status === "pending",
-      )
-    ) {
-      activeCache.set(issueId, true);
-      return true;
-    }
-
-    const children = childrenMap.get(issueId) ?? [];
-    const result = children.some((childId) => isActive(childId));
-    activeCache.set(issueId, result);
-    return result;
-  }
-
-  for (const pageIssueId of set.pageIssueIds) {
-    // Direct child statuses
-    const directChildIds = childrenMap.get(pageIssueId) ?? [];
-    const childStatuses: ChildStatus[] = [];
-    for (const childId of directChildIds) {
-      const child = set.issueMap.get(childId);
-      if (!child) continue;
-      childStatuses.push({
-        id: childId,
-        status: child.issue.status.key,
-        hasActiveTask: isActive(childId),
-        // Phase 4b: assignee is now a typed `Principal`. The
-        // "assigned to user" check compares against the
-        // `Principal::User { name }` shape.
-        assignedToUser: !!(
-          set.username &&
-          child.issue.assignee &&
-          "User" in child.issue.assignee &&
-          child.issue.assignee.User.name === set.username
-        ),
-      });
-    }
-
-    treeDataMap.set(pageIssueId, {
-      childStatuses,
-      isActive: isActive(pageIssueId),
-    });
-  }
-
-  // Derived maps for consumer convenience
-  const isActiveMap = new Map<string, boolean>();
-  const childStatusMap = new Map<string, ChildStatus[]>();
-  for (const [id, data] of treeDataMap) {
-    isActiveMap.set(id, data.isActive);
-    if (data.childStatuses.length > 0) {
-      childStatusMap.set(id, data.childStatuses);
-    }
-  }
-
-  return { treeDataMap, isActiveMap, childStatusMap };
 }
 
 // ---------------------------------------------------------------------------
@@ -198,77 +94,97 @@ function groupSessionsByIssue(
 // Main hook
 // ---------------------------------------------------------------------------
 
-export function usePageIssueTrees(
-  pageIssues: IssueSummaryRecord[],
-  username: string,
-) {
-  // Step 1: Seed set — page issue IDs
+export function usePageIssueTrees(pageIssues: IssueSummaryRecord[]) {
   const pageIssueIds = useMemo(
     () => pageIssues.map((i) => i.issue_id),
     [pageIssues],
   );
 
-  // Step 2: Expand — collect all transitive descendants
-  const { data: childRelations } = useExpandedChildRelations(pageIssueIds);
+  const { data: childRelations } = useChildRelations(pageIssueIds);
 
-  // Derive the full expanded issue set (page issues + all descendants)
-  const allDescendantIds = useMemo(() => {
-    if (!childRelations) return [];
-    const ids = new Set<string>();
-    for (const rel of childRelations) {
-      ids.add(rel.source_id);
+  // Direct blocker IDs are baked into each issue's dependency list.
+  const directBlockerIdsByIssue = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const issue of pageIssues) {
+      const blockerIds = issue.issue.dependencies
+        .filter((d) => d.type === "blocked-on")
+        .map((d) => d.issue_id);
+      if (blockerIds.length > 0) map.set(issue.issue_id, blockerIds);
     }
-    return Array.from(ids);
+    return map;
+  }, [pageIssues]);
+
+  // Direct child IDs per page issue, derived from the relations response.
+  const directChildIdsByIssue = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const rel of childRelations ?? []) {
+      const list = map.get(rel.target_id) ?? [];
+      if (!list.includes(rel.source_id)) list.push(rel.source_id);
+      map.set(rel.target_id, list);
+    }
+    return map;
   }, [childRelations]);
 
-  const allIssueIds = useMemo(
-    () => [...new Set([...pageIssueIds, ...allDescendantIds])],
-    [pageIssueIds, allDescendantIds],
-  );
+  // Union of neighbor IDs not already in the page set.
+  const neighborIds = useMemo(() => {
+    const pageIdSet = new Set(pageIssueIds);
+    const ids = new Set<string>();
+    for (const list of directChildIdsByIssue.values()) {
+      for (const id of list) {
+        if (!pageIdSet.has(id)) ids.add(id);
+      }
+    }
+    for (const list of directBlockerIdsByIssue.values()) {
+      for (const id of list) {
+        if (!pageIdSet.has(id)) ids.add(id);
+      }
+    }
+    return Array.from(ids).sort();
+  }, [pageIssueIds, directChildIdsByIssue, directBlockerIdsByIssue]);
 
-  // Step 3: Sessions — collect sessions for expanded set
-  const { data: sessions } = useSessions(allIssueIds);
+  const { data: sessions } = useSessions(pageIssueIds);
+  const { data: neighborSummaries } = useIssueSummaries(neighborIds);
 
-  // Step 4: Summary records — fetch issue summaries for descendants
-  const { data: descendantIssues } = useIssueSummaries(allDescendantIds);
-
-  // Build lookup maps
   const issueMap = useMemo(() => {
     const map = new Map<string, IssueSummaryRecord>();
     for (const issue of pageIssues) {
       map.set(issue.issue_id, issue);
     }
-    if (descendantIssues) {
-      for (const issue of descendantIssues) {
+    if (neighborSummaries) {
+      for (const issue of neighborSummaries) {
         map.set(issue.issue_id, issue);
       }
     }
     return map;
-  }, [pageIssues, descendantIssues]);
+  }, [pageIssues, neighborSummaries]);
 
   const sessionsByIssue = useMemo(
     () => groupSessionsByIssue(sessions ?? []),
     [sessions],
   );
 
-  // Step 5: Build trees — pure function of the collected set
-  const { treeDataMap, isActiveMap, childStatusMap } = useMemo(
-    () =>
-      buildIssueTrees({
-        pageIssueIds,
-        childRelations: childRelations ?? [],
-        issueMap,
-        sessionsByIssue,
-        username,
-      }),
-    [
-      pageIssueIds,
-      childRelations,
-      issueMap,
-      sessionsByIssue,
-      username,
-    ],
-  );
+  const neighborhoodMap = useMemo(() => {
+    const map = new Map<string, IssueNeighborhood>();
+    for (const issueId of pageIssueIds) {
+      const childIds = directChildIdsByIssue.get(issueId) ?? [];
+      const blockerIds = directBlockerIdsByIssue.get(issueId) ?? [];
+      const children: NeighborStatus[] = [];
+      for (const id of childIds) {
+        const rec = issueMap.get(id);
+        if (!rec) continue;
+        children.push({ id, status: rec.issue.status });
+      }
+      const blockers: NeighborStatus[] = [];
+      for (const id of blockerIds) {
+        const rec = issueMap.get(id);
+        if (!rec) continue;
+        blockers.push({ id, status: rec.issue.status });
+      }
+      if (children.length === 0 && blockers.length === 0) continue;
+      map.set(issueId, { children, blockers });
+    }
+    return map;
+  }, [pageIssueIds, directChildIdsByIssue, directBlockerIdsByIssue, issueMap]);
 
   // Only show loading state on the very first fetch when no data (real or
   // placeholder) is available. With keepPreviousData, subsequent refetches
@@ -276,13 +192,11 @@ export function usePageIssueTrees(
   // avoid flashing the shimmer animation.
   const isLoading =
     (pageIssueIds.length > 0 && childRelations === undefined) ||
-    (allIssueIds.length > 0 && sessions === undefined) ||
-    (allDescendantIds.length > 0 && descendantIssues === undefined);
+    (pageIssueIds.length > 0 && sessions === undefined) ||
+    (neighborIds.length > 0 && neighborSummaries === undefined);
 
   return {
-    treeDataMap,
-    isActiveMap,
-    childStatusMap,
+    neighborhoodMap,
     sessionsByIssue,
     isLoading,
   };
