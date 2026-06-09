@@ -774,8 +774,7 @@ function SortableBoardColumn(props: BoardColumnProps) {
     transform,
     transition,
     isDragging,
-    isOver,
-  } = useSortable({ id: props.status.key });
+  } = useSortable({ id: props.status.key, animateLayoutChanges: () => false });
   const style: React.CSSProperties = {
     transform: transformToCss(transform),
     transition: transition ?? undefined,
@@ -787,7 +786,6 @@ function SortableBoardColumn(props: BoardColumnProps) {
       setNodeRef={setNodeRef}
       style={style}
       isDragging={isDragging}
-      isOver={isOver}
       dragHandleProps={{ ...attributes, ...listeners }}
     />
   );
@@ -805,16 +803,14 @@ function BoardColumn({
   setNodeRef,
   style,
   isDragging,
-  isOver,
   dragHandleProps,
-}: BoardColumnProps & SortableHandleProps & { isOver?: boolean }) {
+}: BoardColumnProps & SortableHandleProps) {
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const assignTo = status.on_enter?.assign_to ?? null;
   const interactiveLabel = status.interactive === true ? "interactive" : "auto";
   const colClasses = [styles.col];
   if (isDragging) colClasses.push(styles.colDragging);
-  if (isOver && !isDragging) colClasses.push(styles.colDropOver);
   return (
     <div
       ref={setNodeRef}
