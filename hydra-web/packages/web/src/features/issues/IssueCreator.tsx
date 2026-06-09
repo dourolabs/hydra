@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Textarea, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
+import { DEFAULT_PROJECT_ID } from "@hydra/api";
 import type { Principal, RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
@@ -73,7 +74,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
           creator: params.creator,
           progress: "",
           status: "open",
-          project_id: "j-defaul",
+          project_id: DEFAULT_PROJECT_ID,
           dependencies: [],
           patches: [],
           ...(params.assignee && { assignee: params.assignee }),

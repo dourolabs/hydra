@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
+import { DEFAULT_PROJECT_ID } from "@hydra/api";
 import type { IssueType, LabelRecord, Principal, StatusKey } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
@@ -208,7 +209,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
           creator: params.creator,
           progress: "",
           status: params.status,
-          project_id: params.projectId || "j-defaul",
+          project_id: params.projectId || DEFAULT_PROJECT_ID,
           dependencies: [],
           patches: [],
           ...(params.assignee && { assignee: params.assignee }),
