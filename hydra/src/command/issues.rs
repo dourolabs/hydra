@@ -118,8 +118,8 @@ pub enum IssueCommands {
         #[arg(long, value_name = "STATUS_KEY", default_value = "open")]
         status: StatusKey,
 
-        /// Project id or key to attach this issue to. Omit for the
-        /// synthesized default project.
+        /// Project id or key to attach this issue to. Omit to fall
+        /// back to the seeded default project (`j-defaul`).
         #[arg(long, value_name = "PROJECT_ID_OR_KEY")]
         project: Option<ProjectRef>,
 

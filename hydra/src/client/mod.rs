@@ -1658,7 +1658,7 @@ impl HydraClient {
 
     /// Call `GET /v1/projects/:project/statuses` to list the project's status
     /// definitions. Pass [`ProjectIdOrDefault::Default`] to get the
-    /// synthesized default project's statuses.
+    /// seeded default project's statuses.
     pub async fn get_project_statuses(
         &self,
         project: &ProjectIdOrDefault,

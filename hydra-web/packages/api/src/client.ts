@@ -755,8 +755,8 @@ export class HydraApiClient {
    * GET /v1/projects/:projectId/statuses
    *
    * Pass `"default"` (or use [`getDefaultProjectStatuses`]) for the
-   * synthesized default project that issues with no `project_id` resolve
-   * against.
+   * seeded default project (`j-defaul`), which is the fallback project
+   * for issues created without an explicit `project_id`.
    */
   getProjectStatuses(projectId: string): Promise<ProjectStatusesResponse> {
     return this.get(`/v1/projects/${encodeURIComponent(projectId)}/statuses`);
