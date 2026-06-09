@@ -215,6 +215,24 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("cutover_to_statuses_table: FK rejects DELETE of referenced status row")?;
 
+    reserve_hydra_id_shape_rewrites_project_keys(&pool)
+        .await
+        .context("reserve_hydra_id_shape: projects.key shape-matching rows rewritten")?;
+    reserve_hydra_id_shape_rewrites_status_keys(&pool)
+        .await
+        .context("reserve_hydra_id_shape: statuses.key shape-matching rows rewritten")?;
+    reserve_hydra_id_shape_no_reserved_shape_remains(&pool)
+        .await
+        .context("reserve_hydra_id_shape: no projects.key / statuses.key matches `[a-z]-...` post-rewrite")?;
+    reserve_hydra_id_shape_domain_roundtrip(&pool)
+        .await
+        .context(
+            "reserve_hydra_id_shape: Store::get_project / list_projects read rewritten rows",
+        )?;
+    reserve_hydra_id_shape_migration_is_idempotent(&pool)
+        .await
+        .context("reserve_hydra_id_shape: re-applying body is a no-op")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -2949,6 +2967,183 @@ async fn add_issues_v2_status_sequence_migration_is_idempotent(pool: &PgPool) ->
     // captured in `add_issues_v2_status_sequence_backfills_issues`
     // above.
     let _ = pool;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260615000000_reserve_hydra_id_shape_in_keys — assert the rewrite
+// of shape-matching `metis.projects.key` / `metis.statuses.key` rows
+// from the `20260614000000__pre_reserve_hydra_id_shape` baseline. The
+// load-bearing assertion is the typed `Store::get_project` /
+// `Store::list_projects` read-back: a pure SQL-level assertion would
+// not catch a wire-side validation gap.
+// ---------------------------------------------------------------------------
+
+async fn reserve_hydra_id_shape_rewrites_project_keys(pool: &PgPool) -> Result<()> {
+    let expected: &[(&str, &str)] = &[
+        ("j-rsvshapa", "renamed-j-foo"),
+        ("j-rsvshapb", "engineering"),
+        ("j-rsvshapc", "renamed-x-old"),
+    ];
+    for (id, want_key) in expected {
+        let row = sqlx::query("SELECT key FROM metis.projects WHERE id = $1 AND is_latest = TRUE")
+            .bind(*id)
+            .fetch_one(pool)
+            .await
+            .with_context(|| format!("read metis.projects.key for {id}"))?;
+        let got: String = row.try_get("key")?;
+        if got.as_str() != *want_key {
+            bail!("metis.projects({id}).key: expected {want_key:?}; got {got:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_rewrites_status_keys(pool: &PgPool) -> Result<()> {
+    // (sequence, expected key) on j-rsvshapa.
+    let expected: &[(i64, &str)] = &[
+        (1, "renamed-i-progress"),
+        (2, "done"),
+        (3, "renamed-s-todo-seq3"),
+        (4, "renamed-s-todo"),
+    ];
+    for (sequence, want_key) in expected {
+        let row = sqlx::query(
+            "SELECT key FROM metis.statuses WHERE project_id = 'j-rsvshapa' AND sequence = $1",
+        )
+        .bind(*sequence)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read metis.statuses.key for (j-rsvshapa, seq={sequence})"))?;
+        let got: String = row.try_get("key")?;
+        if got.as_str() != *want_key {
+            bail!(
+                "metis.statuses(j-rsvshapa, seq={sequence}).key: expected {want_key:?}; got {got:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_no_reserved_shape_remains(pool: &PgPool) -> Result<()> {
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.projects WHERE key ~ '^[a-z]-.*'")
+        .fetch_one(pool)
+        .await
+        .context("count metis.projects.key rows still matching reserved shape")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!("expected 0 metis.projects rows with key matching `^[a-z]-`; got {count}");
+    }
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.statuses WHERE key ~ '^[a-z]-.*'")
+        .fetch_one(pool)
+        .await
+        .context("count metis.statuses.key rows still matching reserved shape")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!("expected 0 metis.statuses rows with key matching `^[a-z]-`; got {count}");
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey, StatusKey};
+
+    let store = PostgresStoreV2::new(pool.clone());
+
+    // Per-project shape and status keys must round-trip through the
+    // typed `Store::get_project`, which deserializes the row through
+    // the post-rewrite `ProjectKey` / `StatusKey` validators. A
+    // shape-matching value would surface as a deserialization error.
+    let cases: &[(&str, &str, &[&str])] = &[
+        (
+            "j-rsvshapa",
+            "renamed-j-foo",
+            &[
+                "renamed-i-progress",
+                "done",
+                "renamed-s-todo-seq3",
+                "renamed-s-todo",
+            ],
+        ),
+        ("j-rsvshapb", "engineering", &[]),
+        ("j-rsvshapc", "renamed-x-old", &[]),
+    ];
+    for (id, want_key, want_status_keys) in cases {
+        let project_id = parse_project_id(id)?;
+        let fetched = store
+            .get_project(&project_id, false)
+            .await
+            .with_context(|| format!("Store::get_project({id}) post-reserve-hydra-id-shape"))?;
+        let ApiProject { key, statuses, .. } = &fetched.item;
+        let expected_key =
+            ProjectKey::try_new(*want_key).expect("expected key passes new validator");
+        if key != &expected_key {
+            bail!("{id}: expected key={want_key:?}; got {key:?}");
+        }
+        if statuses.len() != want_status_keys.len() {
+            bail!(
+                "{id}: expected {} statuses; got {}",
+                want_status_keys.len(),
+                statuses.len()
+            );
+        }
+        for (got, want_key_str) in statuses.iter().zip(want_status_keys.iter()) {
+            let want_key = StatusKey::try_new(*want_key_str)
+                .expect("expected status key passes new validator");
+            if got.key != want_key {
+                bail!(
+                    "{id}: status key mismatch: expected {want_key_str:?}; got {:?}",
+                    got.key
+                );
+            }
+        }
+    }
+
+    // `list_projects` reads the same backing rows through a different
+    // SELECT projection — assert the shape-matching baseline rows
+    // surface there too with the rewritten keys.
+    let listed = store
+        .list_projects(false)
+        .await
+        .context("Store::list_projects(false) post-reserve-hydra-id-shape")?;
+    let want: &[(&str, &str)] = &[
+        ("j-rsvshapa", "renamed-j-foo"),
+        ("j-rsvshapb", "engineering"),
+        ("j-rsvshapc", "renamed-x-old"),
+    ];
+    for (id, want_key) in want {
+        let row = listed
+            .iter()
+            .find(|(pid, _)| pid.as_ref() == *id)
+            .with_context(|| format!("list_projects: missing project {id}"))?;
+        if row.1.item.key.as_str() != *want_key {
+            bail!(
+                "list_projects({id}).key: expected {want_key:?}; got {:?}",
+                row.1.item.key
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    // Re-execute the migration body verbatim. The reserved-shape
+    // WHERE clauses match nothing post-rewrite (every renamed key
+    // starts with `renamed-`, second byte `e`), so the body's
+    // iteration is empty and no further UPDATEs run. Re-asserting
+    // the expected post-rewrite key set confirms.
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/20260615000000_reserve_hydra_id_shape_in_keys.sql"),
+    )
+    .context("read postgres reserve_hydra_id_shape migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply postgres reserve_hydra_id_shape migration body")?;
+    reserve_hydra_id_shape_rewrites_project_keys(pool).await?;
+    reserve_hydra_id_shape_rewrites_status_keys(pool).await?;
+    reserve_hydra_id_shape_no_reserved_shape_remains(pool).await?;
     Ok(())
 }
 
