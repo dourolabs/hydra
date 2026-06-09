@@ -456,7 +456,7 @@ async fn test_client_state(
             // The summary assertions only inspect identity-level fields,
             // not the status definition's display props, so use the shared
             // test helper rather than round-tripping through the project store.
-            let resolved = crate::test_utils::status::make_status_def(input.status.clone());
+            let resolved = hydra_common::test_utils::status::make_status_def(input.status.clone());
             let api_issue = hydra_common::api::v1::issues::Issue::new(
                 input.issue_type,
                 input.title,

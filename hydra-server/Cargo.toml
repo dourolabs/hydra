@@ -72,3 +72,4 @@ httpmock = "0.7"
 openssl = "0.10"
 regex = "1"
 tokio-tungstenite = "0.24"
+hydra-common = { path = "../hydra-common", features = ["test-utils"] }

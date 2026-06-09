@@ -18,6 +18,9 @@ pub mod time;
 pub mod util;
 pub mod versioning;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub use activity_log::{
     ActivityEvent, ActivityLogEntry, ActivityObjectKind, FieldChange,
     activity_log_for_document_versions, activity_log_for_patch_versions,

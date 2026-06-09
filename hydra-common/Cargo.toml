@@ -9,6 +9,7 @@ vendored-openssl = [
     "openssl-sys/vendored",
 ]
 ts = ["dep:ts-rs"]
+test-utils = []
 
 [dependencies]
 indexmap = { version = "2", features = ["serde"] }
