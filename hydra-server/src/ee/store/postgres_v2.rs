@@ -349,16 +349,13 @@ impl PostgresStoreV2 {
     // Issue helpers
     // -------------------------------------------------------------------------
 
-    async fn insert_issue_in_tx<'e, E>(
-        executor: E,
+    async fn insert_issue_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         id: &IssueId,
         version_number: VersionNumber,
         issue: &Issue,
         actor: Option<&Value>,
-    ) -> Result<(), StoreError>
-    where
-        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-    {
+    ) -> Result<(), StoreError> {
         let version_number = i64::try_from(version_number).map_err(|_| {
             StoreError::Internal(format!("version number overflow for issue '{id}'"))
         })?;
@@ -390,8 +387,14 @@ impl PostgresStoreV2 {
         // typed Principal's canonical path form so out-of-band readers
         // keep working.
         let assignee_path = issue.assignee.as_ref().map(|p| p.to_path());
+        let status_sequence = Self::resolve_status_sequence(
+            &mut **tx,
+            issue.project_id.as_ref(),
+            issue.status.as_str(),
+        )
+        .await?;
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, project_id)
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status_sequence, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, project_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
         );
         sqlx::query(&query)
@@ -402,7 +405,7 @@ impl PostgresStoreV2 {
             .bind(&issue.description)
             .bind(issue.creator.as_str())
             .bind(&issue.progress)
-            .bind(issue.status.as_str())
+            .bind(status_sequence)
             .bind(assignee_path.as_deref())
             .bind(&assignee_principal_json)
             .bind(&job_settings_json)
@@ -412,7 +415,7 @@ impl PostgresStoreV2 {
             .bind(&form_response_json)
             .bind(issue.feedback.as_deref())
             .bind(issue.project_id.as_ref())
-            .execute(executor)
+            .execute(&mut **tx)
             .await
             .map_err(map_sqlx_error)?;
 
@@ -1273,27 +1276,20 @@ impl PostgresStoreV2 {
         ))
     }
 
-    async fn insert_project_in_tx<'e, E>(
+    async fn insert_project_row_in_tx<'e, E>(
         executor: E,
         id: &ProjectId,
-        version_number: VersionNumber,
+        version_number: i64,
         project: &Project,
         actor: Option<&Value>,
+        next_status_sequence: i64,
     ) -> Result<(), StoreError>
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
-        let version_number = i64::try_from(version_number).map_err(|_| {
-            StoreError::Internal(format!("version number overflow for project '{id}'"))
-        })?;
-
-        let statuses_json = serde_json::to_value(&project.statuses).map_err(|e| {
-            StoreError::Internal(format!("failed to serialize project statuses: {e}"))
-        })?;
-
         let query = format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, statuses, creator, deleted, actor, prompt_path, priority) \
+             (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         );
         sqlx::query(&query)
@@ -1301,12 +1297,12 @@ impl PostgresStoreV2 {
             .bind(version_number)
             .bind(project.key.as_str())
             .bind(&project.name)
-            .bind(&statuses_json)
             .bind(project.creator.as_str())
             .bind(project.deleted)
             .bind(actor)
             .bind(project.prompt_path.as_deref())
             .bind(project.priority)
+            .bind(next_status_sequence)
             .execute(executor)
             .await
             .map_err(|err| {
@@ -1320,11 +1316,10 @@ impl PostgresStoreV2 {
         Ok(())
     }
 
-    fn row_to_project(row: &ProjectRow) -> Result<Project, StoreError> {
-        let statuses: Vec<StatusDefinition> = serde_json::from_value(row.statuses.clone())
-            .map_err(|e| {
-                StoreError::Internal(format!("failed to deserialize project statuses: {e}"))
-            })?;
+    fn row_to_project(
+        row: &ProjectRow,
+        statuses: Vec<StatusDefinition>,
+    ) -> Result<Project, StoreError> {
         let key = ProjectKey::try_new(row.key.clone()).map_err(|e| {
             StoreError::Internal(format!("invalid project key stored for project: {e}"))
         })?;
@@ -1338,6 +1333,206 @@ impl PostgresStoreV2 {
         );
         project.prompt_path = row.prompt_path.clone();
         Ok(project)
+    }
+
+    fn status_row_to_definition(row: &StatusRow) -> Result<StatusDefinition, StoreError> {
+        let key = StatusKey::try_new(row.key.clone())
+            .map_err(|e| StoreError::Internal(format!("invalid status key in database: {e}")))?;
+        let color = row
+            .color
+            .parse()
+            .map_err(|e| StoreError::Internal(format!("invalid status color in database: {e}")))?;
+        let on_enter = row
+            .on_enter
+            .clone()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to deserialize status on_enter: {e}"))
+            })?;
+        let mut def = StatusDefinition::new(
+            key,
+            row.label.clone(),
+            color,
+            row.unblocks_parents,
+            row.unblocks_dependents,
+            row.cascades_to_children,
+            on_enter,
+        );
+        def.prompt_path = row.prompt_path.clone();
+        def.interactive = row.interactive;
+        Ok(def)
+    }
+
+    async fn fetch_statuses_for_project<'e, E>(
+        executor: E,
+        project_id: &str,
+    ) -> Result<Vec<StatusDefinition>, StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let rows = sqlx::query_as::<_, StatusRow>(
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive \
+             FROM metis.statuses WHERE project_id = $1 ORDER BY sequence",
+        )
+        .bind(project_id)
+        .fetch_all(executor)
+        .await
+        .map_err(map_sqlx_error)?;
+        rows.iter().map(Self::status_row_to_definition).collect()
+    }
+
+    async fn fetch_statuses_for_projects(
+        pool: &sqlx::PgPool,
+        project_ids: &[String],
+    ) -> Result<HashMap<String, Vec<StatusDefinition>>, StoreError> {
+        let mut out: HashMap<String, Vec<StatusDefinition>> = HashMap::new();
+        if project_ids.is_empty() {
+            return Ok(out);
+        }
+        for id in project_ids {
+            out.entry(id.clone()).or_default();
+        }
+        let rows = sqlx::query_as::<_, StatusRow>(
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive \
+             FROM metis.statuses WHERE project_id = ANY($1) ORDER BY project_id, sequence",
+        )
+        .bind(project_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        for row in &rows {
+            let def = Self::status_row_to_definition(row)?;
+            out.entry(row.project_id.clone()).or_default().push(def);
+        }
+        Ok(out)
+    }
+
+    /// Apply the incoming `Project.statuses` list to `metis.statuses`
+    /// for `project_id`. Matched-by-key rows are UPDATEd; new rows get
+    /// the next sequence drawn from the per-project high-water mark
+    /// (`metis.projects.next_status_sequence`); removed rows are
+    /// DELETEd (the FK on `issues_v2.status_sequence` rejects the
+    /// DELETE if an issue still references the row — intentional
+    /// safety, same shape as the sqlite_store). Returns the new
+    /// high-water-mark value to persist on the new `projects` row.
+    async fn apply_statuses_diff_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        project_id: &str,
+        incoming: &[StatusDefinition],
+        starting_next_sequence: i64,
+    ) -> Result<i64, StoreError> {
+        let existing = sqlx::query_as::<_, StatusRow>(
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive \
+             FROM metis.statuses WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let mut existing_by_key: HashMap<String, i64> = existing
+            .iter()
+            .map(|r| (r.key.clone(), r.sequence))
+            .collect();
+
+        let mut next_sequence = starting_next_sequence;
+        let mut incoming_keys: HashSet<String> = HashSet::new();
+        for def in incoming {
+            let key_str = def.key.as_str().to_string();
+            if !incoming_keys.insert(key_str.clone()) {
+                return Err(StoreError::Internal(format!(
+                    "duplicate status key '{key_str}' in incoming project statuses"
+                )));
+            }
+            let color_str = def.color.as_ref().to_string();
+            let on_enter_json = def
+                .on_enter
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| {
+                    StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
+                })?;
+            if let Some(seq) = existing_by_key.remove(&key_str) {
+                sqlx::query(
+                    "UPDATE metis.statuses SET label = $1, color = $2, unblocks_parents = $3, unblocks_dependents = $4, cascades_to_children = $5, on_enter = $6, prompt_path = $7, interactive = $8 \
+                     WHERE project_id = $9 AND sequence = $10",
+                )
+                .bind(&def.label)
+                .bind(&color_str)
+                .bind(def.unblocks_parents)
+                .bind(def.unblocks_dependents)
+                .bind(def.cascades_to_children)
+                .bind(&on_enter_json)
+                .bind(def.prompt_path.as_deref())
+                .bind(def.interactive)
+                .bind(project_id)
+                .bind(seq)
+                .execute(&mut **tx)
+                .await
+                .map_err(map_sqlx_error)?;
+            } else {
+                let seq = next_sequence;
+                next_sequence = next_sequence.checked_add(1).ok_or_else(|| {
+                    StoreError::Internal(format!(
+                        "next_status_sequence overflow for project '{project_id}'"
+                    ))
+                })?;
+                sqlx::query(
+                    "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                )
+                .bind(project_id)
+                .bind(seq)
+                .bind(&key_str)
+                .bind(&def.label)
+                .bind(&color_str)
+                .bind(def.unblocks_parents)
+                .bind(def.unblocks_dependents)
+                .bind(def.cascades_to_children)
+                .bind(&on_enter_json)
+                .bind(def.prompt_path.as_deref())
+                .bind(def.interactive)
+                .execute(&mut **tx)
+                .await
+                .map_err(map_sqlx_error)?;
+            }
+        }
+        for (_key, seq) in existing_by_key {
+            sqlx::query("DELETE FROM metis.statuses WHERE project_id = $1 AND sequence = $2")
+                .bind(project_id)
+                .bind(seq)
+                .execute(&mut **tx)
+                .await
+                .map_err(map_sqlx_error)?;
+        }
+        Ok(next_sequence)
+    }
+
+    /// Resolve a `(project_id, status_key)` pair to its
+    /// `metis.statuses.sequence` integer. Errors with
+    /// `InvalidIssueStatus` if no matching status row exists.
+    async fn resolve_status_sequence<'e, E>(
+        executor: E,
+        project_id: &str,
+        status_key: &str,
+    ) -> Result<i64, StoreError>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let value: Option<i64> = sqlx::query_scalar(
+            "SELECT sequence FROM metis.statuses WHERE project_id = $1 AND key = $2 LIMIT 1",
+        )
+        .bind(project_id)
+        .bind(status_key)
+        .fetch_optional(executor)
+        .await
+        .map_err(map_sqlx_error)?;
+        value.ok_or_else(|| {
+            StoreError::InvalidIssueStatus(format!(
+                "status '{status_key}' does not exist on project '{project_id}'"
+            ))
+        })
     }
 
     async fn insert_conversation_in_tx<'e, E>(
@@ -1655,7 +1850,6 @@ struct ProjectRow {
     version_number: i64,
     key: String,
     name: String,
-    statuses: Value,
     creator: String,
     deleted: bool,
     actor: Option<Value>,
@@ -1671,6 +1865,27 @@ struct ProjectRow {
     // loud at runtime instead of silently surfacing `0.0` in place of the
     // backfilled value.
     priority: f64,
+    // Per-project high-water mark for `metis.statuses.sequence`
+    // assignment. Monotonically non-decreasing across status add/remove
+    // cycles to forbid sequence id reuse. Read here only for
+    // `get_project`/`list_projects` sanity.
+    #[allow(dead_code)]
+    next_status_sequence: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct StatusRow {
+    project_id: String,
+    sequence: i64,
+    key: String,
+    label: String,
+    color: String,
+    unblocks_parents: bool,
+    unblocks_dependents: bool,
+    cascades_to_children: bool,
+    on_enter: Option<Value>,
+    prompt_path: Option<String>,
+    interactive: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1761,6 +1976,11 @@ struct AgentRow {
 }
 
 /// Build WHERE predicates and bindings for issues queries (PostgreSQL `$N` placeholders).
+/// Build WHERE predicates and bindings for issues queries. Issue
+/// columns are qualified with `i.`; the joined `statuses` row is
+/// qualified with `s.`. Callers must ensure the query has
+/// `FROM metis.issues_v2 i INNER JOIN metis.statuses s ON …` in
+/// scope.
 fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<String>) {
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
@@ -1772,14 +1992,14 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
             .enumerate()
             .map(|(i, _)| format!("${}", bindings.len() + i + 1))
             .collect();
-        predicates.push(format!("id IN ({})", placeholders.join(", ")));
+        predicates.push(format!("i.id IN ({})", placeholders.join(", ")));
         for id in &query.ids {
             bindings.push(id.as_ref().to_string());
         }
     }
 
     if let Some(issue_type) = query.issue_type.as_ref() {
-        predicates.push(format!("issue_type = ${}", bindings.len() + 1));
+        predicates.push(format!("i.issue_type = ${}", bindings.len() + 1));
         bindings.push(issue_type.as_str().to_string());
     }
 
@@ -1790,14 +2010,14 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
             .enumerate()
             .map(|(i, _)| format!("${}", bindings.len() + i + 1))
             .collect();
-        predicates.push(format!("status IN ({})", placeholders.join(", ")));
+        predicates.push(format!("s.key IN ({})", placeholders.join(", ")));
         for s in &query.status {
             bindings.push(s.as_str().to_string());
         }
     }
 
     if let Some(project_id) = query.project_id.as_ref() {
-        predicates.push(format!("project_id = ${}", bindings.len() + 1));
+        predicates.push(format!("i.project_id = ${}", bindings.len() + 1));
         bindings.push(project_id.as_ref().to_string());
     }
 
@@ -1807,7 +2027,7 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         // continues to participate in the `q` free-text predicate below.
         let serialized = serde_json::to_string(assignee).unwrap_or_default();
         predicates.push(format!(
-            "assignee_principal = ${}::jsonb",
+            "i.assignee_principal = ${}::jsonb",
             bindings.len() + 1
         ));
         bindings.push(serialized);
@@ -1819,7 +2039,7 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
     {
-        predicates.push(format!("LOWER(creator) = ${}", bindings.len() + 1));
+        predicates.push(format!("LOWER(i.creator) = ${}", bindings.len() + 1));
         bindings.push(creator.to_lowercase());
     }
 
@@ -1838,14 +2058,14 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         let idx_creator = bindings.len() + 7;
         let idx_assignee = bindings.len() + 8;
         predicates.push(format!(
-            "(LOWER(id) LIKE ${idx_id} \
-             OR LOWER(title) LIKE ${idx_title} \
-             OR LOWER(description) LIKE ${idx_desc} \
-             OR LOWER(progress) LIKE ${idx_progress} \
-             OR issue_type = ${idx_type} \
-             OR status = ${idx_status} \
-             OR LOWER(creator) LIKE ${idx_creator} \
-             OR LOWER(COALESCE(assignee,'')) LIKE ${idx_assignee})"
+            "(LOWER(i.id) LIKE ${idx_id} \
+             OR LOWER(i.title) LIKE ${idx_title} \
+             OR LOWER(i.description) LIKE ${idx_desc} \
+             OR LOWER(i.progress) LIKE ${idx_progress} \
+             OR i.issue_type = ${idx_type} \
+             OR s.key = ${idx_status} \
+             OR LOWER(i.creator) LIKE ${idx_creator} \
+             OR LOWER(COALESCE(i.assignee,'')) LIKE ${idx_assignee})"
         ));
         let pattern = format!("%{term}%");
         bindings.push(pattern.clone()); // id
@@ -1859,7 +2079,7 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
     }
 
     if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = false".to_string());
+        predicates.push("i.deleted = false".to_string());
     }
 
     if !query.label_ids.is_empty() {
@@ -1871,7 +2091,7 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
             .map(|(i, _)| format!("${}", bindings.len() + i + 1))
             .collect();
         predicates.push(format!(
-            "id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
+            "i.id IN (SELECT la.object_id FROM {TABLE_LABEL_ASSOCIATIONS} la \
              WHERE la.label_id IN ({}) \
              GROUP BY la.object_id \
              HAVING COUNT(DISTINCT la.label_id) = {label_count})",
@@ -2320,12 +2540,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, \
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time, \
-             form, form_response, feedback, project_id
-             FROM {TABLE_ISSUES_V2}
-             WHERE id = $1
-             ORDER BY is_latest DESC, version_number DESC
+             i.form, i.form_response, i.feedback, i.project_id
+             FROM {TABLE_ISSUES_V2} i
+             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
+             WHERE i.id = $1
+             ORDER BY i.is_latest DESC, i.version_number DESC
              LIMIT 1"
         );
         let row = sqlx::query_as::<_, IssueRow>(&query)
@@ -2361,11 +2582,12 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, issue_type, title, description, creator, progress, status, assignee, assignee_principal, job_settings, deleted, actor, created_at, updated_at, \
-             form, form_response, feedback, project_id
-             FROM {TABLE_ISSUES_V2}
-             WHERE id = $1
-             ORDER BY version_number"
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
+             i.form, i.form_response, i.feedback, i.project_id
+             FROM {TABLE_ISSUES_V2} i
+             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
+             WHERE i.id = $1
+             ORDER BY i.version_number"
         );
         let rows = sqlx::query_as::<_, IssueRow>(&query)
             .bind(id.as_ref())
@@ -2423,17 +2645,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
         // Filter to the latest version of each issue using the is_latest
         // column maintained by a BEFORE INSERT trigger, avoiding correlated
         // subqueries or DISTINCT ON.
-        let subquery = format!(
+        let mut sql = format!(
             "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-             i.progress, i.status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
+             i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
              i.created_at, i.updated_at, \
              (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
              i.form, i.form_response, i.feedback, i.project_id \
              FROM {TABLE_ISSUES_V2} i \
-             WHERE i.is_latest = true"
+             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence"
         );
-        let mut sql = format!("SELECT * FROM ({subquery}) AS latest");
         let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
+        predicates.push("i.is_latest = true".to_string());
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2441,8 +2663,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "updated_at",
-            "id",
+            "i.updated_at",
+            "i.id",
         )?;
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
@@ -2483,7 +2705,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
     }
 
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
-        let mut sql = format!("SELECT COUNT(*) FROM {TABLE_ISSUES_V2} i");
+        let mut sql = format!(
+            "SELECT COUNT(*) FROM {TABLE_ISSUES_V2} i \
+             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence"
+        );
         let (mut predicates, bindings) = build_issues_predicates_pg(query);
         predicates.push("i.is_latest = true".to_string());
 
@@ -3714,9 +3939,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Project>, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
-            "SELECT id, version_number, key, name, statuses, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, key, name, creator, deleted, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
-             prompt_path, priority \
+             prompt_path, priority, next_status_sequence \
              FROM {TABLE_PROJECTS} \
              WHERE id = $1 \
              ORDER BY version_number DESC \
@@ -3728,7 +3953,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
-        let project = Self::row_to_project(&row)?;
+        let statuses = Self::fetch_statuses_for_project(&self.pool, &row.id).await?;
+        let project = Self::row_to_project(&row, statuses)?;
 
         if project.deleted && !include_deleted {
             return Err(StoreError::ProjectNotFound(id.clone()));
@@ -3761,9 +3987,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.key, p.name, p.statuses, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
+            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
-             p.prompt_path, p.priority \
+             p.prompt_path, p.priority, p.next_status_sequence \
              FROM {TABLE_PROJECTS} p \
              WHERE p.is_latest = true"
         );
@@ -3776,6 +4002,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx_error)?;
+
+        let project_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        let mut statuses_by_project =
+            Self::fetch_statuses_for_projects(&self.pool, &project_ids).await?;
 
         let mut projects = Vec::with_capacity(rows.len());
         for row in rows {
@@ -3796,7 +4026,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 .id
                 .parse()
                 .map_err(|e| StoreError::Internal(format!("invalid project id stored: {e}")))?;
-            let project = Self::row_to_project(&row)?;
+            let statuses = statuses_by_project.remove(&row.id).unwrap_or_default();
+            let project = Self::row_to_project(&row, statuses)?;
             projects.push((
                 project_id,
                 Versioned::with_optional_actor(
@@ -4532,7 +4763,7 @@ impl Store for PostgresStoreV2 {
         let actor_json = actor_to_json(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
-        Self::insert_issue_in_tx(&mut *tx, &id, 1, &issue, Some(&actor_json)).await?;
+        Self::insert_issue_in_tx(&mut tx, &id, 1, &issue, Some(&actor_json)).await?;
         Self::sync_issue_relationships_in_tx(&mut tx, &id, &issue).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
@@ -4562,7 +4793,7 @@ impl Store for PostgresStoreV2 {
         let actor_json = actor_to_json(actor);
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
-        Self::insert_issue_in_tx(&mut *tx, id, next_version, &issue, Some(&actor_json)).await?;
+        Self::insert_issue_in_tx(&mut tx, id, next_version, &issue, Some(&actor_json)).await?;
         Self::sync_issue_relationships_in_tx(&mut tx, id, &issue).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
@@ -5487,7 +5718,12 @@ impl Store for PostgresStoreV2 {
     ) -> Result<(ProjectId, VersionNumber), StoreError> {
         let id = self.next_project_id().await?;
         let actor_json = actor_to_json(actor);
-        Self::insert_project_in_tx(&self.pool, &id, 1, &project, Some(&actor_json)).await?;
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+        let new_next_seq =
+            Self::apply_statuses_diff_in_tx(&mut tx, id.as_ref(), &project.statuses, 1).await?;
+        Self::insert_project_row_in_tx(&mut *tx, &id, 1, &project, Some(&actor_json), new_next_seq)
+            .await?;
+        tx.commit().await.map_err(map_sqlx_error)?;
         Ok((id, 1))
     }
 
@@ -5499,8 +5735,8 @@ impl Store for PostgresStoreV2 {
     ) -> Result<VersionNumber, StoreError> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
 
-        let latest_version = sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT version_number FROM {TABLE_PROJECTS} \
+        let row = sqlx::query_as::<_, (i64, i64)>(&format!(
+            "SELECT version_number, next_status_sequence FROM {TABLE_PROJECTS} \
              WHERE id = $1 AND is_latest = true \
              FOR UPDATE"
         ))
@@ -5509,17 +5745,35 @@ impl Store for PostgresStoreV2 {
         .await
         .map_err(map_sqlx_error)?;
 
-        let latest_version =
-            latest_version.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let (latest_version, current_next_seq) =
+            row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
         let latest_version = VersionNumber::try_from(latest_version).map_err(|_| {
             StoreError::Internal(format!("invalid version number stored for project '{id}'"))
         })?;
         let next_version = latest_version.checked_add(1).ok_or_else(|| {
             StoreError::Internal(format!("version number overflow for project '{id}'"))
         })?;
+        let next_version_i64 = i64::try_from(next_version).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
 
         let actor_json = actor_to_json(actor);
-        Self::insert_project_in_tx(&mut *tx, id, next_version, &project, Some(&actor_json)).await?;
+        let new_next_seq = Self::apply_statuses_diff_in_tx(
+            &mut tx,
+            id.as_ref(),
+            &project.statuses,
+            current_next_seq,
+        )
+        .await?;
+        Self::insert_project_row_in_tx(
+            &mut *tx,
+            id,
+            next_version_i64,
+            &project,
+            Some(&actor_json),
+            new_next_seq,
+        )
+        .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
         Ok(next_version)
@@ -10528,5 +10782,228 @@ mod tests {
             .find_status(&issue.status)
             .expect("issue status must resolve to a default-project status");
         assert_eq!(status.key.as_str(), "open");
+    }
+
+    // ---- Cutover-specific (post-20260614000000) ----
+
+    fn cutover_sample_project_pg(name: &str, keys: &[&str]) -> Project {
+        use hydra_common::api::v1::projects::{ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        let statuses = keys
+            .iter()
+            .map(|k| {
+                StatusDefinition::new(
+                    StatusKey::try_new(*k).unwrap(),
+                    k.to_string(),
+                    "#cccccc".parse().unwrap(),
+                    false,
+                    false,
+                    false,
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        Project::new(
+            ProjectKey::try_new(name).unwrap(),
+            name.to_string(),
+            statuses,
+            ApiUsername::from("alice"),
+            false,
+            0.0,
+        )
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn cutover_add_project_assigns_sequences_in_input_order_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("abc", &["a", "b", "c"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT sequence, key FROM metis.statuses WHERE project_id = $1 ORDER BY sequence",
+        )
+        .bind(project_id.as_ref())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (1, "a".to_string()),
+                (2, "b".to_string()),
+                (3, "c".to_string()),
+            ]
+        );
+        let next_seq: i64 = sqlx::query_scalar(
+            "SELECT next_status_sequence FROM metis.projects WHERE id = $1 AND is_latest = TRUE",
+        )
+        .bind(project_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(next_seq, 4);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn cutover_update_project_preserves_sequence_on_label_change_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("abc", &["a", "b", "c"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses[1] = StatusDefinition::new(
+            StatusKey::try_new("b").unwrap(),
+            "B Prime".to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        let row: (i64, String) = sqlx::query_as(
+            "SELECT sequence, label FROM metis.statuses WHERE project_id = $1 AND key = 'b'",
+        )
+        .bind(project_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row, (2, "B Prime".to_string()));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn cutover_high_water_mark_no_sequence_reuse_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("abc", &["a", "b", "c"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses.retain(|s| s.key.as_str() != "c");
+        store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        let next_seq: i64 = sqlx::query_scalar(
+            "SELECT next_status_sequence FROM metis.projects WHERE id = $1 AND is_latest = TRUE",
+        )
+        .bind(project_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(next_seq, 4);
+
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses.push(StatusDefinition::new(
+            StatusKey::try_new("x").unwrap(),
+            "x".to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ));
+        store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        let x_seq: i64 = sqlx::query_scalar(
+            "SELECT sequence FROM metis.statuses WHERE project_id = $1 AND key = 'x'",
+        )
+        .bind(project_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(x_seq, 4);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn cutover_status_key_rename_does_not_orphan_issues_pg(pool: PgStorePool) {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("rename", &["a", "b", "c"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        // Simulate the future rename CLI via direct UPDATE.
+        sqlx::query("UPDATE metis.statuses SET key = 'bb' WHERE project_id = $1 AND sequence = 2")
+            .bind(project_id.as_ref())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "rename test".to_string(),
+            "test".to_string(),
+            hydra_common::api::v1::users::Username::from("alice").into(),
+            String::new(),
+            StatusKey::try_new("bb").unwrap(),
+            project_id.clone(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.status.as_str(), "bb");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn cutover_fk_rejects_unknown_status_sequence_pg(pool: PgStorePool) {
+        let res = sqlx::query(
+            "INSERT INTO metis.issues_v2 (id, version_number, issue_type, description, creator, project_id, status_sequence) \
+             VALUES ('i-fkbadseq', 1, 'task', 'fk', 'alice', 'j-defaul', 9999)",
+        )
+        .execute(&pool)
+        .await;
+        assert!(res.is_err());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn cutover_update_project_rejects_status_removal_with_active_issue_pg(pool: PgStorePool) {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("rmproj", &["a", "b"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let issue = Issue::new(
+            IssueType::Task,
+            "test".to_string(),
+            "test".to_string(),
+            hydra_common::api::v1::users::Username::from("alice").into(),
+            String::new(),
+            StatusKey::try_new("b").unwrap(),
+            project_id.clone(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        store.add_issue(issue, &ActorRef::test()).await.unwrap();
+
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses.retain(|s| s.key.as_str() != "b");
+        let res = store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await;
+        assert!(res.is_err());
     }
 }

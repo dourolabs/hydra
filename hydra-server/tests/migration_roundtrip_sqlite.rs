@@ -140,7 +140,149 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
 
     issues_v2_project_id_not_null_migration_is_idempotent(&pool).await?;
 
+    cutover_to_statuses_table_schema_invariants(&pool).await?;
+    cutover_to_statuses_table_backfills_deploy_gap_project(&pool).await?;
+    cutover_to_statuses_table_backfills_deploy_gap_issues(&pool).await?;
+    cutover_to_statuses_table_fk_rejects_unknown_sequence(&pool).await?;
+    cutover_to_statuses_table_fk_rejects_status_delete_with_active_issue(&pool).await?;
+
     Ok(())
+}
+
+/// 20260614000000_cutover_to_statuses_table. The cutover drops
+/// `projects.statuses` JSONB and `issues_v2.status` TEXT, tightens
+/// `issues_v2.status_sequence` to NOT NULL, adds the FK to
+/// `statuses(project_id, sequence)`, and adds the
+/// `projects.next_status_sequence` high-water-mark column. These
+/// assertions cover schema, deploy-gap catch-up backfills, and FK
+/// enforcement.
+async fn cutover_to_statuses_table_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if column_exists(pool, "projects", "statuses").await? {
+        bail!("expected `projects.statuses` JSON column to be dropped post-cutover");
+    }
+    if column_exists(pool, "issues_v2", "status").await? {
+        bail!("expected `issues_v2.status` TEXT column to be dropped post-cutover");
+    }
+    if !column_exists(pool, "projects", "next_status_sequence").await? {
+        bail!("expected `projects.next_status_sequence` column to be present post-cutover");
+    }
+    if column_is_nullable(pool, "issues_v2", "status_sequence").await? {
+        bail!("expected `issues_v2.status_sequence` to be NOT NULL post-cutover");
+    }
+    // Every project's next_status_sequence must be >= max(sequence)
+    // for that project + 1, and >= 1 when the project has no
+    // statuses.
+    let rows = sqlx::query(
+        "SELECT p.id, p.next_status_sequence, COALESCE((SELECT MAX(s.sequence) FROM statuses s WHERE s.project_id = p.id), 0) AS max_seq \
+         FROM projects p WHERE p.is_latest = 1",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read projects.next_status_sequence vs MAX(statuses.sequence)")?;
+    for row in &rows {
+        let id: String = row.try_get("id")?;
+        let next: i64 = row.try_get("next_status_sequence")?;
+        let max_seq: i64 = row.try_get("max_seq")?;
+        if next < 1 {
+            bail!("projects({id}).next_status_sequence={next}; must be >= 1");
+        }
+        if next <= max_seq {
+            bail!(
+                "projects({id}).next_status_sequence={next}; must be > MAX(statuses.sequence)={max_seq}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn cutover_to_statuses_table_backfills_deploy_gap_project(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT sequence, key FROM statuses WHERE project_id = 'j-cutgapprj' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read deploy-gap project statuses rows")?;
+    let pairs: Vec<(i64, String)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<i64, _>("sequence").unwrap(),
+                r.try_get::<String, _>("key").unwrap(),
+            )
+        })
+        .collect();
+    if pairs != vec![(1, "intake".to_string()), (2, "done".to_string())] {
+        bail!("j-cutgapprj statuses: expected [(1,intake),(2,done)]; got {pairs:?}");
+    }
+    Ok(())
+}
+
+async fn cutover_to_statuses_table_backfills_deploy_gap_issues(pool: &SqlitePool) -> Result<()> {
+    for (id, key) in &[("i-cutgapa", "intake"), ("i-cutgapdef", "open")] {
+        let row = sqlx::query(
+            "SELECT i.status_sequence, s.key AS resolved_key \
+             FROM issues_v2 i \
+             LEFT JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE i.id = ?1 AND i.is_latest = 1",
+        )
+        .bind(*id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read deploy-gap issue {id}"))?;
+        let seq: Option<i64> = row.try_get("status_sequence")?;
+        let resolved: Option<String> = row.try_get("resolved_key")?;
+        if seq.is_none() {
+            bail!("{id}: expected non-NULL status_sequence post-cutover; got NULL");
+        }
+        if resolved.as_deref() != Some(*key) {
+            bail!("{id}: expected resolved key '{key}'; got {resolved:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn cutover_to_statuses_table_fk_rejects_unknown_sequence(pool: &SqlitePool) -> Result<()> {
+    // SQLite enforces the FK only when `PRAGMA foreign_keys=ON`. The
+    // store layer's pool sets it on every connection; verify the pool
+    // here too so the assertion exercises the enforced FK rather than
+    // a no-op.
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(pool)
+        .await
+        .context("enable foreign_keys for FK enforcement check")?;
+    let result = sqlx::query(
+        "INSERT INTO issues_v2 (id, version_number, issue_type, description, creator, project_id, status_sequence, is_latest) \
+         VALUES ('i-fkbadseq', 1, 'task', 'fk test', 'system', 'j-defaul', 9999, 1)",
+    )
+    .execute(pool)
+    .await;
+    match result {
+        Err(_) => Ok(()),
+        Ok(_) => {
+            bail!("expected FK to reject insert with unknown status_sequence; insert succeeded")
+        }
+    }
+}
+
+async fn cutover_to_statuses_table_fk_rejects_status_delete_with_active_issue(
+    pool: &SqlitePool,
+) -> Result<()> {
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(pool)
+        .await
+        .context("enable foreign_keys for FK enforcement check")?;
+    // i-stsopena is on j-defaul with status `open` (sequence 1). The
+    // FK must reject the DELETE while the issue still references the
+    // row.
+    let result = sqlx::query("DELETE FROM statuses WHERE project_id = 'j-defaul' AND sequence = 1")
+        .execute(pool)
+        .await;
+    match result {
+        Err(_) => Ok(()),
+        Ok(_) => {
+            bail!("expected FK to reject DELETE of statuses row while an issue still references it")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -669,35 +811,34 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
     }
 
     let project_id = "j-migsmoke";
-    let project_statuses = serde_json::json!([
-        {
-            "key": "todo",
-            "label": "Todo",
-            "color": "#abcdef",
-            "unblocks_parents": false,
-            "unblocks_dependents": false,
-            "cascades_to_children": false
-        }
-    ])
-    .to_string();
-    // Include `prompt_path` so the post-rollforward schema's added column
-    // is exercised on the smoke INSERT — see
-    // `20260606010000_add_projects_prompt_path.sql`.
+    // Post-cutover (20260614000000), `projects.statuses` JSONB was
+    // dropped and `metis.statuses` is the source of truth. Smoke
+    // INSERT writes both the `projects` row (with the new
+    // `next_status_sequence` high-water mark) and the matching
+    // `statuses` row so the FK-bearing IssueRow inserts below resolve
+    // their `(project_id, status_sequence)` references.
     sqlx::query(
         "INSERT INTO projects \
-           (id, version_number, key, name, statuses, \
-            creator, deleted, actor, prompt_path, is_latest) \
-         VALUES (?1, 1, ?2, ?3, ?4, ?5, 0, NULL, ?6, 1)",
+           (id, version_number, key, name, \
+            creator, deleted, actor, prompt_path, next_status_sequence, is_latest) \
+         VALUES (?1, 1, ?2, ?3, ?4, 0, NULL, ?5, 2, 1)",
     )
     .bind(project_id)
     .bind("smoke")
     .bind("Smoke")
-    .bind(&project_statuses)
     .bind("alice")
     .bind("/projects/smoke/prompt.md")
     .execute(pool)
     .await
     .context("insert smoke project row")?;
+    sqlx::query(
+        "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive) \
+         VALUES (?1, 1, 'todo', 'Todo', '#abcdef', 0, 0, 0, NULL, NULL, 0)",
+    )
+    .bind(project_id)
+    .execute(pool)
+    .await
+    .context("insert smoke project statuses row")?;
 
     let pid = ProjectId::from_str(project_id).context("parse smoke project id")?;
     let fetched_project = store
@@ -1000,8 +1141,11 @@ async fn assert_agent_config_system_prompt_backfill(pool: &SqlitePool) -> Result
 // ---------------------------------------------------------------------------
 
 async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result<()> {
+    // Post-cutover (20260614000000), `projects.statuses` JSONB is gone;
+    // the seed's status set lives in the `statuses` table. The
+    // `projects` row still carries the rest of the seed payload.
     let row = sqlx::query(
-        "SELECT id, version_number, key, name, statuses, \
+        "SELECT id, version_number, key, name, \
                 creator, deleted, actor, is_latest, prompt_path \
          FROM projects WHERE id = 'j-defaul'",
     )
@@ -1013,7 +1157,6 @@ async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result
     let version_number: i64 = row.try_get("version_number")?;
     let key: String = row.try_get("key")?;
     let name: String = row.try_get("name")?;
-    let statuses_text: String = row.try_get("statuses")?;
     let creator: String = row.try_get("creator")?;
     let deleted: i64 = row.try_get("deleted")?;
     let is_latest: i64 = row.try_get("is_latest")?;
@@ -1048,12 +1191,48 @@ async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result
         bail!("j-defaul: expected prompt_path='/projects/default/prompt.md'; got {prompt_path:?}");
     }
 
-    // `statuses` JSON must deserialize into a Vec<StatusDefinition> that
-    // matches `default_project_seed()` byte-for-byte. Comparing against the
-    // Rust seed locks the SQL literal to the Rust constant: any drift in
-    // either direction fails loud here.
-    let statuses: Vec<StatusDefinition> = serde_json::from_str(&statuses_text)
-        .context("deserialize projects.statuses into Vec<StatusDefinition>")?;
+    // The status set lives on `statuses` after the cutover. Read the
+    // rows in sequence order and rebuild a `Vec<StatusDefinition>` for
+    // comparison against `default_project_seed().statuses`.
+    let status_rows = sqlx::query(
+        "SELECT sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive \
+         FROM statuses WHERE project_id = 'j-defaul' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read j-defaul rows from `statuses`")?;
+    let mut statuses: Vec<StatusDefinition> = Vec::with_capacity(status_rows.len());
+    for row in &status_rows {
+        let key: String = row.try_get("key")?;
+        let label: String = row.try_get("label")?;
+        let color: String = row.try_get("color")?;
+        let unblocks_parents: i64 = row.try_get("unblocks_parents")?;
+        let unblocks_dependents: i64 = row.try_get("unblocks_dependents")?;
+        let cascades_to_children: i64 = row.try_get("cascades_to_children")?;
+        let on_enter: Option<String> = row.try_get("on_enter")?;
+        let prompt_path: Option<String> = row.try_get("prompt_path")?;
+        let interactive: i64 = row.try_get("interactive")?;
+        let on_enter_value = on_enter
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .context("decode statuses.on_enter")?;
+        let mut def = StatusDefinition::new(
+            hydra_common::api::v1::projects::StatusKey::try_new(key)
+                .map_err(|e| anyhow::anyhow!("invalid status key: {e}"))?,
+            label,
+            color
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid status color: {e}"))?,
+            unblocks_parents != 0,
+            unblocks_dependents != 0,
+            cascades_to_children != 0,
+            on_enter_value,
+        );
+        def.prompt_path = prompt_path;
+        def.interactive = interactive != 0;
+        statuses.push(def);
+    }
     let expected = default_project_seed().statuses;
     if statuses != expected {
         bail!(
@@ -1134,26 +1313,23 @@ async fn drop_status_icon_migration_strips_default_seed(pool: &SqlitePool) -> Re
         );
     }
 
-    // Belt-and-braces JSON-level check: confirm the raw column shape
-    // has no surviving `icon` keys, independent of the typed-serde path
-    // (e.g. a future `StatusDefinition` that silently ignores unknown
-    // fields wouldn't catch a regression).
-    let row = sqlx::query("SELECT statuses FROM projects WHERE id = 'j-defaul'")
-        .fetch_one(pool)
-        .await
-        .context("read j-defaul raw statuses post-drop_status_icon")?;
-    let statuses_text: String = row.try_get("statuses")?;
-    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
-        .context("decode j-defaul.statuses JSON post-drop_status_icon")?;
-    let arr = statuses_json
-        .as_array()
-        .context("expected j-defaul.statuses to be a JSON array")?;
-    for (i, elem) in arr.iter().enumerate() {
-        let obj = elem
-            .as_object()
-            .with_context(|| format!("j-defaul.statuses[{i}] is not a JSON object"))?;
-        if obj.contains_key("icon") {
-            bail!("j-defaul.statuses[{i}]: expected no `icon` key; got {elem}");
+    // Belt-and-braces structural check post-cutover: the legacy
+    // `projects.statuses` JSONB column was dropped by
+    // 20260614000000_cutover_to_statuses_table; the per-status rows
+    // now live in the `statuses` table, which has no `icon` column at
+    // all. The store-level read above already validates the
+    // post-strip column set against `default_project_seed()`; the
+    // additional invariant we want to capture here is "no `icon`
+    // anywhere in the new schema" — assert that by checking
+    // `pragma_table_info` on the `statuses` table.
+    let column_names: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM pragma_table_info('statuses')")
+            .fetch_all(pool)
+            .await
+            .context("read statuses table info post-drop_status_icon")?;
+    for (name,) in &column_names {
+        if name == "icon" {
+            bail!("statuses table still carries an `icon` column post-strip");
         }
     }
     Ok(())
@@ -1219,71 +1395,31 @@ async fn drop_status_icon_migration_strips_custom_row(pool: &SqlitePool) -> Resu
         }
     }
 
-    // Belt-and-braces JSON-level check on the raw column.
-    let row = sqlx::query("SELECT statuses FROM projects WHERE id = 'j-iconfix'")
-        .fetch_one(pool)
-        .await
-        .context("read j-iconfix raw statuses for icon-presence check")?;
-    let statuses_text: String = row.try_get("statuses")?;
-    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
-        .context("decode j-iconfix.statuses JSON post-drop_status_icon")?;
-    let arr = statuses_json
-        .as_array()
-        .context("expected j-iconfix.statuses to be a JSON array")?;
-    for (i, elem) in arr.iter().enumerate() {
-        let obj = elem
-            .as_object()
-            .with_context(|| format!("j-iconfix.statuses[{i}] is not a JSON object"))?;
-        if obj.contains_key("icon") {
-            bail!("j-iconfix.statuses[{i}]: expected no `icon` key post-strip; got {elem}");
-        }
-    }
+    // The legacy `projects.statuses` JSONB column was dropped by
+    // 20260614000000_cutover_to_statuses_table. The store-level
+    // read above already validates the post-strip column shape; the
+    // schema-level "no icon column anywhere" check is performed once
+    // in `drop_status_icon_migration_strips_default_seed` against
+    // the `statuses` table (shared across every project), so there's
+    // nothing per-row to re-assert here.
 
     Ok(())
 }
 
-async fn drop_status_icon_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
-    // Re-execute the migration body verbatim. `json_remove(value,
-    // '$.icon')` is a no-op on entries that no longer carry the key, so
-    // a second pass must produce no change. Reading the file rather
-    // than hard-coding the SQL keeps this test honest if the migration's
-    // body ever changes shape.
-    let before = snapshot_status_arrays(pool).await?;
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("sqlite-migrations/20260608000000_drop_status_icon.sql"),
-    )
-    .context("read sqlite drop_status_icon migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply sqlite drop_status_icon migration body")?;
-    let after = snapshot_status_arrays(pool).await?;
-    if before != after {
-        bail!(
-            "drop_status_icon: expected no change on re-apply; before={before:?}, after={after:?}"
-        );
-    }
+async fn drop_status_icon_migration_is_idempotent(_pool: &SqlitePool) -> Result<()> {
+    // Originally this re-executed `20260608000000_drop_status_icon.sql`
+    // verbatim and asserted the resulting `projects.statuses` JSONB
+    // arrays were unchanged. After
+    // `20260614000000_cutover_to_statuses_table` drops that JSONB
+    // column entirely, the body's `UPDATE projects SET statuses =
+    // json_remove(statuses, '$.icon')` no longer references an
+    // existing column and cannot run. The idempotency guarantee that
+    // still matters here — "the strip was destructive of the `icon`
+    // key, not of the migration-tracker state" — is captured by the
+    // earlier `_strips_default_seed` invariant (no `icon` column on
+    // the new `statuses` table) plus the migration tracker preventing
+    // a second apply at the framework level.
     Ok(())
-}
-
-/// Read every `(id, statuses)` pair from `projects` and return it keyed
-/// by `id`. Used by the idempotency check above to compare the
-/// statuses JSON across re-applications.
-async fn snapshot_status_arrays(
-    pool: &SqlitePool,
-) -> Result<std::collections::HashMap<String, String>> {
-    let rows = sqlx::query("SELECT id, statuses FROM projects")
-        .fetch_all(pool)
-        .await
-        .context("read all projects rows for statuses snapshot")?;
-    let mut snap = std::collections::HashMap::new();
-    for row in rows {
-        let id: String = row.try_get("id")?;
-        let statuses: String = row.try_get("statuses")?;
-        snap.insert(id, statuses);
-    }
-    Ok(snap)
 }
 
 async fn seed_default_project_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
@@ -1584,32 +1720,18 @@ async fn drop_projects_default_status_key_migration_preserves_typed_read(
 }
 
 async fn drop_projects_default_status_key_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
-    // Re-execute the migration body verbatim. The table-rebuild dance
-    // (CREATE TABLE IF NOT EXISTS + INSERT OR IGNORE + DROP + RENAME)
-    // is naturally idempotent: a second pass rebuilds an empty
-    // `projects_new`, copies the now-already-stripped rows, and swaps
-    // the table back into place. Reading the file rather than
-    // hard-coding the SQL keeps this test honest if the migration's
-    // body ever changes shape.
-    let before = snapshot_status_arrays(pool).await?;
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("sqlite-migrations/20260611000000_drop_projects_default_status_key.sql"),
-    )
-    .context("read sqlite drop_projects_default_status_key migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply sqlite drop_projects_default_status_key migration body")?;
-    let after = snapshot_status_arrays(pool).await?;
-    if before != after {
-        bail!(
-            "drop_projects_default_status_key: expected no change on re-apply; \
-             before={before:?}, after={after:?}"
-        );
-    }
+    // Originally this re-executed
+    // `20260611000000_drop_projects_default_status_key.sql` verbatim
+    // and compared the resulting `projects.statuses` JSONB snapshots.
+    // After `20260614000000_cutover_to_statuses_table` drops the
+    // `projects.statuses` column, the body's table-rebuild
+    // (`INSERT INTO projects_new (..., statuses, ...) SELECT ..., statuses, ... FROM projects`)
+    // no longer matches the current schema and cannot run verbatim.
+    // The schema-shape invariant the test actually wants to lock down
+    // — "`projects.default_status_key` is gone and stays gone" —
+    // remains testable directly.
     if column_exists(pool, "projects", "default_status_key").await? {
-        bail!("drop_projects_default_status_key: column reappeared after idempotency rerun");
+        bail!("drop_projects_default_status_key: column reappeared post-rollforward");
     }
     Ok(())
 }
@@ -1655,32 +1777,35 @@ async fn issues_v2_project_id_rejects_null_insert(pool: &SqlitePool) -> Result<(
 /// (no NULL rows survive) and the table rebuild rerun must produce the
 /// same schema invariants.
 async fn issues_v2_project_id_not_null_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("sqlite-migrations/20260612000000_issues_v2_project_id_not_null.sql"),
-    )
-    .context("read sqlite issues_v2_project_id_not_null migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply sqlite issues_v2_project_id_not_null migration body")?;
+    // The body of `20260612000000_issues_v2_project_id_not_null.sql`
+    // rebuilds `issues_v2` and explicitly enumerates `status` (the
+    // legacy TEXT column). After
+    // `20260614000000_cutover_to_statuses_table` drops that column,
+    // the body can no longer be re-executed verbatim. Lock down the
+    // surviving schema invariants directly: `project_id` is still
+    // NOT NULL, and the indexes that survived the cutover rebuild
+    // are still in place. (The cutover migration drops the old
+    // `issues_v2_status_idx` along with the `status` column; the new
+    // `issues_v2_project_status_sequence_idx` index replaces it.)
     if column_is_nullable(pool, "issues_v2", "project_id").await? {
-        bail!("expected `issues_v2.project_id` to stay NOT NULL after idempotency rerun");
+        bail!("expected `issues_v2.project_id` to stay NOT NULL post-rollforward");
     }
     for index in [
-        "issues_v2_status_idx",
         "issues_v2_latest_idx",
         "issues_v2_latest_id_idx",
         "issues_v2_latest_pagination_idx",
         "issues_v2_project_id_idx",
         "issues_v2_updated_at_id_idx",
+        "issues_v2_project_status_sequence_idx",
     ] {
         if !index_exists(pool, index).await? {
-            bail!(
-                "expected index `{index}` to survive the idempotent rerun of \
-                 20260612000000_issues_v2_project_id_not_null"
-            );
+            bail!("expected index `{index}` to survive the post-cutover schema");
         }
+    }
+    if index_exists(pool, "issues_v2_status_idx").await? {
+        bail!(
+            "expected legacy `issues_v2_status_idx` to be gone (dropped with the `status` column)"
+        );
     }
     Ok(())
 }
@@ -1983,11 +2108,19 @@ async fn add_issues_v2_status_sequence_schema_invariants(pool: &SqlitePool) -> R
     if !column_exists(pool, "issues_v2", "status_sequence").await? {
         bail!("expected `issues_v2.status_sequence` column to exist after rollforward");
     }
-    if !column_is_nullable(pool, "issues_v2", "status_sequence").await? {
-        bail!(
-            "expected `issues_v2.status_sequence` to be nullable (FK + NOT NULL deferred to PR 3); \
-             got NOT NULL"
-        );
+    // After 20260614000000_cutover_to_statuses_table, the column is
+    // tightened to NOT NULL and carries the FK to `statuses`.
+    if column_is_nullable(pool, "issues_v2", "status_sequence").await? {
+        bail!("expected `issues_v2.status_sequence` to be NOT NULL post-cutover; got nullable");
+    }
+    if column_exists(pool, "issues_v2", "status").await? {
+        bail!("expected `issues_v2.status` (TEXT) to be dropped post-cutover");
+    }
+    if column_exists(pool, "projects", "statuses").await? {
+        bail!("expected `projects.statuses` (JSON) to be dropped post-cutover");
+    }
+    if !column_exists(pool, "projects", "next_status_sequence").await? {
+        bail!("expected `projects.next_status_sequence` to be added post-cutover");
     }
     Ok(())
 }
@@ -2041,28 +2174,16 @@ async fn add_issues_v2_status_sequence_backfills_issues(pool: &SqlitePool) -> Re
 }
 
 async fn create_statuses_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
-    // The create_statuses body is naturally idempotent:
-    //   * `CREATE TABLE IF NOT EXISTS`
-    //   * `CREATE UNIQUE INDEX IF NOT EXISTS`
-    //   * `INSERT OR IGNORE`
-    // Re-applying the body must not produce duplicate `(project_id,
-    // sequence)` rows or duplicate `(project_id, key)` rows. (A new
-    // project inserted between runs *will* be picked up on re-apply,
-    // which is correct — the upstream test seeds `j-migsmoke` post-
-    // rollforward in `assert_recent_migration_store_smoke`; that
-    // project's statuses are unbackfilled until this re-apply, so the
-    // re-apply legitimately adds them. We check for duplicates, not
-    // for a frozen row count.)
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("sqlite-migrations/20260613000000_create_statuses.sql"),
-    )
-    .context("read sqlite create_statuses migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply sqlite create_statuses migration body")?;
-
+    // PR 1's `20260613000000_create_statuses.sql` body sourced its
+    // INSERT from `projects.statuses` JSONB. After
+    // `20260614000000_cutover_to_statuses_table` drops that JSONB
+    // column, re-executing the body verbatim is no longer possible
+    // (it errors on `p.statuses`). The invariant that matters — "no
+    // duplicate `(project_id, sequence)` or `(project_id, key)` rows
+    // remain in the `statuses` table after a full migration plan
+    // rolls forward, including a re-run through the tracker" — stays
+    // testable directly, so check the duplicate-free shape on the
+    // post-rollforward pool.
     let row = sqlx::query(
         "SELECT COUNT(*) - COUNT(DISTINCT project_id || ':' || sequence) AS dup FROM statuses",
     )
@@ -2071,7 +2192,9 @@ async fn create_statuses_migration_is_idempotent(pool: &SqlitePool) -> Result<()
     .context("count duplicate (project_id, sequence) rows in statuses")?;
     let dup: i64 = row.try_get("dup")?;
     if dup != 0 {
-        bail!("create_statuses re-apply produced {dup} duplicate (project_id, sequence) rows");
+        bail!(
+            "statuses table carries {dup} duplicate (project_id, sequence) rows post-rollforward"
+        );
     }
     let row = sqlx::query(
         "SELECT COUNT(*) - COUNT(DISTINCT project_id || ':' || key) AS dup FROM statuses",
@@ -2081,7 +2204,7 @@ async fn create_statuses_migration_is_idempotent(pool: &SqlitePool) -> Result<()
     .context("count duplicate (project_id, key) rows in statuses")?;
     let dup: i64 = row.try_get("dup")?;
     if dup != 0 {
-        bail!("create_statuses re-apply produced {dup} duplicate (project_id, key) rows");
+        bail!("statuses table carries {dup} duplicate (project_id, key) rows post-rollforward");
     }
     Ok(())
 }

@@ -202,6 +202,19 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("add_issues_v2_status_sequence: re-applying body does not overwrite sequences")?;
 
+    cutover_to_statuses_table_backfills_deploy_gap_project(&pool)
+        .await
+        .context("cutover_to_statuses_table: deploy-gap project's metis.statuses backfilled")?;
+    cutover_to_statuses_table_backfills_deploy_gap_issues(&pool)
+        .await
+        .context("cutover_to_statuses_table: deploy-gap issues' status_sequence backfilled")?;
+    cutover_to_statuses_table_fk_rejects_unknown_sequence(&pool)
+        .await
+        .context("cutover_to_statuses_table: FK rejects insert with unknown sequence")?;
+    cutover_to_statuses_table_fk_rejects_status_delete_with_active_issue(&pool)
+        .await
+        .context("cutover_to_statuses_table: FK rejects DELETE of referenced status row")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -213,6 +226,93 @@ async fn migration_roundtrip() -> Result<()> {
         .context("actor_variant_cleanup idempotent second-pass assertions")?;
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260614000000_cutover_to_statuses_table — covers deploy-gap
+// catch-up backfills and FK enforcement. The schema-shape checks
+// (column drops, NOT NULL tightening, FK existence) are folded into
+// `add_issues_v2_status_sequence_schema_invariants` above so the
+// before/after states stay co-located.
+// ---------------------------------------------------------------------------
+
+async fn cutover_to_statuses_table_backfills_deploy_gap_project(pool: &PgPool) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT sequence, key FROM metis.statuses WHERE project_id = 'j-cutgapprj' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read deploy-gap project statuses rows")?;
+    let pairs: Vec<(i64, String)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<i64, _>("sequence").unwrap(),
+                r.try_get::<String, _>("key").unwrap(),
+            )
+        })
+        .collect();
+    if pairs != vec![(1, "intake".to_string()), (2, "done".to_string())] {
+        bail!("j-cutgapprj metis.statuses: expected [(1,intake),(2,done)]; got {pairs:?}");
+    }
+    Ok(())
+}
+
+async fn cutover_to_statuses_table_backfills_deploy_gap_issues(pool: &PgPool) -> Result<()> {
+    for (id, key) in &[("i-cutgapa", "intake"), ("i-cutgapdef", "open")] {
+        let row = sqlx::query(
+            "SELECT i.status_sequence, s.key AS resolved_key \
+             FROM metis.issues_v2 i \
+             LEFT JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE i.id = $1 AND i.is_latest = TRUE",
+        )
+        .bind(*id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read deploy-gap issue {id}"))?;
+        let seq: Option<i64> = row.try_get("status_sequence")?;
+        let resolved: Option<String> = row.try_get("resolved_key")?;
+        if seq.is_none() {
+            bail!("{id}: expected non-NULL status_sequence post-cutover; got NULL");
+        }
+        if resolved.as_deref() != Some(*key) {
+            bail!("{id}: expected resolved key '{key}'; got {resolved:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn cutover_to_statuses_table_fk_rejects_unknown_sequence(pool: &PgPool) -> Result<()> {
+    let result = sqlx::query(
+        "INSERT INTO metis.issues_v2 (id, version_number, issue_type, description, creator, project_id, status_sequence) \
+         VALUES ('i-fkbadseq', 1, 'task', 'fk test', 'system', 'j-defaul', 9999)",
+    )
+    .execute(pool)
+    .await;
+    match result {
+        Err(_) => Ok(()),
+        Ok(_) => {
+            bail!("expected FK to reject insert with unknown status_sequence; insert succeeded")
+        }
+    }
+}
+
+async fn cutover_to_statuses_table_fk_rejects_status_delete_with_active_issue(
+    pool: &PgPool,
+) -> Result<()> {
+    // i-stsopena is on j-defaul with status `open` (sequence 1). The
+    // FK must reject the DELETE while the issue still references the
+    // row.
+    let result =
+        sqlx::query("DELETE FROM metis.statuses WHERE project_id = 'j-defaul' AND sequence = 1")
+            .execute(pool)
+            .await;
+    match result {
+        Err(_) => Ok(()),
+        Ok(_) => bail!(
+            "expected FK to reject DELETE of metis.statuses row while an issue still references it"
+        ),
+    }
 }
 
 /// Drop and recreate the `metis` schema, and drop the sqlx migration tracking
@@ -1711,30 +1811,31 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
 
     // ---- projects -----------------------------------------------------
     let project_id = parse_project_id("j-rtrip")?;
-    let statuses_json = serde_json::json!([
-        {
-            "key": "open",
-            "label": "Open",
-            "color": "#3498db",
-            "unblocks_parents": false,
-            "unblocks_dependents": false,
-            "cascades_to_children": false
-        }
-    ]);
-    // Include `prompt_path` so the new column added by
-    // 20260606010000_add_projects_prompt_path.sql is exercised by the
-    // seed INSERT and the Store::get_project read back below.
+    // Post-cutover (20260614000000): `metis.projects.statuses` JSONB
+    // is gone, so the smoke seed populates the post-cutover schema —
+    // the `projects` row carries the per-project high-water mark, and
+    // the per-status row lives in `metis.statuses`. Include
+    // `prompt_path` so 20260606010000_add_projects_prompt_path is
+    // exercised, and `next_status_sequence` so 20260614000000's new
+    // column is exercised.
     sqlx::query(
         "INSERT INTO metis.projects \
-         (id, version_number, key, name, statuses, creator, prompt_path) \
-         VALUES ($1, 1, 'roundtrip', 'Roundtrip', $2, 'jayantk', $3)",
+         (id, version_number, key, name, creator, prompt_path, next_status_sequence) \
+         VALUES ($1, 1, 'roundtrip', 'Roundtrip', 'jayantk', $2, 2)",
     )
     .bind(project_id.as_ref())
-    .bind(&statuses_json)
     .bind("/projects/roundtrip/prompt.md")
     .execute(pool)
     .await
     .context("seed metis.projects row for round-trip assertion")?;
+    sqlx::query(
+        "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive) \
+         VALUES ($1, 1, 'open', 'Open', '#3498db', FALSE, FALSE, FALSE, NULL, NULL, FALSE)",
+    )
+    .bind(project_id.as_ref())
+    .execute(pool)
+    .await
+    .context("seed metis.statuses row for round-trip project")?;
 
     let fetched = store
         .get_project(&project_id, false)
@@ -1819,9 +1920,13 @@ fn parse_session_id(s: &str) -> Result<SessionId> {
 // ---------------------------------------------------------------------------
 
 async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()> {
+    // Post-cutover (20260614000000), `metis.projects.statuses` JSONB
+    // is gone; statuses live in `metis.statuses`. Validate the row's
+    // non-statuses columns directly, then rebuild the status set
+    // from `metis.statuses` and compare against
+    // `default_project_seed()`.
     let row = sqlx::query(
-        "SELECT id, version_number, key, name, \
-                statuses::text AS statuses, creator, deleted, \
+        "SELECT id, version_number, key, name, creator, deleted, \
                 actor::text AS actor, is_latest, prompt_path \
          FROM metis.projects WHERE id = 'j-defaul'",
     )
@@ -1833,7 +1938,6 @@ async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()>
     let version_number: i64 = row.try_get("version_number")?;
     let key: String = row.try_get("key")?;
     let name: String = row.try_get("name")?;
-    let statuses_text: String = row.try_get("statuses")?;
     let creator: String = row.try_get("creator")?;
     let deleted: bool = row.try_get("deleted")?;
     let is_latest: bool = row.try_get("is_latest")?;
@@ -1868,12 +1972,45 @@ async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()>
         bail!("j-defaul: expected prompt_path='/projects/default/prompt.md'; got {prompt_path:?}");
     }
 
-    // `statuses` JSONB must deserialize into a Vec<StatusDefinition> that
-    // matches `default_project_seed()` byte-for-byte. Comparing against
-    // the Rust seed locks the SQL literal to the Rust constant: any drift
-    // in either direction fails loud here.
-    let statuses: Vec<StatusDefinition> = serde_json::from_str(&statuses_text)
-        .context("deserialize projects.statuses into Vec<StatusDefinition>")?;
+    let status_rows = sqlx::query(
+        "SELECT sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter::text AS on_enter_text, prompt_path, interactive \
+         FROM metis.statuses WHERE project_id = 'j-defaul' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read j-defaul rows from metis.statuses")?;
+    let mut statuses: Vec<StatusDefinition> = Vec::with_capacity(status_rows.len());
+    for row in &status_rows {
+        let key: String = row.try_get("key")?;
+        let label: String = row.try_get("label")?;
+        let color: String = row.try_get("color")?;
+        let unblocks_parents: bool = row.try_get("unblocks_parents")?;
+        let unblocks_dependents: bool = row.try_get("unblocks_dependents")?;
+        let cascades_to_children: bool = row.try_get("cascades_to_children")?;
+        let on_enter_text: Option<String> = row.try_get("on_enter_text")?;
+        let prompt_path: Option<String> = row.try_get("prompt_path")?;
+        let interactive: bool = row.try_get("interactive")?;
+        let on_enter_value = on_enter_text
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .context("decode metis.statuses.on_enter")?;
+        let mut def = StatusDefinition::new(
+            hydra_common::api::v1::projects::StatusKey::try_new(key)
+                .map_err(|e| anyhow::anyhow!("invalid status key: {e}"))?,
+            label,
+            color
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid status color: {e}"))?,
+            unblocks_parents,
+            unblocks_dependents,
+            cascades_to_children,
+            on_enter_value,
+        );
+        def.prompt_path = prompt_path;
+        def.interactive = interactive;
+        statuses.push(def);
+    }
     let expected = default_project_seed().statuses;
     if statuses != expected {
         bail!(
@@ -1950,37 +2087,30 @@ async fn seed_default_project_migration_is_idempotent(pool: &PgPool) -> Result<(
 // ---------------------------------------------------------------------------
 
 async fn drop_status_icon_migration_strips_default_seed(pool: &PgPool) -> Result<()> {
-    // The `j-defaul` row was inserted by 20260607000000_seed_default_project
-    // with `"icon": "..."` on every status; 20260608000000_drop_status_icon
-    // must have stripped each. `seed_default_project_migration_inserts_row`
-    // above already compares the deserialized Vec<StatusDefinition>
-    // against `default_project_seed()`; here we additionally assert at
-    // the JSONB level so a regression that re-adds the key shows up
-    // independently of the Rust type's serde shape.
-    let row =
-        sqlx::query("SELECT statuses::text AS statuses FROM metis.projects WHERE id = 'j-defaul'")
+    // Post-cutover, the legacy `metis.projects.statuses` JSONB column
+    // is gone; per-status rows live in `metis.statuses`, which has no
+    // `icon` column at all. The schema-shape invariant ("no `icon`
+    // anywhere") becomes a one-line check against
+    // `information_schema.columns`.
+    let row = sqlx::query(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.columns \
+         WHERE table_schema = 'metis' AND table_name = 'statuses' AND column_name = 'icon')",
+    )
+    .fetch_one(pool)
+    .await
+    .context("check metis.statuses for `icon` column")?;
+    let has_icon: bool = row.get(0);
+    if has_icon {
+        bail!("metis.statuses still carries an `icon` column post-strip");
+    }
+    let row_count =
+        sqlx::query("SELECT COUNT(*) FROM metis.statuses WHERE project_id = 'j-defaul'")
             .fetch_one(pool)
             .await
-            .context("read j-defaul statuses post-drop_status_icon")?;
-    let statuses_text: String = row.try_get("statuses")?;
-    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
-        .context("decode j-defaul.statuses JSON post-drop_status_icon")?;
-    let arr = statuses_json
-        .as_array()
-        .context("expected j-defaul.statuses to be a JSON array")?;
-    if arr.len() != 5 {
-        bail!(
-            "j-defaul: expected 5 statuses post-drop_status_icon; got {}",
-            arr.len()
-        );
-    }
-    for (i, elem) in arr.iter().enumerate() {
-        let obj = elem
-            .as_object()
-            .with_context(|| format!("j-defaul.statuses[{i}] is not a JSON object"))?;
-        if obj.contains_key("icon") {
-            bail!("j-defaul.statuses[{i}]: expected no `icon` key; got {elem}");
-        }
+            .context("count j-defaul statuses post-cutover")?;
+    let count: i64 = row_count.try_get(0)?;
+    if count != 5 {
+        bail!("j-defaul: expected 5 statuses rows post-cutover; got {count}");
     }
     Ok(())
 }
@@ -2045,74 +2175,32 @@ async fn drop_status_icon_migration_strips_custom_row(pool: &PgPool) -> Result<(
         }
     }
 
-    // Belt-and-braces JSONB-level check: confirm the raw column shape
-    // has no surviving `icon` keys, independent of the typed-serde path
-    // (e.g. a future `StatusDefinition` that silently ignores unknown
-    // fields wouldn't catch a regression).
-    let row =
-        sqlx::query("SELECT statuses::text AS statuses FROM metis.projects WHERE id = 'j-iconfix'")
-            .fetch_one(pool)
-            .await
-            .context("read j-iconfix raw statuses for icon-presence check")?;
-    let statuses_text: String = row.try_get("statuses")?;
-    let statuses_json: serde_json::Value = serde_json::from_str(&statuses_text)
-        .context("decode j-iconfix.statuses JSON post-drop_status_icon")?;
-    let arr = statuses_json
-        .as_array()
-        .context("expected j-iconfix.statuses to be a JSON array")?;
-    for (i, elem) in arr.iter().enumerate() {
-        let obj = elem
-            .as_object()
-            .with_context(|| format!("j-iconfix.statuses[{i}] is not a JSON object"))?;
-        if obj.contains_key("icon") {
-            bail!("j-iconfix.statuses[{i}]: expected no `icon` key post-strip; got {elem}");
-        }
-    }
+    // The legacy `metis.projects.statuses` JSONB column was dropped
+    // by 20260614000000_cutover_to_statuses_table; the per-project
+    // schema-shape "no icon anywhere" assertion is in
+    // `drop_status_icon_migration_strips_default_seed` above (checks
+    // `metis.statuses` once, which is shared across every project).
+    // The typed-Store read above already validates the post-strip
+    // column shape for j-iconfix.
 
     Ok(())
 }
 
-async fn drop_status_icon_migration_is_idempotent(pool: &PgPool) -> Result<()> {
-    // Re-execute the migration body verbatim. `elem - 'icon'` is a no-op
-    // on rows whose statuses no longer carry the key, so a second pass
-    // must produce no change. Reading the file rather than hard-coding
-    // the SQL keeps this test honest if the migration's body ever
-    // changes shape.
-    let before = snapshot_status_arrays(pool).await?;
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("migrations/20260608000000_drop_status_icon.sql"),
-    )
-    .context("read postgres drop_status_icon migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply postgres drop_status_icon migration body")?;
-    let after = snapshot_status_arrays(pool).await?;
-    if before != after {
-        bail!(
-            "drop_status_icon: expected no change on re-apply; before={before:?}, after={after:?}"
-        );
-    }
+async fn drop_status_icon_migration_is_idempotent(_pool: &PgPool) -> Result<()> {
+    // Originally this re-executed `20260608000000_drop_status_icon.sql`
+    // verbatim. After 20260614000000_cutover_to_statuses_table drops
+    // the `metis.projects.statuses` JSONB column the body operates on,
+    // the body can no longer re-run. The schema-shape invariant is
+    // captured elsewhere (no `icon` column on `metis.statuses`).
     Ok(())
 }
 
-/// Read every `(id, statuses)` pair from `metis.projects` and return it
-/// keyed by `id`. Used by the idempotency check above to compare the
-/// statuses JSON byte-for-byte across re-applications.
-async fn snapshot_status_arrays(pool: &PgPool) -> Result<HashMap<String, String>> {
-    let rows = sqlx::query("SELECT id, statuses::text AS statuses FROM metis.projects")
-        .fetch_all(pool)
-        .await
-        .context("read all projects rows for statuses snapshot")?;
-    let mut snap = HashMap::new();
-    for row in rows {
-        let id: String = row.try_get("id")?;
-        let statuses: String = row.try_get("statuses")?;
-        snap.insert(id, statuses);
-    }
-    Ok(snap)
-}
+// `snapshot_status_arrays` was removed alongside the idempotency
+// rerun helpers that relied on the legacy `metis.projects.statuses`
+// JSONB column. The 20260614000000 cutover migration dropped the
+// column; per-status state now lives in `metis.statuses`. The
+// schema-invariant checks against the new table replace the prior
+// byte-for-byte JSONB comparison.
 
 // ---------------------------------------------------------------------------
 // 20260609000000_add_creator_to_auth_tokens / 20260609010000_drop_actors_v2
@@ -2720,13 +2808,21 @@ async fn add_issues_v2_status_sequence_schema_invariants(pool: &PgPool) -> Resul
     if !column_exists(pool, "issues_v2", "status_sequence").await? {
         bail!("expected metis.issues_v2.status_sequence column to exist after rollforward");
     }
-    if !column_is_nullable(pool, "issues_v2", "status_sequence").await? {
-        bail!(
-            "expected metis.issues_v2.status_sequence to be nullable (FK + NOT NULL deferred to PR 3); \
-             got NOT NULL"
-        );
+    // Post-cutover (20260614000000), the column is tightened to
+    // NOT NULL and carries the FK to `metis.statuses`.
+    if column_is_nullable(pool, "issues_v2", "status_sequence").await? {
+        bail!("expected metis.issues_v2.status_sequence to be NOT NULL post-cutover; got nullable");
     }
-    // Confirm the supporting index landed for the join in PR 2/3.
+    if column_exists(pool, "issues_v2", "status").await? {
+        bail!("expected metis.issues_v2.status (TEXT) to be dropped post-cutover");
+    }
+    if column_exists(pool, "projects", "statuses").await? {
+        bail!("expected metis.projects.statuses (JSONB) to be dropped post-cutover");
+    }
+    if !column_exists(pool, "projects", "next_status_sequence").await? {
+        bail!("expected metis.projects.next_status_sequence to be added post-cutover");
+    }
+    // Confirm the supporting index for the JOIN landed.
     let row = sqlx::query(
         "SELECT EXISTS(SELECT 1 FROM pg_indexes \
          WHERE schemaname = 'metis' AND indexname = 'issues_v2_project_status_sequence_idx')",
@@ -2736,6 +2832,25 @@ async fn add_issues_v2_status_sequence_schema_invariants(pool: &PgPool) -> Resul
     let exists: bool = row.get(0);
     if !exists {
         bail!("expected metis.issues_v2_project_status_sequence_idx to exist after rollforward");
+    }
+    // Confirm the FK landed with the expected name and ON DELETE / ON
+    // UPDATE policy.
+    let row = sqlx::query(
+        "SELECT confdeltype, confupdtype FROM pg_constraint \
+         WHERE conname = 'issues_v2_status_sequence_fkey'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let row = row.context("expected FK 'issues_v2_status_sequence_fkey' to exist post-cutover")?;
+    let del_type: i8 = row.try_get("confdeltype")?;
+    let upd_type: i8 = row.try_get("confupdtype")?;
+    // 'r' = RESTRICT.
+    if del_type as u8 != b'r' || upd_type as u8 != b'r' {
+        bail!(
+            "FK issues_v2_status_sequence_fkey: expected ON DELETE/UPDATE RESTRICT; got del={} upd={}",
+            del_type as u8 as char,
+            upd_type as u8 as char
+        );
     }
     Ok(())
 }
@@ -2778,33 +2893,27 @@ async fn add_issues_v2_status_sequence_backfills_issues(pool: &PgPool) -> Result
             );
         }
     }
-    // Note: no catch-all NULL check post-rollforward. The migration body's
-    // `DO $$ ... RAISE EXCEPTION` already guarantees no pre-migration row
-    // remained NULL (otherwise the migration would have aborted before this
-    // test runs). `assert_store_level_smoke` inserts fresh rows through the
-    // Store layer *after* migrations roll forward, and the Store does not
-    // write `status_sequence` yet (PR 2 wires it up), so those rows
-    // legitimately sit at NULL until PR 3 tightens the column.
+    // Post-cutover (20260614000000), every issue row must have a
+    // non-NULL status_sequence (the column was tightened to NOT NULL
+    // after the catch-up backfill).
+    let row = sqlx::query("SELECT COUNT(*) FROM metis.issues_v2 WHERE status_sequence IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count NULL status_sequence rows post-cutover")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!(
+            "expected 0 metis.issues_v2 rows with NULL status_sequence post-cutover; got {count}"
+        );
+    }
     Ok(())
 }
 
 async fn create_statuses_migration_is_idempotent(pool: &PgPool) -> Result<()> {
-    // Re-applying the body must not produce duplicate `(project_id,
-    // sequence)` rows or duplicate `(project_id, key)` rows. (A new
-    // project inserted between runs — e.g. `j-rtrip` from
-    // `assert_recent_migration_data_shape` — *will* be picked up on
-    // re-apply, which is correct: that project's statuses weren't
-    // backfilled at initial migration time. Check for duplicates, not
-    // for a frozen row count.)
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations/20260613000000_create_statuses.sql"),
-    )
-    .context("read postgres create_statuses migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply postgres create_statuses migration body")?;
-
+    // PR 1's body sourced its INSERT from `metis.projects.statuses`
+    // JSONB. After 20260614000000_cutover_to_statuses_table dropped
+    // that column, re-executing the body verbatim errors. The
+    // duplicate-free invariant remains testable directly.
     let row = sqlx::query(
         "SELECT COUNT(*) - COUNT(DISTINCT (project_id, sequence)) AS dup FROM metis.statuses",
     )
@@ -2813,7 +2922,9 @@ async fn create_statuses_migration_is_idempotent(pool: &PgPool) -> Result<()> {
     .context("count duplicate (project_id, sequence) rows in metis.statuses")?;
     let dup: i64 = row.try_get("dup")?;
     if dup != 0 {
-        bail!("create_statuses re-apply produced {dup} duplicate (project_id, sequence) rows");
+        bail!(
+            "metis.statuses carries {dup} duplicate (project_id, sequence) rows post-rollforward"
+        );
     }
     let row = sqlx::query(
         "SELECT COUNT(*) - COUNT(DISTINCT (project_id, key)) AS dup FROM metis.statuses",
@@ -2823,94 +2934,21 @@ async fn create_statuses_migration_is_idempotent(pool: &PgPool) -> Result<()> {
     .context("count duplicate (project_id, key) rows in metis.statuses")?;
     let dup: i64 = row.try_get("dup")?;
     if dup != 0 {
-        bail!("create_statuses re-apply produced {dup} duplicate (project_id, key) rows");
+        bail!("metis.statuses carries {dup} duplicate (project_id, key) rows post-rollforward");
     }
     Ok(())
 }
 
 async fn add_issues_v2_status_sequence_migration_is_idempotent(pool: &PgPool) -> Result<()> {
-    // Snapshot every (id, version_number, status_sequence) row whose
-    // status_sequence was already backfilled (non-NULL) so we can
-    // confirm the re-application does not overwrite an existing
-    // sequence. (Post-rollforward INSERTs through the smoke creates
-    // can land issues with NULL status_sequence — the re-apply
-    // legitimately backfills those; the snapshot subset isolates the
-    // overwrite-detection.)
-    let before_rows = sqlx::query(
-        "SELECT id, version_number, status_sequence FROM metis.issues_v2 \
-         WHERE status_sequence IS NOT NULL ORDER BY id, version_number",
-    )
-    .fetch_all(pool)
-    .await
-    .context("snapshot non-NULL metis.issues_v2.status_sequence before idempotency rerun")?;
-    let before: Vec<(String, i64, i64)> = before_rows
-        .iter()
-        .map(|r| {
-            (
-                r.try_get::<String, _>("id").unwrap(),
-                r.try_get::<i64, _>("version_number").unwrap(),
-                r.try_get::<i64, _>("status_sequence").unwrap(),
-            )
-        })
-        .collect();
-
-    let body = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("migrations/20260613010000_add_issues_v2_status_sequence.sql"),
-    )
-    .context("read postgres add_issues_v2_status_sequence migration body for idempotency rerun")?;
-    sqlx::raw_sql(&body)
-        .execute(pool)
-        .await
-        .context("re-apply postgres add_issues_v2_status_sequence migration body")?;
-
-    // For the subset of rows that already had a non-NULL
-    // status_sequence before, the re-apply must leave the value
-    // untouched (the body's `WHERE status_sequence IS NULL` clause
-    // skips them).
-    let before_ids: Vec<String> = before.iter().map(|(id, _, _)| id.clone()).collect();
-    let before_versions: Vec<i64> = before.iter().map(|(_, v, _)| *v).collect();
-    let after_rows = sqlx::query(
-        "SELECT id, version_number, status_sequence FROM metis.issues_v2 \
-         WHERE (id, version_number) IN ( \
-             SELECT * FROM UNNEST($1::text[], $2::bigint[]) AS t(id, version_number) \
-         ) ORDER BY id, version_number",
-    )
-    .bind(&before_ids)
-    .bind(&before_versions)
-    .fetch_all(pool)
-    .await
-    .context("re-snapshot the same subset after idempotency rerun")?;
-    let after: Vec<(String, i64, Option<i64>)> = after_rows
-        .iter()
-        .map(|r| {
-            (
-                r.try_get::<String, _>("id").unwrap(),
-                r.try_get::<i64, _>("version_number").unwrap(),
-                r.try_get::<Option<i64>, _>("status_sequence").unwrap(),
-            )
-        })
-        .collect();
-    for ((bid, bv, bs), (aid, av, ass)) in before.iter().zip(after.iter()) {
-        if bid != aid || bv != av || Some(*bs) != *ass {
-            bail!(
-                "add_issues_v2_status_sequence re-apply overwrote previously-backfilled rows: \
-                 ({bid}, {bv}, {bs}) → ({aid}, {av}, {ass:?})"
-            );
-        }
-    }
-
-    // Pre-flight guard: no metis.issues_v2 row may remain with NULL
-    // status_sequence after the re-apply (the body's RAISE EXCEPTION
-    // would have aborted otherwise, but verify the post-state directly).
-    let row = sqlx::query("SELECT COUNT(*) FROM metis.issues_v2 WHERE status_sequence IS NULL")
-        .fetch_one(pool)
-        .await
-        .context("count NULL status_sequence rows after idempotency rerun")?;
-    let null_count: i64 = row.try_get(0)?;
-    if null_count != 0 {
-        bail!("add_issues_v2_status_sequence re-apply left {null_count} NULL status_sequence rows");
-    }
+    // PR 1's body relied on the legacy `metis.issues_v2.status` TEXT
+    // column for the join. After
+    // 20260614000000_cutover_to_statuses_table dropped that column
+    // and tightened `status_sequence` to NOT NULL, re-executing the
+    // body verbatim errors. The invariant that matters — "every
+    // post-cutover issue row has a non-NULL status_sequence" — is
+    // captured in `add_issues_v2_status_sequence_backfills_issues`
+    // above.
+    let _ = pool;
     Ok(())
 }
 

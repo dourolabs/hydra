@@ -328,12 +328,12 @@ mod tests {
         // live conversation.
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe").await;
-        let (project_id, interactive_key, _backlog_key) =
+        let (project_id, interactive_key, backlog_key) =
             seed_project_with_interactive(&state).await;
 
         let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
         issue.project_id = project_id;
-        issue.status = StatusKey::try_new("open").unwrap();
+        issue.status = backlog_key.clone();
         let (issue_id, _) = state
             .store
             .add_issue_with_actor(issue.clone(), ActorRef::test())
