@@ -372,9 +372,8 @@ impl ListProjectsResponse {
     }
 }
 
-/// Response body for `GET /v1/projects/:id/statuses` and
-/// `GET /v1/projects/default/statuses`. Returned as an ordered list
-/// matching the project's declaration order.
+/// Response body for `GET /v1/projects/:id/statuses`. Returned as an
+/// ordered list matching the project's declaration order.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

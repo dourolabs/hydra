@@ -1,15 +1,11 @@
 //! HTTP routes for `/v1/projects`.
 //!
 //! Exposes project CRUD plus the per-project status set (the wire shape
-//! every issue's `resolved_status` is computed against). The `default`
-//! path token is resolved through the same store fetch as any other
-//! project, using the stable `default_project_id()` constant (the SQL
-//! migrations seed the row; `MemoryStore::new` mirrors it in-process).
-//! Auth + error mapping follow the existing `/v1/labels` pattern.
+//! every issue's `resolved_status` is computed against). Auth + error
+//! mapping follow the existing `/v1/labels` pattern.
 
 use crate::app::AppState;
 use crate::domain::actors::{Actor, ActorRef};
-use crate::domain::projects::{DEFAULT_PROJECT_KEY, default_project_id};
 use crate::store::{ReadOnlyStore, StoreError};
 use anyhow::anyhow;
 use axum::{
@@ -71,38 +67,29 @@ pub async fn list_projects(
     Ok(Json(ListProjectsResponse::new(projects)))
 }
 
-/// GET /v1/projects/:project_id — fetch a single project. The literal
-/// path `default` resolves to the seeded default project via the store
-/// just like any other project id.
+/// GET /v1/projects/:project_id — fetch a single project.
 pub async fn get_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Path(project_id): Path<String>,
+    Path(project_id): Path<ProjectId>,
 ) -> Result<Json<ProjectRecord>, ApiError> {
     info!(actor = %actor.name(), project_id = %project_id, "get_project invoked");
 
-    let project_id_typed = if project_id == DEFAULT_PROJECT_KEY {
-        default_project_id()
-    } else {
-        ProjectId::try_from(project_id.clone())
-            .map_err(|e| ApiError::bad_request(format!("invalid project id '{project_id}': {e}")))?
-    };
-
     let store: &dyn ReadOnlyStore = state.store.as_ref();
     let versioned = store
-        .get_project(&project_id_typed, false)
+        .get_project(&project_id, false)
         .await
-        .map_err(|e| map_project_not_found(e, &project_id_typed))?;
+        .map_err(|e| map_project_not_found(e, &project_id))?;
 
     info!(
         actor = %actor.name(),
-        project_id = %project_id_typed,
+        project_id = %project_id,
         version = versioned.version,
         "get_project completed"
     );
 
     Ok(Json(ProjectRecord::new(
-        project_id_typed,
+        project_id,
         versioned.version,
         versioned.item,
     )))
@@ -166,28 +153,21 @@ pub async fn delete_project(
 pub async fn get_project_statuses(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Path(project_id): Path<String>,
+    Path(project_id): Path<ProjectId>,
 ) -> Result<Json<ProjectStatusesResponse>, ApiError> {
     info!(actor = %actor.name(), project_id = %project_id, "get_project_statuses invoked");
 
-    let project_id_typed = if project_id == DEFAULT_PROJECT_KEY {
-        default_project_id()
-    } else {
-        ProjectId::try_from(project_id.clone())
-            .map_err(|e| ApiError::bad_request(format!("invalid project id '{project_id}': {e}")))?
-    };
-
     let store: &dyn ReadOnlyStore = state.store.as_ref();
     let versioned = store
-        .get_project(&project_id_typed, false)
+        .get_project(&project_id, false)
         .await
-        .map_err(|e| map_project_not_found(e, &project_id_typed))?;
+        .map_err(|e| map_project_not_found(e, &project_id))?;
 
     let response = ProjectStatusesResponse::new(versioned.item.statuses.clone());
 
     info!(
         actor = %actor.name(),
-        project_id = %project_id_typed,
+        project_id = %project_id,
         count = response.statuses.len(),
         "get_project_statuses completed"
     );

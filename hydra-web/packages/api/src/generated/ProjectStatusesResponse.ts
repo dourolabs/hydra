@@ -2,10 +2,7 @@
 import type { StatusDefinition } from "./StatusDefinition";
 
 /**
- * Response body for `GET /v1/projects/:id/statuses` and
- * `GET /v1/projects/default/statuses`. Returned as an ordered list
- * matching the project's declaration order.
+ * Response body for `GET /v1/projects/:id/statuses`. Returned as an
+ * ordered list matching the project's declaration order.
  */
-export type ProjectStatusesResponse = {
-  statuses: Array<StatusDefinition>;
-};
+export type ProjectStatusesResponse = { statuses: Array<StatusDefinition> };

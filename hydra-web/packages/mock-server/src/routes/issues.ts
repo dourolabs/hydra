@@ -73,9 +73,6 @@ export function createIssueRoutes(store: Store): Hono {
     const id = generateId("issue");
     const issue: Issue = {
       ...body.issue,
-      // Wire `IssueInput.project_id` is optional for back-compat; the
-      // real server substitutes the seeded default project — mirror it.
-      project_id: body.issue.project_id ?? "j-defaul",
       dependencies: body.issue.dependencies ?? [],
       patches: body.issue.patches ?? [],
     };
@@ -99,7 +96,6 @@ export function createIssueRoutes(store: Store): Hono {
     const body = await c.req.json<UpsertIssueRequest>();
     const issue: Issue = {
       ...body.issue,
-      project_id: body.issue.project_id ?? "j-defaul",
       dependencies: body.issue.dependencies ?? [],
       patches: body.issue.patches ?? [],
     };

@@ -136,7 +136,8 @@ async fn events_endpoint_streams_issue_mutations() -> anyhow::Result<()> {
                 "description": "test issue for SSE",
                 "creator": "tester",
                 "progress": "",
-                "status": "open"
+                "status": "open",
+                "project_id": "j-defaul"
             }
         }))
         .send()
@@ -174,7 +175,8 @@ async fn events_endpoint_sends_resync_on_reconnect() -> anyhow::Result<()> {
                 "description": "advance seq",
                 "creator": "tester",
                 "progress": "",
-                "status": "open"
+                "status": "open",
+                "project_id": "j-defaul"
             }
         }))
         .send()
@@ -322,7 +324,8 @@ async fn events_endpoint_filters_by_entity_type() -> anyhow::Result<()> {
                 "description": "should be filtered out",
                 "creator": "tester",
                 "progress": "",
-                "status": "open"
+                "status": "open",
+                "project_id": "j-defaul"
             }
         }))
         .send()

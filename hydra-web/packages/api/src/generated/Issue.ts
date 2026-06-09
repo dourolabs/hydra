@@ -29,8 +29,7 @@ export type Issue = {
    * `seed_default_project` migration backfilled every legacy NULL row
    * to the seeded `j-defaul` project, and the
    * `issues_v2_project_id_not_null` migration enforces NOT NULL at the
-   * DB layer. Create-side back-compat for older clients that omit
-   * `project_id` lives on [`IssueInput`].
+   * DB layer.
    */
   project_id: ProjectId;
   /**

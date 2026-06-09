@@ -13,11 +13,8 @@ import type { Username } from "./Username";
 /**
  * Request shape for create / update issue endpoints.
  *
- * Mirrors the wire [`Issue`] field set but with `project_id` as
- * `Option<ProjectId>` so older clients that omit the field still
- * deserialize. The route handler substitutes the seeded default
- * project ID when None before handing off to the domain layer. Drops
- * `resolved_status` (server-computed; never accepted on requests).
+ * Mirrors the wire [`Issue`] field set but drops `resolved_status`
+ * (server-computed; never accepted on requests).
  */
 export type IssueInput = {
   type: IssueType;
@@ -26,12 +23,7 @@ export type IssueInput = {
   creator: Username;
   progress: string;
   status: StatusKey;
-  /**
-   * Optional on the wire for back-compat with clients that pre-date
-   * the per-project issue-status work; the server substitutes the
-   * seeded default project ID when None.
-   */
-  project_id?: ProjectId | null;
+  project_id: ProjectId;
   assignee?: Principal | null;
   session_settings?: SessionSettings;
   dependencies: Array<IssueDependency>;

@@ -73,6 +73,7 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
           creator: params.creator,
           progress: "",
           status: "open",
+          project_id: "j-defaul",
           dependencies: [],
           patches: [],
           ...(params.assignee && { assignee: params.assignee }),
