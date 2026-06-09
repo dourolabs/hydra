@@ -83,22 +83,30 @@ impl AppState {
         &self,
         issue: &Issue,
     ) -> Result<StatusDefinition, ResolveStatusError> {
-        let key =
-            StatusKey::try_new(issue.status.as_str()).map_err(ResolveStatusError::InvalidKey)?;
-        let project_id = issue.project_id.clone();
-        let store: &dyn ReadOnlyStore = self.store.as_ref();
-        let project = match store.get_project(&project_id, false).await {
-            Ok(versioned) => versioned.item,
-            Err(StoreError::ProjectNotFound(_)) => {
-                return Err(ResolveStatusError::ProjectNotFound(project_id));
-            }
-            Err(err) => return Err(ResolveStatusError::Store(err)),
-        };
-        project
-            .find_status(&key)
-            .cloned()
-            .ok_or(ResolveStatusError::UnknownStatus(key))
+        resolve_status_via_store(self.store.as_ref(), issue).await
     }
+}
+
+/// Free-function variant of [`AppState::resolve_status`] for callers that
+/// hold a [`ReadOnlyStore`] but not a full [`AppState`] (e.g. restrictions
+/// evaluated through [`crate::policy::context::RestrictionContext`]).
+pub async fn resolve_status_via_store(
+    store: &dyn ReadOnlyStore,
+    issue: &Issue,
+) -> Result<StatusDefinition, ResolveStatusError> {
+    let key = StatusKey::try_new(issue.status.as_str()).map_err(ResolveStatusError::InvalidKey)?;
+    let project_id = issue.project_id.clone();
+    let project = match store.get_project(&project_id, false).await {
+        Ok(versioned) => versioned.item,
+        Err(StoreError::ProjectNotFound(_)) => {
+            return Err(ResolveStatusError::ProjectNotFound(project_id));
+        }
+        Err(err) => return Err(ResolveStatusError::Store(err)),
+    };
+    project
+        .find_status(&key)
+        .cloned()
+        .ok_or(ResolveStatusError::UnknownStatus(key))
 }
 
 #[cfg(test)]

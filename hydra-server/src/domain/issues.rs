@@ -255,17 +255,6 @@ impl Issue {
             feedback,
         }
     }
-
-    /// Legacy adapter: parse the wire status string back to the
-    /// closed [`IssueStatus`] enum.
-    ///
-    /// Returns `None` for custom statuses defined on a project outside
-    /// the default project. Used by PR 3 consumer code that still
-    /// pattern-matches on [`IssueStatus`]; PR 4 replaces these call
-    /// sites with `AppState::resolve_status` flag reads.
-    pub fn status_as_legacy(&self) -> Option<IssueStatus> {
-        IssueStatus::from_str(self.status.as_str()).ok()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

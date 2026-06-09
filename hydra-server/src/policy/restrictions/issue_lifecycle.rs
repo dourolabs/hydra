@@ -1,9 +1,13 @@
 use async_trait::async_trait;
 
-use crate::domain::issues::{IssueDependencyType, IssueStatus};
+use crate::app::projects::resolve_status_via_store;
+use crate::domain::issues::{Issue, IssueDependencyType};
 use crate::policy::context::{OperationPayload, RestrictionContext};
 use crate::policy::{PolicyViolation, Restriction};
+use crate::store::ReadOnlyStore;
 use hydra_common::issues::IssueId;
+
+const RESTRICTION_NAME: &str = "issue_lifecycle_validation";
 
 /// Validates issue lifecycle constraints when closing:
 /// - All blockers must be in a terminal state
@@ -20,7 +24,7 @@ impl IssueLifecycleRestriction {
 #[async_trait]
 impl Restriction for IssueLifecycleRestriction {
     fn name(&self) -> &str {
-        "issue_lifecycle_validation"
+        RESTRICTION_NAME
     }
 
     async fn evaluate(&self, ctx: &RestrictionContext<'_>) -> Result<(), PolicyViolation> {
@@ -28,8 +32,23 @@ impl Restriction for IssueLifecycleRestriction {
             return Ok(());
         };
 
-        // Only validate when closing (PR 4 will swap in `resolve_status` flag reads).
-        if new.status_as_legacy() != Some(IssueStatus::Closed) {
+        // Only validate when the proposed status unblocks dependents — i.e.
+        // the success-close lane. Dropped/Failed leave `unblocks_dependents`
+        // false, so this restriction lets those through (matching the
+        // legacy `IssueStatus::Closed`-only gate).
+        let resolved_new = match resolve_status_via_store(ctx.store, new).await {
+            Ok(def) => def,
+            Err(err) => {
+                tracing::warn!(
+                    restriction = RESTRICTION_NAME,
+                    status = %new.status,
+                    error = %err,
+                    "issue_lifecycle_validation: failed to resolve new status; skipping validation"
+                );
+                return Ok(());
+            }
+        };
+        if !resolved_new.unblocks_dependents {
             return Ok(());
         }
 
@@ -45,14 +64,11 @@ impl Restriction for IssueLifecycleRestriction {
                 .get_issue(&dependency.issue_id, false)
                 .await
                 .map_err(|e| PolicyViolation {
-                    policy_name: self.name().to_string(),
+                    policy_name: RESTRICTION_NAME.to_string(),
                     message: format!("Failed to look up blocker {}: {e}", dependency.issue_id),
                 })?;
 
-            if !matches!(
-                blocker.item.status_as_legacy(),
-                Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed)
-            ) {
+            if !is_terminal(ctx.store, &blocker.item, "blocker", &dependency.issue_id).await {
                 open_blockers.push(dependency.issue_id.clone());
             }
         }
@@ -64,7 +80,7 @@ impl Restriction for IssueLifecycleRestriction {
                     .get_issue_children(issue_id)
                     .await
                     .map_err(|e| PolicyViolation {
-                        policy_name: self.name().to_string(),
+                        policy_name: RESTRICTION_NAME.to_string(),
                         message: format!("Failed to look up children of {issue_id}: {e}"),
                     })?;
 
@@ -75,13 +91,10 @@ impl Restriction for IssueLifecycleRestriction {
                         .get_issue(&child_id, false)
                         .await
                         .map_err(|e| PolicyViolation {
-                            policy_name: self.name().to_string(),
+                            policy_name: RESTRICTION_NAME.to_string(),
                             message: format!("Failed to look up child issue {child_id}: {e}"),
                         })?;
-                if !matches!(
-                    child.item.status_as_legacy(),
-                    Some(IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed)
-                ) {
+                if !is_terminal(ctx.store, &child.item, "child", &child_id).await {
                     open_children.push(child_id);
                 }
             }
@@ -89,7 +102,7 @@ impl Restriction for IssueLifecycleRestriction {
             if !open_children.is_empty() {
                 let ids = join_issue_ids(&open_children);
                 return Err(PolicyViolation {
-                    policy_name: self.name().to_string(),
+                    policy_name: RESTRICTION_NAME.to_string(),
                     message: format!("cannot close issue with open child issues: {ids}"),
                 });
             }
@@ -99,12 +112,38 @@ impl Restriction for IssueLifecycleRestriction {
         if !open_blockers.is_empty() {
             let ids = join_issue_ids(&open_blockers);
             return Err(PolicyViolation {
-                policy_name: self.name().to_string(),
+                policy_name: RESTRICTION_NAME.to_string(),
                 message: format!("blocked issues cannot close until blockers are closed: {ids}"),
             });
         }
 
         Ok(())
+    }
+}
+
+/// Resolve the status of a related issue (blocker or child) and report
+/// whether it counts as terminal for lifecycle gating. Unresolvable
+/// statuses are conservatively treated as non-terminal (still blocking),
+/// with a warn so operators can spot misconfigurations.
+async fn is_terminal(
+    store: &dyn ReadOnlyStore,
+    issue: &Issue,
+    kind: &'static str,
+    issue_id: &IssueId,
+) -> bool {
+    match resolve_status_via_store(store, issue).await {
+        Ok(def) => def.unblocks_parents,
+        Err(err) => {
+            tracing::warn!(
+                restriction = RESTRICTION_NAME,
+                kind,
+                issue_id = %issue_id,
+                status = %issue.status,
+                error = %err,
+                "issue_lifecycle_validation: failed to resolve related issue status; treating as still-blocking"
+            );
+            false
+        }
     }
 }
 
@@ -118,7 +157,7 @@ fn join_issue_ids(ids: &[IssueId]) -> String {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{Issue, IssueDependency, IssueType};
+    use crate::domain::issues::{Issue, IssueDependency, IssueStatus, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
