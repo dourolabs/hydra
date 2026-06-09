@@ -450,6 +450,59 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    // POST /v1/projects/:project_ref/statuses
+    let project_status_create_path = project_statuses_path.clone();
+    let project_id_for_status_post = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path(project_status_create_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_status_post,
+            "version": 3,
+            "status": {
+                "key": "open",
+                "label": "Open",
+                "color": "#abcdef",
+                "unblocks_parents": false,
+                "unblocks_dependents": false,
+                "cascades_to_children": false,
+                "future": "field"
+            },
+            "extra": "create-status"
+        }));
+    });
+
+    // PUT /v1/projects/:project_ref/statuses/:status_key
+    let project_status_update_path = format!("{project_statuses_path}/open");
+    let project_id_for_status_put = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(project_status_update_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_status_put,
+            "version": 4,
+            "status": {
+                "key": "open",
+                "label": "Renamed",
+                "color": "#abcdef",
+                "unblocks_parents": false,
+                "unblocks_dependents": false,
+                "cascades_to_children": false,
+            },
+            "extra": "update-status"
+        }));
+    });
+
+    // DELETE /v1/projects/:project_ref/statuses/:status_key
+    let project_status_delete_path = format!("{project_statuses_path}/open");
+    let project_id_for_status_delete = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(project_status_delete_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_status_delete,
+            "version": 5,
+            "extra": "delete-status"
+        }));
+    });
+
     server.mock(|when, then| {
         when.method(GET).path("/v1/github/app/client-id");
         then.status(200)
