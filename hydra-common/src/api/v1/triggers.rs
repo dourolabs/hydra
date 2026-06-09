@@ -90,9 +90,8 @@ pub enum Action {
 /// `title`, `description`, and `assignee` are template strings rendered
 /// through [`render`]. `assignee` is parsed as a `Principal` after
 /// rendering. Both `project_id` and `status` are required on the wire —
-/// no defaults, no inference. A persisted trigger row that pre-dates this
-/// requirement will fail to deserialize on next read; that is the
-/// explicit fail-loud outcome agreed with the deletion of `IssueStatus`.
+/// no defaults, no inference. A persisted trigger row missing either
+/// field will fail to deserialize on next read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
