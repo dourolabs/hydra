@@ -589,18 +589,29 @@ impl UpsertIssueRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Response shape for the create / update issue endpoints.
+///
+/// Carries the resolved [`Issue`] (with status definition inlined) so
+/// callers don't have to follow up with a `GET` to render the result.
+/// The server builds it via the same `build_issue_response` helper used
+/// by `GET /v1/issues/:id`, guaranteeing the wire shape matches.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertIssueResponse {
     pub issue_id: IssueId,
     pub version: VersionNumber,
+    pub issue: Issue,
 }
 
 impl UpsertIssueResponse {
-    pub fn new(issue_id: IssueId, version: VersionNumber) -> Self {
-        Self { issue_id, version }
+    pub fn new(issue_id: IssueId, version: VersionNumber, issue: Issue) -> Self {
+        Self {
+            issue_id,
+            version,
+            issue,
+        }
     }
 }
 

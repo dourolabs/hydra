@@ -4,8 +4,6 @@ import { generateId } from "../id.js";
 import type {
   Issue,
   IssueInput,
-  StatusDefinition,
-  StatusKey,
   UpsertIssueRequest,
   UpsertIssueResponse,
   IssueVersionRecord,
@@ -15,28 +13,13 @@ import type {
   IssueSummary,
 } from "@hydra/api";
 import { getLabelsForObject, resolveLabelNames } from "./labels.js";
+import { resolveStatusDef } from "../statusResolver.js";
 
-/** Synthesize a [`StatusDefinition`] for a known key. The mock server
- *  doesn't track per-project status lists, so it stamps placeholder
- *  display props (empty label, neutral color). Real server responses
- *  inline the project's authoritative `StatusDefinition`.
- */
-function placeholderStatusDef(key: StatusKey): StatusDefinition {
-  return {
-    key,
-    label: "",
-    color: "#888888",
-    unblocks_parents: false,
-    unblocks_dependents: false,
-    cascades_to_children: false,
-  };
-}
-
-function inputToIssue(input: IssueInput): Issue {
+function inputToIssue(store: Store, input: IssueInput): Issue {
   const { status, ...rest } = input;
   return {
     ...rest,
-    status: placeholderStatusDef(status),
+    status: resolveStatusDef(store, input.project_id, status),
     dependencies: input.dependencies ?? [],
     patches: input.patches ?? [],
   };
@@ -99,7 +82,7 @@ export function createIssueRoutes(store: Store): Hono {
   app.post("/v1/issues", async (c) => {
     const body = await c.req.json<UpsertIssueRequest>();
     const id = generateId("issue");
-    const issue: Issue = inputToIssue(body.issue);
+    const issue: Issue = inputToIssue(store, body.issue);
     const entry = store.create<Issue>(COLLECTION, id, issue, SSE_PREFIX);
 
     // Resolve label_names: create missing labels and associate them with the issue
@@ -110,6 +93,7 @@ export function createIssueRoutes(store: Store): Hono {
     const resp: UpsertIssueResponse = {
       issue_id: id,
       version: BigInt(entry.version),
+      issue,
     };
     return c.json(resp, 201);
   });
@@ -118,11 +102,12 @@ export function createIssueRoutes(store: Store): Hono {
   app.put("/v1/issues/:id", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<UpsertIssueRequest>();
-    const issue: Issue = inputToIssue(body.issue);
+    const issue: Issue = inputToIssue(store, body.issue);
     const entry = store.update<Issue>(COLLECTION, id, issue, SSE_PREFIX);
     const resp: UpsertIssueResponse = {
       issue_id: id,
       version: BigInt(entry.version),
+      issue,
     };
     return c.json(resp);
   });

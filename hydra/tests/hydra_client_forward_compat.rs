@@ -188,20 +188,28 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     });
 
     let issue_id_for_create_clone = issue_id_for_create.clone();
+    let issue_record_for_create = issue_record_body.clone();
     server.mock(move |when, then| {
         when.method(POST).path("/v1/issues");
-        then.status(200).json_body(
-            json!({ "issue_id": issue_id_for_create_clone, "version": 0, "extra": "create-issue" }),
-        );
+        then.status(200).json_body(json!({
+            "issue_id": issue_id_for_create_clone,
+            "version": 0,
+            "issue": issue_record_for_create["issue"].clone(),
+            "extra": "create-issue",
+        }));
     });
 
     let issue_update_path = issue_path.clone();
     let issue_id_for_update_clone = issue_id_for_update.clone();
+    let issue_record_for_update = issue_record_body.clone();
     server.mock(move |when, then| {
         when.method(PUT).path(issue_update_path.as_str());
-        then.status(200).json_body(
-            json!({ "issue_id": issue_id_for_update_clone, "version": 1, "future": true }),
-        );
+        then.status(200).json_body(json!({
+            "issue_id": issue_id_for_update_clone,
+            "version": 1,
+            "issue": issue_record_for_update["issue"].clone(),
+            "future": true,
+        }));
     });
 
     let issue_get_path = issue_path.clone();

@@ -81,9 +81,10 @@ pub async fn create_issue(
         .await
         .map_err(map_upsert_issue_error)?;
 
+    let api_issue = load_api_issue(&state, &issue_id).await?;
     info!(issue_id = %issue_id, "create_issue completed");
     Ok(Json(api_issues::UpsertIssueResponse::new(
-        issue_id, version,
+        issue_id, version, api_issue,
     )))
 }
 
@@ -99,10 +100,22 @@ pub async fn update_issue(
         .await
         .map_err(map_upsert_issue_error)?;
 
+    let api_issue = load_api_issue(&state, &issue_id).await?;
     info!(issue_id = %issue_id, "update_issue completed");
     Ok(Json(api_issues::UpsertIssueResponse::new(
-        issue_id, version,
+        issue_id, version, api_issue,
     )))
+}
+
+async fn load_api_issue(
+    state: &AppState,
+    issue_id: &IssueId,
+) -> Result<api_issues::Issue, ApiError> {
+    let issue = state
+        .get_issue(issue_id, true)
+        .await
+        .map_err(|err| map_issue_error(err, Some(issue_id)))?;
+    build_issue_response(state, issue.item).await
 }
 
 pub async fn get_issue(

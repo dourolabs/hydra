@@ -15,38 +15,19 @@ use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
-    api::v1::projects::{StatusDefinition, StatusKey},
+    api::v1::projects::StatusKey,
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueId, IssueSummaryRecord, IssueType,
+        IssueDependency, IssueDependencyType, IssueId, IssueInput, IssueSummaryRecord, IssueType,
         IssueVersionRecord, SearchIssuesQuery, SessionSettings, SubmitFormRequest,
         UpsertIssueRequest,
     },
     principal::{Principal, PrincipalParseError},
     users::Username,
-    HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName, Rgb,
+    HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
 };
 use std::str::FromStr;
-
-/// Synthesize a [`StatusDefinition`] for a known status key. CLI write
-/// paths build display-only [`Issue`] records from request payloads
-/// (which carry only [`StatusKey`]), so they fill in display props with
-/// placeholder values rather than round-tripping to the server for
-/// resolution. Pretty rendering only reads `status.key`, and the
-/// conversion back to [`hydra_common::issues::IssueInput`] for the wire
-/// drops everything but the key.
-pub(crate) fn placeholder_status_def(key: StatusKey) -> StatusDefinition {
-    StatusDefinition::new(
-        key,
-        String::new(),
-        Rgb::try_from("#888888".to_string()).expect("well-formed default rgb"),
-        false,
-        false,
-        false,
-        None,
-    )
-}
 
 /// clap value parser for `--assignee`. Phase 4b requires the full
 /// canonical path form (`users/<name>`, `agents/<name>`, or
@@ -937,13 +918,13 @@ async fn create_issue(
     let job_settings = (job_settings_requested || !SessionSettings::is_default(&job_settings))
         .then_some(job_settings);
 
-    let issue = Issue::new(
+    let input = IssueInput::new(
         issue_type,
         title,
         description.to_string(),
         creator,
         progress,
-        placeholder_status_def(status),
+        status,
         project_id.unwrap_or_else(ProjectId::default_project),
         assignee,
         job_settings,
@@ -954,7 +935,7 @@ async fn create_issue(
         None,
         feedback,
     );
-    let mut request = UpsertIssueRequest::new(issue.clone().into(), None);
+    let mut request = UpsertIssueRequest::new(input, None);
     let label_names: Vec<String> = labels
         .into_iter()
         .map(|s| s.trim().to_string())
@@ -973,7 +954,7 @@ async fn create_issue(
         response.issue_id,
         response.version,
         Utc::now(),
-        issue,
+        response.issue,
         None,
         Utc::now(),
         Vec::new(),
@@ -1141,15 +1122,13 @@ async fn update_issue(
 
     let result = if issue_fields_changed {
         let project_id = project.unwrap_or(current.issue.project_id);
-        let updated_issue = Issue::new(
+        let input = IssueInput::new(
             issue_type.unwrap_or(current.issue.issue_type),
             title.unwrap_or(current.issue.title),
             description.unwrap_or(current.issue.description),
             current.issue.creator,
             progress_update.unwrap_or(current.issue.progress),
-            status
-                .map(placeholder_status_def)
-                .unwrap_or(current.issue.status),
+            status.unwrap_or(current.issue.status.key),
             project_id,
             assignee.unwrap_or(current.issue.assignee),
             job_settings,
@@ -1162,10 +1141,7 @@ async fn update_issue(
         );
 
         let response = client
-            .update_issue(
-                &issue_id,
-                &UpsertIssueRequest::new(updated_issue.clone().into(), None),
-            )
+            .update_issue(&issue_id, &UpsertIssueRequest::new(input, None))
             .await
             .with_context(|| format!("failed to update issue '{issue_id}'"))?;
 
@@ -1173,7 +1149,7 @@ async fn update_issue(
             response.issue_id,
             response.version,
             Utc::now(),
-            updated_issue,
+            response.issue,
             None,
             Utc::now(),
             Vec::new(),
@@ -1341,6 +1317,7 @@ mod tests {
     use super::*;
     use crate::client::HydraClient;
     use crate::test_utils::ids::{issue_id, patch_id};
+    use crate::test_utils::status::make_status_def;
     use chrono::Utc;
     use httpmock::prelude::*;
     use hydra_common::issues::{
@@ -1355,6 +1332,30 @@ mod tests {
 
     fn sample_repo_name() -> RepoName {
         RepoName::from_str("dourolabs/example").unwrap()
+    }
+
+    /// Minimal [`Issue`] used as the `issue` payload of stub
+    /// [`UpsertIssueResponse`] bodies. Tests that don't inspect the
+    /// returned record only need a well-formed shape; the status is
+    /// always `open` for the default project.
+    fn stub_response_issue() -> Issue {
+        Issue::new(
+            IssueType::Task,
+            String::new(),
+            String::new(),
+            empty_user(),
+            String::new(),
+            make_status_def(IssueStatus::Open.into()),
+            ProjectId::default_project(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            false,
+            None,
+            None,
+            None,
+        )
     }
 
     fn sample_job_settings() -> SessionSettings {
@@ -1408,7 +1409,7 @@ mod tests {
                 description.into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(status.into()),
+                make_status_def(status.into()),
                 ProjectId::default_project(),
                 assignee.map(user_principal),
                 None,
@@ -1440,7 +1441,7 @@ mod tests {
                     "First issue".into(),
                     empty_user(),
                     String::new(),
-                    placeholder_status_def(IssueStatus::Open.into()),
+                    make_status_def(IssueStatus::Open.into()),
                     ProjectId::default_project(),
                     None,
                     None,
@@ -1510,7 +1511,7 @@ mod tests {
                 "Edge case bug".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::InProgress.into()),
+                make_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -1566,7 +1567,7 @@ mod tests {
                     "Edge case bug".into(),
                     empty_user(),
                     String::new(),
-                    placeholder_status_def(IssueStatus::Open.into()),
+                    make_status_def(IssueStatus::Open.into()),
                     ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
@@ -1621,7 +1622,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                placeholder_status_def(IssueStatus::Closed.into()),
+                make_status_def(IssueStatus::Closed.into()),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 None,
@@ -1639,8 +1640,11 @@ mod tests {
             when.method(POST)
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456"), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                issue_id("i-456"),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         create_issue(
@@ -1692,7 +1696,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                placeholder_status_def(IssueStatus::Closed.into()),
+                make_status_def(IssueStatus::Closed.into()),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 Some(job_settings.clone()),
@@ -1710,8 +1714,11 @@ mod tests {
             when.method(POST)
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-456"), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                issue_id("i-456"),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         create_issue(
@@ -1766,7 +1773,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -1793,7 +1800,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
@@ -1811,8 +1818,11 @@ mod tests {
             when.method(POST)
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                issue_id("i-new"),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         create_issue(
@@ -1869,7 +1879,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -1902,7 +1912,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(expected_settings.clone()),
@@ -1920,8 +1930,11 @@ mod tests {
             when.method(POST)
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-new"), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                issue_id("i-new"),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         create_issue(
@@ -1971,7 +1984,7 @@ mod tests {
                 "Issue with secrets".into(),
                 Username::from("creator-a"),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(job_settings.clone()),
@@ -1989,8 +2002,11 @@ mod tests {
             when.method(POST)
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-secrets"), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                issue_id("i-secrets"),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         create_issue(
@@ -2042,7 +2058,7 @@ mod tests {
                 "Parent issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -2069,7 +2085,7 @@ mod tests {
                 "Child issue".into(),
                 Username::from("creator-a"),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
@@ -2087,8 +2103,11 @@ mod tests {
             when.method(POST)
                 .path("/v1/issues")
                 .json_body_obj(&create_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(issue_id("i-child"), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                issue_id("i-child"),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         create_issue(
@@ -2223,7 +2242,7 @@ mod tests {
                 "Updated issue description".into(),
                 empty_user(),
                 "New progress".into(),
-                placeholder_status_def(IssueStatus::Closed.into()),
+                make_status_def(IssueStatus::Closed.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-b")),
                 Some(job_settings.clone()),
@@ -2249,8 +2268,11 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&updated_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                target_issue_id.clone(),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         update_issue(
@@ -2312,7 +2334,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                placeholder_status_def(IssueStatus::InProgress.into()),
+                make_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
@@ -2337,7 +2359,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::InProgress.into()),
+                make_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2360,8 +2382,11 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                target_issue_id.clone(),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         update_issue(
@@ -2421,7 +2446,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                placeholder_status_def(IssueStatus::InProgress.into()),
+                make_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 Some(job_settings),
@@ -2446,7 +2471,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                placeholder_status_def(IssueStatus::InProgress.into()),
+                make_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
@@ -2472,8 +2497,11 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                target_issue_id.clone(),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         update_issue(
@@ -2532,7 +2560,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2556,7 +2584,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(expected_settings),
@@ -2579,8 +2607,11 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                target_issue_id.clone(),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         update_issue(
@@ -2641,7 +2672,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(existing_settings),
@@ -2663,7 +2694,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                placeholder_status_def(IssueStatus::Open.into()),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(SessionSettings::default()),
@@ -2686,8 +2717,11 @@ mod tests {
             when.method(PUT)
                 .path(format!("/v1/issues/{target_issue_id}").as_str())
                 .json_body_obj(&update_request);
-            then.status(200)
-                .json_body_obj(&UpsertIssueResponse::new(target_issue_id.clone(), 0));
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                target_issue_id.clone(),
+                0,
+                stub_response_issue(),
+            ));
         });
 
         update_issue(
@@ -2744,7 +2778,7 @@ mod tests {
                     "First issue\nwith context".into(),
                     empty_user(),
                     "Working on repro".into(),
-                    placeholder_status_def(IssueStatus::Open.into()),
+                    make_status_def(IssueStatus::Open.into()),
                     ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
@@ -2772,7 +2806,7 @@ mod tests {
                     "Follow-up work".into(),
                     empty_user(),
                     String::new(),
-                    placeholder_status_def(IssueStatus::InProgress.into()),
+                    make_status_def(IssueStatus::InProgress.into()),
                     ProjectId::default_project(),
                     None,
                     None,

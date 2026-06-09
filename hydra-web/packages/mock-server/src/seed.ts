@@ -147,41 +147,56 @@ function seedVersionedEntity<TFixture extends object, TStored extends object = T
   store.seedVersion<TStored>(collection, id, finalize(current), finalTimestamp);
 }
 
-function placeholderStatusDef(key: string): StatusDefinition {
-  return {
-    key,
-    label: "",
-    color: "#888888",
-    unblocks_parents: false,
-    unblocks_dependents: false,
-    cascades_to_children: false,
-  };
-}
-
-function normalizeIssue(
+function makeIssueNormalizer(
+  projects: Record<string, Project> | undefined,
+): (
   issue: Omit<Issue, "status"> & {
     status: string | StatusDefinition;
     resolved_status?: StatusDefinition | null;
   },
-): Issue {
-  // The legacy fixture shape carries the bare key on `status` and the
-  // resolved `StatusDefinition` on `resolved_status`. Lift the
-  // definition onto `status` (collapsing the two fields), falling back
-  // to a placeholder when no definition was provided.
-  const resolved =
-    typeof issue.status === "string"
-      ? issue.resolved_status ?? placeholderStatusDef(issue.status)
-      : issue.status;
-  return {
-    ...issue,
-    status: resolved,
+) => Issue {
+  return (issue) => {
     // Backfill `project_id` for legacy seed fixtures that pre-date the
     // wire-side NOT NULL tightening — the mirror of the
     // `seed_default_project` backfill on real DBs.
-    project_id: issue.project_id ?? "j-defaul",
-    dependencies: issue.dependencies ?? [],
-    patches: issue.patches ?? [],
+    const project_id = issue.project_id ?? "j-defaul";
+    // The legacy fixture shape carries the bare key on `status` and
+    // (optionally) the resolved `StatusDefinition` on `resolved_status`.
+    // Prefer an inline definition when the fixture provides one;
+    // otherwise resolve `(project_id, key)` against the seed's project
+    // status list — mirroring `AppState::resolve_status` server-side.
+    const resolved: StatusDefinition =
+      typeof issue.status !== "string"
+        ? issue.status
+        : (issue.resolved_status ?? resolveSeedStatus(projects, project_id, issue.status));
+    return {
+      ...issue,
+      status: resolved,
+      project_id,
+      dependencies: issue.dependencies ?? [],
+      patches: issue.patches ?? [],
+    };
   };
+}
+
+function resolveSeedStatus(
+  projects: Record<string, Project> | undefined,
+  projectId: string,
+  key: string,
+): StatusDefinition {
+  const project = projects?.[projectId];
+  if (!project) {
+    throw new Error(
+      `seed: project '${projectId}' not declared while resolving status '${key}'`,
+    );
+  }
+  const def = project.statuses.find((s) => s.key === key);
+  if (!def) {
+    throw new Error(
+      `seed: status '${key}' not declared on project '${projectId}'`,
+    );
+  }
+  return def;
 }
 
 function normalizePatch(patch: Patch): Patch {
@@ -199,6 +214,7 @@ export function loadSeedData(store: Store): void {
 
   const seed = loadFixture();
 
+  const normalizeIssue = makeIssueNormalizer(seed.projects);
   for (const [id, issue] of Object.entries(seed.issues)) {
     seedVersionedEntity<IssueFixture, Issue>(store, "issues", id, issue, normalizeIssue);
   }

@@ -322,9 +322,22 @@ async fn serialize_entity(
 ) -> Option<serde_json::Value> {
     let value = match payload.as_ref() {
         MutationPayload::Issue { new, .. } => {
-            let summary = crate::routes::issue_response::build_issue_summary_response(state, new)
-                .await
-                .ok()?;
+            let summary = match crate::routes::issue_response::build_issue_summary_response(
+                state, new,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(
+                        entity_id,
+                        version,
+                        error = ?err,
+                        "dropping issue SSE event: failed to build summary",
+                    );
+                    return None;
+                }
+            };
             let creation_time = if version == 1 {
                 timestamp
             } else {

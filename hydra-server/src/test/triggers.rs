@@ -453,20 +453,10 @@ async fn test_client_state(
         .into_iter()
         .map(|(id, versioned)| {
             let input: hydra_common::api::v1::issues::IssueInput = versioned.item.into();
-            // Synthesize a placeholder `StatusDefinition` so we can
-            // build the API summary shape without round-tripping
-            // through the project store. The assertions in this test
-            // only depend on identity-level summary fields, not the
-            // status definition's display props.
-            let resolved = hydra_common::api::v1::projects::StatusDefinition::new(
-                input.status.clone(),
-                String::new(),
-                "#888888".parse().expect("well-formed default rgb"),
-                false,
-                false,
-                false,
-                None,
-            );
+            // The summary assertions only inspect identity-level fields,
+            // not the status definition's display props, so use the shared
+            // test helper rather than round-tripping through the project store.
+            let resolved = crate::test_utils::status::make_status_def(input.status.clone());
             let api_issue = hydra_common::api::v1::issues::Issue::new(
                 input.issue_type,
                 input.title,
