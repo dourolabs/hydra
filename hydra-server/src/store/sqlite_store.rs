@@ -1263,13 +1263,21 @@ impl SqliteStore {
         // incoming set: delete them. The FK on
         // `issues_v2.status_sequence` rejects the DELETE with a SQLite
         // FK error if an issue still references the row.
-        for (_key, seq) in existing_by_key {
+        for (key, seq) in existing_by_key {
             sqlx::query("DELETE FROM statuses WHERE project_id = ?1 AND sequence = ?2")
                 .bind(project_id)
                 .bind(seq)
                 .execute(&mut **tx)
                 .await
-                .map_err(map_sqlx_error)?;
+                .map_err(|err| {
+                    if is_foreign_key_violation_sqlite(&err) {
+                        StoreError::InvalidIssueStatus(format!(
+                            "cannot remove status '{key}' from project '{project_id}': an issue still references it"
+                        ))
+                    } else {
+                        map_sqlx_error(err)
+                    }
+                })?;
         }
         Ok(next_sequence)
     }
@@ -2656,6 +2664,29 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
         }
     }
     StoreError::Internal(err.to_string())
+}
+
+/// True iff `err` is a SQLite FK-constraint violation. Used by
+/// `apply_statuses_diff_in_tx` (scoped to its DELETE on `statuses`) to
+/// translate the raw sqlx error into [`StoreError::InvalidIssueStatus`]
+/// so the route layer can surface a 400 instead of an opaque 500.
+///
+/// SQLite messages do not carry a constraint name, so the predicate is
+/// intentionally generic; only call from a site where the only FK that
+/// can fail is the `issues_v2.status_sequence` one. Matches the
+/// extended code SQLITE_CONSTRAINT_FOREIGNKEY (787) and the message
+/// substring as a fallback for sqlx versions that surface the base
+/// SQLITE_CONSTRAINT code instead.
+fn is_foreign_key_violation_sqlite(err: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = err {
+        if db_err.code().as_deref() == Some("787") {
+            return true;
+        }
+        if db_err.message().contains("FOREIGN KEY constraint failed") {
+            return true;
+        }
+    }
+    false
 }
 
 /// True iff `err` is a SQLite unique-violation on the partial
@@ -13660,8 +13691,8 @@ mod tests {
             .update_project(&project_id, updated, &ActorRef::test())
             .await;
         assert!(
-            res.is_err(),
-            "expected FK to reject removal of a status with active issues"
+            matches!(res, Err(StoreError::InvalidIssueStatus(_))),
+            "expected InvalidIssueStatus when removing a status with active issues, got {res:?}"
         );
     }
 }

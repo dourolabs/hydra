@@ -1498,13 +1498,21 @@ impl PostgresStoreV2 {
                 .map_err(map_sqlx_error)?;
             }
         }
-        for (_key, seq) in existing_by_key {
+        for (key, seq) in existing_by_key {
             sqlx::query("DELETE FROM metis.statuses WHERE project_id = $1 AND sequence = $2")
                 .bind(project_id)
                 .bind(seq)
                 .execute(&mut **tx)
                 .await
-                .map_err(map_sqlx_error)?;
+                .map_err(|err| {
+                    if is_status_sequence_fk_violation_pg(&err) {
+                        StoreError::InvalidIssueStatus(format!(
+                            "cannot remove status '{key}' from project '{project_id}': an issue still references it"
+                        ))
+                    } else {
+                        map_sqlx_error(err)
+                    }
+                })?;
         }
         Ok(next_sequence)
     }
@@ -2409,6 +2417,21 @@ fn is_project_key_unique_violation_pg(err: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db_err) = err {
         if db_err.code().as_deref() == Some("23505") {
             return db_err.constraint() == Some("projects_key_unique_active_idx");
+        }
+    }
+    false
+}
+
+/// True iff `err` is a Postgres FK-violation on
+/// `issues_v2_status_sequence_fkey` — the RESTRICT that blocks deleting
+/// a `metis.statuses` row while an `issues_v2` row still references it.
+/// Used by `apply_statuses_diff_in_tx` to translate the raw sqlx error
+/// into [`StoreError::InvalidIssueStatus`] so the route layer can
+/// surface a 400 instead of an opaque 500.
+fn is_status_sequence_fk_violation_pg(err: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = err {
+        if db_err.code().as_deref() == Some("23503") {
+            return db_err.constraint() == Some("issues_v2_status_sequence_fkey");
         }
     }
     false
@@ -11004,6 +11027,9 @@ mod tests {
         let res = store
             .update_project(&project_id, updated, &ActorRef::test())
             .await;
-        assert!(res.is_err());
+        assert!(
+            matches!(res, Err(StoreError::InvalidIssueStatus(_))),
+            "expected InvalidIssueStatus when removing a status with active issues, got {res:?}"
+        );
     }
 }
