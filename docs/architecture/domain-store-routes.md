@@ -29,7 +29,8 @@ self.store.update_issue_with_actor(&id, updated_issue, actor).await
 // wrong: lifecycle check inside the store impl
 impl Store for SqliteStore {
     async fn update_issue(&self, id: &IssueId, issue: Issue) -> Result<...> {
-        if issue.status == IssueStatus::Closed && self.has_open_children(id).await? {
+        let resolved = self.resolve_status(&issue).await?;
+        if resolved.unblocks_dependents && self.has_open_children(id).await? {
             return Err(...); // policy belongs in PolicyEngine, not here
         }
         ...
@@ -50,11 +51,13 @@ The rule of thumb: *per-row* invariants (FK presence, NOT NULL, basic shape) sta
 Every entity has paired `From` impls in `hydra-server/src/domain/<entity>.rs`:
 
 ```rust
-impl From<api::issues::IssueStatus> for IssueStatus { ... }
-impl From<IssueStatus> for api::issues::IssueStatus { ... }
+impl From<api::issues::IssueType> for IssueType { ... }
+impl From<IssueType> for api::issues::IssueType { ... }
 ```
 
 Route handlers do the translation explicitly, so the store and policy engine only ever see `domain::*` types. When `hydra-common::api::v1` gains a new field or variant, the matching `domain` type and `From` impls update in the same change — see [`api-wire-contract.md`](./api-wire-contract.md).
+
+`StatusKey` is special: it is a transparent string newtype declared once in `hydra-common::api::v1::projects` and reused unchanged on both the wire and the domain side, so there is no enum-to-enum `From` to maintain. Status semantics (terminal? unblocking?) come from resolving the key against the issue's project via `AppState::resolve_status`, not from variant-matching.
 
 ## Reading vs. writing
 

@@ -1,7 +1,8 @@
 //! Default-project constants and seed for stores that lack a SQL
 //! migration pipeline (e.g. `MemoryStore`). The five-status seed
-//! reproduces today's `IssueStatus` semantics so legacy issues continue
-//! to resolve without per-row migration.
+//! reproduces the legacy hardcoded status semantics so issues created
+//! before per-project statuses existed continue to resolve without
+//! per-row migration.
 //!
 //! Flag table for the seeded statuses:
 //!
@@ -181,9 +182,9 @@ mod tests {
         assert_eq!(default_project_seed().statuses.len(), 5);
     }
 
-    /// Every wire string produced by today's `IssueStatus` must resolve
-    /// to a status in the default project. This is the legacy-compat
-    /// contract for issues that previously had no `project_id`.
+    /// Every legacy status wire string must resolve to a status in the
+    /// default project. This is the legacy-compat contract for issues
+    /// that previously had no `project_id`.
     #[test]
     fn every_legacy_status_string_resolves() {
         let project = default_project_seed();

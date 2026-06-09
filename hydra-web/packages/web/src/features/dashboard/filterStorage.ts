@@ -1,10 +1,10 @@
-import type { IssueStatus, PatchStatus } from "@hydra/api";
+import type { PatchStatus } from "@hydra/api";
 
 const STORAGE_KEY = "hydra:v2:dashboard:filters";
 
 export interface PersistedFilterState {
   filterRootId: string;
-  selectedIssueStatus: IssueStatus | null;
+  selectedIssueStatus: string | null;
   selectedPatchStatus: PatchStatus | null;
   selectedLabelId: string | null;
   searchValue: string;

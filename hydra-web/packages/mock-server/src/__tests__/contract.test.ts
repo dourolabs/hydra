@@ -1435,6 +1435,8 @@ describe("Triggers", () => {
           type: "task",
           title: "Nightly health check",
           description: "Run the nightly health check sweep.",
+          project_id: "j-defaul",
+          status: "open",
         },
       },
     ],

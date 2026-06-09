@@ -290,7 +290,9 @@ impl Automation for SpawnSessionsAutomation {
 
                         // Update the issue to Failed with a descriptive progress message.
                         let mut failed_issue = issue.clone();
-                        failed_issue.status = crate::domain::issues::IssueStatus::Failed.into();
+                        failed_issue.status =
+                            hydra_common::api::v1::projects::StatusKey::try_new("failed")
+                                .expect("\"failed\" is a well-formed StatusKey");
                         failed_issue.progress = progress.clone();
                         if let Err(err) = ctx
                             .app_state

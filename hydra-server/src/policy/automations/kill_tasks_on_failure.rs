@@ -139,22 +139,24 @@ mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::issues::{Issue, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
     use chrono::Utc;
+    use hydra_common::api::v1::projects::StatusKey;
+    use hydra_common::test_utils::status::status;
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    fn make_issue(status: IssueStatus) -> Issue {
+    fn make_issue(status_key: StatusKey) -> Issue {
         Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
             "test".to_string(),
             Username::from("tester"),
             String::new(),
-            status.into(),
+            status_key,
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -192,7 +194,7 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let issue = make_issue(IssueStatus::Open);
+        let issue = make_issue(status("open"));
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
         // Add a task for the issue
@@ -211,8 +213,8 @@ mod tests {
             .unwrap();
 
         // Update issue to Dropped
-        let old_issue = make_issue(IssueStatus::Open);
-        let new_issue = make_issue(IssueStatus::Dropped);
+        let old_issue = make_issue(status("open"));
+        let new_issue = make_issue(status("dropped"));
         store
             .update_issue(&issue_id, new_issue.clone(), &ActorRef::test())
             .await
@@ -248,8 +250,8 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let old_issue = make_issue(IssueStatus::Open);
-        let new_issue = make_issue(IssueStatus::InProgress);
+        let old_issue = make_issue(status("open"));
+        let new_issue = make_issue(status("in-progress"));
 
         let (issue_id, _) = store
             .add_issue(new_issue.clone(), &ActorRef::test())

@@ -43,8 +43,8 @@ impl Restriction for IssueLifecycleRestriction {
         // Only validate when the proposed status unblocks dependents — i.e.
         // the success-close lane. Dropped/Failed leave `unblocks_dependents`
         // false, so this restriction lets those through (matching the
-        // legacy `IssueStatus::Closed`-only gate). Resolving via the cache
-        // also seeds `new`'s project so the loops below reuse it.
+        // legacy `closed`-only gate). Resolving via the cache also seeds
+        // `new`'s project so the loops below reuse it.
         let resolved_new = match resolve_status_with_cache(&mut project_cache, ctx.store, new).await
         {
             Ok(def) => def,
@@ -184,19 +184,21 @@ fn join_issue_ids(ids: &[IssueId]) -> String {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{Issue, IssueDependency, IssueStatus, IssueType};
+    use crate::domain::issues::{Issue, IssueDependency, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::{MemoryStore, Store};
+    use hydra_common::api::v1::projects::StatusKey;
+    use hydra_common::test_utils::status::status;
 
-    fn make_issue(status: IssueStatus) -> Issue {
+    fn make_issue(status_key: StatusKey) -> Issue {
         Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            status.into(),
+            status_key,
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -213,7 +215,7 @@ mod tests {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
 
-        let issue = make_issue(IssueStatus::Open);
+        let issue = make_issue(status("open"));
         let payload = OperationPayload::Issue {
             issue_id: None,
             new: issue,
@@ -234,7 +236,7 @@ mod tests {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
 
-        let issue = make_issue(IssueStatus::Closed);
+        let issue = make_issue(status("closed"));
         let payload = OperationPayload::Issue {
             issue_id: None,
             new: issue,
@@ -256,10 +258,10 @@ mod tests {
         let store = MemoryStore::new();
 
         // Create parent and child
-        let parent = make_issue(IssueStatus::Open);
+        let parent = make_issue(status("open"));
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
-        let mut child = make_issue(IssueStatus::Open);
+        let mut child = make_issue(status("open"));
         child.dependencies = vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
             parent_id.clone(),
@@ -267,7 +269,7 @@ mod tests {
         store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         // Try to close parent
-        let mut closing_parent = make_issue(IssueStatus::Closed);
+        let mut closing_parent = make_issue(status("closed"));
         closing_parent.creator = Username::from("creator");
         let payload = OperationPayload::Issue {
             issue_id: Some(parent_id.clone()),
@@ -295,24 +297,20 @@ mod tests {
     async fn allows_closing_with_terminal_children() {
         let restriction = IssueLifecycleRestriction::new();
 
-        for status in [
-            IssueStatus::Closed,
-            IssueStatus::Failed,
-            IssueStatus::Dropped,
-        ] {
+        for child_status in [status("closed"), status("failed"), status("dropped")] {
             let store = MemoryStore::new();
 
-            let parent = make_issue(IssueStatus::Open);
+            let parent = make_issue(status("open"));
             let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
-            let mut child = make_issue(status);
+            let mut child = make_issue(child_status.clone());
             child.dependencies = vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
             )];
             store.add_issue(child, &ActorRef::test()).await.unwrap();
 
-            let closing_parent = make_issue(IssueStatus::Closed);
+            let closing_parent = make_issue(status("closed"));
             let payload = OperationPayload::Issue {
                 issue_id: Some(parent_id.clone()),
                 new: closing_parent,
@@ -327,7 +325,7 @@ mod tests {
             };
             assert!(
                 restriction.evaluate(&ctx).await.is_ok(),
-                "closing parent should succeed when child is {status:?}"
+                "closing parent should succeed when child is {child_status:?}"
             );
         }
     }
@@ -337,17 +335,17 @@ mod tests {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
 
-        let parent = make_issue(IssueStatus::Open);
+        let parent = make_issue(status("open"));
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
-        let mut child = make_issue(IssueStatus::InProgress);
+        let mut child = make_issue(status("in-progress"));
         child.dependencies = vec![IssueDependency::new(
             IssueDependencyType::ChildOf,
             parent_id.clone(),
         )];
         store.add_issue(child, &ActorRef::test()).await.unwrap();
 
-        let closing_parent = make_issue(IssueStatus::Closed);
+        let closing_parent = make_issue(status("closed"));
         let payload = OperationPayload::Issue {
             issue_id: Some(parent_id.clone()),
             new: closing_parent,
@@ -376,10 +374,10 @@ mod tests {
         let store = MemoryStore::new();
 
         // Create blocker that is still open
-        let blocker = make_issue(IssueStatus::Open);
+        let blocker = make_issue(status("open"));
         let (blocker_id, _) = store.add_issue(blocker, &ActorRef::test()).await.unwrap();
 
-        let mut issue = make_issue(IssueStatus::Closed);
+        let mut issue = make_issue(status("closed"));
         issue.dependencies = vec![IssueDependency::new(
             IssueDependencyType::BlockedOn,
             blocker_id.clone(),
@@ -415,18 +413,18 @@ mod tests {
         let restriction = IssueLifecycleRestriction::new();
         let store = MemoryStore::new();
 
-        let parent = make_issue(IssueStatus::Open);
+        let parent = make_issue(status("open"));
         let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
 
         // Mix of terminal child statuses, all in the same (default) project.
-        for status in [
-            IssueStatus::Closed,
-            IssueStatus::Failed,
-            IssueStatus::Dropped,
-            IssueStatus::Closed,
-            IssueStatus::Failed,
+        for child_status in [
+            status("closed"),
+            status("failed"),
+            status("dropped"),
+            status("closed"),
+            status("failed"),
         ] {
-            let mut child = make_issue(status);
+            let mut child = make_issue(child_status);
             child.dependencies = vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -434,7 +432,7 @@ mod tests {
             store.add_issue(child, &ActorRef::test()).await.unwrap();
         }
 
-        let closing_parent = make_issue(IssueStatus::Closed);
+        let closing_parent = make_issue(status("closed"));
         let payload = OperationPayload::Issue {
             issue_id: Some(parent_id.clone()),
             new: closing_parent,

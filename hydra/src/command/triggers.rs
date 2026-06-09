@@ -247,8 +247,8 @@ pub(crate) struct RenderedCreateIssue {
     pub(crate) description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) assignee: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) status: Option<String>,
+    pub(crate) project_id: String,
+    pub(crate) status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) repo_name: Option<String>,
 }
@@ -261,6 +261,7 @@ fn render_action(idx: usize, action: &Action, ctx: &RenderContext) -> Result<Ren
                 title,
                 description,
                 assignee,
+                project_id,
                 status,
                 session_settings,
                 ..
@@ -282,7 +283,8 @@ fn render_action(idx: usize, action: &Action, ctx: &RenderContext) -> Result<Ren
                 title,
                 description,
                 assignee,
-                status: status.as_ref().map(ToString::to_string),
+                project_id: project_id.to_string(),
+                status: status.to_string(),
                 repo_name: session_settings.repo_name.as_ref().map(ToString::to_string),
             }))
         }
@@ -297,7 +299,8 @@ mod tests {
     use httpmock::prelude::*;
     use hydra_common::actor_ref::ActorRef;
     use hydra_common::api::v1::issues::SessionSettings;
-    use hydra_common::issues::{IssueStatus, IssueType};
+    use hydra_common::issues::IssueType;
+    use hydra_common::test_utils::status::status;
     use hydra_common::triggers::{Schedule, ScheduleFiring, Trigger, TriggerVersionRecord};
     use reqwest::Client as HttpClient;
     use std::str::FromStr;
@@ -335,6 +338,7 @@ actions:
       title: "Weekly triage — {{ now.date }}"
       description: "Created by trigger {{ trigger.id }} at {{ now.iso }}"
       assignee: "users/alice"
+      project_id: j-defaul
       status: open
       session_settings:
         repo_name: "dourolabs/hydra"
@@ -351,6 +355,8 @@ actions:
       type: bug
       title: "one-shot"
       description: "fired"
+      project_id: j-defaul
+      status: open
 "#
     }
 
@@ -373,7 +379,7 @@ actions:
         assert_eq!(action.issue_type, IssueType::Task);
         assert_eq!(action.title, "Weekly triage — {{ now.date }}");
         assert_eq!(action.assignee.as_deref(), Some("users/alice"));
-        assert_eq!(action.status, Some(IssueStatus::Open));
+        assert_eq!(action.status, status("open"));
         assert_eq!(
             action
                 .session_settings
@@ -434,7 +440,8 @@ actions:
             format!("Created by trigger {placeholder} at 2026-06-10T09:00:00+00:00")
         );
         assert_eq!(action.assignee.as_deref(), Some("users/alice"));
-        assert_eq!(action.status.as_deref(), Some("open"));
+        assert_eq!(action.project_id, "j-defaul");
+        assert_eq!(action.status, "open");
         assert_eq!(action.repo_name.as_deref(), Some("dourolabs/hydra"));
     }
 
@@ -449,6 +456,8 @@ actions:
       type: task
       title: "hi {{ bogus }}"
       description: "d"
+      project_id: j-defaul
+      status: open
 "#;
         let spec: TriggerSpec = parse_spec(yaml).expect("parse");
         let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
@@ -671,6 +680,7 @@ actions:
         );
         assert!(text.contains("  description:"), "got: {text}");
         assert!(text.contains("  assignee: users/alice"), "got: {text}");
+        assert!(text.contains("  project_id: j-defaul"), "got: {text}");
         assert!(text.contains("  status: open"), "got: {text}");
         assert!(text.contains("  repo: dourolabs/hydra"), "got: {text}");
     }
@@ -686,6 +696,8 @@ actions:
       type: task
       title: "t"
       description: ""
+      project_id: j-defaul
+      status: open
 "#;
         let spec: TriggerSpec = parse_spec(yaml).expect("parse");
         let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
@@ -764,6 +776,8 @@ actions:
       type: task
       title: "t"
       description: "d"
+      project_id: j-defaul
+      status: open
 "#;
         let spec: TriggerSpec = parse_spec(yaml).expect("parse");
         let Action::CreateIssue(action) = &spec.actions[0];

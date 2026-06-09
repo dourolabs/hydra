@@ -12,13 +12,14 @@ use crate::{
 use chrono::Utc;
 use hydra_common::{
     api::v1::{
-        issues::{IssueStatus, IssueType, ListIssuesResponse, SessionSettings},
+        issues::{IssueType, ListIssuesResponse, SessionSettings},
         triggers::{
             Action, CreateIssueAction, ListTriggersResponse, Schedule, TriggerVersionRecord,
             UpsertTriggerRequest, UpsertTriggerResponse,
         },
         users::Username,
     },
+    test_utils::status::status,
     triggers::Trigger,
 };
 use reqwest::StatusCode;
@@ -33,7 +34,8 @@ fn sample_request(schedule: Schedule) -> UpsertTriggerRequest {
             "Triage {{ now.date }}".to_string(),
             "Trigger {{ trigger.id }}".to_string(),
             None,
-            Some(IssueStatus::Open),
+            crate::domain::projects::default_project_id(),
+            status("open"),
             SessionSettings::default(),
         ))],
         Username::from("test-creator"),
@@ -237,7 +239,8 @@ async fn worker_fires_once_trigger_creates_issue_and_edge() -> anyhow::Result<()
             "Triage {{ now.date }}".to_string(),
             "Trigger {{ trigger.id }}".to_string(),
             None,
-            Some(IssueStatus::Open),
+            crate::domain::projects::default_project_id(),
+            status("open"),
             SessionSettings::default(),
         ))],
         Username::from("test-creator"),
@@ -371,7 +374,8 @@ async fn worker_skips_disabled_triggers() -> anyhow::Result<()> {
             "t".to_string(),
             "d".to_string(),
             None,
-            Some(IssueStatus::Open),
+            crate::domain::projects::default_project_id(),
+            status("open"),
             SessionSettings::default(),
         ))],
         Username::from("test-creator"),
@@ -413,7 +417,8 @@ async fn worker_does_not_refire_after_restart() -> anyhow::Result<()> {
             "t".to_string(),
             "d".to_string(),
             None,
-            Some(IssueStatus::Open),
+            crate::domain::projects::default_project_id(),
+            status("open"),
             SessionSettings::default(),
         ))],
         Username::from("test-creator"),
