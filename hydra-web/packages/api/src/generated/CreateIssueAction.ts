@@ -10,9 +10,9 @@ import type { StatusKey } from "./StatusKey";
  * `title`, `description`, and `assignee` are template strings rendered
  * through [`render`]. `assignee` is parsed as a `Principal` after
  * rendering. Both `project_id` and `status` are required on the wire —
- * no defaults, no inference. A persisted trigger row that pre-dates this
- * requirement will fail to deserialize on next read; that is the
- * explicit fail-loud outcome agreed with the deletion of `IssueStatus`.
+ * no defaults, no inference. A persisted trigger row missing either
+ * field will fail loudly at deserialization rather than silently
+ * substitute a default.
  */
 export type CreateIssueAction = {
   type: IssueType;
