@@ -1,0 +1,32 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.readOnlyNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.actionsSpacer {
+  flex: 1;
+}
+
+.error {
+  color: var(--color-status-failed, #e74c3c);
+  font-size: var(--font-size-sm);
+}

@@ -291,14 +291,6 @@ impl Project {
     }
 }
 
-/// Identifier for the project of an issue. `Default` is the synthesized
-/// default project used for issues with no `project_id`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ProjectScope {
-    Default,
-    Project(ProjectId),
-}
-
 /// Request body for `POST /v1/projects` and `PUT /v1/projects/:id`.
 // No `Eq` derive: contains a `Project`, whose `priority` is `f64`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

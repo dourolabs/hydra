@@ -22,6 +22,15 @@ let queryDataByKey: Map<string, unknown> = new Map();
 let projectsHookData: ProjectRecord[] | undefined = [];
 
 vi.mock("@tanstack/react-query", () => ({
+  // Prompt-doc loader (usePromptDocumentBody) calls useQuery; create mode never
+  // loads an existing doc, so a neutral success state seeds an empty body.
+  useQuery: () => ({
+    isLoading: false,
+    isError: false,
+    isSuccess: true,
+    data: null,
+    error: null,
+  }),
   useMutation: ({
     mutationFn,
     onMutate,
@@ -176,8 +185,12 @@ vi.mock("../useProjects", () => ({
   useProjects: () => ({ data: projectsHookData }),
 }));
 
-vi.mock("../ProjectCreateModal.module.css", () => ({
+vi.mock("../ProjectForm.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
+vi.mock("../../../components/DeleteConfirmModal/DeleteConfirmModal", () => ({
+  DeleteConfirmModal: () => null,
 }));
 
 const { ProjectCreateModal } = await import("../ProjectCreateModal");
@@ -220,8 +233,8 @@ describe("ProjectCreateModal", () => {
 
   it("renders only Name + Prompt inputs (no key field, no status list, no prompt-path field)", () => {
     render(<ProjectCreateModal open={true} onClose={() => {}} />);
-    expect(screen.getByTestId("new-project-name")).toBeDefined();
-    expect(screen.getByTestId("new-project-prompt-body")).toBeDefined();
+    expect(screen.getByTestId("project-form-name")).toBeDefined();
+    expect(screen.getByTestId("project-form-prompt-body")).toBeDefined();
     // The simplified modal must not expose any of the old form fields.
     expect(screen.queryByTestId("project-editor-key")).toBeNull();
     expect(screen.queryByTestId("project-editor-prompt-path")).toBeNull();
@@ -230,71 +243,73 @@ describe("ProjectCreateModal", () => {
 
   it("disables Save until the user types a name with at least one slug-able character", () => {
     render(<ProjectCreateModal open={true} onClose={() => {}} />);
-    const save = screen.getByTestId("new-project-save") as HTMLButtonElement;
+    const save = screen.getByTestId("project-form-save") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
 
-    fireEvent.change(screen.getByTestId("new-project-name"), {
+    fireEvent.change(screen.getByTestId("project-form-name"), {
       target: { value: "@@@" },
     });
     expect(save.disabled).toBe(true);
-    expect(screen.getByTestId("new-project-error").textContent).toContain(
+    expect(screen.getByTestId("project-form-error").textContent).toContain(
       "letter or digit",
     );
 
-    fireEvent.change(screen.getByTestId("new-project-name"), {
+    fireEvent.change(screen.getByTestId("project-form-name"), {
       target: { value: "Engineering" },
     });
     expect(save.disabled).toBe(false);
-    expect(screen.queryByTestId("new-project-error")).toBeNull();
+    expect(screen.queryByTestId("project-form-error")).toBeNull();
   });
 
   it("disables Save and shows error when the derived key collides with an existing project", () => {
     projectsHookData = [makeProject("engineering", "Engineering")];
     render(<ProjectCreateModal open={true} onClose={() => {}} />);
 
-    fireEvent.change(screen.getByTestId("new-project-name"), {
+    fireEvent.change(screen.getByTestId("project-form-name"), {
       target: { value: "Engineering" },
     });
 
-    const save = screen.getByTestId("new-project-save") as HTMLButtonElement;
+    const save = screen.getByTestId("project-form-save") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    expect(screen.getByTestId("new-project-error").textContent).toContain(
+    expect(screen.getByTestId("project-form-error").textContent).toContain(
       "already exists",
     );
   });
 
   it("writes the prompt document at /projects/<key>/prompt.md, then creates the project with empty statuses", async () => {
     render(<ProjectCreateModal open={true} onClose={() => {}} />);
-    fireEvent.change(screen.getByTestId("new-project-name"), {
+    fireEvent.change(screen.getByTestId("project-form-name"), {
       target: { value: "Engineering" },
     });
-    fireEvent.change(screen.getByTestId("new-project-prompt-body"), {
+    fireEvent.change(screen.getByTestId("project-form-prompt-body"), {
       target: { value: "Hello prompt" },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId("new-project-save"));
+      fireEvent.click(screen.getByTestId("project-form-save"));
     });
 
     expect(createDocumentSpy).toHaveBeenCalledTimes(1);
-    const docPayload = createDocumentSpy.mock.calls[0][0] as {
-      document: { path: string; body_markdown: string; title: string };
-    };
+    const [docPayload] = createDocumentSpy.mock.calls[0] as unknown as [
+      { document: { path: string; body_markdown: string; title: string } },
+    ];
     expect(docPayload.document.path).toBe("/projects/engineering/prompt.md");
     expect(docPayload.document.body_markdown).toBe("Hello prompt");
     expect(docPayload.document.title).toBe("/projects/engineering/prompt.md");
 
     expect(createProjectSpy).toHaveBeenCalledTimes(1);
-    const projectPayload = createProjectSpy.mock.calls[0][0] as {
-      project: {
-        key: string;
-        name: string;
-        statuses: unknown[];
-        creator: string;
-        prompt_path: string | null;
-        priority: number;
-      };
-    };
+    const [projectPayload] = createProjectSpy.mock.calls[0] as unknown as [
+      {
+        project: {
+          key: string;
+          name: string;
+          statuses: unknown[];
+          creator: string;
+          prompt_path: string | null;
+          priority: number;
+        };
+      },
+    ];
     expect(projectPayload.project.key).toBe("engineering");
     expect(projectPayload.project.name).toBe("Engineering");
     expect(projectPayload.project.statuses).toEqual([]);
@@ -307,12 +322,12 @@ describe("ProjectCreateModal", () => {
 
   it("skips the document write when the prompt body is blank", async () => {
     render(<ProjectCreateModal open={true} onClose={() => {}} />);
-    fireEvent.change(screen.getByTestId("new-project-name"), {
+    fireEvent.change(screen.getByTestId("project-form-name"), {
       target: { value: "Engineering" },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId("new-project-save"));
+      fireEvent.click(screen.getByTestId("project-form-save"));
     });
 
     expect(createDocumentSpy).not.toHaveBeenCalled();
@@ -322,12 +337,12 @@ describe("ProjectCreateModal", () => {
   it("closes the modal and navigates to the project page on success", async () => {
     const onClose = vi.fn();
     render(<ProjectCreateModal open={true} onClose={onClose} />);
-    fireEvent.change(screen.getByTestId("new-project-name"), {
+    fireEvent.change(screen.getByTestId("project-form-name"), {
       target: { value: "Engineering" },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId("new-project-save"));
+      fireEvent.click(screen.getByTestId("project-form-save"));
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -336,17 +351,17 @@ describe("ProjectCreateModal", () => {
 
   it("slugifies multi-word names to a kebab-case project key", async () => {
     render(<ProjectCreateModal open={true} onClose={() => {}} />);
-    fireEvent.change(screen.getByTestId("new-project-name"), {
+    fireEvent.change(screen.getByTestId("project-form-name"), {
       target: { value: "Growth Team" },
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId("new-project-save"));
+      fireEvent.click(screen.getByTestId("project-form-save"));
     });
 
-    const projectPayload = createProjectSpy.mock.calls[0][0] as {
-      project: { key: string; prompt_path: string | null };
-    };
+    const [projectPayload] = createProjectSpy.mock.calls[0] as unknown as [
+      { project: { key: string; prompt_path: string | null } },
+    ];
     expect(projectPayload.project.key).toBe("growth-team");
     expect(projectPayload.project.prompt_path).toBe(
       "/projects/growth-team/prompt.md",

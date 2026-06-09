@@ -3,12 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
+  DragOverlay,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
   closestCenter,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type Modifier,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -94,6 +97,26 @@ function computeReorderPriority(
   if (left) return left.project.priority + PROJECT_PRIORITY_STEP;
   return 0;
 }
+
+// Keep the DragOverlay header vertically centred on the cursor. Because every
+// section collapses to its bar at drag start and we re-measure continuously
+// (MeasuringStrategy.Always), the overlay's measured origin shifts up by the
+// height collapsed above the grabbed bar — which would otherwise drift the
+// preview off the pointer for any bar below the first. Snapping to the cursor
+// each frame makes that measured origin irrelevant. (This is the vertical half
+// of dnd-kit's snapCenterToCursor; horizontal is left alone so the full-width
+// header keeps spanning the board.)
+const snapHeaderToCursorY: Modifier = ({
+  activatorEvent,
+  draggingNodeRect,
+  transform,
+}) => {
+  if (draggingNodeRect && activatorEvent && "clientY" in activatorEvent) {
+    const offsetY = (activatorEvent as PointerEvent).clientY - draggingNodeRect.top;
+    return { ...transform, y: transform.y + offsetY - draggingNodeRect.height / 2 };
+  }
+  return transform;
+};
 
 function sortProjectsByPriority(list: ProjectRecord[]): ProjectRecord[] {
   return list
@@ -197,6 +220,12 @@ export function IssuesBoard({
     null,
   );
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+
+  // The project section currently being dragged. Drives the DragOverlay so
+  // the thing following the cursor is a compact fixed-size header rather than
+  // the full-height section (which dnd-kit would otherwise stretch to match
+  // each neighbor it passes over).
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const handleCardClick = (id: string) => {
     const params = new URLSearchParams({
@@ -333,6 +362,7 @@ export function IssuesBoard({
       projectIssueCount,
       childStatusMap,
       hideIssues,
+      dragActive: activeProjectId !== null,
       onCardClick: handleCardClick,
       onOpenSettings: setSettingsProjectId,
       onGearClick: handleGearClick,
@@ -345,13 +375,33 @@ export function IssuesBoard({
     );
   });
 
+  const activeProject = activeProjectId
+    ? projects.find((p) => p.project_id === activeProjectId) ?? null
+    : null;
+  const activeIssueCount = activeProject
+    ? activeProject.statuses.reduce((acc, s) => {
+        const cell = cells.get(activeProject.project_id)?.get(s.key);
+        return acc + (cell?.issues.length ?? 0);
+      }, 0)
+    : 0;
+
   return (
     <div className={styles.kanban}>
       {allowProjectReorder ? (
         <DndContext
           sensors={projectSensors}
           collisionDetection={closestCenter}
-          onDragEnd={handleProjectDragEnd}
+          // The dragged section collapses to its bar mid-drag, so the
+          // surrounding sections shift. Re-measure droppables continuously,
+          // otherwise drop targets resolve against the pre-collapse layout
+          // and the drop snaps back to the original slot.
+          measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+          onDragStart={(event) => setActiveProjectId(String(event.active.id))}
+          onDragEnd={(event) => {
+            setActiveProjectId(null);
+            handleProjectDragEnd(event);
+          }}
+          onDragCancel={() => setActiveProjectId(null)}
         >
           <SortableContext
             items={projectSortableIds}
@@ -359,6 +409,15 @@ export function IssuesBoard({
           >
             {sections}
           </SortableContext>
+          <DragOverlay modifiers={[snapHeaderToCursorY]}>
+            {activeProject ? (
+              <ProjectDragPreview
+                project={activeProject}
+                issueCount={activeIssueCount}
+                hideIssues={hideIssues}
+              />
+            ) : null}
+          </DragOverlay>
         </DndContext>
       ) : (
         sections
@@ -414,6 +473,10 @@ interface ProjectSectionProps {
   projectIssueCount: number;
   childStatusMap: Map<string, ChildStatus[]>;
   hideIssues: boolean;
+  // True while any project section is being dragged. Every section collapses
+  // to just its bar so the reorder list is a row of uniform-height headers —
+  // far more reliable for dnd-kit than reordering full-height sections.
+  dragActive: boolean;
   onCardClick: (id: string) => void;
   onOpenSettings: (id: ProjectId) => void;
   onGearClick: (
@@ -435,9 +498,15 @@ function SortableProjectSection(props: ProjectSectionProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: props.project.project_id });
   const style: React.CSSProperties = {
-    transform: transformToCss(transform),
+    // While dragging, the moving preview is rendered by <DragOverlay>; leave
+    // the source section in place (no self-transform) as a dimmed placeholder
+    // so neighbors reflow around a stable slot instead of a stretching one.
+    transform: isDragging ? undefined : transformToCss(transform),
     transition: transition ?? undefined,
-    opacity: isDragging ? 0.6 : undefined,
+    // Hide the source entirely while dragging; the only thing visible is the
+    // header in <DragOverlay> following the cursor. The collapsed (bar-only)
+    // node stays mounted so dnd-kit keeps a drop slot to reorder against.
+    opacity: isDragging ? 0 : undefined,
   };
   return (
     <ProjectSection
@@ -450,6 +519,36 @@ function SortableProjectSection(props: ProjectSectionProps) {
   );
 }
 
+// Compact, fixed-size header shown inside <DragOverlay> while a project
+// section is being dragged. Mirrors the project bar's left side but never
+// resizes — it's decoupled from the sortable layout.
+function ProjectDragPreview({
+  project,
+  issueCount,
+  hideIssues,
+}: {
+  project: BoardProjectDescriptor;
+  issueCount: number;
+  hideIssues: boolean;
+}) {
+  return (
+    <div className={`${styles.projectBar} ${styles.projectBarDragPreview}`}>
+      <div className={styles.projectBarLeft}>
+        <ProjectChip projectKey={project.key} name={project.name} />
+        {!hideIssues && (
+          <span className={styles.projectMeta}>
+            {issueCount} {issueCount === 1 ? "issue" : "issues"}
+          </span>
+        )}
+        <span className={styles.projectMeta}>
+          {project.statuses.length}{" "}
+          {project.statuses.length === 1 ? "status" : "statuses"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function ProjectSection({
   project,
   projectRecord,
@@ -457,6 +556,7 @@ function ProjectSection({
   projectIssueCount,
   childStatusMap,
   hideIssues,
+  dragActive,
   onCardClick,
   onOpenSettings,
   onGearClick,
@@ -469,34 +569,19 @@ function ProjectSection({
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const reorderMutation = useMutation({
-    mutationFn: async (nextStatuses: StatusDefinition[]) => {
+    mutationFn: async ({
+      nextStatuses,
+    }: {
+      nextStatuses: StatusDefinition[];
+      previous: ListProjectsResponse | undefined;
+    }) => {
       return apiClient.updateProject(projectRecord.project_id, {
         project: { ...projectRecord.project, statuses: nextStatuses },
       });
     },
-    onMutate: async (nextStatuses) => {
-      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
-      const previous =
-        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+    onError: (err, { previous }) => {
       if (previous) {
-        const nextProject = {
-          ...projectRecord.project,
-          statuses: nextStatuses,
-        };
-        const next: ListProjectsResponse = {
-          projects: applyOptimisticUpsert(
-            previous.projects,
-            projectRecord.project_id,
-            nextProject,
-          ),
-        };
-        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
-      }
-      return { previous };
-    },
-    onError: (err, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, previous);
       }
       addToast(
         err instanceof Error ? err.message : "Failed to reorder columns",
@@ -529,9 +614,26 @@ function ProjectSection({
       const newIdx = statuses.findIndex((s) => s.key === over.id);
       if (oldIdx < 0 || newIdx < 0) return;
       const next = arrayMove(statuses, oldIdx, newIdx);
-      reorderMutation.mutate(next);
+      // Apply the optimistic reorder synchronously here, inside the drop event
+      // handler, so React batches it into the SAME commit as dnd-kit clearing
+      // the drag transform. Doing it in the mutation's onMutate instead defers
+      // it past a microtask, producing a one-frame flash where the column snaps
+      // back to its original slot before the reorder lands.
+      const previous =
+        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        const nextProject = { ...projectRecord.project, statuses: next };
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, {
+          projects: applyOptimisticUpsert(
+            previous.projects,
+            projectRecord.project_id,
+            nextProject,
+          ),
+        });
+      }
+      reorderMutation.mutate({ nextStatuses: next, previous });
     },
-    [projectRecord, reorderMutation],
+    [projectRecord, reorderMutation, queryClient],
   );
 
   const columns = project.statuses.map((status) => {
@@ -615,18 +717,24 @@ function ProjectSection({
           </button>
         </div>
       </div>
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragEnd={handleDragEnd}
-      >
-        <SortableContext
-          items={sortableIds}
-          strategy={horizontalListSortingStrategy}
+      {/* While any project is being dragged, every section collapses to just
+          the bar above. This keeps the reorder list a row of uniform-height
+          headers (reliable drop targets) and hides the body of the section
+          that's travelling with the cursor inside <DragOverlay>. */}
+      {!dragActive && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
         >
-          {columnsRow}
-        </SortableContext>
-      </DndContext>
+          <SortableContext
+            items={sortableIds}
+            strategy={horizontalListSortingStrategy}
+          >
+            {columnsRow}
+          </SortableContext>
+        </DndContext>
+      )}
     </section>
   );
 }
@@ -668,8 +776,7 @@ function SortableBoardColumn(props: BoardColumnProps) {
     transform,
     transition,
     isDragging,
-    isOver,
-  } = useSortable({ id: props.status.key });
+  } = useSortable({ id: props.status.key, animateLayoutChanges: () => false });
   const style: React.CSSProperties = {
     transform: transformToCss(transform),
     transition: transition ?? undefined,
@@ -681,7 +788,6 @@ function SortableBoardColumn(props: BoardColumnProps) {
       setNodeRef={setNodeRef}
       style={style}
       isDragging={isDragging}
-      isOver={isOver}
       dragHandleProps={{ ...attributes, ...listeners }}
     />
   );
@@ -699,16 +805,14 @@ function BoardColumn({
   setNodeRef,
   style,
   isDragging,
-  isOver,
   dragHandleProps,
-}: BoardColumnProps & SortableHandleProps & { isOver?: boolean }) {
+}: BoardColumnProps & SortableHandleProps) {
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const assignTo = status.on_enter?.assign_to ?? null;
   const interactiveLabel = status.interactive === true ? "interactive" : "auto";
   const colClasses = [styles.col];
   if (isDragging) colClasses.push(styles.colDragging);
-  if (isOver && !isDragging) colClasses.push(styles.colDropOver);
   return (
     <div
       ref={setNodeRef}

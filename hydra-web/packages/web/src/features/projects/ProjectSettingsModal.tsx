@@ -1,7 +1,6 @@
 import { Modal } from "@hydra/ui";
 import type { ProjectRecord } from "@hydra/api";
-import { ProjectEditor } from "./ProjectEditor";
-import largeModalStyles from "../../components/LargeModal.module.css";
+import { ProjectForm } from "./ProjectForm";
 
 interface ProjectSettingsModalProps {
   open: boolean;
@@ -19,12 +18,12 @@ export function ProjectSettingsModal({
       open={open}
       onClose={onClose}
       title={`Project settings · ${project.project.name}`}
-      className={largeModalStyles.largeModal}
     >
-      <ProjectEditor
+      <ProjectForm
         projectId={project.project_id}
         initial={project.project}
         creator={project.project.creator}
+        onClose={onClose}
       />
     </Modal>
   );
