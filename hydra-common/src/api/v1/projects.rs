@@ -233,7 +233,6 @@ pub struct Project {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectValidationError {
     DuplicateStatusKey(StatusKey),
-    NoStatuses,
 }
 
 impl fmt::Display for ProjectValidationError {
@@ -241,9 +240,6 @@ impl fmt::Display for ProjectValidationError {
         match self {
             ProjectValidationError::DuplicateStatusKey(key) => {
                 write!(f, "duplicate status key '{key}' in project")
-            }
-            ProjectValidationError::NoStatuses => {
-                f.write_str("project must declare at least one status")
             }
         }
     }
@@ -272,12 +268,11 @@ impl Project {
     }
 
     /// Check structural invariants:
-    /// - statuses is non-empty
     /// - all status keys are unique within the project
+    ///
+    /// An empty status list is permitted; projects can be created with no
+    /// statuses and have them added later.
     pub fn validate(&self) -> Result<(), ProjectValidationError> {
-        if self.statuses.is_empty() {
-            return Err(ProjectValidationError::NoStatuses);
-        }
         let mut seen: HashSet<&StatusKey> = HashSet::with_capacity(self.statuses.len());
         for status in &self.statuses {
             if !seen.insert(&status.key) {
@@ -672,10 +667,9 @@ mod tests {
     }
 
     #[test]
-    fn project_validate_rejects_empty_status_list() {
+    fn project_validate_accepts_empty_status_list() {
         let proj = project(vec![]);
-        let err = proj.validate().unwrap_err();
-        assert!(matches!(err, ProjectValidationError::NoStatuses));
+        proj.validate().unwrap();
     }
 
     #[test]
