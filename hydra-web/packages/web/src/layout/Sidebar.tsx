@@ -122,6 +122,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
   const isAllIssuesActive = isNoFilters();
   const isAssignedActive = principalPath ? isOnlyParam("assignee", principalPath) : false;
   const isInProgressActive = isOnlyParam("status", "in-progress");
+  const isArchiveActive = isOnlyParam("includeArchived", "1");
 
   // ── Recent chats ──
   // Default to the logged-in user's own chats; mirrors the ChatListPage 'mine' default.
@@ -359,6 +360,16 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
               </span>
               <span className={styles.itemLabel}>In progress</span>
               {inProgressCount > 0 && <span className={styles.itemMeta}>{inProgressCount}</span>}
+            </NavLink>
+            <NavLink
+              to="/?includeArchived=1"
+              className={() => `${styles.item}${isArchiveActive ? ` ${styles.itemActive}` : ""}`}
+              data-testid="sidebar-issues-archive"
+            >
+              <span className={styles.itemIcon}>
+                <Icons.IconArchive />
+              </span>
+              <span className={styles.itemLabel}>Archive</span>
             </NavLink>
           </div>
         )}

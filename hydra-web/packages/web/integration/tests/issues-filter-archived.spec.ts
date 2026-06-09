@@ -131,4 +131,22 @@ test.describe("Issues page 'Include archived' filter @issues:filter-include-arch
       )
       .toBe(true);
   });
+
+  test("Sidebar > Views > Archive activates the chip on the issues page @issues:filter-include-archived-sidebar", async ({
+    authenticatedPage: page,
+  }) => {
+    await archiveIssue(TARGET_ISSUE);
+
+    // Start anywhere except the issues landing so we exercise navigation, not
+    // a no-op same-page click.
+    await page.goto("/sessions");
+
+    await page.getByTestId("sidebar-issues-archive").click();
+
+    await expect(page).toHaveURL(/[?&]includeArchived=1\b/);
+    await expect(page.getByTestId("filter-chip-includeArchived")).toBeVisible();
+    await expect(
+      page.getByTestId(`issues-list-row-${TARGET_ISSUE}`),
+    ).toBeVisible();
+  });
 });
