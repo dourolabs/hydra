@@ -22,7 +22,7 @@ import styles from "./AppLayout.module.css";
 const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 
 function GlobalIssueCreateModal() {
-  const { isOpen, close } = useIssueCreateModal();
+  const { isOpen, initial, close } = useIssueCreateModal();
   const { data: agents } = useAgents();
   const { data: users } = useUsers();
   const assignees = useMemo(() => {
@@ -34,7 +34,14 @@ function GlobalIssueCreateModal() {
     ).sort();
     return { agents: agentNames, users: userNames };
   }, [agents, users]);
-  return <IssueCreateModal open={isOpen} onClose={close} assignees={assignees} />;
+  return (
+    <IssueCreateModal
+      open={isOpen}
+      onClose={close}
+      assignees={assignees}
+      initial={initial}
+    />
+  );
 }
 
 export function AppLayout() {

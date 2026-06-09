@@ -6,6 +6,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import type { IssueCreateModalInitial } from "./useIssueCreateModal";
 import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
 import { DEFAULT_PROJECT_ID } from "@hydra/api";
 import type { IssueType, LabelRecord, Principal, StatusKey } from "@hydra/api";
@@ -66,9 +67,19 @@ interface IssueCreateModalProps {
   open: boolean;
   onClose: () => void;
   assignees: AssigneeGroups;
+  // When the modal is opened from a scoped context (e.g. the IssuesBoard's
+  // per-column "+ Add issue" button), the caller seeds the project and/or
+  // status fields. These are applied on every open-transition so that opening
+  // the modal scoped to a different column overrides any prior selection.
+  initial?: IssueCreateModalInitial | null;
 }
 
-export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalProps) {
+export function IssueCreateModal({
+  open,
+  onClose,
+  assignees,
+  initial,
+}: IssueCreateModalProps) {
   const { user } = useAuth();
   const { data: repos } = useRepositories();
   const { data: labels } = useLabels();
@@ -132,6 +143,19 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     const t = window.setTimeout(() => titleInputRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
   }, [open]);
+
+  // When the modal opens with seeded `initial.projectId` / `initial.status`
+  // (the IssuesBoard "+ Add issue" path), apply them over the persisted
+  // draft. We deliberately don't touch title/description here — opening
+  // scoped to a column shouldn't blow away in-progress text.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!justOpened || !initial) return;
+    if (initial.projectId !== undefined) setProjectId(initial.projectId);
+    if (initial.status !== undefined) setStatus(initial.status);
+  }, [open, initial, setProjectId, setStatus]);
 
   // Esc closes the modal globally.
   useEffect(() => {

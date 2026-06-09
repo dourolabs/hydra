@@ -361,6 +361,50 @@
   cursor: not-allowed;
 }
 
+.colAddIssue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: auto;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--fg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+  /* Space is permanently reserved (visibility, not display) so the column
+     height stays stable when the button toggles in/out on hover. */
+  visibility: hidden;
+  transition:
+    border-color var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.col:hover .colAddIssue {
+  visibility: visible;
+}
+
+.colAddIssue:hover {
+  color: var(--fg-0);
+  border-color: var(--line-strong);
+}
+
+.colAddIssue:focus-visible {
+  outline: 1px solid var(--line-strong);
+  outline-offset: 1px;
+}
+
+.colAddIssueIcon {
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
+  line-height: 1;
+  color: inherit;
+}
+
 .colGhost {
   display: flex;
   align-items: center;
