@@ -75,10 +75,12 @@ import type {
   ProjectRef,
   UpsertProjectRequest,
   UpsertProjectResponse,
+  UpsertProjectStatusResponse,
   ProjectRecord,
   ListProjectsResponse,
   ProjectStatusesResponse,
 } from "./projects";
+import type { StatusDefinition } from "./generated/StatusDefinition";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -758,6 +760,44 @@ export class HydraApiClient {
   /** GET /v1/projects/:projectRef/statuses — accepts either an id (`j-…`) or key. */
   getProjectStatuses(projectRef: ProjectRef): Promise<ProjectStatusesResponse> {
     return this.get(`/v1/projects/${encodeURIComponent(projectRef)}/statuses`);
+  }
+
+  /** POST /v1/projects/:projectRef/statuses — add a new status. */
+  createProjectStatus(
+    projectRef: ProjectRef,
+    status: StatusDefinition,
+  ): Promise<UpsertProjectStatusResponse> {
+    return this.post(`/v1/projects/${encodeURIComponent(projectRef)}/statuses`, status);
+  }
+
+  /**
+   * PUT /v1/projects/:projectRef/statuses/:statusKey — update or
+   * rename an existing status. A body whose `key` differs from
+   * `statusKey` is a rename in place.
+   */
+  updateProjectStatus(
+    projectRef: ProjectRef,
+    statusKey: string,
+    status: StatusDefinition,
+  ): Promise<UpsertProjectStatusResponse> {
+    return this.put(
+      `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}`,
+      status,
+    );
+  }
+
+  /**
+   * DELETE /v1/projects/:projectRef/statuses/:statusKey — remove a
+   * status. Fails with 400 if any issue still references the
+   * status.
+   */
+  deleteProjectStatus(
+    projectRef: ProjectRef,
+    statusKey: string,
+  ): Promise<UpsertProjectResponse> {
+    return this.del(
+      `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}`,
+    );
   }
 
   // ---------------------------------------------------------------------------

@@ -113,11 +113,16 @@ export function ProjectForm({
           });
         }
       }
-      const project = buildProject();
+      const request = {
+        key: key as Project["key"],
+        name: name.trim(),
+        prompt_path: (promptPath || null) as DocumentPath | null,
+        priority: initial?.priority ?? 0,
+      };
       if (isEdit && projectId) {
-        return apiClient.updateProject(projectId, { project });
+        return apiClient.updateProject(projectId, request);
       }
-      return apiClient.createProject({ project });
+      return apiClient.createProject(request);
     },
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });

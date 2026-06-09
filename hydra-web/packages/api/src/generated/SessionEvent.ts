@@ -8,11 +8,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * model "sees" is the projection of this log onto `UserMessage` and
  * `AssistantMessage` variants in insertion order.
  */
-export type SessionEvent =
-  | { type: "user_message"; content: string; timestamp: string }
-  | { type: "assistant_message"; content: string; timestamp: string }
-  | { type: "tool_use"; tool_name: string; payload: JsonValue; timestamp: string }
-  | { type: "suspending"; reason: string; timestamp: string }
-  | { type: "resumed"; from_session_id: SessionId; source: ResumeSource; timestamp: string }
-  | { type: "closed"; timestamp: string }
-  | { type: "unknown" };
+export type SessionEvent = { "type": "user_message", content: string, timestamp: string, } | { "type": "assistant_message", content: string, timestamp: string, } | { "type": "tool_use", tool_name: string, payload: JsonValue, timestamp: string, } | { "type": "suspending", reason: string, timestamp: string, } | { "type": "resumed", from_session_id: SessionId, source: ResumeSource, timestamp: string, } | { "type": "closed", timestamp: string, } | { "type": "unknown" };

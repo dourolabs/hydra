@@ -11,11 +11,4 @@ import type { Username } from "./Username";
  * double-fires the same slot and never replays slots whose scheduled
  * time elapsed during downtime.
  */
-export type Trigger = {
-  enabled: boolean;
-  schedule: TriggerSchedule;
-  actions: Array<TriggerAction>;
-  creator: Username;
-  last_fired_at?: string | null;
-  deleted?: boolean;
-};
+export type Trigger = { enabled: boolean, schedule: TriggerSchedule, actions: Array<TriggerAction>, creator: Username, last_fired_at?: string | null, deleted?: boolean, };

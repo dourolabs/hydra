@@ -4,4 +4,4 @@
  * Summary of session events for batch fetching, returned by
  * `get_session_event_summaries`.
  */
-export type SessionEventSummary = { event_count: number; last_event_preview?: string | null };
+export type SessionEventSummary = { event_count: number, last_event_preview?: string | null, };

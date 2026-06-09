@@ -4,4 +4,4 @@ import type { TriggerVersionRecord } from "./TriggerVersionRecord";
 /**
  * `GET /v1/triggers` response.
  */
-export type ListTriggersResponse = { triggers: Array<TriggerVersionRecord> };
+export type ListTriggersResponse = { triggers: Array<TriggerVersionRecord>, };

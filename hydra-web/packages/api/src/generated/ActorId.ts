@@ -13,8 +13,4 @@
  * - **`External { system, username }`** — an identity that lives in an
  *   external system (e.g. GitHub) and has no corresponding Hydra user.
  */
-export type ActorId =
-  | { User: { name: string } }
-  | { Agent: { name: string } }
-  | { Adhoc: { session_id: string } }
-  | { External: { system: string; username: string } };
+export type ActorId = | { User: { name: string } } | { Agent: { name: string } } | { Adhoc: { session_id: string } } | { External: { system: string; username: string } };

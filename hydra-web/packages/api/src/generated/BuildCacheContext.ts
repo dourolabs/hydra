@@ -2,4 +2,4 @@
 import type { BuildCacheSettings } from "./BuildCacheSettings";
 import type { BuildCacheStorageConfig } from "./BuildCacheStorageConfig";
 
-export type BuildCacheContext = { storage: BuildCacheStorageConfig; settings: BuildCacheSettings };
+export type BuildCacheContext = { storage: BuildCacheStorageConfig, settings: BuildCacheSettings, };

@@ -6,4 +6,4 @@ import type { SessionEvent } from "./SessionEvent";
  * the payload of `ServerMessage::CatchUp` so the worker can update its
  * running max from the catch-up slice itself.
  */
-export type CatchUpEvent = { event: SessionEvent; event_index: number };
+export type CatchUpEvent = { event: SessionEvent, event_index: number, };

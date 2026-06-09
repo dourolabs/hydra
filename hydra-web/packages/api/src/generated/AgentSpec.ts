@@ -16,6 +16,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * The two variants are exclusive: there is no "Named with prompt
  * override" middle ground. See `i-mnmvcxmd` for the design rationale.
  */
-export type AgentSpec =
-  | { type: "named"; name: AgentName }
-  | { type: "adhoc"; system_prompt: string; mcp_config?: JsonValue | null };
+export type AgentSpec = { "type": "named", name: AgentName, } | { "type": "adhoc", system_prompt: string, mcp_config?: JsonValue | null, };

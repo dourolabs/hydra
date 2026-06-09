@@ -7,4 +7,4 @@ import type { CreateIssueAction } from "./CreateIssueAction";
  * v1 ships only `CreateIssue`; future variants slot in without changing
  * surrounding machinery.
  */
-export type TriggerAction = { CreateIssue: CreateIssueAction };
+export type TriggerAction = { "CreateIssue": CreateIssueAction };

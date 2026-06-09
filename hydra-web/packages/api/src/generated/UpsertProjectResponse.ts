@@ -4,4 +4,4 @@ import type { ProjectId } from "./ProjectId";
 /**
  * Response body for `POST /v1/projects` and `PUT /v1/projects/:id`.
  */
-export type UpsertProjectResponse = { project_id: ProjectId; version: bigint };
+export type UpsertProjectResponse = { project_id: ProjectId, version: bigint, };

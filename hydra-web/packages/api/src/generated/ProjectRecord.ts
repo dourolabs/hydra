@@ -5,4 +5,4 @@ import type { ProjectId } from "./ProjectId";
 /**
  * Response body for `GET /v1/projects/:id`.
  */
-export type ProjectRecord = { project_id: ProjectId; version: bigint; project: Project };
+export type ProjectRecord = { project_id: ProjectId, version: bigint, project: Project, };

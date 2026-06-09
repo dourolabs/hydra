@@ -62,6 +62,7 @@ function makeIssueRecord(opts?: {
         key: "open",
         label: opts?.statusLabel ?? "Open",
         color: "#3498db",
+        position: 0,
         unblocks_parents: false,
         unblocks_dependents: false,
         cascades_to_children: false,

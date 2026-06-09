@@ -3,4 +3,4 @@
 /**
  * `GET /v1/triggers` query string.
  */
-export type SearchTriggersQuery = { include_deleted?: boolean | null };
+export type SearchTriggersQuery = { include_deleted?: boolean | null, };

@@ -6,6 +6,4 @@
  * `Cron` is a 5-field cron expression. `Once { at }` fires a single time
  * at the given UTC timestamp.
  */
-export type TriggerSchedule =
-  | { Cron: { expression: string; timezone?: string | null } }
-  | { Once: { at: string } };
+export type TriggerSchedule = { "Cron": { expression: string, timezone?: string | null, } } | { "Once": { at: string, } };

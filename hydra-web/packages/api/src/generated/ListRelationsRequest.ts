@@ -4,23 +4,17 @@ import type { HydraId } from "./HydraId";
 /**
  * Query parameters for `GET /v1/relations/`.
  */
-export type ListRelationsRequest = {
-  source_id?: HydraId | null;
-  /**
-   * Comma-separated list of source IDs (mutually exclusive with `source_id`).
-   */
-  source_ids?: string | null;
-  target_id?: HydraId | null;
-  /**
-   * Comma-separated list of target IDs (mutually exclusive with `target_id`).
-   */
-  target_ids?: string | null;
-  object_id?: HydraId | null;
-  /**
-   * Comma-separated list of object IDs (mutually exclusive with `object_id`,
-   * `source_id`/`source_ids`, and `target_id`/`target_ids`).
-   */
-  object_ids?: string | null;
-  rel_type?: string | null;
-  transitive?: boolean | null;
-};
+export type ListRelationsRequest = { source_id?: HydraId | null, 
+/**
+ * Comma-separated list of source IDs (mutually exclusive with `source_id`).
+ */
+source_ids?: string | null, target_id?: HydraId | null, 
+/**
+ * Comma-separated list of target IDs (mutually exclusive with `target_id`).
+ */
+target_ids?: string | null, object_id?: HydraId | null, 
+/**
+ * Comma-separated list of object IDs (mutually exclusive with `object_id`,
+ * `source_id`/`source_ids`, and `target_id`/`target_ids`).
+ */
+object_ids?: string | null, rel_type?: string | null, transitive?: boolean | null, };

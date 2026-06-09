@@ -384,6 +384,7 @@ function makeStatus(
     key: key as never,
     label: key,
     color: "#abcdef" as never,
+    position: 0,
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,

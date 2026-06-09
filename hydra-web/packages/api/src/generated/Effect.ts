@@ -4,6 +4,4 @@ import type { StatusKey } from "./StatusKey";
 /**
  * What happens when an action is taken.
  */
-export type Effect =
-  | { type: "update_issue"; status: StatusKey; set_feedback_from?: string | null }
-  | { type: "record_only" };
+export type Effect = { "type": "update_issue", status: StatusKey, set_feedback_from?: string | null, } | { "type": "record_only" };

@@ -157,6 +157,8 @@ mod ts_export {
         crate::projects::ListProjectsResponse::export_all(&cfg).expect("ListProjectsResponse");
         crate::projects::ProjectStatusesResponse::export_all(&cfg)
             .expect("ProjectStatusesResponse");
+        crate::projects::UpsertProjectStatusResponse::export_all(&cfg)
+            .expect("UpsertProjectStatusResponse");
 
         // API v1: labels
         crate::labels::Label::export_all(&cfg).expect("Label");

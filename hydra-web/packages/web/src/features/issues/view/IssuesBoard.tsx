@@ -316,7 +316,10 @@ export function IssuesBoard({
       priority: number;
     }) => {
       return apiClient.updateProject(projectRecord.project_id, {
-        project: { ...projectRecord.project, priority },
+        key: projectRecord.project.key,
+        name: projectRecord.project.name,
+        prompt_path: projectRecord.project.prompt_path ?? null,
+        priority,
       });
     },
     onMutate: async ({ projectRecord, priority }) => {
@@ -784,9 +787,19 @@ function ProjectSection({
       nextStatuses: StatusDefinition[];
       previous: ListProjectsResponse | undefined;
     }) => {
-      return apiClient.updateProject(projectRecord.project_id, {
-        project: { ...projectRecord.project, statuses: nextStatuses },
-      });
+      // Per-status PUTs persist the new `position` values. The
+      // drag-to-reorder UI recomputes positions to `index * 100`
+      // before mutating, so a stale cached project still sorts
+      // correctly on next read. We fire requests sequentially to keep
+      // mock-server ordering predictable; in production the server's
+      // version-bump-per-call already serializes them.
+      const ref = projectRecord.project_id;
+      let lastVersion = projectRecord.version;
+      for (const status of nextStatuses) {
+        const resp = await apiClient.updateProjectStatus(ref, status.key, status);
+        lastVersion = resp.version;
+      }
+      return { project_id: ref, version: lastVersion };
     },
     onError: (err, { previous }) => {
       if (previous) {
@@ -822,7 +835,13 @@ function ProjectSection({
       const oldIdx = statuses.findIndex((s) => s.key === active.id);
       const newIdx = statuses.findIndex((s) => s.key === over.id);
       if (oldIdx < 0 || newIdx < 0) return;
-      const next = arrayMove(statuses, oldIdx, newIdx);
+      // Recompute `position` to `index * 100` after the reorder so
+      // the persisted column order matches the optimistic UI.
+      const reorderedRaw = arrayMove(statuses, oldIdx, newIdx);
+      const next: StatusDefinition[] = reorderedRaw.map((s, i) => ({
+        ...s,
+        position: i * 100,
+      }));
       // Apply the optimistic reorder synchronously here, inside the drop event
       // handler, so React batches it into the SAME commit as dnd-kit clearing
       // the drag transform. Doing it in the mutation's onMutate instead defers

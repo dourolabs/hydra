@@ -5,11 +5,9 @@ import type { DocumentId } from "./DocumentId";
  * Inline document reference attached to a `PathChildEntry` when the entry's
  * `full_path` matches a live (non-deleted) document.
  */
-export type PathChildDocumentRef = {
-  document_id: DocumentId;
-  /**
-   * Document title at the time of the lookup. May be an empty string if the
-   * document has no title set; the frontend has its own fallback.
-   */
-  title: string;
-};
+export type PathChildDocumentRef = { document_id: DocumentId, 
+/**
+ * Document title at the time of the lookup. May be an empty string if the
+ * document has no title set; the frontend has its own fallback.
+ */
+title: string, };

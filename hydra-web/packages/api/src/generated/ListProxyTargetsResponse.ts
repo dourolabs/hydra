@@ -4,4 +4,4 @@ import type { ProxyTarget } from "./ProxyTarget";
 /**
  * Body for `GET /v1/sessions/<sid>/proxy-targets`.
  */
-export type ListProxyTargetsResponse = { targets: Array<ProxyTarget> };
+export type ListProxyTargetsResponse = { targets: Array<ProxyTarget>, };

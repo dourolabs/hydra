@@ -3,16 +3,13 @@ import type { IssueInput } from "./IssueInput";
 import type { LabelId } from "./LabelId";
 import type { SessionId } from "./SessionId";
 
-export type UpsertIssueRequest = {
-  issue: IssueInput;
-  session_id: SessionId | null;
-  /**
-   * Label IDs to associate with this issue (replaces existing labels).
-   */
-  label_ids?: Array<LabelId> | null;
-  /**
-   * Label names to associate with this issue (resolved to label IDs).
-   * Labels that do not exist are created automatically.
-   */
-  label_names?: Array<string> | null;
-};
+export type UpsertIssueRequest = { issue: IssueInput, session_id: SessionId | null, 
+/**
+ * Label IDs to associate with this issue (replaces existing labels).
+ */
+label_ids?: Array<LabelId> | null, 
+/**
+ * Label names to associate with this issue (resolved to label IDs).
+ * Labels that do not exist are created automatically.
+ */
+label_names?: Array<string> | null, };

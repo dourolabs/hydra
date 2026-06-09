@@ -16,12 +16,8 @@ import type { Principal } from "./Principal";
  * `tracing::warn!` on the `review_author_legacy_decode` target so the
  * fallback can be release-soaked before deletion.
  */
-export type Review = {
-  contents: string;
-  is_approved: boolean;
-  author: Principal;
-  /**
-   * Timestamp for when the review was recorded.
-   */
-  submitted_at: string | null;
-};
+export type Review = { contents: string, is_approved: boolean, author: Principal, 
+/**
+ * Timestamp for when the review was recorded.
+ */
+submitted_at: string | null, };

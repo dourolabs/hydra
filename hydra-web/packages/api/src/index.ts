@@ -30,6 +30,7 @@ export type {
   ProjectRef,
   UpsertProjectRequest,
   UpsertProjectResponse,
+  UpsertProjectStatusResponse,
   ProjectRecord,
   ListProjectsResponse,
   ProjectStatusesResponse,

@@ -6,22 +6,16 @@ import type { Username } from "./Username";
 /**
  * A project owns an ordered list of [`StatusDefinition`]s.
  */
-export type Project = {
-  key: ProjectKey;
-  name: string;
-  statuses: Array<StatusDefinition>;
-  creator: Username;
-  deleted?: boolean;
-  /**
-   * Doc-store path for the project-layer prompt slice that gets
-   * concatenated into a session's `system_prompt` at create-time.
-   * `None` contributes an empty slice.
-   */
-  prompt_path?: string | null;
-  /**
-   * Sort key for project ordering. Smaller values appear earlier.
-   * Default 0.0; drag-and-drop UI (follow-up) sets explicit values to
-   * reorder.
-   */
-  priority: number;
-};
+export type Project = { key: ProjectKey, name: string, statuses: Array<StatusDefinition>, creator: Username, deleted?: boolean, 
+/**
+ * Doc-store path for the project-layer prompt slice that gets
+ * concatenated into a session's `system_prompt` at create-time.
+ * `None` contributes an empty slice.
+ */
+prompt_path?: string | null, 
+/**
+ * Sort key for project ordering. Smaller values appear earlier.
+ * Default 0.0; drag-and-drop UI (follow-up) sets explicit values to
+ * reorder.
+ */
+priority: number, };

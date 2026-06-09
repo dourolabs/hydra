@@ -4,4 +4,4 @@ import type { TriggerId } from "./TriggerId";
 /**
  * `POST /v1/triggers` and `PUT /v1/triggers/:id` response.
  */
-export type UpsertTriggerResponse = { trigger_id: TriggerId; version: bigint };
+export type UpsertTriggerResponse = { trigger_id: TriggerId, version: bigint, };

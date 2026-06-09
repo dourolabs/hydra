@@ -5,25 +5,24 @@ import type { Effect } from "./Effect";
 /**
  * An action button on the form.
  */
-export type Action = {
-  /**
-   * Unique identifier within the form.
-   */
-  id: string;
-  /**
-   * Button label.
-   */
-  label: string;
-  /**
-   * Visual style for the button.
-   */
-  style: ActionStyle;
-  /**
-   * Which field keys are required for this action.
-   */
-  requires: Array<string>;
-  /**
-   * What happens when the user clicks this action.
-   */
-  effect: Effect;
-};
+export type Action = { 
+/**
+ * Unique identifier within the form.
+ */
+id: string, 
+/**
+ * Button label.
+ */
+label: string, 
+/**
+ * Visual style for the button.
+ */
+style: ActionStyle, 
+/**
+ * Which field keys are required for this action.
+ */
+requires: Array<string>, 
+/**
+ * What happens when the user clicks this action.
+ */
+effect: Effect, };

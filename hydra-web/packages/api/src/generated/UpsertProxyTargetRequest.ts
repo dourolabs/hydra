@@ -3,4 +3,4 @@
 /**
  * Body for `POST /v1/sessions/<sid>/proxy-targets`.
  */
-export type UpsertProxyTargetRequest = { port: number; ready_path?: string | null };
+export type UpsertProxyTargetRequest = { port: number, ready_path?: string | null, };

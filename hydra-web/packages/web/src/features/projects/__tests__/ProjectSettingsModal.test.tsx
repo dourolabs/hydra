@@ -220,6 +220,7 @@ function makeProject(): ProjectRecord {
           cascades_to_children: false,
           on_enter: null,
           prompt_path: null,
+          position: 0,
         },
       ],
       creator: "alice" as never,

@@ -11,9 +11,4 @@ import type { Username } from "./Username";
  * and carried forward by `update_trigger`; `deleted` is flipped by
  * `delete_trigger`).
  */
-export type UpsertTriggerRequest = {
-  enabled: boolean;
-  schedule: TriggerSchedule;
-  actions: Array<TriggerAction>;
-  creator: Username;
-};
+export type UpsertTriggerRequest = { enabled: boolean, schedule: TriggerSchedule, actions: Array<TriggerAction>, creator: Username, };

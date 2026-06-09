@@ -33,7 +33,4 @@ import type { Username } from "./Username";
  * wraps a `Principal` for its `Static` case, and `Principal.ts` is
  * generated from this type.
  */
-export type Principal =
-  | { User: { name: Username } }
-  | { Agent: { name: AgentName } }
-  | { External: { system: ExternalSystem; username: string } };
+export type Principal = { "User": { name: Username, } } | { "Agent": { name: AgentName, } } | { "External": { system: ExternalSystem, username: string, } };

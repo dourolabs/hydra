@@ -4,4 +4,4 @@ import type { HydraId } from "./HydraId";
 /**
  * Request body for `DELETE /v1/relations/`.
  */
-export type RemoveRelationRequest = { source_id: HydraId; target_id: HydraId; rel_type: string };
+export type RemoveRelationRequest = { source_id: HydraId, target_id: HydraId, rel_type: string, };

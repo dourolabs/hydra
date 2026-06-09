@@ -69,19 +69,50 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     [key, name, statuses, promptPath],
   );
 
+  interface SubmitPayload {
+    request: UpsertProjectRequest;
+    project: Project;
+    nextStatuses: StatusDefinition[];
+    initialStatuses: StatusDefinition[];
+  }
+
   const mutation = useMutation({
-    mutationFn: async (req: UpsertProjectRequest) => {
-      if (isEdit && projectId) {
-        return apiClient.updateProject(projectId, req);
+    mutationFn: async (payload: SubmitPayload) => {
+      const upsertResp =
+        isEdit && projectId
+          ? await apiClient.updateProject(projectId, payload.request)
+          : await apiClient.createProject(payload.request);
+      // Status-level changes go through per-status endpoints.
+      // `initialStatuses` is the at-load snapshot from `initial`;
+      // `nextStatuses` is the editor's local edit. For create, the
+      // initial slice is empty and everything in `nextStatuses` is a
+      // POST.
+      const ref = upsertResp.project_id;
+      const existingByKey = new Map(
+        payload.initialStatuses.map((s) => [s.key, s] as const),
+      );
+      const nextKeys = new Set(payload.nextStatuses.map((s) => s.key));
+      for (const status of payload.nextStatuses) {
+        if (existingByKey.has(status.key)) {
+          await apiClient.updateProjectStatus(ref, status.key, status);
+          existingByKey.delete(status.key);
+        } else {
+          await apiClient.createProjectStatus(ref, status);
+        }
       }
-      return apiClient.createProject(req);
+      for (const [key, _] of existingByKey) {
+        if (!nextKeys.has(key)) {
+          await apiClient.deleteProjectStatus(ref, key);
+        }
+      }
+      return upsertResp;
     },
-    onMutate: async (req) => {
+    onMutate: async (payload) => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
       const previous = queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
       if (previous) {
         const next: ListProjectsResponse = {
-          projects: applyOptimisticUpsert(previous.projects, projectId ?? null, req.project),
+          projects: applyOptimisticUpsert(previous.projects, projectId ?? null, payload.project),
         };
         queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
       }
@@ -134,18 +165,32 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       return;
     }
     const trimmedPromptPath = promptPath.trim();
+    const promptPathOrNull = trimmedPromptPath ? trimmedPromptPath : null;
+    const priority = initial?.priority ?? 0;
+    const nextStatuses = statuses.map(normalizeStatusForSubmit);
     const project: Project = {
       key: key.trim(),
       name: name.trim(),
-      statuses: statuses.map(normalizeStatusForSubmit),
+      statuses: nextStatuses,
       creator,
       deleted: false,
-      prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
+      prompt_path: promptPathOrNull,
       // Preserve the existing project's priority on edit; new projects
       // get `0` (sort-to-top).
-      priority: initial?.priority ?? 0,
+      priority,
     };
-    mutation.mutate({ project });
+    const request: UpsertProjectRequest = {
+      key: key.trim(),
+      name: name.trim(),
+      prompt_path: promptPathOrNull,
+      priority,
+    };
+    mutation.mutate({
+      request,
+      project,
+      nextStatuses,
+      initialStatuses: initial?.statuses ?? [],
+    });
   }, [
     formError,
     key,
@@ -153,6 +198,7 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     promptPath,
     statuses,
     creator,
+    initial,
     mutation,
     addToast,
   ]);
@@ -613,6 +659,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       cascades_to_children: false,
       on_enter: null,
       prompt_path: null,
+      position: 100,
     },
     {
       key: "in-progress",
@@ -623,6 +670,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       cascades_to_children: false,
       on_enter: null,
       prompt_path: null,
+      position: 200,
     },
     {
       key: "closed",
@@ -633,6 +681,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       cascades_to_children: false,
       on_enter: null,
       prompt_path: null,
+      position: 300,
     },
   ];
 }

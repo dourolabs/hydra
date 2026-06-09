@@ -10,35 +10,21 @@ import type { SessionSettings } from "./SessionSettings";
 import type { StatusDefinition } from "./StatusDefinition";
 import type { Username } from "./Username";
 
-export type Issue = {
-  type: IssueType;
-  title: string;
-  description: string;
-  creator: Username;
-  progress: string;
-  /**
-   * Server-computed status definition (display props + dependency
-   * flags), resolved against the issue's project's status list at
-   * response time. The bare key lives at `status.key`. Never stored:
-   * always populated on responses so frontends don't need a second
-   * round trip to render the status chip. Create / update requests
-   * go through [`IssueInput`], which carries only [`StatusKey`].
-   */
-  status: StatusDefinition;
-  /**
-   * Project this issue belongs to. Always present on the wire — the
-   * `seed_default_project` migration backfilled every legacy NULL row
-   * to the seeded `j-defaul` project, and the
-   * `issues_v2_project_id_not_null` migration enforces NOT NULL at the
-   * DB layer.
-   */
-  project_id: ProjectId;
-  assignee?: Principal | null;
-  session_settings?: SessionSettings;
-  dependencies: Array<IssueDependency>;
-  patches: Array<PatchId>;
-  deleted?: boolean;
-  form?: Form | null;
-  form_response?: FormResponse | null;
-  feedback?: string | null;
-};
+export type Issue = { type: IssueType, title: string, description: string, creator: Username, progress: string, 
+/**
+ * Server-computed status definition (display props + dependency
+ * flags), resolved against the issue's project's status list at
+ * response time. The bare key lives at `status.key`. Never stored:
+ * always populated on responses so frontends don't need a second
+ * round trip to render the status chip. Create / update requests
+ * go through [`IssueInput`], which carries only [`StatusKey`].
+ */
+status: StatusDefinition, 
+/**
+ * Project this issue belongs to. Always present on the wire — the
+ * `seed_default_project` migration backfilled every legacy NULL row
+ * to the seeded `j-defaul` project, and the
+ * `issues_v2_project_id_not_null` migration enforces NOT NULL at the
+ * DB layer.
+ */
+project_id: ProjectId, assignee?: Principal | null, session_settings?: SessionSettings, dependencies: Array<IssueDependency>, patches: Array<PatchId>, deleted?: boolean, form?: Form | null, form_response?: FormResponse | null, feedback?: string | null, };

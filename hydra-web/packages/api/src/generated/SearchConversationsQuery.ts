@@ -2,33 +2,32 @@
 import type { ConversationStatus } from "./ConversationStatus";
 import type { IssueId } from "./IssueId";
 
-export type SearchConversationsQuery = {
-  /**
-   * Free-text search across conversation title, agent name, and ID.
-   */
-  q: string | null;
-  /**
-   * Filter by conversation status.
-   */
-  status?: ConversationStatus | null;
-  /**
-   * Filter by creator username.
-   */
-  creator?: string | null;
-  /**
-   * Include soft-deleted conversations in results.
-   */
-  include_deleted: boolean | null;
-  /**
-   * Filter by the issue that spawned this conversation.
-   */
-  spawned_from?: IssueId | null;
-  /**
-   * Maximum number of results to return.
-   */
-  limit: number | null;
-  /**
-   * Opaque cursor from a previous response's `next_cursor` field.
-   */
-  cursor: string | null;
-};
+export type SearchConversationsQuery = { 
+/**
+ * Free-text search across conversation title, agent name, and ID.
+ */
+q: string | null, 
+/**
+ * Filter by conversation status.
+ */
+status?: ConversationStatus | null, 
+/**
+ * Filter by creator username.
+ */
+creator?: string | null, 
+/**
+ * Include soft-deleted conversations in results.
+ */
+include_deleted: boolean | null, 
+/**
+ * Filter by the issue that spawned this conversation.
+ */
+spawned_from?: IssueId | null, 
+/**
+ * Maximum number of results to return.
+ */
+limit: number | null, 
+/**
+ * Opaque cursor from a previous response's `next_cursor` field.
+ */
+cursor: string | null, };
