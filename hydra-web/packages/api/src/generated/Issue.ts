@@ -19,10 +19,9 @@ export type Issue = {
   progress: string;
   /**
    * Status key for this issue; resolved against its project's status
-   * list (or [`super::projects::Project`]'s synthesized default project
-   * when [`Self::project_id`] is None). The wire string is unchanged
-   * for the five legacy statuses (`open`, `in-progress`, `closed`,
-   * `dropped`, `failed`) so older clients keep working.
+   * list. The wire string is unchanged for the five legacy statuses
+   * (`open`, `in-progress`, `closed`, `dropped`, `failed`) so older
+   * clients keep working.
    */
   status: StatusKey;
   /**
