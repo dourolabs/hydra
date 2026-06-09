@@ -4,7 +4,7 @@ export type FilterOp = "in" | "not_in";
 
 export type FilterGroup = "properties" | "people" | "context" | "relations";
 
-export type FilterKind = "enum" | "user" | "relation";
+export type FilterKind = "enum" | "user" | "relation" | "presence";
 
 export interface Filter {
   _uid: string;

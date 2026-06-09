@@ -1168,6 +1168,10 @@ function BoardColumn({
           const id = rec.issue_id;
           const children = childStatusMap.get(id);
           const pct = progressFraction(children);
+          const archived = issue.deleted === true;
+          const cardClass = archived
+            ? `${styles.card} ${styles.cardArchived}`
+            : styles.card;
 
           const handleCardDragStart = (
             e: React.DragEvent<HTMLDivElement>,
@@ -1186,15 +1190,26 @@ function BoardColumn({
           return (
             <div
               key={id}
-              className={styles.card}
+              className={cardClass}
               onClick={() => onCardClick(id)}
               draggable
               onDragStart={handleCardDragStart}
               data-testid={`board-card-${id}`}
+              data-archived={archived ? "true" : undefined}
             >
-              {issue.type && issue.type !== "unknown" && (
+              {(archived || (issue.type && issue.type !== "unknown")) && (
                 <div className={styles.cardHead}>
-                  <TypeChip type={issue.type} />
+                  {issue.type && issue.type !== "unknown" && (
+                    <TypeChip type={issue.type} />
+                  )}
+                  {archived && (
+                    <span
+                      className={styles.cardArchivedTag}
+                      data-testid={`board-card-archived-${id}`}
+                    >
+                      ARCHIVED
+                    </span>
+                  )}
                 </div>
               )}
               <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>

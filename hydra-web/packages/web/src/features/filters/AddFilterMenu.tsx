@@ -26,6 +26,7 @@ function hintForKind<T>(
 ): string {
   if (kind === "enum") return `${def.options.length} options`;
   if (kind === "user") return "person or agent";
+  if (kind === "presence") return "flag";
   return def.entityLabel ?? "relation";
 }
 

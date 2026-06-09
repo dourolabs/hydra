@@ -330,6 +330,18 @@ export function useIssueFilters(
         options: relationOptionsFromEntities("issue", issueEntities),
         apply: () => false,
       },
+      // Presence-only flag — selecting it from the menu activates
+      // `include_deleted=true` on the issues list query so soft-deleted
+      // (archived) issues appear alongside live ones. Dismissing the chip
+      // returns the page to the default (archived rows hidden).
+      includeArchived: {
+        label: "Include archived",
+        icon: Icons.IconArchive,
+        group: "properties",
+        kind: "presence",
+        options: [],
+        apply: () => true,
+      },
     };
   }, [
     userOpts,

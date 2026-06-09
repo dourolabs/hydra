@@ -332,17 +332,29 @@ function IssueDataRow({
   const fillClass = hasActiveChild
     ? `${styles.progressFill} ${styles.progressFillActive}`
     : styles.progressFill;
-  const rowClass = blocked ? `${styles.dataRow} ${styles.blocked}` : styles.dataRow;
+  const archived = issue.deleted === true;
+  const rowClasses = [styles.dataRow];
+  if (blocked) rowClasses.push(styles.blocked);
+  if (archived) rowClasses.push(styles.archived);
 
   return (
     <tr
-      className={rowClass}
+      className={rowClasses.join(" ")}
       data-testid={`issues-list-row-${id}`}
+      data-archived={archived ? "true" : undefined}
       onClick={() => onClick(id)}
     >
       <td className={styles.colTitle}>
         <div className={styles.titleCell}>
           <span className={styles.titleText}>{issue.title || "(untitled)"}</span>
+          {archived && (
+            <span
+              className={styles.archivedTag}
+              data-testid={`issues-row-archived-${id}`}
+            >
+              ARCHIVED
+            </span>
+          )}
         </div>
       </td>
       <td className={styles.colStatus}>

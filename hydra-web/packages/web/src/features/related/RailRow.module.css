@@ -168,3 +168,24 @@
   margin-right: 2px;
   opacity: 0.85;
 }
+
+.archived {
+  opacity: 0.62;
+}
+
+.archived .title {
+  color: var(--fg-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+}
+
+.archivedTag {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+}
