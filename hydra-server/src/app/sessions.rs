@@ -299,14 +299,11 @@ impl AppState {
     ///
     /// - `Some(issue_id)`: load the issue, resolve its status via
     ///   [`AppState::resolve_status`], and load the project from the store.
-    ///   Issues with `project_id = None` (residual shape; the
-    ///   `seed_default_project` migration backfills production rows) are
-    ///   resolved through the seeded default project. On any lookup
-    ///   failure we fall back to the no-project sentinel — the session
-    ///   still spawns, and the empty project / status slices keep
-    ///   `system_prompt` byte-identical to today's `resolve_agent_prompt`
-    ///   output. This matches the "tolerate missing layers" invariant
-    ///   from the design doc.
+    ///   On any lookup failure we fall back to the no-project sentinel —
+    ///   the session still spawns, and the empty project / status slices
+    ///   keep `system_prompt` byte-identical to today's
+    ///   `resolve_agent_prompt` output. This matches the "tolerate
+    ///   missing layers" invariant from the design doc.
     /// - `None`: conversation sessions and other issue-less spawns get the
     ///   [`no_project_sentinel`] (both `prompt_path = None`), so the
     ///   resolver emits system + agent only.
@@ -1777,15 +1774,15 @@ mod tests {
         );
     }
 
-    /// Issues with `project_id = None` should exercise the four-level
-    /// prompt resolver via the DefaultProject path references. Because
-    /// the new system / project / status docs don't yet exist in the
-    /// doc store (PR 2 authors them), all three new layers resolve to
-    /// empty slices and the spawned session's `system_prompt` is
+    /// Issues with the default `project_id` should exercise the
+    /// four-level prompt resolver via the DefaultProject path references.
+    /// Because the new system / project / status docs don't yet exist in
+    /// the doc store (PR 2 authors them), all three new layers resolve
+    /// to empty slices and the spawned session's `system_prompt` is
     /// byte-identical to today's agent prompt — that's the "no
     /// observable behavior change" invariant from the design.
     #[tokio::test]
-    async fn create_session_for_issue_with_no_project_id_returns_agent_body_only() {
+    async fn create_session_for_issue_with_default_project_id_returns_agent_body_only() {
         use crate::domain::agents::Agent;
         use crate::domain::documents::Document;
         use hydra_common::api::v1::sessions::{

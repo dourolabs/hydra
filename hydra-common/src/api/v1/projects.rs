@@ -396,7 +396,7 @@ impl ProjectStatusesResponse {
 
 /// Path segment for `GET /v1/projects/:project_id_or_default/statuses`. Either
 /// a real [`ProjectId`] or the literal `"default"` token addressing the
-/// synthesized default project.
+/// seeded default project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectIdOrDefault {
     Default,
