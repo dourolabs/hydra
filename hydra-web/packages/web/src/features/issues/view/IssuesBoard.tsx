@@ -569,34 +569,19 @@ function ProjectSection({
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const reorderMutation = useMutation({
-    mutationFn: async (nextStatuses: StatusDefinition[]) => {
+    mutationFn: async ({
+      nextStatuses,
+    }: {
+      nextStatuses: StatusDefinition[];
+      previous: ListProjectsResponse | undefined;
+    }) => {
       return apiClient.updateProject(projectRecord.project_id, {
         project: { ...projectRecord.project, statuses: nextStatuses },
       });
     },
-    onMutate: async (nextStatuses) => {
-      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
-      const previous =
-        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+    onError: (err, { previous }) => {
       if (previous) {
-        const nextProject = {
-          ...projectRecord.project,
-          statuses: nextStatuses,
-        };
-        const next: ListProjectsResponse = {
-          projects: applyOptimisticUpsert(
-            previous.projects,
-            projectRecord.project_id,
-            nextProject,
-          ),
-        };
-        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
-      }
-      return { previous };
-    },
-    onError: (err, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
+        queryClient.setQueryData(PROJECTS_QUERY_KEY, previous);
       }
       addToast(
         err instanceof Error ? err.message : "Failed to reorder columns",
@@ -629,9 +614,26 @@ function ProjectSection({
       const newIdx = statuses.findIndex((s) => s.key === over.id);
       if (oldIdx < 0 || newIdx < 0) return;
       const next = arrayMove(statuses, oldIdx, newIdx);
-      reorderMutation.mutate(next);
+      // Apply the optimistic reorder synchronously here, inside the drop event
+      // handler, so React batches it into the SAME commit as dnd-kit clearing
+      // the drag transform. Doing it in the mutation's onMutate instead defers
+      // it past a microtask, producing a one-frame flash where the column snaps
+      // back to its original slot before the reorder lands.
+      const previous =
+        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      if (previous) {
+        const nextProject = { ...projectRecord.project, statuses: next };
+        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, {
+          projects: applyOptimisticUpsert(
+            previous.projects,
+            projectRecord.project_id,
+            nextProject,
+          ),
+        });
+      }
+      reorderMutation.mutate({ nextStatuses: next, previous });
     },
-    [projectRecord, reorderMutation],
+    [projectRecord, reorderMutation, queryClient],
   );
 
   const columns = project.statuses.map((status) => {
