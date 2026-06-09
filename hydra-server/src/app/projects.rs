@@ -8,6 +8,8 @@
 //! DTO [`hydra_common::api::v1::issues::IssueInput`] requires
 //! `project_id` to be populated.
 
+use std::collections::HashMap;
+
 use crate::domain::actors::ActorRef;
 use crate::domain::issues::Issue;
 use crate::store::{ReadOnlyStore, StoreError};
@@ -94,19 +96,48 @@ pub async fn resolve_status_via_store(
     store: &dyn ReadOnlyStore,
     issue: &Issue,
 ) -> Result<StatusDefinition, ResolveStatusError> {
+    let mut cache = HashMap::new();
+    resolve_status_with_cache(&mut cache, store, issue).await
+}
+
+/// Cached variant of [`resolve_status_via_store`]. Callers driving loops
+/// over many issues that share a [`ProjectId`] can pass a single
+/// `HashMap<ProjectId, Project>` across iterations to collapse N
+/// `get_project` round-trips down to one per distinct project. Cache
+/// lifetime should be scoped to the surrounding request — never global.
+pub async fn resolve_status_with_cache(
+    cache: &mut HashMap<ProjectId, Project>,
+    store: &dyn ReadOnlyStore,
+    issue: &Issue,
+) -> Result<StatusDefinition, ResolveStatusError> {
     let key = StatusKey::try_new(issue.status.as_str()).map_err(ResolveStatusError::InvalidKey)?;
-    let project_id = issue.project_id.clone();
-    let project = match store.get_project(&project_id, false).await {
-        Ok(versioned) => versioned.item,
-        Err(StoreError::ProjectNotFound(_)) => {
-            return Err(ResolveStatusError::ProjectNotFound(project_id));
-        }
-        Err(err) => return Err(ResolveStatusError::Store(err)),
-    };
+    let project = project_cached(cache, store, &issue.project_id).await?;
     project
         .find_status(&key)
         .cloned()
         .ok_or(ResolveStatusError::UnknownStatus(key))
+}
+
+/// Look up a [`Project`] through `cache`, fetching from `store` on miss.
+/// Companion to [`resolve_status_with_cache`] for callers that also need
+/// direct project access (e.g. checking whether a target status key is
+/// declared) over the same cache.
+pub async fn project_cached<'a>(
+    cache: &'a mut HashMap<ProjectId, Project>,
+    store: &dyn ReadOnlyStore,
+    project_id: &ProjectId,
+) -> Result<&'a Project, ResolveStatusError> {
+    if !cache.contains_key(project_id) {
+        let project = match store.get_project(project_id, false).await {
+            Ok(versioned) => versioned.item,
+            Err(StoreError::ProjectNotFound(_)) => {
+                return Err(ResolveStatusError::ProjectNotFound(project_id.clone()));
+            }
+            Err(err) => return Err(ResolveStatusError::Store(err)),
+        };
+        cache.insert(project_id.clone(), project);
+    }
+    Ok(cache.get(project_id).expect("just inserted"))
 }
 
 #[cfg(test)]

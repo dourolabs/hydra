@@ -1,13 +1,14 @@
 use async_trait::async_trait;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::app::AppState;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
+use crate::app::projects::{ResolveStatusError, project_cached, resolve_status_with_cache};
 use crate::domain::actors::ActorRef;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
-use hydra_common::IssueId;
-use hydra_common::api::v1::projects::StatusKey;
+use hydra_common::api::v1::projects::{Project, StatusKey};
+use hydra_common::{IssueId, ProjectId};
 
 const AUTOMATION_NAME: &str = "cascade_issue_status";
 
@@ -146,6 +147,11 @@ async fn cascade_to_descendants(
     })?;
 
     let mut visited = HashSet::new();
+    // Same-project descendants are the dominant case (the default project
+    // covers most graphs); cache resolved projects across the traversal so
+    // each project is fetched at most once for both the current-status
+    // resolve and the target-key declaration check.
+    let mut project_cache: HashMap<ProjectId, Project> = HashMap::new();
 
     while let Some(child_id) = to_visit.pop() {
         if !visited.insert(child_id.clone()) {
@@ -159,7 +165,13 @@ async fn cascade_to_descendants(
         })?;
 
         let mut child_issue = child.item;
-        let resolved_current = match app_state.resolve_status(&child_issue).await {
+        let resolved_current = match resolve_status_with_cache(
+            &mut project_cache,
+            store,
+            &child_issue,
+        )
+        .await
+        {
             Ok(def) => Some(def),
             Err(err) => {
                 tracing::warn!(
@@ -180,8 +192,8 @@ async fn cascade_to_descendants(
             // Check that the child's resolved project declares `target_key`.
             // Cross-project children where the key is missing are skipped
             // and logged.
-            let target_in_child_project: Result<bool, _> =
-                child_project_has_key(app_state, &child_issue, target_key).await;
+            let target_in_child_project =
+                child_project_has_key(&mut project_cache, store, &child_issue, target_key).await;
             match target_in_child_project {
                 Ok(true) => {
                     child_issue.status = target_key.clone();
@@ -219,24 +231,22 @@ async fn cascade_to_descendants(
 
 /// Returns whether the child's resolved project declares a status with
 /// `target_key`. Errors propagate to the caller, which logs and skips.
+/// Routed through `project_cache` so a project shared with prior children
+/// is fetched only once per `cascade_to_descendants` call.
 async fn child_project_has_key(
-    app_state: &AppState,
+    cache: &mut HashMap<ProjectId, Project>,
+    store: &dyn crate::store::ReadOnlyStore,
     child: &crate::domain::issues::Issue,
     target_key: &StatusKey,
 ) -> Result<bool, anyhow::Error> {
-    use crate::store::StoreError;
-    let project_id = child.project_id.clone();
-    let store = app_state.store();
-    let project = match store.get_project(&project_id, false).await {
-        Ok(versioned) => versioned.item,
-        Err(StoreError::ProjectNotFound(_)) => return Ok(false),
-        Err(err) => {
-            return Err(anyhow::anyhow!(
-                "store error reading project {project_id}: {err}"
-            ));
-        }
-    };
-    Ok(project.find_status(target_key).is_some())
+    match project_cached(cache, store, &child.project_id).await {
+        Ok(project) => Ok(project.find_status(target_key).is_some()),
+        Err(ResolveStatusError::ProjectNotFound(_)) => Ok(false),
+        Err(err) => Err(anyhow::anyhow!(
+            "store error reading project {}: {err}",
+            child.project_id
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -906,5 +916,92 @@ mod tests {
         // Child should remain Open — the automation must not act on its own events.
         let child_result = store.get_issue(&child_id, false).await.unwrap();
         assert_eq!(child_result.item.status, IssueStatus::Open.as_status_key());
+    }
+
+    /// Exercises the per-call project cache: a parent with multiple
+    /// same-project descendants at varying depths is dropped, and every
+    /// non-terminal descendant should be cascaded to Dropped. The cache
+    /// collapses the per-child `resolve_status` + `child_project_has_key`
+    /// lookups to one project fetch underneath.
+    #[tokio::test]
+    async fn cascades_to_many_same_project_descendants_at_varying_depths() {
+        let handles = test_utils::test_state_handles();
+        let store = handles.store.clone();
+
+        // Build a parent with three direct children, where one child also
+        // has two grandchildren. All share the default project.
+        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let (parent_id, _) = store
+            .add_issue(parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut direct_child_ids = Vec::new();
+        for _ in 0..3 {
+            let child = make_issue(
+                IssueStatus::Open,
+                vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    parent_id.clone(),
+                )],
+            );
+            let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
+            direct_child_ids.push(child_id);
+        }
+
+        let mut grandchild_ids = Vec::new();
+        for _ in 0..2 {
+            let grandchild = make_issue(
+                IssueStatus::InProgress,
+                vec![IssueDependency::new(
+                    IssueDependencyType::ChildOf,
+                    direct_child_ids[0].clone(),
+                )],
+            );
+            let (grandchild_id, _) = store
+                .add_issue(grandchild, &ActorRef::test())
+                .await
+                .unwrap();
+            grandchild_ids.push(grandchild_id);
+        }
+
+        let mut dropped_parent = parent;
+        dropped_parent.status = IssueStatus::Dropped.into();
+        store
+            .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            new: dropped_parent,
+            actor: ActorRef::test(),
+        });
+
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: parent_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = CascadeIssueStatusAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+
+        automation.execute(&ctx).await.unwrap();
+
+        for id in direct_child_ids.iter().chain(grandchild_ids.iter()) {
+            let result = store.get_issue(id, false).await.unwrap();
+            assert_eq!(
+                result.item.status,
+                IssueStatus::Dropped.as_status_key(),
+                "descendant {id} should be dropped"
+            );
+        }
     }
 }

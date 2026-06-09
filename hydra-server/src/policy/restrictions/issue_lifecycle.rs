@@ -1,10 +1,13 @@
 use async_trait::async_trait;
+use std::collections::HashMap;
 
-use crate::app::projects::resolve_status_via_store;
+use crate::app::projects::resolve_status_with_cache;
 use crate::domain::issues::{Issue, IssueDependencyType};
 use crate::policy::context::{OperationPayload, RestrictionContext};
 use crate::policy::{PolicyViolation, Restriction};
 use crate::store::ReadOnlyStore;
+use hydra_common::ProjectId;
+use hydra_common::api::v1::projects::Project;
 use hydra_common::issues::IssueId;
 
 const RESTRICTION_NAME: &str = "issue_lifecycle_validation";
@@ -32,11 +35,18 @@ impl Restriction for IssueLifecycleRestriction {
             return Ok(());
         };
 
+        // Same-project blockers and children are the common case; cache
+        // resolved projects across this `evaluate()` so the loops below
+        // collapse to one `get_project` round-trip per distinct project.
+        let mut project_cache: HashMap<ProjectId, Project> = HashMap::new();
+
         // Only validate when the proposed status unblocks dependents — i.e.
         // the success-close lane. Dropped/Failed leave `unblocks_dependents`
         // false, so this restriction lets those through (matching the
-        // legacy `IssueStatus::Closed`-only gate).
-        let resolved_new = match resolve_status_via_store(ctx.store, new).await {
+        // legacy `IssueStatus::Closed`-only gate). Resolving via the cache
+        // also seeds `new`'s project so the loops below reuse it.
+        let resolved_new = match resolve_status_with_cache(&mut project_cache, ctx.store, new).await
+        {
             Ok(def) => def,
             Err(err) => {
                 tracing::warn!(
@@ -68,7 +78,15 @@ impl Restriction for IssueLifecycleRestriction {
                     message: format!("Failed to look up blocker {}: {e}", dependency.issue_id),
                 })?;
 
-            if !is_terminal(ctx.store, &blocker.item, "blocker", &dependency.issue_id).await {
+            if !is_terminal(
+                &mut project_cache,
+                ctx.store,
+                &blocker.item,
+                "blocker",
+                &dependency.issue_id,
+            )
+            .await
+            {
                 open_blockers.push(dependency.issue_id.clone());
             }
         }
@@ -94,7 +112,15 @@ impl Restriction for IssueLifecycleRestriction {
                             policy_name: RESTRICTION_NAME.to_string(),
                             message: format!("Failed to look up child issue {child_id}: {e}"),
                         })?;
-                if !is_terminal(ctx.store, &child.item, "child", &child_id).await {
+                if !is_terminal(
+                    &mut project_cache,
+                    ctx.store,
+                    &child.item,
+                    "child",
+                    &child_id,
+                )
+                .await
+                {
                     open_children.push(child_id);
                 }
             }
@@ -126,12 +152,13 @@ impl Restriction for IssueLifecycleRestriction {
 /// statuses are conservatively treated as non-terminal (still blocking),
 /// with a warn so operators can spot misconfigurations.
 async fn is_terminal(
+    cache: &mut HashMap<ProjectId, Project>,
     store: &dyn ReadOnlyStore,
     issue: &Issue,
     kind: &'static str,
     issue_id: &IssueId,
 ) -> bool {
-    match resolve_status_via_store(store, issue).await {
+    match resolve_status_with_cache(cache, store, issue).await {
         Ok(def) => def.unblocks_parents,
         Err(err) => {
             tracing::warn!(
@@ -377,5 +404,50 @@ mod tests {
                 .message
                 .contains("blocked issues cannot close until blockers are closed")
         );
+    }
+
+    /// Exercises the per-`evaluate()` project cache: a parent with
+    /// multiple same-project children at various terminal statuses should
+    /// close successfully and pass through `is_terminal` once per child
+    /// while only resolving the (shared) project once underneath.
+    #[tokio::test]
+    async fn allows_closing_with_many_terminal_same_project_children() {
+        let restriction = IssueLifecycleRestriction::new();
+        let store = MemoryStore::new();
+
+        let parent = make_issue(IssueStatus::Open);
+        let (parent_id, _) = store.add_issue(parent, &ActorRef::test()).await.unwrap();
+
+        // Mix of terminal child statuses, all in the same (default) project.
+        for status in [
+            IssueStatus::Closed,
+            IssueStatus::Failed,
+            IssueStatus::Dropped,
+            IssueStatus::Closed,
+            IssueStatus::Failed,
+        ] {
+            let mut child = make_issue(status);
+            child.dependencies = vec![IssueDependency::new(
+                IssueDependencyType::ChildOf,
+                parent_id.clone(),
+            )];
+            store.add_issue(child, &ActorRef::test()).await.unwrap();
+        }
+
+        let closing_parent = make_issue(IssueStatus::Closed);
+        let payload = OperationPayload::Issue {
+            issue_id: Some(parent_id.clone()),
+            new: closing_parent,
+            old: None,
+        };
+        let actor = ActorRef::test();
+        let ctx = RestrictionContext {
+            operation: Operation::UpdateIssue,
+            actor: &actor,
+            payload: &payload,
+            store: &store,
+        };
+
+        assert!(restriction.evaluate(&ctx).await.is_ok());
     }
 }
