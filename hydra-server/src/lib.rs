@@ -330,11 +330,13 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         )
         .route(
             "/v1/projects/:project_ref/statuses",
-            get(routes::projects::get_project_statuses),
+            get(routes::projects::get_project_statuses)
+                .post(routes::projects::create_project_status),
         )
         .route(
-            "/v1/projects/:project_ref/statuses/rename",
-            post(routes::projects::rename_project_status),
+            "/v1/projects/:project_ref/statuses/:status_key",
+            put(routes::projects::update_project_status)
+                .delete(routes::projects::delete_project_status),
         )
         .route(
             "/v1/repositories",

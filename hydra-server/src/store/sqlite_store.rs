@@ -279,6 +279,11 @@ struct ProjectRow {
 #[derive(sqlx::FromRow)]
 struct StatusRow {
     project_id: String,
+    // Stable storage identity for the row. SELECTed so the FromRow
+    // mapping mirrors the on-disk column list, but consumers
+    // round-trip the value through the row rather than reading it
+    // directly off the struct.
+    #[allow(dead_code)]
     sequence: i64,
     key: String,
     label: String,
@@ -289,6 +294,11 @@ struct StatusRow {
     on_enter: Option<String>,
     prompt_path: Option<String>,
     interactive: bool,
+    // No `#[sqlx(default)]`: forces every SELECT site on `statuses` to
+    // project `position`. A missing column should fail loud at runtime
+    // instead of silently surfacing `0.0` in place of the backfilled
+    // value.
+    position: f64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1077,6 +1087,7 @@ impl SqliteStore {
         );
         def.prompt_path = row.prompt_path.clone();
         def.interactive = row.interactive;
+        def.position = row.position;
         Ok(def)
     }
 
@@ -1088,8 +1099,8 @@ impl SqliteStore {
         E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive \
-             FROM statuses WHERE project_id = ?1 ORDER BY sequence",
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position \
+             FROM statuses WHERE project_id = ?1 ORDER BY position, sequence",
         )
         .bind(project_id)
         .fetch_all(executor)
@@ -1111,8 +1122,8 @@ impl SqliteStore {
         }
         let placeholders: Vec<String> = (1..=project_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive \
-             FROM statuses WHERE project_id IN ({}) ORDER BY project_id, sequence",
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position \
+             FROM statuses WHERE project_id IN ({}) ORDER BY project_id, position, sequence",
             placeholders.join(", ")
         );
         let mut q = sqlx::query_as::<_, StatusRow>(&sql);
@@ -1165,121 +1176,113 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Apply the incoming `Project.statuses` list to the `statuses`
-    /// table for `project_id`. Matched-by-key rows are UPDATEd in
-    /// place (sequence preserved). New rows get a sequence drawn from
-    /// the per-project high-water mark on `projects.next_status_sequence`
-    /// and are INSERTed. Rows whose key is missing from the incoming
-    /// list are DELETEd; the FK on `issues_v2.status_sequence` rejects
-    /// the delete with a SQLite FK error if any issue still references
-    /// the sequence, which is intentional safety. Returns the new
-    /// high-water-mark value to write back to
-    /// `projects.next_status_sequence`.
-    async fn apply_statuses_diff_in_tx(
+    /// Load the latest `projects` row inside a status-mutation
+    /// transaction. Returns the row carrying the fields needed to
+    /// rebuild the next version in `bump_project_version_for_status_mutation`.
+    async fn load_project_row_for_status_mutation(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        project_id: &str,
-        incoming: &[StatusDefinition],
-        starting_next_sequence: i64,
-    ) -> Result<i64, StoreError> {
-        // Snapshot existing rows so we can decide UPDATE vs INSERT vs
-        // DELETE without per-row round-trips.
-        let existing = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive \
-             FROM statuses WHERE project_id = ?1",
-        )
-        .bind(project_id)
-        .fetch_all(&mut **tx)
+        id: &ProjectId,
+    ) -> Result<ProjectRow, StoreError> {
+        let row = sqlx::query_as::<_, ProjectRow>(&format!(
+            "SELECT id, version_number, key, name, creator, deleted, actor, created_at, updated_at, \
+             NULL AS creation_time, prompt_path, priority, next_status_sequence \
+             FROM {TABLE_PROJECTS} \
+             WHERE id = ?1 AND is_latest = 1 \
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&mut **tx)
         .await
         .map_err(map_sqlx_error)?;
-        let mut existing_by_key: HashMap<String, i64> = existing
-            .iter()
-            .map(|r| (r.key.clone(), r.sequence))
-            .collect();
+        row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))
+    }
 
-        let mut next_sequence = starting_next_sequence;
-        let mut incoming_keys: HashSet<String> = HashSet::new();
-        for def in incoming {
-            let key_str = def.key.as_str().to_string();
-            if !incoming_keys.insert(key_str.clone()) {
-                return Err(StoreError::Internal(format!(
-                    "duplicate status key '{key_str}' in incoming project statuses"
-                )));
-            }
-            let color_str = def.color.as_ref().to_string();
-            let on_enter_json = def
-                .on_enter
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(|e| {
-                    StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
-                })?;
-            if let Some(seq) = existing_by_key.remove(&key_str) {
-                sqlx::query(
-                    "UPDATE statuses SET label = ?1, color = ?2, unblocks_parents = ?3, unblocks_dependents = ?4, cascades_to_children = ?5, on_enter = ?6, prompt_path = ?7, interactive = ?8 \
-                     WHERE project_id = ?9 AND sequence = ?10",
-                )
-                .bind(&def.label)
-                .bind(&color_str)
-                .bind(def.unblocks_parents)
-                .bind(def.unblocks_dependents)
-                .bind(def.cascades_to_children)
-                .bind(on_enter_json.as_deref())
-                .bind(def.prompt_path.as_deref())
-                .bind(def.interactive)
-                .bind(project_id)
-                .bind(seq)
-                .execute(&mut **tx)
-                .await
-                .map_err(map_sqlx_error)?;
-            } else {
-                let seq = next_sequence;
-                next_sequence = next_sequence.checked_add(1).ok_or_else(|| {
-                    StoreError::Internal(format!(
-                        "next_status_sequence overflow for project '{project_id}'"
-                    ))
-                })?;
-                sqlx::query(
-                    "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                )
-                .bind(project_id)
-                .bind(seq)
-                .bind(&key_str)
-                .bind(&def.label)
-                .bind(&color_str)
-                .bind(def.unblocks_parents)
-                .bind(def.unblocks_dependents)
-                .bind(def.cascades_to_children)
-                .bind(on_enter_json.as_deref())
-                .bind(def.prompt_path.as_deref())
-                .bind(def.interactive)
-                .execute(&mut **tx)
-                .await
-                .map_err(map_sqlx_error)?;
-            }
-        }
-        // Any keys still in existing_by_key are no longer in the
-        // incoming set: delete them. The FK on
-        // `issues_v2.status_sequence` rejects the DELETE with a SQLite
-        // FK error if an issue still references the row.
-        for (key, seq) in existing_by_key {
-            sqlx::query("DELETE FROM statuses WHERE project_id = ?1 AND sequence = ?2")
-                .bind(project_id)
-                .bind(seq)
-                .execute(&mut **tx)
-                .await
-                .map_err(|err| {
-                    if is_foreign_key_violation_sqlite(&err) {
-                        StoreError::InvalidIssueStatus(format!(
-                            "cannot remove status '{key}' from project '{project_id}': an issue still references it"
-                        ))
-                    } else {
-                        map_sqlx_error(err)
-                    }
-                })?;
-        }
-        Ok(next_sequence)
+    /// Flip the prior `is_latest` row off and insert a new versioned
+    /// `projects` row carrying the same project-level fields. Used by
+    /// the per-status mutation paths to bump the project version after
+    /// a status add / update / delete.
+    async fn bump_project_version_for_status_mutation(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        id: &ProjectId,
+        row: &ProjectRow,
+        latest_version: VersionNumber,
+        actor: &ActorRef,
+        next_status_sequence: i64,
+    ) -> Result<VersionNumber, StoreError> {
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+        let next_version_i64 = i64::try_from(next_version).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+
+        sqlx::query(&format!(
+            "UPDATE {TABLE_PROJECTS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut **tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let actor_json = actor_to_json_string(actor);
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence, is_latest) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
+        ))
+        .bind(id.as_ref())
+        .bind(next_version_i64)
+        .bind(&row.key)
+        .bind(&row.name)
+        .bind(&row.creator)
+        .bind(row.deleted)
+        .bind(&actor_json)
+        .bind(row.prompt_path.as_deref())
+        .bind(row.priority)
+        .bind(next_status_sequence)
+        .execute(&mut **tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(next_version)
+    }
+
+    /// Insert a single `statuses` row for `add_status`. Pulled out of
+    /// the trait method so the caller can sequence it with the
+    /// preflight existence check + the project version bump.
+    async fn insert_status_row_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        project_id: &str,
+        sequence: i64,
+        status: &StatusDefinition,
+    ) -> Result<(), StoreError> {
+        let color_str = status.color.as_ref().to_string();
+        let on_enter_json = status
+            .on_enter
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
+            })?;
+        sqlx::query(
+            "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )
+        .bind(project_id)
+        .bind(sequence)
+        .bind(status.key.as_str())
+        .bind(&status.label)
+        .bind(&color_str)
+        .bind(status.unblocks_parents)
+        .bind(status.unblocks_dependents)
+        .bind(status.cascades_to_children)
+        .bind(on_enter_json.as_deref())
+        .bind(status.prompt_path.as_deref())
+        .bind(status.interactive)
+        .bind(status.position)
+        .execute(&mut **tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        Ok(())
     }
 
     /// Resolve a `(project_id, status_key)` pair to its
@@ -6038,12 +6041,10 @@ impl Store for SqliteStore {
         .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
-        // Apply the statuses diff first so the post-diff
-        // `next_status_sequence` is what lands on the new row.
-        let new_next_seq =
-            Self::apply_statuses_diff_in_tx(&mut tx, id.as_ref(), &project.statuses, 1).await?;
-        Self::insert_project_row_in_tx(&mut *tx, &id, 1, &project, Some(&actor_json), new_next_seq)
-            .await?;
+        // Post-cutover, `add_project` is project-level only. The new
+        // row starts with `next_status_sequence = 1`; statuses are
+        // created independently via `add_status`.
+        Self::insert_project_row_in_tx(&mut *tx, &id, 1, &project, Some(&actor_json), 1).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
         bump_count(&self.row_counts.projects);
@@ -6089,20 +6090,16 @@ impl Store for SqliteStore {
         .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
-        let new_next_seq = Self::apply_statuses_diff_in_tx(
-            &mut tx,
-            id.as_ref(),
-            &project.statuses,
-            current_next_seq,
-        )
-        .await?;
+        // Post-cutover, `update_project` is project-level only and
+        // carries the existing `next_status_sequence` forward unchanged
+        // — only `add_status` mutates it.
         Self::insert_project_row_in_tx(
             &mut *tx,
             id,
             next_version_i64,
             &project,
             Some(&actor_json),
-            new_next_seq,
+            current_next_seq,
         )
         .await?;
         tx.commit().await.map_err(map_sqlx_error)?;
@@ -6121,96 +6118,189 @@ impl Store for SqliteStore {
         self.update_project(id, project, actor).await
     }
 
-    async fn rename_status(
+    async fn add_status(
         &self,
         id: &ProjectId,
-        from: &StatusKey,
-        to: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let project_row = Self::load_project_row_for_status_mutation(&mut tx, id).await?;
+        let latest_version = VersionNumber::try_from(project_row.version_number).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+
+        let existing: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM statuses WHERE project_id = ?1 AND key = ?2 LIMIT 1")
+                .bind(id.as_ref())
+                .bind(status.key.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?;
+        if existing.is_some() {
+            return Err(StoreError::InvalidIssueStatus(format!(
+                "status '{}' already exists on project '{id}'",
+                status.key.as_str()
+            )));
+        }
+
+        let sequence = project_row.next_status_sequence;
+        let new_next_seq = sequence.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!(
+                "next_status_sequence overflow for project '{id}'"
+            ))
+        })?;
+
+        Self::insert_status_row_in_tx(&mut tx, id.as_ref(), sequence, &status).await?;
+
+        let next_version = Self::bump_project_version_for_status_mutation(
+            &mut tx,
+            id,
+            &project_row,
+            latest_version,
+            actor,
+            new_next_seq,
+        )
+        .await?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((status, next_version))
+    }
+
+    async fn update_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let project_row = Self::load_project_row_for_status_mutation(&mut tx, id).await?;
+        let latest_version = VersionNumber::try_from(project_row.version_number).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+
+        let sequence: Option<i64> = sqlx::query_scalar(
+            "SELECT sequence FROM statuses WHERE project_id = ?1 AND key = ?2 LIMIT 1",
+        )
+        .bind(id.as_ref())
+        .bind(status_key.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let sequence = sequence.ok_or_else(|| {
+            StoreError::InvalidIssueStatus(format!(
+                "status '{}' does not exist on project '{id}'",
+                status_key.as_str()
+            ))
+        })?;
+
+        if &status.key != status_key {
+            let collides: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM statuses WHERE project_id = ?1 AND key = ?2 LIMIT 1",
+            )
+            .bind(id.as_ref())
+            .bind(status.key.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+            if collides.is_some() {
+                return Err(StoreError::InvalidIssueStatus(format!(
+                    "status '{}' already exists on project '{id}'",
+                    status.key.as_str()
+                )));
+            }
+        }
+
+        let color_str = status.color.as_ref().to_string();
+        let on_enter_json = status
+            .on_enter
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
+            })?;
+        sqlx::query(
+            "UPDATE statuses SET key = ?1, label = ?2, color = ?3, unblocks_parents = ?4, unblocks_dependents = ?5, cascades_to_children = ?6, on_enter = ?7, prompt_path = ?8, interactive = ?9, position = ?10 \
+             WHERE project_id = ?11 AND sequence = ?12",
+        )
+        .bind(status.key.as_str())
+        .bind(&status.label)
+        .bind(&color_str)
+        .bind(status.unblocks_parents)
+        .bind(status.unblocks_dependents)
+        .bind(status.cascades_to_children)
+        .bind(on_enter_json.as_deref())
+        .bind(status.prompt_path.as_deref())
+        .bind(status.interactive)
+        .bind(status.position)
+        .bind(id.as_ref())
+        .bind(sequence)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let next_version = Self::bump_project_version_for_status_mutation(
+            &mut tx,
+            id,
+            &project_row,
+            latest_version,
+            actor,
+            project_row.next_status_sequence,
+        )
+        .await?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((status, next_version))
+    }
+
+    async fn delete_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
 
-        let row = sqlx::query_as::<_, ProjectRow>(&format!(
-            "SELECT id, version_number, key, name, creator, deleted, actor, created_at, updated_at, \
-             NULL AS creation_time, prompt_path, priority, next_status_sequence \
-             FROM {TABLE_PROJECTS} \
-             WHERE id = ?1 AND is_latest = 1 \
-             LIMIT 1"
-        ))
-        .bind(id.as_ref())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(map_sqlx_error)?;
-        let row = row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
-
-        let latest_version = VersionNumber::try_from(row.version_number).map_err(|_| {
+        let project_row = Self::load_project_row_for_status_mutation(&mut tx, id).await?;
+        let latest_version = VersionNumber::try_from(project_row.version_number).map_err(|_| {
             StoreError::Internal(format!("invalid version number stored for project '{id}'"))
         })?;
-        if from == to {
-            return Ok(latest_version);
-        }
 
-        let to_exists: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM statuses WHERE project_id = ?1 AND key = ?2 LIMIT 1")
-                .bind(id.as_ref())
-                .bind(to.as_str())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(map_sqlx_error)?;
-        if to_exists.is_some() {
-            return Err(StoreError::InvalidIssueStatus(format!(
-                "status '{}' already exists on project '{id}'",
-                to.as_str()
-            )));
-        }
-
-        let result = sqlx::query("UPDATE statuses SET key = ?1 WHERE project_id = ?2 AND key = ?3")
-            .bind(to.as_str())
+        let result = sqlx::query("DELETE FROM statuses WHERE project_id = ?1 AND key = ?2")
             .bind(id.as_ref())
-            .bind(from.as_str())
+            .bind(status_key.as_str())
             .execute(&mut *tx)
             .await
-            .map_err(map_sqlx_error)?;
+            .map_err(|err| {
+                if is_foreign_key_violation_sqlite(&err) {
+                    StoreError::InvalidIssueStatus(format!(
+                        "cannot remove status '{}' from project '{id}': an issue still references it",
+                        status_key.as_str()
+                    ))
+                } else {
+                    map_sqlx_error(err)
+                }
+            })?;
         if result.rows_affected() == 0 {
             return Err(StoreError::InvalidIssueStatus(format!(
                 "status '{}' does not exist on project '{id}'",
-                from.as_str()
+                status_key.as_str()
             )));
         }
 
-        let next_version = latest_version.checked_add(1).ok_or_else(|| {
-            StoreError::Internal(format!("version number overflow for project '{id}'"))
-        })?;
-        let next_version_i64 = i64::try_from(next_version).map_err(|_| {
-            StoreError::Internal(format!("version number overflow for project '{id}'"))
-        })?;
-
-        sqlx::query(&format!(
-            "UPDATE {TABLE_PROJECTS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
-        ))
-        .bind(id.as_ref())
-        .execute(&mut *tx)
-        .await
-        .map_err(map_sqlx_error)?;
-
-        let actor_json = actor_to_json_string(actor);
-        sqlx::query(&format!(
-            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence, is_latest) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
-        ))
-        .bind(id.as_ref())
-        .bind(next_version_i64)
-        .bind(&row.key)
-        .bind(&row.name)
-        .bind(&row.creator)
-        .bind(row.deleted)
-        .bind(&actor_json)
-        .bind(row.prompt_path.as_deref())
-        .bind(row.priority)
-        .bind(row.next_status_sequence)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_sqlx_error)?;
+        let next_version = Self::bump_project_version_for_status_mutation(
+            &mut tx,
+            id,
+            &project_row,
+            latest_version,
+            actor,
+            project_row.next_status_sequence,
+        )
+        .await?;
 
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(next_version)
@@ -6290,8 +6380,8 @@ mod tests {
         let mut next_seq = max_seq.unwrap_or(0) + 1;
         for key in keys {
             sqlx::query(
-                "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive) \
-                 VALUES (?1, ?2, ?3, ?3, '#cccccc', 0, 0, 0, NULL, NULL, 0)",
+                "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position) \
+                 VALUES (?1, ?2, ?3, ?3, '#cccccc', 0, 0, 0, NULL, NULL, 0, 0)",
             )
             .bind(project_id.as_ref())
             .bind(next_seq)
@@ -13076,6 +13166,25 @@ mod tests {
 
     // ---- Project tests --------------------------------------------------
 
+    /// Test helper: add a project plus every inline status on it via
+    /// the new per-status API. Returns the assigned project id and
+    /// the project version after the last `add_status` call.
+    async fn add_project_with_statuses(
+        store: &SqliteStore,
+        project: Project,
+        actor: &ActorRef,
+    ) -> (ProjectId, VersionNumber) {
+        let statuses = project.statuses.clone();
+        let mut bare = project;
+        bare.statuses = Vec::new();
+        let (id, mut version) = store.add_project(bare, actor).await.unwrap();
+        for status in statuses {
+            let (_, v) = store.add_status(&id, status, actor).await.unwrap();
+            version = v;
+        }
+        (id, version)
+    }
+
     /// Fully-populated sample, including `on_enter` so the JSON serde
     /// path for `StatusOnEnter` is exercised end-to-end in the round-trip
     /// test.
@@ -13130,14 +13239,13 @@ mod tests {
     async fn project_round_trip_create_get_list_update_delete_sqlite() {
         use crate::domain::projects::default_project_id;
         let store = create_test_store().await;
-        let (id, version) = store
-            .add_project(sample_project(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(version, 1);
+        let (id, version) =
+            add_project_with_statuses(&store, sample_project(), &ActorRef::test()).await;
+        // 1 add_project + 2 add_status = version 3.
+        assert_eq!(version, 3);
 
         let fetched = store.get_project(&id, false).await.unwrap();
-        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.version, 3);
         assert_eq!(fetched.item.name, "Engineering");
         assert_eq!(fetched.item.statuses.len(), 2);
         // `on_enter` must round-trip through the JSON column unchanged.
@@ -13158,13 +13266,13 @@ mod tests {
             .update_project(&id, updated, &ActorRef::test())
             .await
             .unwrap();
-        assert_eq!(v2, 2);
+        assert_eq!(v2, 4);
         let fetched = store.get_project(&id, false).await.unwrap();
-        assert_eq!(fetched.version, 2);
+        assert_eq!(fetched.version, 4);
         assert_eq!(fetched.item.name, "Engineering Renamed");
 
         let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
-        assert_eq!(v3, 3);
+        assert_eq!(v3, 5);
         let after_delete = store.list_projects(false).await.unwrap();
         assert_eq!(after_delete.len(), 1);
         assert_eq!(after_delete[0].0, default_id);
@@ -13181,10 +13289,8 @@ mod tests {
     async fn get_project_by_key_round_trip_sqlite() {
         use hydra_common::api::v1::projects::ProjectKey;
         let store = create_test_store().await;
-        let (id, _) = store
-            .add_project(sample_project(), &ActorRef::test())
-            .await
-            .unwrap();
+        let (id, _) =
+            add_project_with_statuses(&store, sample_project(), &ActorRef::test()).await;
 
         let key = ProjectKey::try_new("engineering").unwrap();
         let (resolved_id, versioned) = store
@@ -13603,41 +13709,49 @@ mod tests {
         assert_eq!(status.key.as_str(), "open");
     }
 
-    // ---- Cutover-specific (post-20260614000000) ----
+    // ---- Per-status CRUD (post-cutover) ----
 
-    /// Round-trip a 3-status project through `add_project` →
-    /// `get_project` and verify the post-cutover store assigns
-    /// sequences `1, 2, 3` in input order via `metis.statuses`. The
-    /// sequences are not surfaced through `StatusDefinition`; read
-    /// them from the table directly.
-    #[tokio::test]
-    async fn cutover_add_project_assigns_sequences_in_input_order_sqlite() {
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
+    fn cutover_status_def(k: &str) -> hydra_common::api::v1::projects::StatusDefinition {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        StatusDefinition::new(
+            StatusKey::try_new(k).unwrap(),
+            k.to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        )
+    }
+
+    fn cutover_empty_project(name: &str) -> hydra_common::api::v1::projects::Project {
+        use hydra_common::api::v1::projects::{Project, ProjectKey};
         use hydra_common::api::v1::users::Username as ApiUsername;
-        let store = create_test_store().await;
-        let statuses = ["a", "b", "c"]
-            .iter()
-            .map(|k| {
-                StatusDefinition::new(
-                    StatusKey::try_new(*k).unwrap(),
-                    k.to_string(),
-                    "#cccccc".parse().unwrap(),
-                    false,
-                    false,
-                    false,
-                    None,
-                )
-            })
-            .collect::<Vec<_>>();
-        let project = Project::new(
-            ProjectKey::try_new("abc").unwrap(),
-            "ABC".to_string(),
-            statuses.clone(),
+        Project::new(
+            ProjectKey::try_new(name).unwrap(),
+            name.to_string(),
+            Vec::new(),
             ApiUsername::from("alice"),
             false,
             0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        )
+    }
+
+    /// `add_status` assigns sequences `1, 2, 3` in input order and
+    /// advances `next_status_sequence` monotonically.
+    #[tokio::test]
+    async fn add_status_assigns_sequences_in_input_order_sqlite() {
+        let store = create_test_store().await;
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("abc"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
 
         let rows: Vec<(i64, String)> = sqlx::query_as(
             "SELECT sequence, key FROM statuses WHERE project_id = ?1 ORDER BY sequence",
@@ -13665,40 +13779,32 @@ mod tests {
         assert_eq!(next_seq, 4);
     }
 
-    /// `update_project` with a same-key but different-label
-    /// `StatusDefinition` must UPDATE the existing `statuses` row,
-    /// preserving its sequence id (matching SQL backends; matches the
-    /// FK semantic the cutover protects).
+    /// `update_status` with the same key edits the row in place,
+    /// preserving its sequence id and bumping the project version.
     #[tokio::test]
-    async fn cutover_update_project_preserves_sequence_on_label_change_sqlite() {
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
+    async fn update_status_edits_in_place_sqlite() {
+        use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
-        let mk_def = |k: &str, label: &str| {
-            StatusDefinition::new(
-                StatusKey::try_new(k).unwrap(),
-                label.to_string(),
-                "#cccccc".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            )
-        };
-        let project = Project::new(
-            ProjectKey::try_new("abc").unwrap(),
-            "ABC".to_string(),
-            vec![mk_def("a", "A"), mk_def("b", "B"), mk_def("c", "C")],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("abc"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
 
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses[1] = mk_def("b", "B Prime"); // same key, different label
+        let mut updated = cutover_status_def("b");
+        updated.label = "B Prime".to_string();
         store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("b").unwrap(),
+                updated,
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
@@ -13712,41 +13818,30 @@ mod tests {
         assert_eq!(row, (2, "B Prime".to_string()));
     }
 
-    /// Removing a status and adding a different one must NOT reuse
-    /// the freed sequence id. The high-water mark on
+    /// `delete_status` followed by `add_status` must NOT reuse the
+    /// freed sequence id. The high-water mark on
     /// `projects.next_status_sequence` enforces monotonic-no-reuse.
     #[tokio::test]
-    async fn cutover_high_water_mark_no_sequence_reuse_sqlite() {
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
+    async fn delete_status_then_add_does_not_reuse_sequence_sqlite() {
+        use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
-        let mk_def = |k: &str| {
-            StatusDefinition::new(
-                StatusKey::try_new(k).unwrap(),
-                k.to_string(),
-                "#cccccc".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            )
-        };
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("abc"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
 
-        let project = Project::new(
-            ProjectKey::try_new("abc").unwrap(),
-            "ABC".to_string(),
-            vec![mk_def("a"), mk_def("b"), mk_def("c")],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        // Remove `c` (sequence 3). next_status_sequence stays at 4.
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses = vec![mk_def("a"), mk_def("b")];
         store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .delete_status(
+                &project_id,
+                &StatusKey::try_new("c").unwrap(),
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
         let next_seq: i64 = sqlx::query_scalar(
@@ -13758,11 +13853,8 @@ mod tests {
         .unwrap();
         assert_eq!(next_seq, 4, "next_status_sequence must not decrement");
 
-        // Add `x`. Must get sequence 4 (not the freed 3).
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses = vec![mk_def("a"), mk_def("b"), mk_def("x")];
         store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .add_status(&project_id, cutover_status_def("x"), &ActorRef::test())
             .await
             .unwrap();
         let x_seq: i64 =
@@ -13774,46 +13866,38 @@ mod tests {
         assert_eq!(x_seq, 4, "removed sequence id must not be reused");
     }
 
-    /// A direct `UPDATE metis.statuses SET key = 'BB' WHERE …` (the
-    /// shape a future `hydra projects status rename` CLI would take)
-    /// must flow through every issue's `Issue.status` when the issue
-    /// is read back, because issues store the sequence, not the key.
+    /// `update_status` with a different `key` is a rename: the row's
+    /// `(project_id, sequence)` storage identity is preserved so the
+    /// issue continues to resolve through the same sequence and reads
+    /// back as the new key.
     #[tokio::test]
-    async fn cutover_status_key_rename_does_not_orphan_issues_sqlite() {
+    async fn update_status_rename_does_not_orphan_issues_sqlite() {
         use crate::domain::issues::{Issue, IssueType};
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
-        let mk_def = |k: &str| {
-            StatusDefinition::new(
-                StatusKey::try_new(k).unwrap(),
-                k.to_string(),
-                "#cccccc".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            )
-        };
-        let project = Project::new(
-            ProjectKey::try_new("rename").unwrap(),
-            "Rename".to_string(),
-            vec![mk_def("a"), mk_def("b"), mk_def("c")],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("rename"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b", "c"] {
+            store
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
 
-        // Direct UPDATE simulating the future rename CLI on sequence 2.
-        sqlx::query("UPDATE statuses SET key = 'bb' WHERE project_id = ?1 AND sequence = 2")
-            .bind(project_id.as_ref())
-            .execute(&store.pool)
+        let mut renamed = cutover_status_def("bb");
+        renamed.key = StatusKey::try_new("bb").unwrap();
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("b").unwrap(),
+                renamed,
+                &ActorRef::test(),
+            )
             .await
             .unwrap();
 
-        // Add an issue referencing the renamed key. The store layer
-        // must resolve 'bb' → sequence 2 and INSERT successfully.
         let issue = Issue::new(
             IssueType::Task,
             "rename test".to_string(),
@@ -13832,7 +13916,6 @@ mod tests {
         );
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
-        // Reading the issue back: status must be the *current* key.
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(fetched.item.status.as_str(), "bb");
     }
@@ -13853,35 +13936,24 @@ mod tests {
         assert!(res.is_err(), "FK must reject unknown status_sequence");
     }
 
-    /// `update_project` that drops a status with active issues must
-    /// fail (the FK on `issues_v2.status_sequence` rejects the
-    /// implicit DELETE inside `apply_statuses_diff_in_tx`).
+    /// `delete_status` is rejected when any live issue still
+    /// references the row — surfaced from the SQLite FK on
+    /// `issues_v2.status_sequence → statuses(project_id, sequence)`.
     #[tokio::test]
-    async fn cutover_update_project_rejects_status_removal_with_active_issue_sqlite() {
+    async fn delete_status_rejects_removal_with_active_issue_sqlite() {
         use crate::domain::issues::{Issue, IssueType};
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
-        let mk_def = |k: &str| {
-            StatusDefinition::new(
-                StatusKey::try_new(k).unwrap(),
-                k.to_string(),
-                "#cccccc".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            )
-        };
-        let project = Project::new(
-            ProjectKey::try_new("rmproj").unwrap(),
-            "Rm".to_string(),
-            vec![mk_def("a"), mk_def("b")],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("rmproj"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b"] {
+            store
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
         let issue = Issue::new(
             IssueType::Task,
             "test".to_string(),
@@ -13900,13 +13972,12 @@ mod tests {
         );
         store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
-        // Try to remove status 'b'. Issue references it → FK must
-        // reject the DELETE inside apply_statuses_diff_in_tx, which
-        // rolls the whole update back.
-        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
-        updated.statuses = vec![mk_def("a")];
         let res = store
-            .update_project(&project_id, updated, &ActorRef::test())
+            .delete_status(
+                &project_id,
+                &StatusKey::try_new("b").unwrap(),
+                &ActorRef::test(),
+            )
             .await;
         assert!(
             matches!(res, Err(StoreError::InvalidIssueStatus(_))),
@@ -13914,122 +13985,44 @@ mod tests {
         );
     }
 
-    // ---- rename_status (PR-3) ----
-
-    fn rename_status_test_status(k: &str) -> hydra_common::api::v1::projects::StatusDefinition {
-        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
-        StatusDefinition::new(
-            StatusKey::try_new(k).unwrap(),
-            k.to_string(),
-            "#cccccc".parse().unwrap(),
-            false,
-            false,
-            false,
-            None,
-        )
-    }
-
-    /// Renaming a status via the trait method must (a) flow through reads
-    /// as the new key, (b) preserve `issues_v2.status_sequence` on the
-    /// issue row, and (c) bump the project's `version_number`. This is
-    /// the value-of-cutover assertion PR-2's model was designed to
-    /// enable.
     #[tokio::test]
-    async fn rename_status_preserves_issue_sequence_sqlite() {
-        use crate::domain::issues::{Issue, IssueType};
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
+    async fn add_status_duplicate_key_returns_invalid_status_sqlite() {
         let store = create_test_store().await;
-        let project = Project::new(
-            ProjectKey::try_new("rn").unwrap(),
-            "Rn".to_string(),
-            vec![
-                rename_status_test_status("a"),
-                rename_status_test_status("b"),
-                rename_status_test_status("c"),
-            ],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        let issue = Issue::new(
-            IssueType::Task,
-            "rename".to_string(),
-            "test".to_string(),
-            Username::from("alice"),
-            String::new(),
-            StatusKey::try_new("b").unwrap(),
-            project_id.clone(),
-            None,
-            None,
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
-        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
-        let before_seq: i64 = sqlx::query_scalar(
-            "SELECT status_sequence FROM issues_v2 WHERE id = ?1 AND is_latest = 1",
-        )
-        .bind(issue_id.as_ref())
-        .fetch_one(&store.pool)
-        .await
-        .unwrap();
-
-        let from = StatusKey::try_new("b").unwrap();
-        let to = StatusKey::try_new("bb").unwrap();
-        let v = store
-            .rename_status(&project_id, &from, &to, &ActorRef::test())
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("dup"), &ActorRef::test())
             .await
             .unwrap();
-        assert_eq!(v, 2, "project version must bump on rename");
-
-        let fetched = store.get_issue(&issue_id, false).await.unwrap();
-        assert_eq!(fetched.item.status.as_str(), "bb");
-
-        let after_seq: i64 = sqlx::query_scalar(
-            "SELECT status_sequence FROM issues_v2 WHERE id = ?1 AND is_latest = 1",
-        )
-        .bind(issue_id.as_ref())
-        .fetch_one(&store.pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            after_seq, before_seq,
-            "rename must not change the issue's status_sequence"
-        );
-
-        let project = store.get_project(&project_id, false).await.unwrap().item;
-        let keys: Vec<&str> = project.statuses.iter().map(|s| s.key.as_str()).collect();
-        assert_eq!(keys, vec!["a", "bb", "c"]);
+        store
+            .add_status(&project_id, cutover_status_def("a"), &ActorRef::test())
+            .await
+            .unwrap();
+        let res = store
+            .add_status(&project_id, cutover_status_def("a"), &ActorRef::test())
+            .await;
+        assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
     }
 
     #[tokio::test]
-    async fn rename_status_to_existing_key_returns_invalid_status_sqlite() {
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
+    async fn update_status_rename_to_existing_key_returns_invalid_status_sqlite() {
+        use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
-        let project = Project::new(
-            ProjectKey::try_new("rn2").unwrap(),
-            "Rn2".to_string(),
-            vec![
-                rename_status_test_status("a"),
-                rename_status_test_status("b"),
-            ],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("rn2"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b"] {
+            store
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+        let mut renamed = cutover_status_def("b");
+        renamed.key = StatusKey::try_new("b").unwrap();
         let res = store
-            .rename_status(
+            .update_status(
                 &project_id,
                 &StatusKey::try_new("a").unwrap(),
-                &StatusKey::try_new("b").unwrap(),
+                renamed,
                 &ActorRef::test(),
             )
             .await;
@@ -14037,28 +14030,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rename_status_unknown_from_key_returns_invalid_status_sqlite() {
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
+    async fn update_status_unknown_key_returns_invalid_status_sqlite() {
+        use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
-        let project = Project::new(
-            ProjectKey::try_new("rn3").unwrap(),
-            "Rn3".to_string(),
-            vec![
-                rename_status_test_status("a"),
-                rename_status_test_status("b"),
-            ],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("rn3"), &ActorRef::test())
+            .await
+            .unwrap();
         let res = store
-            .rename_status(
+            .update_status(
                 &project_id,
                 &StatusKey::try_new("nope").unwrap(),
-                &StatusKey::try_new("c").unwrap(),
+                cutover_status_def("c"),
                 &ActorRef::test(),
             )
             .await;
@@ -14066,49 +14049,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rename_status_same_from_and_to_is_noop_sqlite() {
-        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
-        use hydra_common::api::v1::users::Username as ApiUsername;
-        let store = create_test_store().await;
-        let project = Project::new(
-            ProjectKey::try_new("rn4").unwrap(),
-            "Rn4".to_string(),
-            vec![rename_status_test_status("a")],
-            ApiUsername::from("alice"),
-            false,
-            0.0,
-        );
-        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
-
-        let v = store
-            .rename_status(
-                &project_id,
-                &StatusKey::try_new("a").unwrap(),
-                &StatusKey::try_new("a").unwrap(),
-                &ActorRef::test(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(v, 1, "no-op rename must not bump version");
-
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projects WHERE id = ?1")
-            .bind(project_id.as_ref())
-            .fetch_one(&store.pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 1, "no-op rename must not write a new version row");
-    }
-
-    #[tokio::test]
-    async fn rename_status_project_not_found_sqlite() {
+    async fn update_status_project_not_found_sqlite() {
         use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
         let bogus = hydra_common::ProjectId::new();
         let res = store
-            .rename_status(
+            .update_status(
                 &bogus,
                 &StatusKey::try_new("a").unwrap(),
-                &StatusKey::try_new("b").unwrap(),
+                cutover_status_def("a"),
                 &ActorRef::test(),
             )
             .await;

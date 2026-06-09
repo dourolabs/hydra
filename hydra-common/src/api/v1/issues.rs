@@ -641,7 +641,8 @@ impl SearchIssuesQuery {
 /// Excludes `session_settings` and the full `description` body.
 /// The `description` field is truncated to the first line (max 200 chars).
 /// The `progress` field is truncated to the first 200 characters.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `status: StatusDefinition` carries `position: f64`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -701,7 +702,8 @@ impl From<&Issue> for IssueSummary {
 }
 
 /// Summary-level version record for issue list responses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `issue: IssueSummary` carries `status.position: f64`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -753,7 +755,8 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `issues` carry `status.position: f64`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]

@@ -7,7 +7,7 @@ use httpmock::prelude::*;
 use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
     api::v1::projects::{
-        Project, ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
+        ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
     },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
     issues::{IssueDependencyType, IssueInput, IssueType, SearchIssuesQuery, UpsertIssueRequest},
@@ -617,28 +617,28 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(patches.patches.len(), 1);
 
     // Projects
-    let project = Project::new(
+    let upsert_project = UpsertProjectRequest::new(
         ProjectKey::try_new("future-project").unwrap(),
         "Future Project".to_string(),
-        vec![StatusDefinition::new(
-            StatusKey::try_new("open").unwrap(),
-            "Open".to_string(),
-            "#abcdef".parse().unwrap(),
-            false,
-            false,
-            false,
-            None,
-        )],
-        Username::from("test-creator"),
-        false,
-        0.0,
     );
-    let upsert_project = UpsertProjectRequest::new(project);
 
     let created_project = client.create_project(&upsert_project).await?;
     assert_eq!(created_project.project_id, project_id);
 
     let project_ref = ProjectRef::Id(project_id.clone());
+
+    // Add a status via the per-status route so the read-back below
+    // sees one entry.
+    let status = StatusDefinition::new(
+        StatusKey::try_new("open").unwrap(),
+        "Open".to_string(),
+        "#abcdef".parse().unwrap(),
+        false,
+        false,
+        false,
+        None,
+    );
+    client.create_project_status(&project_ref, &status).await?;
 
     let updated_project = client.update_project(&project_ref, &upsert_project).await?;
     assert_eq!(updated_project.project_id, project_id);
@@ -651,6 +651,26 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let statuses = client.get_project_statuses(&project_ref).await?;
     assert_eq!(statuses.statuses.len(), 1);
+
+    let updated_status = StatusDefinition::new(
+        StatusKey::try_new("open").unwrap(),
+        "Renamed".to_string(),
+        "#abcdef".parse().unwrap(),
+        false,
+        false,
+        false,
+        None,
+    );
+    client
+        .update_project_status(
+            &project_ref,
+            &StatusKey::try_new("open").unwrap(),
+            &updated_status,
+        )
+        .await?;
+    client
+        .delete_project_status(&project_ref, &StatusKey::try_new("open").unwrap())
+        .await?;
 
     let deleted_project = client.delete_project(&project_ref).await?;
     assert_eq!(deleted_project.project_id, project_id);

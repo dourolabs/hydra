@@ -2,7 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use hydra_common::api::v1::projects::{
-    Project, ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
+    ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
 };
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -137,36 +137,36 @@ async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
 
     // Create a project that defines a custom `backlog` status, via the API
     // directly so the test focuses on the CLI's `--status` plumbing.
-    let project = Project::new(
+    let upsert = UpsertProjectRequest::new(
         ProjectKey::try_new("engineering").unwrap(),
         "Engineering".into(),
-        vec![
-            StatusDefinition::new(
-                StatusKey::try_new("inbox").unwrap(),
-                "Inbox".into(),
-                "#aabbcc".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            ),
-            StatusDefinition::new(
-                StatusKey::try_new("backlog").unwrap(),
-                "Backlog".into(),
-                "#1199ee".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            ),
-        ],
-        hydra_common::api::v1::users::Username::try_new(user.name()).unwrap(),
-        false,
-        0.0,
     );
-    user.client()
-        .create_project(&UpsertProjectRequest::new(project))
-        .await?;
+    let create_resp = user.client().create_project(&upsert).await?;
+    let project_ref = ProjectRef::Id(create_resp.project_id.clone());
+    for status in [
+        StatusDefinition::new(
+            StatusKey::try_new("inbox").unwrap(),
+            "Inbox".into(),
+            "#aabbcc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ),
+        StatusDefinition::new(
+            StatusKey::try_new("backlog").unwrap(),
+            "Backlog".into(),
+            "#1199ee".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ),
+    ] {
+        user.client()
+            .create_project_status(&project_ref, &status)
+            .await?;
+    }
 
     // CLI accepts a custom status string when the project recognises it.
     user.cli(&[

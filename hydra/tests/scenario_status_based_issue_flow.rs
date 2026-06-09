@@ -8,7 +8,7 @@ use hydra_common::{
     },
     principal::Principal,
     projects::{
-        Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter, UpsertProjectRequest,
+        ProjectKey, ProjectRef, StatusDefinition, StatusKey, StatusOnEnter, UpsertProjectRequest,
     },
     users::Username,
     IssueId, RepoName, SessionId,
@@ -136,19 +136,22 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
         .await
         .context("seed approve/reject form")?;
 
-    let project = Project::new(
+    let upsert = UpsertProjectRequest::new(
         ProjectKey::try_new("engineering").unwrap(),
         "Engineering".to_string(),
-        engineering_statuses(),
-        Username::try_new("default").unwrap(),
-        false,
-        0.0,
     );
     let project_resp = user
         .client()
-        .create_project(&UpsertProjectRequest::new(project))
+        .create_project(&upsert)
         .await
         .context("create engineering project")?;
+    let project_ref = ProjectRef::Id(project_resp.project_id.clone());
+    for status in engineering_statuses() {
+        user.client()
+            .create_project_status(&project_ref, &status)
+            .await
+            .context("seed engineering status")?;
+    }
 
     let repo = RepoName::from_str(REPO)?;
     let mut session_settings = SessionSettings::default();

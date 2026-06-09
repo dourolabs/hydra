@@ -171,15 +171,21 @@ mod tests {
     }
 
     #[test]
-    fn default_project_seed_validates() {
-        default_project_seed()
-            .validate()
-            .expect("default project seed must validate");
+    fn default_project_seed_has_five_statuses() {
+        assert_eq!(default_project_seed().statuses.len(), 5);
     }
 
     #[test]
-    fn default_project_seed_has_five_statuses() {
-        assert_eq!(default_project_seed().statuses.len(), 5);
+    fn default_project_seed_has_unique_status_keys() {
+        let seed = default_project_seed();
+        let mut seen = std::collections::HashSet::new();
+        for status in &seed.statuses {
+            assert!(
+                seen.insert(status.key.as_str().to_string()),
+                "duplicate status key '{}' in default project seed",
+                status.key
+            );
+        }
     }
 
     /// Every legacy status wire string must resolve to a status in the

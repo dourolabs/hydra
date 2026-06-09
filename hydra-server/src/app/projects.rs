@@ -63,14 +63,34 @@ impl AppState {
         self.store.delete_project(id, actor).await
     }
 
-    pub async fn rename_status(
+    pub async fn add_status(
         &self,
         id: &ProjectId,
-        from: &StatusKey,
-        to: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        self.store.add_status(id, status, actor).await
+    }
+
+    pub async fn update_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        self.store
+            .update_status(id, status_key, status, actor)
+            .await
+    }
+
+    pub async fn delete_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.store.rename_status(id, from, to, actor).await
+        self.store.delete_status(id, status_key, actor).await
     }
 
     /// Resolve an issue's `(project_id, status)` pair to a
