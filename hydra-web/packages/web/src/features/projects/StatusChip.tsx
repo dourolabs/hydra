@@ -37,22 +37,11 @@ export function StatusChip({
 
   if (definition) {
     const inProgress = isInProgressKey(definition.key);
-    const dotCls = [styles.dot, inProgress && styles.dotInProgress]
-      .filter(Boolean)
-      .join(" ");
+    const dotCls = [styles.dot, inProgress && styles.dotInProgress].filter(Boolean).join(" ");
     return (
       <span className={cls} data-testid={testId}>
         <span className={dotCls} style={dotStyle(definition.color, inProgress)} />
         <span className={styles.label}>{definition.label}</span>
-        {definition.interactive && (
-          <span
-            className={styles.interactiveTag}
-            data-testid="status-interactive-tag"
-            title="Ready issues in this status spawn an interactive conversation"
-          >
-            interactive
-          </span>
-        )}
       </span>
     );
   }
@@ -62,9 +51,7 @@ export function StatusChip({
   }
 
   const inProgress = isInProgressKey(fallbackKey);
-  const dotCls = [styles.dot, inProgress && styles.dotInProgress]
-    .filter(Boolean)
-    .join(" ");
+  const dotCls = [styles.dot, inProgress && styles.dotInProgress].filter(Boolean).join(" ");
   return (
     <span className={cls} data-testid={testId}>
       <span className={dotCls} style={dotStyle(NEUTRAL_DOT, inProgress)} />
