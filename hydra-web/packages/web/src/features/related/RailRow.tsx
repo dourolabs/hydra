@@ -29,6 +29,7 @@ import {
 import { PatchRepoLink } from "../patches/PatchRepoLink";
 import { ProjectChip } from "../projects/ProjectChip";
 import { useProjects } from "../projects/useProjects";
+import { RestoreIssueButton } from "../issues/RestoreIssueButton";
 import styles from "./RailRow.module.css";
 
 function resolveProjectKey(
@@ -119,6 +120,13 @@ export function IssueRailRow({ record, sessions, neighborhood, linkSearch }: Iss
             >
               ARCHIVED
             </span>
+          )}
+          {archived && (
+            <RestoreIssueButton
+              issueId={record.issue_id}
+              className={styles.restoreButton}
+              data-testid={`related-rail-row-restore-${record.issue_id}`}
+            />
           )}
           {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
           {issue.assignee && assigneeName && (

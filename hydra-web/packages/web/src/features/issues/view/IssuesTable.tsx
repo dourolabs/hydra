@@ -18,6 +18,7 @@ import { useSessionDuration } from "../../dashboard/useSessionDuration";
 import { IssueRailRow } from "../../related/RailRow";
 import { computeBlockedStatus } from "../blockedStatus";
 import { computeFlowPillState, type IssueNeighborhood } from "../flowPill";
+import { RestoreIssueButton } from "../RestoreIssueButton";
 import { buildSections, type ProjectSection } from "./projectSections";
 import styles from "./IssuesTable.module.css";
 
@@ -331,12 +332,19 @@ function IssueDataRow({
         <div className={styles.titleCell}>
           <span className={styles.titleText}>{issue.title || "(untitled)"}</span>
           {archived && (
-            <span
-              className={styles.archivedTag}
-              data-testid={`issues-row-archived-${id}`}
-            >
-              ARCHIVED
-            </span>
+            <>
+              <span
+                className={styles.archivedTag}
+                data-testid={`issues-row-archived-${id}`}
+              >
+                ARCHIVED
+              </span>
+              <RestoreIssueButton
+                issueId={id}
+                className={styles.restoreButton}
+                data-testid={`issues-row-restore-${id}`}
+              />
+            </>
           )}
         </div>
       </td>

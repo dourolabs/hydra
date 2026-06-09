@@ -59,6 +59,7 @@ import {
 import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
 import { AgoTime } from "../../../components/Runtime/Runtime";
 import { useProjectCollapseState } from "./useProjectCollapseState";
+import { RestoreIssueButton } from "../RestoreIssueButton";
 import styles from "./IssuesBoard.module.css";
 
 interface IssuesBoardProps {
@@ -1196,6 +1197,13 @@ function BoardColumn({
                     >
                       ARCHIVED
                     </span>
+                  )}
+                  {archived && (
+                    <RestoreIssueButton
+                      issueId={id}
+                      className={styles.cardRestoreButton}
+                      data-testid={`board-card-restore-${id}`}
+                    />
                   )}
                 </div>
               )}

@@ -154,3 +154,18 @@
   border-radius: var(--radius-xs);
   background: var(--bg-2);
 }
+
+/* Hover/focus-revealed Restore button on archived rail rows. The rail row
+   wrapper is itself a role="button", so we also surface the action on
+   focus-within for tab-traversal users. */
+.restoreButton {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--tx-fast);
+}
+
+.archived:hover .restoreButton,
+.archived:focus-within .restoreButton {
+  opacity: 1;
+}
