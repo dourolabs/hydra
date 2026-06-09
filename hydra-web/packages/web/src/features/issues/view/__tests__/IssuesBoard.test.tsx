@@ -64,11 +64,21 @@ vi.mock("@dnd-kit/core", () => ({
     }
     return <>{children}</>;
   },
+  // <DragOverlay> renders into a portal in production; rendering its children
+  // inline here is enough for assertions that don't care about portal location.
+  DragOverlay: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   PointerSensor: function PointerSensor() {},
   KeyboardSensor: function KeyboardSensor() {},
   useSensor: () => ({}),
   useSensors: () => [],
   closestCenter: () => [],
+  // IssuesBoard references `MeasuringStrategy.Always` as a runtime value,
+  // not a type — the mock must expose it for the module to evaluate.
+  MeasuringStrategy: {
+    Always: "always",
+    BeforeDragging: "before",
+    WhileDragging: "while",
+  },
 }));
 
 vi.mock("@dnd-kit/sortable", () => ({
@@ -115,6 +125,16 @@ vi.mock("../../../../api/client", () => ({
 const mockAddToast = vi.fn();
 vi.mock("../../../toast/useToast", () => ({
   useToast: () => ({ addToast: mockAddToast }),
+}));
+
+const mockOpenIssueCreate = vi.fn();
+vi.mock("../../../dashboard/useIssueCreateModal", () => ({
+  useIssueCreateModal: () => ({
+    isOpen: false,
+    initial: null,
+    open: mockOpenIssueCreate,
+    close: vi.fn(),
+  }),
 }));
 
 // --- @hydra/ui stubs ---
@@ -332,6 +352,7 @@ beforeEach(() => {
   mockUpdateProject.mockReset();
   mockUpdateProject.mockResolvedValue({ project_id: "j-eng", version: 2 });
   mockAddToast.mockReset();
+  mockOpenIssueCreate.mockReset();
 });
 
 afterEach(() => {
@@ -544,6 +565,65 @@ describe("IssuesBoard '+ Add status' ghost column", () => {
   });
 });
 
+describe("IssuesBoard '+ Add issue' per-column button", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+    ];
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell()],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+  });
+
+  it("renders an '+ Add issue' button inside each status column", () => {
+    renderBoard();
+
+    expect(
+      screen.getByTestId("board-col-add-issue-engineering-open"),
+    ).toBeDefined();
+    expect(
+      screen.getByTestId("board-col-add-issue-engineering-in-progress"),
+    ).toBeDefined();
+  });
+
+  it("opens the new-issue modal with the column's project and status prepopulated", () => {
+    renderBoard();
+
+    fireEvent.click(
+      screen.getByTestId("board-col-add-issue-engineering-in-progress"),
+    );
+
+    expect(mockOpenIssueCreate).toHaveBeenCalledTimes(1);
+    expect(mockOpenIssueCreate).toHaveBeenCalledWith({
+      projectId: "j-eng",
+      status: "in-progress",
+    });
+  });
+
+  it("never renders a 'No issues' placeholder, even with empty cells", () => {
+    renderBoard();
+
+    expect(screen.queryByText("No issues")).toBeNull();
+  });
+
+  it("is not rendered in hideIssues mode (Projects tab)", () => {
+    renderBoard(undefined, { hideIssues: true });
+
+    expect(
+      screen.queryByTestId("board-col-add-issue-engineering-open"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("board-col-add-issue-engineering-in-progress"),
+    ).toBeNull();
+  });
+});
+
 describe("IssuesBoard '+ New project' ghost row", () => {
   beforeEach(() => {
     projectsData = [
@@ -714,10 +794,12 @@ describe("IssuesBoard hideIssues (Projects tab)", () => {
     expect(screen.getByTestId("board-new-project")).toBeDefined();
   });
 
-  it("suppresses the per-column 'No issues' placeholder", () => {
+  it("suppresses the per-column 'Loading…' placeholder", () => {
     renderBoard(undefined, { hideIssues: true });
 
-    expect(screen.queryByText("No issues")).toBeNull();
+    // The "No issues" placeholder was removed unconditionally — see the
+    // "'+ Add issue' per-column button" describe block. Here we only assert
+    // that hideIssues continues to suppress the transient loading state.
     expect(screen.queryByText("Loading…")).toBeNull();
   });
 

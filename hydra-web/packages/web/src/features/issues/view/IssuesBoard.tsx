@@ -45,6 +45,7 @@ import {
   applyOptimisticUpsert,
 } from "../../projects/projectCache";
 import { apiClient } from "../../../api/client";
+import { useIssueCreateModal } from "../../dashboard/useIssueCreateModal";
 import { useToast } from "../../toast/useToast";
 import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import {
@@ -134,6 +135,7 @@ export function IssuesBoard({
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const { data: allProjects } = useProjects();
+  const { open: openIssueCreate } = useIssueCreateModal();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
 
   const projects: BoardProjectDescriptor[] = useMemo(() => {
@@ -234,6 +236,13 @@ export function IssuesBoard({
     });
     navigate(`/issues/${id}?${params.toString()}`);
   };
+
+  const handleAddIssueClick = useCallback(
+    (projectId: string, statusKey: string) => {
+      openIssueCreate({ projectId, status: statusKey });
+    },
+    [openIssueCreate],
+  );
 
   const settingsProject: ProjectRecord | null = useMemo(() => {
     if (!settingsProjectId) return null;
@@ -367,6 +376,7 @@ export function IssuesBoard({
       onOpenSettings: setSettingsProjectId,
       onGearClick: handleGearClick,
       onAddStatus: setNewStatusProjectId,
+      onAddIssue: handleAddIssueClick,
     };
     return allowProjectReorder ? (
       <SortableProjectSection key={project.project_id} {...sectionProps} />
@@ -485,6 +495,7 @@ interface ProjectSectionProps {
     cell: BoardCellQuery | undefined,
   ) => void;
   onAddStatus: (projectId: string) => void;
+  onAddIssue: (projectId: string, statusKey: string) => void;
 }
 
 interface SortableSectionHandleProps {
@@ -561,6 +572,7 @@ function ProjectSection({
   onOpenSettings,
   onGearClick,
   onAddStatus,
+  onAddIssue,
   sortableSetNodeRef,
   sortableStyle,
   sortableIsDragging,
@@ -649,6 +661,7 @@ function ProjectSection({
         hideIssues={hideIssues}
         onCardClick={onCardClick}
         onGearClick={onGearClick}
+        onAddIssue={onAddIssue}
       />
     );
   });
@@ -752,6 +765,7 @@ interface BoardColumnProps {
     statusKey: string,
     cell: BoardCellQuery | undefined,
   ) => void;
+  onAddIssue: (projectId: string, statusKey: string) => void;
 }
 
 interface SortableHandleProps {
@@ -802,6 +816,7 @@ function BoardColumn({
   hideIssues,
   onCardClick,
   onGearClick,
+  onAddIssue,
   setNodeRef,
   style,
   isDragging,
@@ -887,9 +902,6 @@ function BoardColumn({
         {!hideIssues && showInitialLoading && (
           <div className={styles.colEmpty}>Loading…</div>
         )}
-        {!hideIssues && !showInitialLoading && colIssues.length === 0 && (
-          <div className={styles.colEmpty}>No issues</div>
-        )}
         {colIssues.map((rec) => {
           const issue = rec.issue;
           const id = rec.issue_id;
@@ -939,6 +951,21 @@ function BoardColumn({
               {cell.isFetchingNextPage ? "Loading…" : "Load more"}
             </button>
           </div>
+        )}
+        {!hideIssues && (
+          // Hover-revealed in CSS via `.col:hover`. Rendered with
+          // `visibility: hidden` by default so the space is reserved and the
+          // column doesn't reflow on hover. See IssuesBoard.module.css.
+          <button
+            type="button"
+            className={styles.colAddIssue}
+            onClick={() => onAddIssue(project.project_id, status.key)}
+            aria-label={`Add issue to ${status.label || status.key}`}
+            data-testid={`board-col-add-issue-${project.key}-${status.key}`}
+          >
+            <span className={styles.colAddIssueIcon}>+</span>
+            Add issue
+          </button>
         )}
       </div>
     </div>

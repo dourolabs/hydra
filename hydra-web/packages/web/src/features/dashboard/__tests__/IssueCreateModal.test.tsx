@@ -428,6 +428,39 @@ describe("IssueCreateModal", () => {
     expect(body.issue.status).toBe("backlog");
   });
 
+  it("prepopulates project and status from the `initial` prop on open", () => {
+    const { rerender } = render(
+      <IssueCreateModal
+        open={false}
+        onClose={() => {}}
+        assignees={{ agents: [], users: [] }}
+        initial={{ projectId: "j-engv2", status: "backlog" }}
+      />,
+    );
+
+    // Open the modal with seeded initial values.
+    rerender(
+      <IssueCreateModal
+        open
+        onClose={() => {}}
+        assignees={{ agents: [], users: [] }}
+        initial={{ projectId: "j-engv2", status: "backlog" }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(DESC_PLACEHOLDER), {
+      target: { value: "scoped from board" },
+    });
+    fireEvent.click(screen.getByText(/Create issue/));
+
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+    const body = createIssueMock.mock.calls[0][0] as {
+      issue: { status: string; project_id?: string };
+    };
+    expect(body.issue.project_id).toBe("j-engv2");
+    expect(body.issue.status).toBe("backlog");
+  });
+
   it("submits the legacy default status when the Status picker isn't touched", () => {
     render(
       <IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />,
