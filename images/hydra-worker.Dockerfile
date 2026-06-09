@@ -96,6 +96,17 @@ RUN curl -fsSL https://downloads.1password.com/linux/keys/1password.asc | \
     rm -rf /var/lib/apt/lists/*
 RUN op --version
 
+# Install ngrok CLI from the official apt repo, pinned for reproducibility.
+# Auth is provided at runtime (env vars / session secrets), not baked in.
+ARG NGROK_VERSION=3.39.7
+RUN curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
+    gpg --dearmor -o /usr/share/keyrings/ngrok-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/ngrok-archive-keyring.gpg] https://ngrok-agent.s3.amazonaws.com bookworm main" \
+    > /etc/apt/sources.list.d/ngrok.list && \
+    apt-get update && apt-get install -y --no-install-recommends ngrok=${NGROK_VERSION} && \
+    rm -rf /var/lib/apt/lists/*
+RUN ngrok version
+
 # Create a non-root user
 RUN useradd -m -s /bin/bash -u 1000 worker \
     && mkdir -p ${APP_HOME} /usr/local/bin \
