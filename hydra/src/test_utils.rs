@@ -69,27 +69,6 @@ pub mod ids {
 }
 
 #[cfg(test)]
-pub mod status {
-    use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
-    use hydra_common::Rgb;
-
-    /// Synthesize a neutral [`StatusDefinition`] for tests. Most CLI
-    /// tests only assert on identity-level fields (e.g. `status.key`),
-    /// so display props default to an empty label and a neutral grey.
-    pub fn make_status_def(key: StatusKey) -> StatusDefinition {
-        StatusDefinition::new(
-            key,
-            String::new(),
-            Rgb::try_from("#888888".to_string()).expect("well-formed default rgb"),
-            false,
-            false,
-            false,
-            None,
-        )
-    }
-}
-
-#[cfg(test)]
 pub mod env {
     use std::sync::{Mutex, MutexGuard, OnceLock};
 

@@ -1509,10 +1509,10 @@ mod tests {
         resolve_head_oid as git_resolve_head_oid, stage_all_changes as git_stage_all_changes,
     };
     use crate::test_utils::ids::{issue_id, patch_id};
-    use crate::test_utils::status::make_status_def;
     use anyhow::{anyhow, Context};
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
+    use hydra_common::test_utils::status::make_status_def;
     use hydra_common::{
         issues::{Issue, IssueStatus, IssueType, IssueVersionRecord, SessionSettings},
         patches::{

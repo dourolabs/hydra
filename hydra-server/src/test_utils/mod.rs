@@ -27,7 +27,6 @@ pub mod git_remote;
 pub mod github_mock;
 pub mod github_test_utils;
 pub mod job_engine;
-pub mod status;
 pub mod store;
 
 pub use git_remote::GitRemote;

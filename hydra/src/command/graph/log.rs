@@ -435,7 +435,6 @@ fn actor_display(actor: &Option<ActorRef>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::status::make_status_def;
     use chrono::TimeZone;
     use hydra_common::actor_ref::{ActorId, ActorRef};
     use hydra_common::api::v1::conversations::{
@@ -443,6 +442,7 @@ mod tests {
     };
     use hydra_common::api::v1::issues::{Issue, IssueStatus, IssueType, SessionSettings};
     use hydra_common::issues::IssueVersionRecord;
+    use hydra_common::test_utils::status::make_status_def;
     use hydra_common::users::Username;
     use hydra_common::versioning::Versioned;
     use hydra_common::{ConversationId, IssueId, ProjectId, SessionId};

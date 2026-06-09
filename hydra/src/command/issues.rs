@@ -1317,13 +1317,13 @@ mod tests {
     use super::*;
     use crate::client::HydraClient;
     use crate::test_utils::ids::{issue_id, patch_id};
-    use crate::test_utils::status::make_status_def;
     use chrono::Utc;
     use httpmock::prelude::*;
     use hydra_common::issues::{
         Issue, IssueStatus, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse,
         SessionSettings, UpsertIssueRequest, UpsertIssueResponse,
     };
+    use hydra_common::test_utils::status::make_status_def;
     use hydra_common::{users::Username, PatchId, ProjectId, RepoName};
     use reqwest::Client as HttpClient;
     use std::str::FromStr;
