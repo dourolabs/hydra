@@ -6,6 +6,7 @@ import { formatPrincipalPath } from "../principal/formatPrincipal";
 import { apiClient } from "../../api/client";
 import { ActivityTimeline } from "../activity/ActivityTimeline";
 import type { Change } from "../activity/types";
+import { StatusChip } from "../projects/StatusChip";
 import styles from "../activity/ActivityTimeline.module.css";
 
 function principalLabel(principal: Principal | null | undefined): string {
@@ -42,6 +43,9 @@ function getDotColor(
   }
 
   const statusChange = changes.find((c) => c.field === "status");
+  if (statusChange?.afterStatus) {
+    return statusChange.afterStatus.color;
+  }
   if (statusChange?.after) {
     return STATUS_DOT_COLORS[statusChange.after];
   }
@@ -62,6 +66,8 @@ function diffIssueVersions(
       field: "status",
       before: prevIssue.status.key,
       after: currIssue.status.key,
+      beforeStatus: prevIssue.status,
+      afterStatus: currIssue.status,
     });
   }
   if (!principalsEqual(prevIssue.assignee, currIssue.assignee)) {
@@ -154,17 +160,14 @@ function ProgressValue({ value }: { value: string }) {
 }
 
 function IssueChangeEntry({ change }: { change: Change }) {
-  if (change.field === "status" && change.before && change.after) {
-    // Activity log entries only carry the bare status key (the project's
-    // resolved `StatusDefinition` isn't included). Render the keys
-    // directly rather than synthesizing a chip without label/color.
+  if (change.field === "status" && change.beforeStatus && change.afterStatus) {
     return (
       <div className={styles.change}>
         <span className={styles.changeLabel}>Status</span>
         <span className={styles.statusTransition}>
-          {change.before}
+          <StatusChip status={change.beforeStatus} />
           <span className={styles.arrow}>{"\u2192"}</span>
-          {change.after}
+          <StatusChip status={change.afterStatus} />
         </span>
       </div>
     );
@@ -254,7 +257,7 @@ function CreationSubItems({ version }: { version: IssueVersionRecord }) {
       </span>
       <span className={styles.creationSubItem}>
         <span className={styles.creationSubItemLabel}>Status:</span>
-        {issue.status.key}
+        <StatusChip status={issue.status} />
       </span>
       <span className={styles.creationSubItem}>
         <span className={styles.creationSubItemLabel}>Assignee:</span>
