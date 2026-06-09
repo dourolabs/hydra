@@ -10316,11 +10316,13 @@ mod tests {
         );
     }
 
-    /// Migration must add `project_id` to existing `issues_v2` rows
-    /// without losing data — verify the column exists and is nullable.
+    /// `20260612000000_issues_v2_project_id_not_null.sql` tightens
+    /// `metis.issues_v2.project_id` to NOT NULL after the seed migration
+    /// backfills legacy NULL rows to `j-defaul`. Verify the column exists,
+    /// remains `text`, and now reports `is_nullable = 'NO'`.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn issues_v2_has_nullable_project_id_column_pg(pool: PgStorePool) {
+    async fn issues_v2_project_id_column_is_not_null_pg(pool: PgStorePool) {
         let row: (String, String) = sqlx::query_as(
             "SELECT data_type, is_nullable FROM information_schema.columns \
              WHERE table_schema = 'metis' AND table_name = 'issues_v2' AND column_name = 'project_id'",
@@ -10329,7 +10331,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(row.0, "text");
-        assert_eq!(row.1, "YES");
+        assert_eq!(row.1, "NO");
     }
 
     /// Regression: every `issues_v2` SELECT must include `project_id` so a
