@@ -208,6 +208,17 @@
   margin-left: auto;
 }
 
+.modeBadgeInteractive {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--acc);
+  background: var(--acc-soft);
+}
+
 .colCount {
   font-family: var(--f-mono);
   font-size: var(--t-xxs);

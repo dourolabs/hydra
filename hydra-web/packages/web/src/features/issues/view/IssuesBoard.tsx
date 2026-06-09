@@ -810,7 +810,7 @@ function BoardColumn({
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const assignTo = status.on_enter?.assign_to ?? null;
-  const interactiveLabel = status.interactive === true ? "interactive" : "auto";
+  const isInteractive = status.interactive === true;
   const colClasses = [styles.col];
   if (isDragging) colClasses.push(styles.colDragging);
   return (
@@ -861,10 +861,26 @@ function BoardColumn({
           </span>
         )}
         <span
-          className={styles.modeBadge}
+          className={
+            isInteractive
+              ? `${styles.modeBadge} ${styles.modeBadgeInteractive}`
+              : styles.modeBadge
+          }
+          title={
+            isInteractive
+              ? "Interactive — human in the loop"
+              : "Autonomous agent work"
+          }
           data-testid={`board-col-mode-${project.key}-${status.key}`}
         >
-          {interactiveLabel}
+          {isInteractive ? (
+            <>
+              <Icons.IconSpark size={11} />
+              interactive
+            </>
+          ) : (
+            "auto"
+          )}
         </span>
       </div>
       <div className={styles.colBody}>

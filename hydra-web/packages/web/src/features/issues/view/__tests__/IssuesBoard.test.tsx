@@ -145,6 +145,7 @@ vi.mock("@hydra/ui", () => ({
     ) : null,
   Icons: {
     IconSettings: () => <span data-testid="icon-settings" />,
+    IconSpark: () => <span data-testid="icon-spark" />,
   },
 }));
 
@@ -381,7 +382,7 @@ describe("IssuesBoard column sub-row", () => {
     expect(mode.textContent).toBe("auto");
   });
 
-  it("renders 'interactive' badge when status.interactive === true", () => {
+  it("renders 'interactive' badge with the Spark icon and the interactive modifier class when status.interactive === true", () => {
     const status = makeStatus({
       key: "triage",
       label: "Triage",
@@ -393,6 +394,23 @@ describe("IssuesBoard column sub-row", () => {
 
     const mode = screen.getByTestId("board-col-mode-proj-triage");
     expect(mode.textContent).toBe("interactive");
+    expect(within(mode).getByTestId("icon-spark")).toBeTruthy();
+    expect(mode.className).toContain("modeBadgeInteractive");
+    expect(mode.getAttribute("title")).toBe(
+      "Interactive — human in the loop",
+    );
+  });
+
+  it("renders 'auto' badge without the interactive modifier or Spark icon", () => {
+    const status = makeStatus({ key: "open", label: "Open" });
+    projectsData = [makeProject("j-proj", "proj", [status])];
+
+    renderBoard();
+
+    const mode = screen.getByTestId("board-col-mode-proj-open");
+    expect(mode.className).not.toContain("modeBadgeInteractive");
+    expect(within(mode).queryByTestId("icon-spark")).toBeNull();
+    expect(mode.getAttribute("title")).toBe("Autonomous agent work");
   });
 
 });
