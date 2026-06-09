@@ -1,7 +1,7 @@
 //! HTTP routes for `/v1/projects`.
 //!
-//! Exposes project CRUD plus the per-project status set (the wire shape
-//! every issue's `resolved_status` is computed against). Auth + error
+//! Exposes project CRUD plus per-status CRUD (the wire shape every
+//! issue's `resolved_status` is computed against). Auth + error
 //! mapping follow the existing `/v1/labels` pattern.
 //!
 //! Every per-project URL accepts either a [`ProjectId`] (`j-…`) or a
@@ -10,6 +10,10 @@
 //! happens at the route boundary via [`resolve_project_ref`] — domain
 //! and store calls below this layer continue to address projects
 //! exclusively by `ProjectId`.
+//!
+//! Post-cutover, `POST /v1/projects` and `PUT /v1/projects/:project_ref`
+//! carry only project-level fields. Per-status add / update / delete
+//! lives at `POST/PUT/DELETE /v1/projects/:project_ref/statuses[/:status_key]`.
 
 use crate::app::AppState;
 use crate::domain::actors::{Actor, ActorRef};
@@ -23,9 +27,11 @@ use hydra_common::ProjectId;
 use hydra_common::api::v1::{
     ApiError,
     projects::{
-        ListProjectsResponse, ProjectRecord, ProjectRef, ProjectStatusesResponse,
-        ProjectValidationError, RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
+        ListProjectsResponse, Project, ProjectRecord, ProjectRef, ProjectStatusesResponse,
+        StatusDefinition, StatusKey, UpsertProjectRequest, UpsertProjectResponse,
+        UpsertProjectStatusResponse,
     },
+    users::Username,
 };
 use tracing::{error, info};
 
@@ -60,6 +66,33 @@ async fn resolve_project_ref(
     }
 }
 
+/// Build the domain [`Project`] from a project-level request body and
+/// the request actor. Post-cutover the wire `UpsertProjectRequest`
+/// no longer carries statuses, so the handler synthesizes an empty
+/// `statuses: Vec<_>` on the domain object — the store layer ignores
+/// it on writes anyway, and the read-side rebuilds it from the
+/// `statuses` table.
+fn project_from_upsert(payload: UpsertProjectRequest, creator: Username) -> Project {
+    let mut project = Project::new(
+        payload.key,
+        payload.name,
+        Vec::new(),
+        creator,
+        false,
+        payload.priority,
+    );
+    project.prompt_path = payload.prompt_path;
+    project
+}
+
+/// Resolve the actor's username so `add_project` can stamp it as the
+/// project's `creator`. Falls back to the actor's display name for
+/// non-user actors — matches the existing CLI pattern for system /
+/// agent actors that operate on projects (e.g. seeded data).
+fn creator_for_actor(actor: &Actor) -> Username {
+    Username::from(actor.name().to_string())
+}
+
 /// POST /v1/projects — create a new project.
 pub async fn create_project(
     State(state): State<AppState>,
@@ -67,8 +100,8 @@ pub async fn create_project(
     Json(payload): Json<UpsertProjectRequest>,
 ) -> Result<Json<UpsertProjectResponse>, ApiError> {
     info!(actor = %actor.name(), "create_project invoked");
-    let project = payload.project;
-    project.validate().map_err(map_validation_error)?;
+    let creator = creator_for_actor(&actor);
+    let project = project_from_upsert(payload, creator);
 
     let actor_ref = ActorRef::from(&actor);
     let (project_id, version) = state
@@ -134,7 +167,7 @@ pub async fn get_project(
     )))
 }
 
-/// PUT /v1/projects/:project_ref — full-replace update (version-bumping).
+/// PUT /v1/projects/:project_ref — update project-level fields.
 pub async fn update_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -143,8 +176,18 @@ pub async fn update_project(
 ) -> Result<Json<UpsertProjectResponse>, ApiError> {
     let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
     info!(actor = %actor.name(), project_id = %project_id, "update_project invoked");
-    let project = payload.project;
-    project.validate().map_err(map_validation_error)?;
+
+    // Preserve the existing creator: `update_project` is a full
+    // project-level rewrite from the store's POV, so the route must
+    // carry the existing creator through unchanged. The
+    // `UpsertProjectRequest` wire shape doesn't carry it, so we read
+    // the current project's creator and stamp it on the domain object.
+    let current = state
+        .store
+        .get_project(&project_id, false)
+        .await
+        .map_err(|e| map_project_not_found(e, &project_id))?;
+    let project = project_from_upsert(payload, current.item.creator.clone());
 
     let actor_ref = ActorRef::from(&actor);
     let version = state
@@ -190,30 +233,24 @@ pub async fn delete_project(
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
-/// POST /v1/projects/:project_ref/statuses/rename — rename a status key in place.
-///
-/// Preserves the status's `(project_id, sequence)` identity, so any
-/// issues referencing the old key continue to resolve through the same
-/// sequence and read back as the new key. Returns the bumped project
-/// version (matches `update_project`'s shape).
-pub async fn rename_project_status(
+/// POST /v1/projects/:project_ref/statuses — add a new status.
+pub async fn create_project_status(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path(project_ref): Path<ProjectRef>,
-    Json(payload): Json<RenameStatusRequest>,
-) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    Json(status): Json<StatusDefinition>,
+) -> Result<Json<UpsertProjectStatusResponse>, ApiError> {
     let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
     info!(
         actor = %actor.name(),
         project_id = %project_id,
-        from = %payload.from,
-        to = %payload.to,
-        "rename_project_status invoked"
+        status_key = %status.key,
+        "create_project_status invoked"
     );
 
     let actor_ref = ActorRef::from(&actor);
-    let version = state
-        .rename_status(&project_id, &payload.from, &payload.to, &actor_ref)
+    let (persisted, version) = state
+        .add_status(&project_id, status, &actor_ref)
         .await
         .map_err(|e| match e {
             StoreError::InvalidIssueStatus(msg) => ApiError::bad_request(msg),
@@ -223,8 +260,88 @@ pub async fn rename_project_status(
     info!(
         actor = %actor.name(),
         project_id = %project_id,
+        status_key = %persisted.key,
         version,
-        "rename_project_status completed"
+        "create_project_status completed"
+    );
+    Ok(Json(UpsertProjectStatusResponse::new(
+        project_id, version, persisted,
+    )))
+}
+
+/// PUT /v1/projects/:project_ref/statuses/:status_key — update an
+/// existing status. A body whose `key` differs from `status_key` is a
+/// rename: the row's `(project_id, sequence)` storage identity is
+/// preserved so existing issues continue to resolve through the same
+/// sequence and read back as the new key.
+pub async fn update_project_status(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path((project_ref, status_key)): Path<(ProjectRef, StatusKey)>,
+    Json(status): Json<StatusDefinition>,
+) -> Result<Json<UpsertProjectStatusResponse>, ApiError> {
+    let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        status_key = %status_key,
+        new_key = %status.key,
+        "update_project_status invoked"
+    );
+
+    let actor_ref = ActorRef::from(&actor);
+    let (persisted, version) = state
+        .update_status(&project_id, &status_key, status, &actor_ref)
+        .await
+        .map_err(|e| match e {
+            StoreError::InvalidIssueStatus(msg) => ApiError::bad_request(msg),
+            other => map_project_not_found(other, &project_id),
+        })?;
+
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        status_key = %persisted.key,
+        version,
+        "update_project_status completed"
+    );
+    Ok(Json(UpsertProjectStatusResponse::new(
+        project_id, version, persisted,
+    )))
+}
+
+/// DELETE /v1/projects/:project_ref/statuses/:status_key — remove a
+/// status. The DB FK on `issues_v2.status_sequence` is the
+/// authoritative guard; a still-referenced row surfaces as
+/// `400 InvalidIssueStatus`.
+pub async fn delete_project_status(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path((project_ref, status_key)): Path<(ProjectRef, StatusKey)>,
+) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        status_key = %status_key,
+        "delete_project_status invoked"
+    );
+
+    let actor_ref = ActorRef::from(&actor);
+    let version = state
+        .delete_status(&project_id, &status_key, &actor_ref)
+        .await
+        .map_err(|e| match e {
+            StoreError::InvalidIssueStatus(msg) => ApiError::bad_request(msg),
+            other => map_project_not_found(other, &project_id),
+        })?;
+
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        status_key = %status_key,
+        version,
+        "delete_project_status completed"
     );
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
@@ -253,10 +370,6 @@ pub async fn get_project_statuses(
         "get_project_statuses completed"
     );
     Ok(Json(response))
-}
-
-fn map_validation_error(err: ProjectValidationError) -> ApiError {
-    ApiError::bad_request(err.to_string())
 }
 
 fn map_project_not_found(err: StoreError, project_id: &ProjectId) -> ApiError {

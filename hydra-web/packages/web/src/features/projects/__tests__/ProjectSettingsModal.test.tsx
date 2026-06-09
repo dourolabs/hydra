@@ -220,6 +220,7 @@ function makeProject(): ProjectRecord {
           cascades_to_children: false,
           on_enter: null,
           prompt_path: null,
+          position: 0,
         },
       ],
       creator: "alice" as never,
@@ -319,16 +320,16 @@ describe("ProjectSettingsModal", () => {
     expect(updateProjectSpy).toHaveBeenCalledTimes(1);
     const [id, req] = updateProjectSpy.mock.calls[0] as unknown as [
       string,
-      { project: { key: string; name: string; statuses: unknown[]; priority: number } },
+      { key: string; name: string; prompt_path: string | null; priority: number },
     ];
     expect(id).toBe("j-engine");
-    expect(req.project.key).toBe("platform-eng");
-    expect(req.project.name).toBe("Platform Eng");
-    // Statuses are preserved untouched (the board owns them).
-    expect(req.project.statuses).toHaveLength(1);
-    expect((req.project.statuses[0] as { key: string }).key).toBe("open");
+    expect(req.key).toBe("platform-eng");
+    expect(req.name).toBe("Platform Eng");
     // Existing priority is preserved on edit.
-    expect(req.project.priority).toBe(7);
+    expect(req.priority).toBe(7);
+    // The project-level update no longer carries statuses; the board's
+    // per-status routes own them.
+    expect(req).not.toHaveProperty("statuses");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

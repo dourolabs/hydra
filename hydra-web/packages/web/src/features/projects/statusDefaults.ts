@@ -11,6 +11,7 @@ export function blankStatus(index: number): StatusDefinition {
     cascades_to_children: false,
     on_enter: null,
     prompt_path: null,
+    position: (index + 1) * 100,
   };
 }
 

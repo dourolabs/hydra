@@ -14,7 +14,7 @@
 //! so a newly added fixture is covered automatically; if a future fixture
 //! targets yet another parser entry point, extend the dispatch below.
 
-use hydra::command::project_body_file::load_body_file;
+use hydra::command::project_body_file::load_status_body_file;
 use hydra_common::api::v1::form::Form;
 use std::path::{Path, PathBuf};
 
@@ -43,7 +43,7 @@ fn e2e_fixtures_round_trip_through_body_file_parser() {
         let result = if is_form_fixture(path, &fixtures_root) {
             parse_form_fixture(path)
         } else {
-            load_body_file(path)
+            load_status_body_file(path)
                 .map(|_| ())
                 .map_err(|e| format!("{e:?}"))
         };

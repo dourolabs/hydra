@@ -300,24 +300,16 @@ describe("ProjectCreateModal", () => {
     expect(createProjectSpy).toHaveBeenCalledTimes(1);
     const [projectPayload] = createProjectSpy.mock.calls[0] as unknown as [
       {
-        project: {
-          key: string;
-          name: string;
-          statuses: unknown[];
-          creator: string;
-          prompt_path: string | null;
-          priority: number;
-        };
+        key: string;
+        name: string;
+        prompt_path: string | null;
+        priority: number;
       },
     ];
-    expect(projectPayload.project.key).toBe("engineering");
-    expect(projectPayload.project.name).toBe("Engineering");
-    expect(projectPayload.project.statuses).toEqual([]);
-    expect(projectPayload.project.creator).toBe("alice");
-    expect(projectPayload.project.prompt_path).toBe(
-      "/projects/engineering/prompt.md",
-    );
-    expect(projectPayload.project.priority).toBe(0);
+    expect(projectPayload.key).toBe("engineering");
+    expect(projectPayload.name).toBe("Engineering");
+    expect(projectPayload.prompt_path).toBe("/projects/engineering/prompt.md");
+    expect(projectPayload.priority).toBe(0);
   });
 
   it("skips the document write when the prompt body is blank", async () => {
@@ -360,11 +352,9 @@ describe("ProjectCreateModal", () => {
     });
 
     const [projectPayload] = createProjectSpy.mock.calls[0] as unknown as [
-      { project: { key: string; prompt_path: string | null } },
+      { key: string; prompt_path: string | null },
     ];
-    expect(projectPayload.project.key).toBe("growth-team");
-    expect(projectPayload.project.prompt_path).toBe(
-      "/projects/growth-team/prompt.md",
-    );
+    expect(projectPayload.key).toBe("growth-team");
+    expect(projectPayload.prompt_path).toBe("/projects/growth-team/prompt.md");
   });
 });

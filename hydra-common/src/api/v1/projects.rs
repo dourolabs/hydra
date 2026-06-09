@@ -12,7 +12,6 @@ use crate::ids::HydraId;
 use crate::principal::Principal;
 use crate::{Rgb, VersionNumber, api::v1::users::Username, ids::ProjectId};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 
@@ -163,7 +162,8 @@ impl StatusOnEnter {
 
 /// Declares one status within a project: display props, dependency
 /// semantics, and an optional `on_enter` automation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `position` is `f64`. Use `PartialEq` for value equality.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -186,6 +186,12 @@ pub struct StatusDefinition {
     /// conversation instead of a headless session.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interactive: bool,
+    /// Sort key for status ordering within a project. Smaller values
+    /// appear earlier. Default 0.0; drag-and-drop UI sets explicit
+    /// values to reorder. Mirrors the existing [`Project::priority`]
+    /// pattern.
+    #[serde(default)]
+    pub position: f64,
 }
 
 impl StatusDefinition {
@@ -208,6 +214,7 @@ impl StatusDefinition {
             on_enter,
             prompt_path: None,
             interactive: false,
+            position: 0.0,
         }
     }
 }
@@ -237,24 +244,6 @@ pub struct Project {
     pub priority: f64,
 }
 
-/// Validation failure for [`Project::validate`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProjectValidationError {
-    DuplicateStatusKey(StatusKey),
-}
-
-impl fmt::Display for ProjectValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProjectValidationError::DuplicateStatusKey(key) => {
-                write!(f, "duplicate status key '{key}' in project")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ProjectValidationError {}
-
 impl Project {
     pub fn new(
         key: ProjectKey,
@@ -275,23 +264,6 @@ impl Project {
         }
     }
 
-    /// Check structural invariants:
-    /// - all status keys are unique within the project
-    ///
-    /// An empty status list is permitted; projects can be created with no
-    /// statuses and have them added later.
-    pub fn validate(&self) -> Result<(), ProjectValidationError> {
-        let mut seen: HashSet<&StatusKey> = HashSet::with_capacity(self.statuses.len());
-        for status in &self.statuses {
-            if !seen.insert(&status.key) {
-                return Err(ProjectValidationError::DuplicateStatusKey(
-                    status.key.clone(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
     /// Resolve a status by its [`StatusKey`] within this project. Returns
     /// `None` if no matching status is declared.
     pub fn find_status(&self, key: &StatusKey) -> Option<&StatusDefinition> {
@@ -299,19 +271,32 @@ impl Project {
     }
 }
 
-/// Request body for `POST /v1/projects` and `PUT /v1/projects/:id`.
-// No `Eq` derive: contains a `Project`, whose `priority` is `f64`.
+/// Request body for `POST /v1/projects` and `PUT /v1/projects/:project_ref`.
+///
+/// Carries only project-level fields. Statuses are managed independently
+/// via `POST/PUT/DELETE /v1/projects/:project_ref/statuses[/:status_key]`.
+// No `Eq` derive: `priority` is `f64`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertProjectRequest {
-    pub project: Project,
+    pub key: ProjectKey,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_path: Option<String>,
+    #[serde(default)]
+    pub priority: f64,
 }
 
 impl UpsertProjectRequest {
-    pub fn new(project: Project) -> Self {
-        Self { project }
+    pub fn new(key: ProjectKey, name: String) -> Self {
+        Self {
+            key,
+            name,
+            prompt_path: None,
+            priority: 0.0,
+        }
     }
 }
 
@@ -372,28 +357,10 @@ impl ListProjectsResponse {
     }
 }
 
-/// Request body for `POST /v1/projects/:id/statuses/rename`. Renames a
-/// single status key in place — the storage `(project_id, sequence)`
-/// identity is preserved, so any issues referencing the old key continue
-/// to resolve through the same sequence and read back as `to`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[non_exhaustive]
-pub struct RenameStatusRequest {
-    pub from: StatusKey,
-    pub to: StatusKey,
-}
-
-impl RenameStatusRequest {
-    pub fn new(from: StatusKey, to: StatusKey) -> Self {
-        Self { from, to }
-    }
-}
-
-/// Response body for `GET /v1/projects/:id/statuses`. Returned as an
-/// ordered list matching the project's declaration order.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Response body for `GET /v1/projects/:project_ref/statuses`. Returned
+/// as an ordered list matching the project's declaration order.
+// No `Eq` derive: `StatusDefinition.position` is `f64`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -404,6 +371,32 @@ pub struct ProjectStatusesResponse {
 impl ProjectStatusesResponse {
     pub fn new(statuses: Vec<StatusDefinition>) -> Self {
         Self { statuses }
+    }
+}
+
+/// Response body for `POST /v1/projects/:project_ref/statuses` and
+/// `PUT /v1/projects/:project_ref/statuses/:status_key`. Echoes the
+/// status as the server persisted it (the inserted row's display props
+/// after any server-side defaulting); `version` is the project's new
+/// version number.
+// No `Eq` derive: `StatusDefinition.position` is `f64`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct UpsertProjectStatusResponse {
+    pub project_id: ProjectId,
+    pub version: VersionNumber,
+    pub status: StatusDefinition,
+}
+
+impl UpsertProjectStatusResponse {
+    pub fn new(project_id: ProjectId, version: VersionNumber, status: StatusDefinition) -> Self {
+        Self {
+            project_id,
+            version,
+            status,
+        }
     }
 }
 
@@ -770,25 +763,6 @@ mod tests {
     }
 
     #[test]
-    fn project_validate_accepts_well_formed() {
-        let proj = project(vec![status("open", "Open"), status("closed", "Closed")]);
-        proj.validate().unwrap();
-    }
-
-    #[test]
-    fn project_validate_rejects_duplicate_status_keys() {
-        let proj = project(vec![status("open", "Open"), status("open", "Open Again")]);
-        let err = proj.validate().unwrap_err();
-        assert!(matches!(err, ProjectValidationError::DuplicateStatusKey(_)));
-    }
-
-    #[test]
-    fn project_validate_accepts_empty_status_list() {
-        let proj = project(vec![]);
-        proj.validate().unwrap();
-    }
-
-    #[test]
     fn find_status_returns_matching_definition() {
         let proj = project(vec![status("open", "Open"), status("closed", "Closed")]);
         let key = StatusKey::try_new("closed").unwrap();
@@ -900,5 +874,67 @@ mod tests {
         });
         let parsed: Project = serde_json::from_value(legacy).unwrap();
         assert_eq!(parsed.priority, 0.0);
+    }
+
+    #[test]
+    fn status_definition_round_trips_position() {
+        let mut def = status("open", "Open");
+        def.position = 1500.0;
+        let value = serde_json::to_value(&def).unwrap();
+        assert_eq!(value.get("position"), Some(&serde_json::json!(1500.0)));
+        let parsed: StatusDefinition = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.position, 1500.0);
+    }
+
+    #[test]
+    fn status_definition_deserializes_legacy_payload_with_default_position() {
+        // Older payloads (pre-position) had no `position`; deserialize to `0.0`.
+        let legacy = serde_json::json!({
+            "key": "open",
+            "label": "Open",
+            "color": "#abcdef",
+            "unblocks_parents": false,
+            "unblocks_dependents": false,
+            "cascades_to_children": false,
+        });
+        let parsed: StatusDefinition = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.position, 0.0);
+    }
+
+    #[test]
+    fn upsert_project_request_round_trips_project_level_fields_only() {
+        let mut req = UpsertProjectRequest::new(
+            ProjectKey::try_new("eng").unwrap(),
+            "Engineering".to_string(),
+        );
+        req.prompt_path = Some("/projects/eng/prompt.md".to_string());
+        req.priority = 100.0;
+        let value = serde_json::to_value(&req).unwrap();
+        let mapping = value.as_object().expect("upsert request is a JSON object");
+        let keys: std::collections::BTreeSet<_> = mapping.keys().cloned().collect();
+        let expected: std::collections::BTreeSet<String> =
+            ["key", "name", "prompt_path", "priority"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        assert_eq!(keys, expected);
+        let parsed: UpsertProjectRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.key, req.key);
+        assert_eq!(parsed.name, req.name);
+        assert_eq!(parsed.prompt_path, req.prompt_path);
+        assert_eq!(parsed.priority, req.priority);
+    }
+
+    #[test]
+    fn upsert_project_request_omits_prompt_path_when_none() {
+        let req = UpsertProjectRequest::new(
+            ProjectKey::try_new("eng").unwrap(),
+            "Engineering".to_string(),
+        );
+        let value = serde_json::to_string(&req).unwrap();
+        assert!(
+            !value.contains("prompt_path"),
+            "prompt_path should be skipped when None; got {value}"
+        );
     }
 }

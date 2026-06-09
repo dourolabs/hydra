@@ -1229,14 +1229,46 @@ impl StoreWithEvents {
         self.inner.delete_project(id, actor).await
     }
 
-    pub async fn rename_status(
+    pub async fn add_status(
         &self,
         id: &ProjectId,
-        from: &hydra_common::api::v1::projects::StatusKey,
-        to: &hydra_common::api::v1::projects::StatusKey,
+        status: hydra_common::api::v1::projects::StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<
+        (
+            hydra_common::api::v1::projects::StatusDefinition,
+            VersionNumber,
+        ),
+        StoreError,
+    > {
+        self.inner.add_status(id, status, actor).await
+    }
+
+    pub async fn update_status(
+        &self,
+        id: &ProjectId,
+        status_key: &hydra_common::api::v1::projects::StatusKey,
+        status: hydra_common::api::v1::projects::StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<
+        (
+            hydra_common::api::v1::projects::StatusDefinition,
+            VersionNumber,
+        ),
+        StoreError,
+    > {
+        self.inner
+            .update_status(id, status_key, status, actor)
+            .await
+    }
+
+    pub async fn delete_status(
+        &self,
+        id: &ProjectId,
+        status_key: &hydra_common::api::v1::projects::StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.inner.rename_status(id, from, to, actor).await
+        self.inner.delete_status(id, status_key, actor).await
     }
 
     // ---- Label association mutations ----

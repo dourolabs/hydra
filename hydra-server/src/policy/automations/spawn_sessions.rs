@@ -1357,7 +1357,7 @@ mod tests {
         let project = Project::new(
             ProjectKey::try_new("engineering").unwrap(),
             "Engineering".to_string(),
-            statuses,
+            Vec::new(),
             hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
             false,
             0.0,
@@ -1366,6 +1366,12 @@ mod tests {
             .store
             .add_project(project, &ActorRef::test())
             .await?;
+        for def in statuses {
+            handles
+                .store
+                .add_status(&project_id, def, &ActorRef::test())
+                .await?;
+        }
 
         let mut issue = make_issue(agent_name, &repo_name);
         issue.project_id = project_id;

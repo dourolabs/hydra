@@ -170,12 +170,22 @@ function EditStatusModal({
   const promptPath = promptPathFor(projectKey, derivedKey);
 
   const saveMutation = useMutation({
-    mutationFn: async (nextStatuses: StatusDefinition[]) => {
-      return apiClient.updateProject(projectId, {
-        project: { ...projectRecord.project, statuses: nextStatuses },
-      });
+    mutationFn: async (next: {
+      nextStatuses: StatusDefinition[];
+      action: "edit" | "delete";
+    }) => {
+      const { nextStatuses, action } = next;
+      if (action === "edit") {
+        // The edit form uses the original `statusKey` as the path
+        // segment; a different `draft.key` is a rename.
+        const updated = nextStatuses[index];
+        return apiClient.updateProjectStatus(projectId, statusKey, updated);
+      }
+      // Pure delete (without bulk move) — `moveAndDeleteMutation`
+      // covers the bulk-move-then-delete branch directly.
+      return apiClient.deleteProjectStatus(projectId, statusKey);
     },
-    onMutate: async (nextStatuses) => {
+    onMutate: async ({ nextStatuses }) => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
       const previous =
         queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
@@ -268,12 +278,15 @@ function EditStatusModal({
       }
     }
     const next = statuses.map((s, i) => (i === index ? normalized : s));
-    saveMutation.mutate(next, {
-      onSuccess: () => {
-        addToast("Status updated", "success");
-        onClose();
+    saveMutation.mutate(
+      { nextStatuses: next, action: "edit" },
+      {
+        onSuccess: () => {
+          addToast("Status updated", "success");
+          onClose();
+        },
       },
-    });
+    );
   }, [
     draft,
     index,
@@ -290,12 +303,15 @@ function EditStatusModal({
   const handleDelete = useCallback(() => {
     if (!canDelete || index < 0) return;
     const next = statuses.filter((_, i) => i !== index);
-    saveMutation.mutate(next, {
-      onSuccess: () => {
-        addToast("Status deleted", "success");
-        onClose();
+    saveMutation.mutate(
+      { nextStatuses: next, action: "delete" },
+      {
+        onSuccess: () => {
+          addToast("Status deleted", "success");
+          onClose();
+        },
       },
-    });
+    );
   }, [canDelete, index, statuses, saveMutation, addToast, onClose]);
 
   // Bulk-move every issue at the to-delete status onto `moveTargetKey`, then
@@ -346,7 +362,7 @@ function EditStatusModal({
         }
       }
 
-      // 3) Optimistic project save: drop the status from the list.
+      // 3) Optimistic update + DELETE the status via the per-status route.
       const nextStatuses = statuses.filter((_, i) => i !== index);
       const nextProject = {
         ...projectRecord.project,
@@ -362,7 +378,7 @@ function EditStatusModal({
         });
       }
       try {
-        return await apiClient.updateProject(projectId, { project: nextProject });
+        return await apiClient.deleteProjectStatus(projectId, statusKey);
       } catch (err) {
         if (previous) {
           queryClient.setQueryData(PROJECTS_QUERY_KEY, previous);
@@ -821,14 +837,11 @@ function AddStatusForm({ onClose, projectRecord }: AddStatusFormProps) {
   const saveMutation = useMutation({
     mutationFn: async (status: StatusDefinition) => {
       // Write the prompt doc at the derived path first (only when non-empty),
-      // then append the status pointing at it.
+      // then append the status via the per-status endpoint.
       if (promptBody.trim() && status.prompt_path) {
         await upsertPromptDoc(status.prompt_path as string, promptBody);
       }
-      const nextStatuses = [...statuses, status];
-      return apiClient.updateProject(projectId, {
-        project: { ...projectRecord.project, statuses: nextStatuses },
-      });
+      return apiClient.createProjectStatus(projectId, status);
     },
     onMutate: async (status) => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });

@@ -216,6 +216,7 @@ describe("ProjectEditor — prompt_path", () => {
               cascades_to_children: false,
               on_enter: null,
               prompt_path: "/projects/engineering/statuses/open.md",
+              position: 0,
             },
           ],
           creator: "alice" as never,

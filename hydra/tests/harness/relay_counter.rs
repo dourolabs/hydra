@@ -33,8 +33,8 @@ use hydra_common::{
     },
     api::v1::merge_check::MergeCheckResponse,
     api::v1::projects::{
-        ListProjectsResponse, ProjectRecord, ProjectRef, ProjectStatusesResponse,
-        RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
+        ListProjectsResponse, ProjectRecord, ProjectRef, ProjectStatusesResponse, StatusDefinition,
+        StatusKey, UpsertProjectRequest, UpsertProjectResponse, UpsertProjectStatusResponse,
     },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
@@ -354,12 +354,33 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.delete_project(project_ref).await
     }
 
-    async fn rename_project_status(
+    async fn create_project_status(
         &self,
         project_ref: &ProjectRef,
-        request: &RenameStatusRequest,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        self.inner.create_project_status(project_ref, request).await
+    }
+
+    async fn update_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        self.inner
+            .update_project_status(project_ref, status_key, request)
+            .await
+    }
+
+    async fn delete_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse> {
-        self.inner.rename_project_status(project_ref, request).await
+        self.inner
+            .delete_project_status(project_ref, status_key)
+            .await
     }
 
     async fn get_project_statuses(

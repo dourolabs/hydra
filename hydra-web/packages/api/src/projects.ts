@@ -9,6 +9,7 @@
 
 import type { Project } from "./generated/Project";
 import type { ProjectId } from "./generated/ProjectId";
+import type { ProjectKey } from "./generated/ProjectKey";
 import type { ProjectRef } from "./generated/ProjectRef";
 import type { StatusDefinition } from "./generated/StatusDefinition";
 
@@ -21,13 +22,32 @@ export type { ProjectRef };
  */
 export const DEFAULT_PROJECT_ID: ProjectId = "j-defaul";
 
+/**
+ * Request body for `POST /v1/projects` and
+ * `PUT /v1/projects/:project_ref`. Post-cutover this carries only
+ * project-level fields; status add / update / delete go through the
+ * per-status routes.
+ */
 export interface UpsertProjectRequest {
-  project: Project;
+  key: ProjectKey;
+  name: string;
+  prompt_path?: string | null;
+  priority?: number;
 }
 
 export interface UpsertProjectResponse {
   project_id: ProjectId;
   version: number;
+}
+
+/**
+ * Response body for `POST /v1/projects/:project_ref/statuses` and
+ * `PUT /v1/projects/:project_ref/statuses/:status_key`.
+ */
+export interface UpsertProjectStatusResponse {
+  project_id: ProjectId;
+  version: number;
+  status: StatusDefinition;
 }
 
 export interface ProjectRecord {

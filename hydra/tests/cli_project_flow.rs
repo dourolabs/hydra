@@ -2,7 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use hydra_common::api::v1::projects::{
-    Project, ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
+    ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
 };
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -13,33 +13,31 @@ fn write_body_file(body: &str) -> NamedTempFile {
     file
 }
 
-const ENGINEERING_BODY: &str = r##"{
-    "statuses": [
-        {
-            "key": "inbox",
-            "label": "Inbox",
-            "color": "#aabbcc",
-            "unblocks_parents": false,
-            "unblocks_dependents": false,
-            "cascades_to_children": false
-        },
-        {
-            "key": "backlog",
-            "label": "Backlog",
-            "color": "#1199ee",
-            "unblocks_parents": false,
-            "unblocks_dependents": false,
-            "cascades_to_children": false
-        },
-        {
-            "key": "released",
-            "label": "Released",
-            "color": "#22aa44",
-            "unblocks_parents": true,
-            "unblocks_dependents": true,
-            "cascades_to_children": false
-        }
-    ]
+const INBOX_BODY: &str = r##"{
+    "key": "inbox",
+    "label": "Inbox",
+    "color": "#aabbcc",
+    "unblocks_parents": false,
+    "unblocks_dependents": false,
+    "cascades_to_children": false
+}"##;
+
+const BACKLOG_BODY: &str = r##"{
+    "key": "backlog",
+    "label": "Backlog",
+    "color": "#1199ee",
+    "unblocks_parents": false,
+    "unblocks_dependents": false,
+    "cascades_to_children": false
+}"##;
+
+const RELEASED_BODY: &str = r##"{
+    "key": "released",
+    "label": "Released",
+    "color": "#22aa44",
+    "unblocks_parents": true,
+    "unblocks_dependents": true,
+    "cascades_to_children": false
 }"##;
 
 #[tokio::test]
@@ -49,9 +47,11 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
         .build()
         .await?;
     let user = harness.default_user();
-    let body_file = write_body_file(ENGINEERING_BODY);
+    let inbox_file = write_body_file(INBOX_BODY);
+    let backlog_file = write_body_file(BACKLOG_BODY);
+    let released_file = write_body_file(RELEASED_BODY);
 
-    // Create a project via the CLI.
+    // Create a project via the CLI (project-level fields only post-cutover).
     user.cli(&[
         "projects",
         "create",
@@ -59,8 +59,6 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
         "engineering",
         "--name",
         "Engineering",
-        "--body-file",
-        body_file.path().to_str().expect("body path utf-8"),
     ])
     .await?;
 
@@ -74,6 +72,19 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
         .find(|p| p.project.key.as_str() == "engineering")
         .expect("engineering project listed");
     let project_id = listed.project_id.clone();
+
+    // Add statuses one at a time via `projects status create --body-file`.
+    for body in [&inbox_file, &backlog_file, &released_file] {
+        user.cli(&[
+            "projects",
+            "status",
+            "create",
+            project_id.as_ref(),
+            "--body-file",
+            body.path().to_str().expect("body path utf-8"),
+        ])
+        .await?;
+    }
 
     // Get by id round-trips the body.
     let project_ref = ProjectRef::Id(project_id.clone());
@@ -137,36 +148,36 @@ async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
 
     // Create a project that defines a custom `backlog` status, via the API
     // directly so the test focuses on the CLI's `--status` plumbing.
-    let project = Project::new(
+    let upsert = UpsertProjectRequest::new(
         ProjectKey::try_new("engineering").unwrap(),
         "Engineering".into(),
-        vec![
-            StatusDefinition::new(
-                StatusKey::try_new("inbox").unwrap(),
-                "Inbox".into(),
-                "#aabbcc".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            ),
-            StatusDefinition::new(
-                StatusKey::try_new("backlog").unwrap(),
-                "Backlog".into(),
-                "#1199ee".parse().unwrap(),
-                false,
-                false,
-                false,
-                None,
-            ),
-        ],
-        hydra_common::api::v1::users::Username::try_new(user.name()).unwrap(),
-        false,
-        0.0,
     );
-    user.client()
-        .create_project(&UpsertProjectRequest::new(project))
-        .await?;
+    let create_resp = user.client().create_project(&upsert).await?;
+    let project_ref = ProjectRef::Id(create_resp.project_id.clone());
+    for status in [
+        StatusDefinition::new(
+            StatusKey::try_new("inbox").unwrap(),
+            "Inbox".into(),
+            "#aabbcc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ),
+        StatusDefinition::new(
+            StatusKey::try_new("backlog").unwrap(),
+            "Backlog".into(),
+            "#1199ee".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ),
+    ] {
+        user.client()
+            .create_project_status(&project_ref, &status)
+            .await?;
+    }
 
     // CLI accepts a custom status string when the project recognises it.
     user.cli(&[

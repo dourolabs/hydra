@@ -313,7 +313,7 @@ mod tests {
         let project = Project::new(
             ProjectKey::try_new("engineering").unwrap(),
             "Engineering".to_string(),
-            statuses,
+            Vec::new(),
             hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
             false,
             0.0,
@@ -323,6 +323,13 @@ mod tests {
             .add_project(project, &ActorRef::test())
             .await
             .unwrap();
+        for def in statuses {
+            handles
+                .store
+                .add_status(&id, def, &ActorRef::test())
+                .await
+                .unwrap();
+        }
         id
     }
 
@@ -651,7 +658,7 @@ mod tests {
         let project = hydra_common::api::v1::projects::Project::new(
             hydra_common::api::v1::projects::ProjectKey::try_new("engineering").unwrap(),
             "Engineering".to_string(),
-            statuses,
+            Vec::new(),
             hydra_common::api::v1::users::Username::try_new("worker").unwrap(),
             false,
             0.0,
@@ -661,6 +668,13 @@ mod tests {
             .add_project(project, &ActorRef::test())
             .await
             .unwrap();
+        for def in statuses {
+            handles
+                .store
+                .add_status(&project_id, def, &ActorRef::test())
+                .await
+                .unwrap();
+        }
 
         let mut issue = make_issue(status("open"));
         issue.project_id = project_id;

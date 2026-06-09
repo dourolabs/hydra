@@ -16,7 +16,7 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::principal::Principal;
@@ -1229,21 +1229,54 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Renames a status key in place on a project. The status's
-    /// `(project_id, sequence)` identity is preserved, so any issues
-    /// referencing the old key continue to resolve through the same
-    /// sequence and read back as `to`.
+    /// Add a new status to a project. Allocates the next `sequence`
+    /// from the per-project high-water mark (`next_status_sequence`)
+    /// and bumps it. Returns the persisted status definition (echoed
+    /// to the caller for the route-layer response) and the project's
+    /// new version number.
     ///
-    /// Returns the new project version number, or
-    /// `StoreError::ProjectNotFound` if the project does not exist, or
-    /// `StoreError::InvalidIssueStatus` if `from` is not declared on
-    /// the project or `to` already exists. If `from == to`, returns
-    /// the current latest version without writing a new row.
-    async fn rename_status(
+    /// Returns `StoreError::ProjectNotFound` if the project does not
+    /// exist, or `StoreError::InvalidIssueStatus` if a status with
+    /// `status.key` already exists on the project.
+    async fn add_status(
         &self,
         id: &ProjectId,
-        from: &StatusKey,
-        to: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError>;
+
+    /// Update an existing status on a project. The row is identified
+    /// by `(project_id, current_key=status_key)`; when `status.key !=
+    /// status_key`, that's a rename — the row's `(project_id,
+    /// sequence)` storage identity is preserved so issues continue to
+    /// resolve through the same sequence.
+    ///
+    /// Returns the persisted status definition (echoed to the caller
+    /// for the route-layer response) and the project's new version
+    /// number. Returns `StoreError::ProjectNotFound` when the project
+    /// does not exist, or `StoreError::InvalidIssueStatus` when
+    /// `status_key` is not declared on the project or when renaming
+    /// into a key that's already taken by another status on the same
+    /// project.
+    async fn update_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError>;
+
+    /// Delete a status from a project. The DB FK on
+    /// `issues_v2.status_sequence` rejects the delete if any issue
+    /// still references the row — surfaced as
+    /// `StoreError::InvalidIssueStatus`.
+    ///
+    /// Returns the project's new version number, or
+    /// `StoreError::ProjectNotFound` when the project does not exist.
+    async fn delete_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 

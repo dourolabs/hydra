@@ -86,6 +86,7 @@ const STATUSES: StatusDefinition[] = [
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,
+    position: 0,
   },
   {
     key: "in-progress",
@@ -94,6 +95,7 @@ const STATUSES: StatusDefinition[] = [
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,
+    position: 0,
   },
   {
     key: "closed",
@@ -102,6 +104,7 @@ const STATUSES: StatusDefinition[] = [
     unblocks_parents: true,
     unblocks_dependents: true,
     cascades_to_children: false,
+    position: 0,
   },
 ];
 
@@ -113,6 +116,7 @@ const ALT_STATUSES: StatusDefinition[] = [
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,
+    position: 0,
   },
 ];
 

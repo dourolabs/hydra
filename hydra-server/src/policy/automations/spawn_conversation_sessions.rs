@@ -1450,7 +1450,7 @@ mod tests {
         let mut project = ApiProject::new(
             ProjectKey::try_new("engineering-v2").unwrap(),
             "Engineering v2".to_string(),
-            vec![backlog_status],
+            Vec::new(),
             hydra_common::api::v1::users::Username::from("alice"),
             false,
             0.0,
@@ -1459,6 +1459,11 @@ mod tests {
         let (project_id, _) = state
             .store
             .add_project(project, &ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .store
+            .add_status(&project_id, backlog_status, &ActorRef::test())
             .await
             .unwrap();
 
