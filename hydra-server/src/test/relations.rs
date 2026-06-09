@@ -1,4 +1,4 @@
-use crate::domain::issues::{Issue, IssueStatus, IssueType};
+use crate::domain::issues::{Issue, IssueType};
 use crate::domain::users::Username;
 use crate::test_utils::{spawn_test_server, test_client};
 use hydra_common::HydraId;
@@ -9,6 +9,7 @@ use hydra_common::api::v1::{
         RemoveRelationResponse,
     },
 };
+use hydra_common::test_utils::status::status;
 
 fn default_user() -> Username {
     Username::from("creator")
@@ -29,7 +30,7 @@ async fn create_issue(
                 format!("description for {title}"),
                 default_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,

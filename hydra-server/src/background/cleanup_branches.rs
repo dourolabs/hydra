@@ -324,6 +324,7 @@ mod tests {
     use crate::domain::actors::ActorRef;
     use crate::domain::users::Username;
     use httpmock::prelude::*;
+    use hydra_common::test_utils::status::status;
     use serde_json::json;
 
     #[test]
@@ -466,7 +467,7 @@ mod tests {
             "test issue".to_string(),
             crate::domain::users::Username::from("creator"),
             String::new(),
-            crate::domain::issues::IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -521,7 +522,7 @@ mod tests {
             "deleted issue".to_string(),
             crate::domain::users::Username::from("creator"),
             String::new(),
-            crate::domain::issues::IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -607,7 +608,7 @@ mod tests {
             label.to_string(),
             Username::from("creator"),
             String::new(),
-            crate::domain::issues::IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,

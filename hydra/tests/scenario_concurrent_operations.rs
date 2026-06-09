@@ -5,7 +5,7 @@ use harness::{
     find_issue_summary_by_description, find_summary_children_of, test_all_orderings,
     IssueSummaryAssertions, Step,
 };
-use hydra_common::issues::IssueStatus;
+use hydra_common::test_utils::status::status;
 
 /// Helper: find the first issue matching a description, or create it.
 async fn find_or_create_issue(
@@ -62,7 +62,7 @@ async fn concurrent_child_creation_and_parent_update_all_orderings() -> Result<(
                     Box::pin(async move {
                         let user = h.default_user();
                         let parent_id = find_or_create_issue(user, "concurrent parent").await?;
-                        user.update_issue_status(&parent_id, IssueStatus::InProgress)
+                        user.update_issue_status(&parent_id, status("in-progress"))
                             .await?;
                         Ok(())
                     })
@@ -79,19 +79,11 @@ async fn concurrent_child_creation_and_parent_update_all_orderings() -> Result<(
                     .expect("parent issue should exist");
 
                 // Verify parent is in-progress.
-                parent.assert_status(IssueStatus::InProgress);
+                parent.assert_status(status("in-progress"));
 
                 // Verify both children exist.
-                parent.assert_has_child_with_status(
-                    &issues.issues,
-                    "task from A",
-                    IssueStatus::Open,
-                );
-                parent.assert_has_child_with_status(
-                    &issues.issues,
-                    "task from B",
-                    IssueStatus::Open,
-                );
+                parent.assert_has_child_with_status(&issues.issues, "task from A", status("open"));
+                parent.assert_has_child_with_status(&issues.issues, "task from B", status("open"));
 
                 // Verify exactly 2 children (no duplicates).
                 let children_count =

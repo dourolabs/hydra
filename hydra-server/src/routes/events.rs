@@ -824,7 +824,7 @@ mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::issues::{Issue, IssueType};
     use crate::domain::sessions::Session;
     use crate::domain::task_status::Status;
     use crate::domain::users::Username;
@@ -832,6 +832,7 @@ mod tests {
     use crate::test_utils::test_state_with_store;
     use chrono::Utc;
     use hydra_common::issues::IssueId;
+    use hydra_common::test_utils::status::status;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -842,7 +843,7 @@ mod tests {
             "sse entity test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -941,7 +942,7 @@ mod tests {
         let issue_id = IssueId::new();
         let old_issue = dummy_issue();
         let mut new_issue = old_issue.clone();
-        new_issue.status = IssueStatus::InProgress.into();
+        new_issue.status = status("in-progress");
         new_issue.description = "updated description".to_string();
 
         let payload = Arc::new(MutationPayload::Issue {

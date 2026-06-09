@@ -4,7 +4,7 @@
 
 use crate::{
     domain::{
-        issues::{Issue, IssueStatus, IssueType},
+        issues::{Issue, IssueType},
         users::Username,
     },
     test_utils::{spawn_test_server, test_client},
@@ -18,6 +18,7 @@ use hydra_common::api::v1::{
     },
     users::Username as ApiUsername,
 };
+use hydra_common::test_utils::status::status;
 
 fn default_user() -> Username {
     Username::from("creator")
@@ -338,20 +339,14 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
     let client = test_client();
     let base = server.base_url();
 
-    for status in [
-        IssueStatus::Open,
-        IssueStatus::InProgress,
-        IssueStatus::Closed,
-        IssueStatus::Dropped,
-        IssueStatus::Failed,
-    ] {
+    for status_slug in ["open", "in-progress", "closed", "dropped", "failed"] {
         let input: hydra_common::api::v1::issues::IssueInput = Issue::new(
             IssueType::Task,
-            format!("Issue with status {status:?}"),
+            format!("Issue with status {status_slug}"),
             "test".to_string(),
             default_user(),
             String::new(),
-            status.into(),
+            status(status_slug),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -387,28 +382,29 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
             crate::domain::projects::DEFAULT_PROJECT_ID_STR
         );
         let resolved = &fetched.issue.status;
-        assert_eq!(resolved.key.as_str(), status.as_str());
+        assert_eq!(resolved.key.as_str(), status_slug);
 
         // Assert the seeded default-project flag values:
         //   open/in-progress: unblocks_parents=false, unblocks_dependents=false, cascades_to_children=false
         //   closed:           unblocks_parents=true,  unblocks_dependents=true,  cascades_to_children=false
         //   dropped/failed:   unblocks_parents=true,  unblocks_dependents=false, cascades_to_children=true
-        match status {
-            IssueStatus::Open | IssueStatus::InProgress => {
+        match status_slug {
+            "open" | "in-progress" => {
                 assert!(!resolved.unblocks_parents);
                 assert!(!resolved.unblocks_dependents);
                 assert!(!resolved.cascades_to_children);
             }
-            IssueStatus::Closed => {
+            "closed" => {
                 assert!(resolved.unblocks_parents);
                 assert!(resolved.unblocks_dependents);
                 assert!(!resolved.cascades_to_children);
             }
-            IssueStatus::Dropped | IssueStatus::Failed => {
+            "dropped" | "failed" => {
                 assert!(resolved.unblocks_parents);
                 assert!(!resolved.unblocks_dependents);
                 assert!(resolved.cascades_to_children);
             }
+            _ => unreachable!(),
         }
     }
 

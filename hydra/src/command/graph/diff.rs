@@ -510,9 +510,10 @@ mod tests {
     use hydra_common::api::v1::conversations::{
         Conversation as ApiConversation, ConversationStatus,
     };
-    use hydra_common::api::v1::issues::{Issue, IssueStatus, IssueType, SessionSettings};
+    use hydra_common::api::v1::issues::{Issue, IssueType, SessionSettings};
+    use hydra_common::api::v1::projects::StatusKey;
     use hydra_common::issues::IssueVersionRecord;
-    use hydra_common::test_utils::status::make_status_def;
+    use hydra_common::test_utils::status::{make_status_def, status};
     use hydra_common::users::Username;
     use hydra_common::versioning::Versioned;
     use hydra_common::{ConversationId, IssueId, ProjectId};
@@ -521,14 +522,14 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap() + chrono::Duration::seconds(secs)
     }
 
-    fn sample_issue(status: IssueStatus, title: &str) -> Issue {
+    fn sample_issue(status: StatusKey, title: &str) -> Issue {
         Issue::new(
             IssueType::Task,
             title.to_string(),
             String::new(),
             Username::from("creator"),
             String::new(),
-            make_status_def(status.into()),
+            make_status_def(status),
             ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),
@@ -576,8 +577,8 @@ mod tests {
     #[test]
     fn classify_modified_when_field_changes_within_window() {
         let id: IssueId = "i-aaaaaa".parse().unwrap();
-        let issue_v1 = sample_issue(IssueStatus::Open, "first");
-        let issue_v2 = sample_issue(IssueStatus::InProgress, "first");
+        let issue_v1 = sample_issue(status("open"), "first");
+        let issue_v2 = sample_issue(status("in-progress"), "first");
         let history = VersionedNode::Issue(vec![
             issue_version_record(&id, 1, ts(10), issue_v1),
             issue_version_record(&id, 2, ts(50), issue_v2),
@@ -616,7 +617,7 @@ mod tests {
             &id,
             1,
             ts(100),
-            sample_issue(IssueStatus::Open, "new"),
+            sample_issue(status("open"), "new"),
         )]);
         let hydra_id: HydraId = id.clone().into();
         let record = classify(
@@ -641,7 +642,7 @@ mod tests {
             &id,
             1,
             ts(10),
-            sample_issue(IssueStatus::Open, "unchanged"),
+            sample_issue(status("open"), "unchanged"),
         )]);
         let hydra_id: HydraId = id.clone().into();
         let record = classify(
@@ -663,7 +664,7 @@ mod tests {
             &id,
             1,
             ts(500),
-            sample_issue(IssueStatus::Open, "future"),
+            sample_issue(status("open"), "future"),
         )]);
         let hydra_id: HydraId = id.clone().into();
         let record = classify(
@@ -681,9 +682,9 @@ mod tests {
     fn classify_modified_respects_verbosity_l1_vs_l2() {
         // Description changes; at L1 (title + status only) this is unchanged.
         let id: IssueId = "i-eeeeee".parse().unwrap();
-        let mut issue_v1 = sample_issue(IssueStatus::Open, "same-title");
+        let mut issue_v1 = sample_issue(status("open"), "same-title");
         issue_v1.description = "before".to_string();
-        let mut issue_v2 = sample_issue(IssueStatus::Open, "same-title");
+        let mut issue_v2 = sample_issue(status("open"), "same-title");
         issue_v2.description = "after".to_string();
         let history = VersionedNode::Issue(vec![
             issue_version_record(&id, 1, ts(10), issue_v1),

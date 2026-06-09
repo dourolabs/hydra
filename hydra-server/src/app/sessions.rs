@@ -1382,7 +1382,7 @@ mod tests {
             issue_with_status, sample_task, state_with_default_model, task_for_issue,
         },
         domain::actors::ActorRef,
-        domain::issues::{Issue, IssueStatus, IssueType, SessionSettings},
+        domain::issues::{Issue, IssueType, SessionSettings},
         domain::users::Username,
         job_engine::{JobEngine, JobStatus},
         store::{ReadOnlyStore, Status, StoreError, TaskError},
@@ -1390,6 +1390,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
     use hydra_common::SessionId;
+    use hydra_common::test_utils::status::status;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -1455,7 +1456,7 @@ mod tests {
                         description: "with limits".to_string(),
                         creator: Username::from("creator"),
                         progress: String::new(),
-                        status: IssueStatus::Open.into(),
+                        status: status("open"),
                         project_id: crate::domain::projects::default_project_id(),
                         assignee: None,
                         session_settings: session_settings.clone(),
@@ -1816,7 +1817,7 @@ mod tests {
             .await
             .unwrap();
 
-        let issue = issue_with_status("test", IssueStatus::Open, vec![]);
+        let issue = issue_with_status("test", status("open"), vec![]);
         let (issue_id, _) = state
             .store
             .add_issue_with_actor(issue, ActorRef::test())
@@ -2014,7 +2015,7 @@ mod tests {
             .unwrap();
 
         // ---- Seed the issue, bound to the project at the `backlog` status.
-        let mut issue = issue_with_status("v2 backlog issue", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("v2 backlog issue", status("open"), vec![]);
         issue.project_id = project_id;
         issue.status = StatusKey::try_new("backlog").unwrap();
         let (issue_id, _) = state
@@ -2156,7 +2157,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut issue = issue_with_status("v2 in-review issue", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("v2 in-review issue", status("open"), vec![]);
         issue.project_id = project_id;
         issue.status = StatusKey::try_new("in-review").unwrap();
         let (issue_id, _) = state
@@ -2365,7 +2366,7 @@ mod tests {
 
         let (issue_id, _) = store
             .add_issue_with_actor(
-                issue_with_status("parent", IssueStatus::Open, vec![]),
+                issue_with_status("parent", status("open"), vec![]),
                 ActorRef::test(),
             )
             .await
@@ -2400,7 +2401,7 @@ mod tests {
 
         let (issue_id, _) = store
             .add_issue_with_actor(
-                issue_with_status("parent", IssueStatus::Open, vec![]),
+                issue_with_status("parent", status("open"), vec![]),
                 ActorRef::test(),
             )
             .await
@@ -2447,7 +2448,7 @@ mod tests {
 
         let (issue_id, _) = store
             .add_issue_with_actor(
-                issue_with_status("parent", IssueStatus::Open, vec![]),
+                issue_with_status("parent", status("open"), vec![]),
                 ActorRef::test(),
             )
             .await

@@ -1,7 +1,8 @@
 mod harness;
 
 use anyhow::{anyhow, Result};
-use hydra_common::issues::{IssueStatus, IssueType, SessionSettings};
+use hydra_common::issues::{IssueType, SessionSettings};
+use hydra_common::test_utils::status::status;
 use std::str::FromStr;
 
 #[tokio::test]
@@ -24,7 +25,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         .create_issue_with_settings(
             "parent issue",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             None,
             Some(parent_session_settings),
         )
@@ -57,10 +58,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         .find(|issue| issue.issue.description == description)
         .ok_or_else(|| anyhow!("expected issue to be created"))?;
 
-    assert_eq!(
-        created_summary.issue.status.key.as_str(),
-        IssueStatus::Open.as_str()
-    );
+    assert_eq!(created_summary.issue.status.key.as_str(), "open");
 
     let created = user.get_issue(&created_summary.issue_id).await?;
     assert_eq!(

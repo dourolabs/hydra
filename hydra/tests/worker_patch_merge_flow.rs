@@ -3,8 +3,9 @@ mod harness;
 use anyhow::{Context, Result};
 use harness::test_job_settings_full;
 use hydra_common::{
-    issues::{IssueStatus, IssueType},
+    issues::IssueType,
     patches::{PatchStatus, Review, UpsertPatchRequest},
+    test_utils::status::status,
 };
 use hydra_server::domain::actors::ActorRef;
 use std::str::FromStr;
@@ -41,7 +42,7 @@ async fn worker_merge_pushes_to_remote() -> Result<()> {
         .create_issue_with_settings(
             "merge task",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
@@ -183,7 +184,7 @@ async fn worker_merge_restores_original_branch() -> Result<()> {
         .create_issue_with_settings(
             "branch restore task",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
@@ -321,7 +322,7 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
         .create_issue_with_settings(
             "merge task 1",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )
@@ -332,7 +333,7 @@ async fn concurrent_merges_both_succeed() -> Result<()> {
         .create_issue_with_settings(
             "merge task 2",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings_full(&repo, "worker:latest", "main")),
         )

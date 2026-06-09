@@ -1,7 +1,7 @@
 use super::common::{patch_diff, service_repo_name};
 use crate::{
     domain::{
-        issues::{Issue, IssueStatus, IssueType},
+        issues::{Issue, IssueType},
         patches::{Patch, PatchStatus},
         users::Username,
     },
@@ -22,6 +22,7 @@ use hydra_common::api::v1::{
         UpsertPatchResponse,
     },
 };
+use hydra_common::test_utils::status::status;
 
 fn default_user() -> Username {
     Username::from("creator")
@@ -79,7 +80,7 @@ async fn issue_labels_returned_from_all_routes() -> anyhow::Result<()> {
                 "label test issue".to_string(),
                 default_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,

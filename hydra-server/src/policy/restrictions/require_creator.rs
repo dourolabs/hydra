@@ -47,10 +47,11 @@ impl Restriction for RequireCreatorRestriction {
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::issues::{Issue, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::{Operation, OperationPayload, RestrictionContext};
     use crate::store::MemoryStore;
+    use hydra_common::test_utils::status::status;
 
     fn make_issue(creator: &str) -> Issue {
         Issue::new(
@@ -59,7 +60,7 @@ mod tests {
             "test issue".to_string(),
             Username::from(creator),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,

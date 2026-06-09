@@ -905,7 +905,7 @@ mod tests {
             },
         },
         domain::actors::ActorRef,
-        domain::issues::{IssueDependency, IssueDependencyType, IssueStatus},
+        domain::issues::{IssueDependency, IssueDependencyType},
         job_engine::{JobEngine, JobStatus},
         store::{ReadOnlyStore, Status},
         test_utils::{MockJobEngine, test_state, test_state_with_engine},
@@ -913,6 +913,7 @@ mod tests {
     use chrono::Utc;
     use hydra_common::api::v1 as api;
     use hydra_common::principal::Principal;
+    use hydra_common::test_utils::status::status;
     use std::sync::Arc;
 
     /// Wait briefly for automations to process events.
@@ -928,7 +929,7 @@ mod tests {
             let store = state.store.as_ref();
             store
                 .add_issue_with_actor(
-                    issue_with_status("open", IssueStatus::Open, vec![]),
+                    issue_with_status("open", status("open"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -946,7 +947,7 @@ mod tests {
             let store = state.store.as_ref();
             let (blocker_id, _) = store
                 .add_issue_with_actor(
-                    issue_with_status("blocker", IssueStatus::Open, vec![]),
+                    issue_with_status("blocker", status("open"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -955,7 +956,7 @@ mod tests {
                 .add_issue_with_actor(
                     issue_with_status(
                         "blocked",
-                        IssueStatus::Open,
+                        status("open"),
                         vec![IssueDependency::new(
                             IssueDependencyType::BlockedOn,
                             blocker_id.clone(),
@@ -976,7 +977,7 @@ mod tests {
             store
                 .update_issue_with_actor(
                     &blocker_id,
-                    issue_with_status("blocker", IssueStatus::Closed, vec![]),
+                    issue_with_status("blocker", status("closed"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -994,7 +995,7 @@ mod tests {
             let store = state.store.as_ref();
             let (parent_id, _) = store
                 .add_issue_with_actor(
-                    issue_with_status("parent", IssueStatus::InProgress, vec![]),
+                    issue_with_status("parent", status("in-progress"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -1005,7 +1006,7 @@ mod tests {
             )];
             let (child_id, _) = store
                 .add_issue_with_actor(
-                    issue_with_status("child", IssueStatus::Open, child_dependencies.clone()),
+                    issue_with_status("child", status("open"), child_dependencies.clone()),
                     ActorRef::test(),
                 )
                 .await
@@ -1021,7 +1022,7 @@ mod tests {
             store
                 .update_issue_with_actor(
                     &child_id,
-                    issue_with_status("child", IssueStatus::Closed, child_dependencies),
+                    issue_with_status("child", status("closed"), child_dependencies),
                     ActorRef::test(),
                 )
                 .await
@@ -1039,7 +1040,7 @@ mod tests {
             let store = state.store.as_ref();
             store
                 .add_issue_with_actor(
-                    issue_with_status("dropped", IssueStatus::Dropped, vec![]),
+                    issue_with_status("dropped", status("dropped"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -1057,7 +1058,7 @@ mod tests {
             let store = state.store.as_ref();
             let (blocker_id, _) = store
                 .add_issue_with_actor(
-                    issue_with_status("blocker", IssueStatus::Dropped, vec![]),
+                    issue_with_status("blocker", status("dropped"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -1066,7 +1067,7 @@ mod tests {
                 .add_issue_with_actor(
                     issue_with_status(
                         "blocked",
-                        IssueStatus::Open,
+                        status("open"),
                         vec![IssueDependency::new(
                             IssueDependencyType::BlockedOn,
                             blocker_id,
@@ -1084,7 +1085,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_issue_rejects_unknown_user_assignee() {
         let state = test_state();
-        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("with-assignee", status("open"), vec![]);
         issue.assignee = Some(Principal::User {
             name: hydra_common::api::v1::users::Username::try_new("ghost").unwrap(),
         });
@@ -1124,7 +1125,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("with-assignee", status("open"), vec![]);
         issue.assignee = Some(Principal::User {
             name: alice.clone(),
         });
@@ -1162,7 +1163,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("with-assignee", status("open"), vec![]);
         issue.assignee = Some(Principal::Agent {
             name: swe_name.clone(),
         });
@@ -1187,7 +1188,7 @@ mod tests {
     async fn upsert_issue_accepts_external_assignee_without_db_lookup() {
         let state = test_state();
         let github = hydra_common::principal::ExternalSystem::try_new("github").unwrap();
-        let mut issue = issue_with_status("with-assignee", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("with-assignee", status("open"), vec![]);
         issue.assignee = Some(Principal::External {
             system: github.clone(),
             username: "anyone".to_string(),
@@ -1220,7 +1221,7 @@ mod tests {
             let store = state.store.as_ref();
             store
                 .add_issue_with_actor(
-                    issue_with_status("closed", IssueStatus::Closed, vec![]),
+                    issue_with_status("closed", status("closed"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -1236,7 +1237,7 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
 
-        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent_issue = issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -1249,7 +1250,7 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
-            issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
+            issue_with_status("child", status("open"), vec![child_dependency.clone()]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -1263,7 +1264,7 @@ mod tests {
             IssueDependency::new(IssueDependencyType::ChildOf, child_id.clone());
         let grandchild_issue = issue_with_status(
             "grandchild",
-            IssueStatus::Open,
+            status("open"),
             vec![grandchild_dependency.clone()],
         );
         let (grandchild_id, _) = state
@@ -1278,7 +1279,7 @@ mod tests {
         // Add a closed child -- should NOT be overwritten to Dropped
         let closed_child_issue = issue_with_status(
             "closed_child",
-            IssueStatus::Closed,
+            status("closed"),
             vec![child_dependency.clone()],
         );
         let (closed_child_id, _) = state
@@ -1293,7 +1294,7 @@ mod tests {
         // Add a failed child -- should NOT be overwritten to Dropped
         let failed_child_issue = issue_with_status(
             "failed_child",
-            IssueStatus::Failed,
+            status("failed"),
             vec![child_dependency.clone()],
         );
         let (failed_child_id, _) = state
@@ -1346,7 +1347,7 @@ mod tests {
             .await;
 
         let mut dropped_parent = parent_issue.clone();
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         state
             .upsert_issue(
                 Some(parent_id.clone()),
@@ -1363,7 +1364,7 @@ mod tests {
             // Open children should be dropped
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Dropped.as_status_key()
+                status("dropped")
             );
             assert_eq!(
                 store
@@ -1372,7 +1373,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Dropped.as_status_key()
+                status("dropped")
             );
             // Terminal-state children should retain their original status
             assert_eq!(
@@ -1382,7 +1383,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Closed.as_status_key()
+                status("closed")
             );
             assert_eq!(
                 store
@@ -1391,7 +1392,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Failed.as_status_key()
+                status("failed")
             );
         }
 
@@ -1411,7 +1412,7 @@ mod tests {
         let state = test_state();
         let mut rx = state.subscribe();
 
-        let issue = issue_with_status("test issue", IssueStatus::Open, Vec::new());
+        let issue = issue_with_status("test issue", status("open"), Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         let (issue_id, _) = state
             .upsert_issue(None, request, ActorRef::test())
@@ -1425,7 +1426,7 @@ mod tests {
         let first_seq = event.seq();
         assert!(first_seq > 0);
 
-        let updated_issue = issue_with_status("updated issue", IssueStatus::InProgress, Vec::new());
+        let updated_issue = issue_with_status("updated issue", status("in-progress"), Vec::new());
         let update_request = api::issues::UpsertIssueRequest::new(updated_issue.into(), None);
         state
             .upsert_issue(Some(issue_id.clone()), update_request, ActorRef::test())
@@ -1443,7 +1444,7 @@ mod tests {
     async fn event_bus_emits_issue_deleted() {
         let state = test_state();
 
-        let issue = issue_with_status("doomed issue", IssueStatus::Open, Vec::new());
+        let issue = issue_with_status("doomed issue", status("open"), Vec::new());
         let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         let (issue_id, _) = state
             .upsert_issue(None, request, ActorRef::test())
@@ -1470,7 +1471,7 @@ mod tests {
 
         let mut seqs = Vec::new();
         for i in 0..5 {
-            let issue = issue_with_status(&format!("issue {i}"), IssueStatus::Open, Vec::new());
+            let issue = issue_with_status(&format!("issue {i}"), status("open"), Vec::new());
             let request = api::issues::UpsertIssueRequest::new(issue.into(), None);
             state
                 .upsert_issue(None, request, ActorRef::test())
@@ -1496,7 +1497,7 @@ mod tests {
             let store = state.store.as_ref();
             store
                 .add_issue_with_actor(
-                    issue_with_status("failed", IssueStatus::Failed, vec![]),
+                    issue_with_status("failed", status("failed"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -1511,14 +1512,14 @@ mod tests {
         let state = test_state();
 
         let store = state.store.as_ref();
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
             .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = issue_with_status("child", IssueStatus::Dropped, vec![child_dep]);
+        let child = issue_with_status("child", status("dropped"), vec![child_dep]);
         store
             .add_issue_with_actor(child, ActorRef::test())
             .await
@@ -1532,14 +1533,14 @@ mod tests {
         let state = test_state();
 
         let store = state.store.as_ref();
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
             .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = issue_with_status("child", IssueStatus::Failed, vec![child_dep]);
+        let child = issue_with_status("child", status("failed"), vec![child_dep]);
         store
             .add_issue_with_actor(child, ActorRef::test())
             .await
@@ -1553,7 +1554,7 @@ mod tests {
         let state = test_state();
 
         let store = state.store.as_ref();
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
@@ -1562,25 +1563,21 @@ mod tests {
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
-                issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
+                issue_with_status("closed child", status("closed"), vec![child_dep.clone()]),
                 ActorRef::test(),
             )
             .await
             .unwrap();
         store
             .add_issue_with_actor(
-                issue_with_status(
-                    "dropped child",
-                    IssueStatus::Dropped,
-                    vec![child_dep.clone()],
-                ),
+                issue_with_status("dropped child", status("dropped"), vec![child_dep.clone()]),
                 ActorRef::test(),
             )
             .await
             .unwrap();
         store
             .add_issue_with_actor(
-                issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
+                issue_with_status("failed child", status("failed"), vec![child_dep]),
                 ActorRef::test(),
             )
             .await
@@ -1601,7 +1598,7 @@ mod tests {
         let state = test_state();
 
         let store = state.store.as_ref();
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
@@ -1612,7 +1609,7 @@ mod tests {
         // Child A: failed
         let (failed_child_id, _) = store
             .add_issue_with_actor(
-                issue_with_status("failed child", IssueStatus::Failed, vec![child_dep.clone()]),
+                issue_with_status("failed child", status("failed"), vec![child_dep.clone()]),
                 ActorRef::test(),
             )
             .await
@@ -1624,7 +1621,7 @@ mod tests {
             .add_issue_with_actor(
                 issue_with_status(
                     "blocked child",
-                    IssueStatus::Open,
+                    status("open"),
                     vec![child_dep, blocked_dep],
                 ),
                 ActorRef::test(),
@@ -1640,7 +1637,7 @@ mod tests {
         let state = test_state();
 
         let store = state.store.as_ref();
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
@@ -1651,7 +1648,7 @@ mod tests {
         // Closed child
         store
             .add_issue_with_actor(
-                issue_with_status("closed child", IssueStatus::Closed, vec![child_dep.clone()]),
+                issue_with_status("closed child", status("closed"), vec![child_dep.clone()]),
                 ActorRef::test(),
             )
             .await
@@ -1660,7 +1657,7 @@ mod tests {
         // Open unblocked child — this child is Ready
         store
             .add_issue_with_actor(
-                issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
+                issue_with_status("open child", status("open"), vec![child_dep]),
                 ActorRef::test(),
             )
             .await
@@ -1675,7 +1672,7 @@ mod tests {
         let state = test_state();
 
         let store = state.store.as_ref();
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
@@ -1691,14 +1688,14 @@ mod tests {
 
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Failed)
-        let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
+        let grandparent = issue_with_status("grandparent", status("in-progress"), vec![]);
         let (grandparent_id, _) = store
             .add_issue_with_actor(grandparent, ActorRef::test())
             .await
             .unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![parent_dep]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
@@ -1707,7 +1704,7 @@ mod tests {
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
-                issue_with_status("failed child", IssueStatus::Failed, vec![child_dep]),
+                issue_with_status("failed child", status("failed"), vec![child_dep]),
                 ActorRef::test(),
             )
             .await
@@ -1725,14 +1722,14 @@ mod tests {
 
         let store = state.store.as_ref();
         // Grandparent (InProgress) -> Parent (InProgress) -> Child (Open, unblocked)
-        let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
+        let grandparent = issue_with_status("grandparent", status("in-progress"), vec![]);
         let (grandparent_id, _) = store
             .add_issue_with_actor(grandparent, ActorRef::test())
             .await
             .unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![parent_dep]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
@@ -1741,7 +1738,7 @@ mod tests {
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
-                issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
+                issue_with_status("open child", status("open"), vec![child_dep]),
                 ActorRef::test(),
             )
             .await
@@ -1764,20 +1761,20 @@ mod tests {
         let state = test_state();
 
         let store = state.store.as_ref();
-        let grandparent = issue_with_status("grandparent", IssueStatus::InProgress, vec![]);
+        let grandparent = issue_with_status("grandparent", status("in-progress"), vec![]);
         let (grandparent_id, _) = store
             .add_issue_with_actor(grandparent, ActorRef::test())
             .await
             .unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
-        let parent = issue_with_status("parent", IssueStatus::InProgress, vec![parent_dep]);
+        let parent = issue_with_status("parent", status("in-progress"), vec![parent_dep]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
             .unwrap();
 
-        let blocker = issue_with_status("blocker", IssueStatus::Open, vec![]);
+        let blocker = issue_with_status("blocker", status("open"), vec![]);
         let (blocker_id, _) = store
             .add_issue_with_actor(blocker, ActorRef::test())
             .await
@@ -1789,7 +1786,7 @@ mod tests {
             .add_issue_with_actor(
                 issue_with_status(
                     "blocked child",
-                    IssueStatus::Open,
+                    status("open"),
                     vec![child_dep, blocked_dep],
                 ),
                 ActorRef::test(),
@@ -1811,7 +1808,7 @@ mod tests {
         let state = test_state();
         let store = state.store.as_ref();
 
-        let parent = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent = issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = store
             .add_issue_with_actor(parent, ActorRef::test())
             .await
@@ -1820,7 +1817,7 @@ mod tests {
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         store
             .add_issue_with_actor(
-                issue_with_status("open child", IssueStatus::Open, vec![child_dep]),
+                issue_with_status("open child", status("open"), vec![child_dep]),
                 ActorRef::test(),
             )
             .await
@@ -1837,7 +1834,7 @@ mod tests {
             let store = state.store.as_ref();
             let (blocker_id, _) = store
                 .add_issue_with_actor(
-                    issue_with_status("blocker", IssueStatus::Failed, vec![]),
+                    issue_with_status("blocker", status("failed"), vec![]),
                     ActorRef::test(),
                 )
                 .await
@@ -1846,7 +1843,7 @@ mod tests {
                 .add_issue_with_actor(
                     issue_with_status(
                         "blocked",
-                        IssueStatus::Open,
+                        status("open"),
                         vec![IssueDependency::new(
                             IssueDependencyType::BlockedOn,
                             blocker_id,
@@ -1867,7 +1864,7 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
 
-        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent_issue = issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -1880,7 +1877,7 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
-            issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
+            issue_with_status("child", status("open"), vec![child_dependency.clone()]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -1909,7 +1906,7 @@ mod tests {
             .await;
 
         let mut dropped_parent = parent_issue;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         state
             .upsert_issue(
                 Some(parent_id.clone()),
@@ -1925,7 +1922,7 @@ mod tests {
             let store = state.store.as_ref();
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Dropped.as_status_key()
+                status("dropped")
             );
         }
 
@@ -1944,7 +1941,7 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
 
-        let parent_issue = issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent_issue = issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -1957,7 +1954,7 @@ mod tests {
         let child_dependency =
             IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
         let child_issue =
-            issue_with_status("child", IssueStatus::Open, vec![child_dependency.clone()]);
+            issue_with_status("child", status("open"), vec![child_dependency.clone()]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -1968,7 +1965,7 @@ mod tests {
             .unwrap();
 
         let mut failed_parent = parent_issue;
-        failed_parent.status = IssueStatus::Failed.into();
+        failed_parent.status = status("failed");
         state
             .upsert_issue(
                 Some(parent_id.clone()),
@@ -1985,7 +1982,7 @@ mod tests {
             // A failed parent cascades children to `failed`.
             assert_eq!(
                 store.get_issue(&child_id, false).await.unwrap().item.status,
-                IssueStatus::Failed.as_status_key()
+                status("failed")
             );
         }
 
@@ -1998,7 +1995,7 @@ mod tests {
         let state = test_state_with_engine(job_engine.clone());
         let runner = start_test_automation_runner(&state);
 
-        let blocker_issue = issue_with_status("blocker", IssueStatus::Open, vec![]);
+        let blocker_issue = issue_with_status("blocker", status("open"), vec![]);
         let (blocker_id, _) = state
             .upsert_issue(
                 None,
@@ -2010,7 +2007,7 @@ mod tests {
 
         let blocked_dep = IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone());
         let dependent_issue =
-            issue_with_status("dependent", IssueStatus::Open, vec![blocked_dep.clone()]);
+            issue_with_status("dependent", status("open"), vec![blocked_dep.clone()]);
         let (dependent_id, _) = state
             .upsert_issue(
                 None,
@@ -2021,7 +2018,7 @@ mod tests {
             .unwrap();
 
         let mut dropped_blocker = blocker_issue;
-        dropped_blocker.status = IssueStatus::Dropped.into();
+        dropped_blocker.status = status("dropped");
         state
             .upsert_issue(
                 Some(blocker_id.clone()),
@@ -2044,7 +2041,7 @@ mod tests {
                     .unwrap()
                     .item
                     .status,
-                IssueStatus::Open.as_status_key()
+                status("open")
             );
         }
 

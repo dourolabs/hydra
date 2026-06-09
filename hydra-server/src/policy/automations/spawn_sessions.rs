@@ -346,13 +346,15 @@ mod tests {
     use crate::config::{DEFAULT_AGENT_MAX_SIMULTANEOUS, DEFAULT_AGENT_MAX_TRIES};
     use crate::domain::agents::Agent;
     use crate::domain::documents::Document;
-    use crate::domain::issues::{Issue, IssueStatus, IssueType, SessionSettings};
+    use crate::domain::issues::{Issue, IssueType, SessionSettings};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::store::Status;
     use crate::test_utils::{self, add_repository};
     use chrono::Utc;
     use hydra_common::RepoName;
+    use hydra_common::api::v1::projects::StatusKey;
+    use hydra_common::test_utils::status::status;
     use std::str::FromStr;
 
     fn make_issue(agent_name: &str, repo_name: &RepoName) -> Issue {
@@ -362,7 +364,7 @@ mod tests {
             "Run agent".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::Agent {
                 name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
@@ -381,18 +383,14 @@ mod tests {
         )
     }
 
-    fn make_issue_with_status(
-        agent_name: &str,
-        repo_name: &RepoName,
-        status: IssueStatus,
-    ) -> Issue {
+    fn make_issue_with_status(agent_name: &str, repo_name: &RepoName, status: StatusKey) -> Issue {
         Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
             "Run agent".to_string(),
             Username::from("worker"),
             String::new(),
-            status.into(),
+            status,
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::Agent {
                 name: hydra_common::api::v1::agents::AgentName::try_new(agent_name)
@@ -748,7 +746,7 @@ mod tests {
         let updated_issue = handles.store.get_issue(&issue_id, false).await?;
         assert_eq!(
             updated_issue.item.status,
-            IssueStatus::Failed.into(),
+            status("failed"),
             "issue should be marked as failed when retries exhausted"
         );
 
@@ -808,7 +806,7 @@ mod tests {
             .await?;
 
         // Update the issue's status to InProgress (status change should reset attempts)
-        let updated_issue = make_issue_with_status(agent_name, &repo_name, IssueStatus::InProgress);
+        let updated_issue = make_issue_with_status(agent_name, &repo_name, status("in-progress"));
         handles
             .store
             .update_issue(&issue_id, updated_issue.clone(), &ActorRef::test())
@@ -854,7 +852,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -923,7 +921,7 @@ mod tests {
             .await?;
 
         // Close the issue (terminal status)
-        let closed_issue = make_issue_with_status(agent_name, &repo_name, IssueStatus::Closed);
+        let closed_issue = make_issue_with_status(agent_name, &repo_name, status("closed"));
         handles
             .store
             .update_issue(&issue_id, closed_issue, &ActorRef::test())
@@ -969,7 +967,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -1036,7 +1034,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -1155,7 +1153,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -1232,7 +1230,7 @@ mod tests {
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,

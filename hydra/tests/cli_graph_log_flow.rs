@@ -21,7 +21,8 @@ mod harness;
 use anyhow::Result;
 use hydra_common::api::v1::conversations::{CreateConversationRequest, SendMessageRequest};
 use hydra_common::api::v1::relations::CreateRelationRequest;
-use hydra_common::issues::{IssueStatus, UpsertIssueRequest};
+use hydra_common::issues::UpsertIssueRequest;
+use hydra_common::test_utils::status::status;
 use serde_json::Value;
 
 /// Parse stdout as JSONL into a Vec of Value.
@@ -50,7 +51,7 @@ async fn log_bare_id_emits_single_object_events() -> Result<()> {
 
     // Bare-id source: no `/v1/relations` call is needed at all.
     let issue = user.create_issue("bare-id-log").await?;
-    user.update_issue_status(&issue, IssueStatus::InProgress)
+    user.update_issue_status(&issue, status("in-progress"))
         .await?;
 
     let output = user
@@ -86,10 +87,9 @@ async fn log_neighbors_emits_per_version_events_for_issue_in_window() -> Result<
 
     let parent = user.create_issue("log-parent").await?;
     let child = user.create_child_issue(&parent, "log-child").await?;
-    user.update_issue_status(&child, IssueStatus::InProgress)
+    user.update_issue_status(&child, status("in-progress"))
         .await?;
-    user.update_issue_status(&child, IssueStatus::Closed)
-        .await?;
+    user.update_issue_status(&child, status("closed")).await?;
 
     let output = user
         .cli(&[
@@ -141,10 +141,10 @@ async fn log_merges_events_across_nodes_in_descending_ts_order() -> Result<()> {
 
     let parent = user.create_issue("log-merge-parent").await?;
     let child_a = user.create_child_issue(&parent, "log-merge-a").await?;
-    user.update_issue_status(&child_a, IssueStatus::InProgress)
+    user.update_issue_status(&child_a, status("in-progress"))
         .await?;
     let child_b = user.create_child_issue(&parent, "log-merge-b").await?;
-    user.update_issue_status(&child_b, IssueStatus::InProgress)
+    user.update_issue_status(&child_b, status("in-progress"))
         .await?;
 
     let output = user
@@ -187,10 +187,9 @@ async fn log_limit_truncates_to_n_records() -> Result<()> {
 
     let parent = user.create_issue("log-limit-parent").await?;
     let child = user.create_child_issue(&parent, "log-limit-child").await?;
-    user.update_issue_status(&child, IssueStatus::InProgress)
+    user.update_issue_status(&child, status("in-progress"))
         .await?;
-    user.update_issue_status(&child, IssueStatus::Closed)
-        .await?;
+    user.update_issue_status(&child, status("closed")).await?;
 
     let output = user
         .cli(&[
@@ -219,7 +218,7 @@ async fn log_scope_form_matches_today_scope_invocation() -> Result<()> {
 
     let parent = user.create_issue("log-scope-parent").await?;
     let child = user.create_child_issue(&parent, "log-scope-child").await?;
-    user.update_issue_status(&child, IssueStatus::InProgress)
+    user.update_issue_status(&child, status("in-progress"))
         .await?;
 
     let output = user
@@ -339,7 +338,7 @@ async fn log_exclusive_children_regression_matches_old_source_form() -> Result<(
 
     let parent = user.create_issue("log-excl-parent").await?;
     let child = user.create_child_issue(&parent, "log-excl-child").await?;
-    user.update_issue_status(&child, IssueStatus::InProgress)
+    user.update_issue_status(&child, status("in-progress"))
         .await?;
 
     let output = user

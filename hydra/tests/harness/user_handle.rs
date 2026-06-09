@@ -4,19 +4,23 @@ use anyhow::{Context, Result};
 use hydra::client::{HydraClient, HydraClientTimeouts};
 use hydra::config::{AppConfig, ServerSection};
 use hydra_common::{
-    api::v1::sessions::{
-        AgentSpec, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
+    api::v1::{
+        projects::StatusKey,
+        sessions::{
+            AgentSpec, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath,
+            SessionMode,
+        },
     },
     issues::{
-        IssueDependency, IssueDependencyType, IssueInput, IssueStatus, IssueType,
-        IssueVersionRecord, ListIssuesResponse, SearchIssuesQuery, SessionSettings,
-        UpsertIssueRequest,
+        IssueDependency, IssueDependencyType, IssueInput, IssueType, IssueVersionRecord,
+        ListIssuesResponse, SearchIssuesQuery, SessionSettings, UpsertIssueRequest,
     },
     patches::{
         GithubPr, ListPatchesResponse, Patch, PatchStatus, PatchVersionRecord, SearchPatchesQuery,
         UpsertPatchRequest,
     },
     sessions::SearchSessionsQuery,
+    test_utils::status::status,
     users::Username,
     IssueId, PatchId, ProjectId, RepoName, SessionId,
 };
@@ -141,7 +145,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             ProjectId::default_project(),
             None,
             None,
@@ -169,7 +173,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             ProjectId::default_project(),
             None,
             None,
@@ -193,14 +197,14 @@ impl UserHandle {
     }
 
     /// Update the status of an existing issue.
-    pub async fn update_issue_status(&self, id: &IssueId, status: IssueStatus) -> Result<()> {
+    pub async fn update_issue_status(&self, id: &IssueId, status: StatusKey) -> Result<()> {
         let existing = self
             .client
             .get_issue(id, false)
             .await
             .context("UserHandle::update_issue_status: failed to get issue")?;
         let mut input: IssueInput = existing.issue.into();
-        input.status = status.into();
+        input.status = status;
         let request = UpsertIssueRequest::new(input, None);
         self.client
             .update_issue(id, &request)
@@ -334,7 +338,7 @@ impl UserHandle {
         &self,
         description: &str,
         issue_type: IssueType,
-        status: IssueStatus,
+        status: StatusKey,
         assignee: Option<&str>,
         job_settings: Option<SessionSettings>,
     ) -> Result<IssueId> {
@@ -344,7 +348,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            status.into(),
+            status,
             ProjectId::default_project(),
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
@@ -383,7 +387,7 @@ impl UserHandle {
         &self,
         issue_type: IssueType,
         description: &str,
-        status: IssueStatus,
+        status: StatusKey,
         assignee: Option<&str>,
         job_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
@@ -395,7 +399,7 @@ impl UserHandle {
             description.to_string(),
             Username::from(self.name.as_str()),
             String::new(),
-            status.into(),
+            status,
             ProjectId::default_project(),
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their

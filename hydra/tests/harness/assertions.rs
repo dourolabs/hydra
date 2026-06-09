@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use hydra_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueSummaryRecord, IssueType, IssueVersionRecord},
+    api::v1::projects::StatusKey,
+    issues::{IssueDependencyType, IssueSummaryRecord, IssueType, IssueVersionRecord},
     patches::{PatchStatus, PatchVersionRecord},
     sessions::SessionVersionRecord,
     task_status::Status,
@@ -19,11 +20,11 @@ use hydra_common::{
 /// Implemented on `IssueVersionRecord` so tests can write:
 /// ```ignore
 /// let issue = user.get_issue(&id).await?;
-/// issue.assert_status(IssueStatus::Closed);
+/// issue.assert_status(status("closed"));
 /// ```
 pub trait IssueAssertions {
     /// Assert the issue has the expected status.
-    fn assert_status(&self, expected: IssueStatus);
+    fn assert_status(&self, expected: StatusKey);
 
     /// Assert that at least one issue in `all_issues` is a child of this issue,
     /// has a description containing `desc_contains`, and has the given `status`.
@@ -34,7 +35,7 @@ pub trait IssueAssertions {
         &self,
         all_issues: &[IssueVersionRecord],
         desc_contains: &str,
-        status: IssueStatus,
+        status: StatusKey,
     );
 
     /// Like [`assert_has_child_with_status`] but accepts summary records from
@@ -44,7 +45,7 @@ pub trait IssueAssertions {
         &self,
         all_issues: &[IssueSummaryRecord],
         desc_contains: &str,
-        status: IssueStatus,
+        status: StatusKey,
     );
 
     /// Assert the issue has at least one patch attached.
@@ -52,7 +53,7 @@ pub trait IssueAssertions {
 }
 
 impl IssueAssertions for IssueVersionRecord {
-    fn assert_status(&self, expected: IssueStatus) {
+    fn assert_status(&self, expected: StatusKey) {
         assert_eq!(
             self.issue.status.key.as_str(),
             expected.as_str(),
@@ -67,7 +68,7 @@ impl IssueAssertions for IssueVersionRecord {
         &self,
         all_issues: &[IssueVersionRecord],
         desc_contains: &str,
-        status: IssueStatus,
+        status: StatusKey,
     ) {
         let children: Vec<&IssueVersionRecord> = all_issues
             .iter()
@@ -113,7 +114,7 @@ impl IssueAssertions for IssueVersionRecord {
         &self,
         all_issues: &[IssueSummaryRecord],
         desc_contains: &str,
-        status: IssueStatus,
+        status: StatusKey,
     ) {
         let children: Vec<&IssueSummaryRecord> = all_issues
             .iter()
@@ -172,7 +173,7 @@ impl IssueAssertions for IssueVersionRecord {
 /// excludes `progress` and `job_settings`.
 pub trait IssueSummaryAssertions {
     /// Assert the issue has the expected status.
-    fn assert_status(&self, expected: IssueStatus);
+    fn assert_status(&self, expected: StatusKey);
 
     /// Assert that at least one issue in `all_issues` is a child of this issue,
     /// has a description containing `desc_contains`, and has the given `status`.
@@ -180,7 +181,7 @@ pub trait IssueSummaryAssertions {
         &self,
         all_issues: &[IssueSummaryRecord],
         desc_contains: &str,
-        status: IssueStatus,
+        status: StatusKey,
     );
 
     /// Assert the issue has at least one patch attached.
@@ -188,7 +189,7 @@ pub trait IssueSummaryAssertions {
 }
 
 impl IssueSummaryAssertions for IssueSummaryRecord {
-    fn assert_status(&self, expected: IssueStatus) {
+    fn assert_status(&self, expected: StatusKey) {
         assert_eq!(
             self.issue.status.key.as_str(),
             expected.as_str(),
@@ -203,7 +204,7 @@ impl IssueSummaryAssertions for IssueSummaryRecord {
         &self,
         all_issues: &[IssueSummaryRecord],
         desc_contains: &str,
-        status: IssueStatus,
+        status: StatusKey,
     ) {
         let children: Vec<&IssueSummaryRecord> = all_issues
             .iter()
@@ -431,7 +432,7 @@ pub fn find_children_by_type_and_status<'a>(
     issues: &'a [IssueVersionRecord],
     parent_id: &IssueId,
     issue_type: IssueType,
-    status: IssueStatus,
+    status: StatusKey,
 ) -> Vec<&'a IssueVersionRecord> {
     issues
         .iter()
@@ -494,7 +495,7 @@ pub fn find_summary_children_by_type_and_status<'a>(
     issues: &'a [IssueSummaryRecord],
     parent_id: &IssueId,
     issue_type: IssueType,
-    status: IssueStatus,
+    status: StatusKey,
 ) -> Vec<&'a IssueSummaryRecord> {
     issues
         .iter()

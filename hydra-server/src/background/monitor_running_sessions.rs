@@ -101,7 +101,7 @@ mod tests {
     use crate::{
         domain::{
             actors::ActorRef,
-            issues::{Issue, IssueStatus, IssueType},
+            issues::{Issue, IssueType},
             sessions::{AgentConfig, SessionMode},
             users::Username,
         },
@@ -115,6 +115,7 @@ mod tests {
     };
     use chrono::Utc;
     use hydra_common::IssueId;
+    use hydra_common::test_utils::status::status;
     use std::{collections::HashMap, sync::Arc};
 
     fn test_session(prompt: &str, spawned_from: Option<IssueId>) -> Session {
@@ -207,7 +208,7 @@ mod tests {
             "parent issue".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,

@@ -30,12 +30,13 @@ use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::projects::StatusDefinition;
 use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::principal::{ExternalSystem, Principal};
+use hydra_common::test_utils::status::status;
 use hydra_common::{
     ConversationId, DocumentId, HydraId, IssueId, PatchId, ProjectId, RepoName, SessionId,
     TriggerId,
 };
 use hydra_server::domain::actors::ActorRef;
-use hydra_server::domain::issues::{Issue, IssueStatus, IssueType};
+use hydra_server::domain::issues::{Issue, IssueType};
 use hydra_server::domain::patches::{Patch, PatchStatus, Review};
 use hydra_server::domain::projects::default_project_seed;
 use hydra_server::domain::sessions::{AgentConfig, Session, SessionEvent, SessionMode};
@@ -1598,7 +1599,7 @@ async fn smoke_create_issue(store: &PostgresStoreV2) -> Result<()> {
         "post-migration write-path round-trip for Principal::Agent assignees".to_string(),
         Username::from("jayantk"),
         String::new(),
-        IssueStatus::Open.into(),
+        status("open"),
         hydra_server::domain::projects::default_project_id(),
         Some(Principal::Agent {
             name: agent.clone(),

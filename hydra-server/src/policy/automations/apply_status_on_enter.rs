@@ -254,7 +254,7 @@ mod tests {
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
     use crate::domain::documents::Document;
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::issues::{Issue, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
@@ -263,16 +263,17 @@ mod tests {
         Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
     };
     use hydra_common::principal::Principal;
+    use hydra_common::test_utils::status::status;
     use std::sync::Arc;
 
-    fn make_issue(status: IssueStatus) -> Issue {
+    fn make_issue(status: StatusKey) -> Issue {
         Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
             "desc".to_string(),
             Username::from("worker"),
             String::new(),
-            status.into(),
+            status,
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -373,7 +374,7 @@ mod tests {
         )
         .await;
 
-        let mut issue = make_issue(IssueStatus::Open);
+        let mut issue = make_issue(status("open"));
         issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
@@ -433,7 +434,7 @@ mod tests {
         )
         .await;
 
-        let mut issue = make_issue(IssueStatus::Open);
+        let mut issue = make_issue(status("open"));
         issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
@@ -478,7 +479,7 @@ mod tests {
         // Override: project's `in-review` status has no on_enter at all.
         // Use `closed` instead which has no on_enter.
 
-        let mut issue = make_issue(IssueStatus::Open);
+        let mut issue = make_issue(status("open"));
         issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
@@ -545,7 +546,7 @@ mod tests {
         )
         .await;
 
-        let mut issue = make_issue(IssueStatus::Open);
+        let mut issue = make_issue(status("open"));
         issue.project_id = project_id;
         // Pre-assign the issue to the reviewer agent so re-entering
         // `in-review` produces no observable state change.
@@ -661,7 +662,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut issue = make_issue(IssueStatus::Open);
+        let mut issue = make_issue(status("open"));
         issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
@@ -714,7 +715,7 @@ mod tests {
         )
         .await;
 
-        let mut issue = make_issue(IssueStatus::Open);
+        let mut issue = make_issue(status("open"));
         issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
@@ -790,7 +791,7 @@ mod tests {
         )
         .await;
 
-        let mut issue = make_issue(IssueStatus::Open);
+        let mut issue = make_issue(status("open"));
         issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
