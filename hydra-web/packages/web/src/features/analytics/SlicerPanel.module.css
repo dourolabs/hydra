@@ -1,0 +1,80 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 8px;
+  background: var(--surface-color, #0e0e0e);
+  min-width: 220px;
+  max-width: 260px;
+}
+
+.head {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-text-color, #888);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted-text-color, #888);
+}
+
+.hint {
+  font-size: 10px;
+  color: var(--muted-text-color, #666);
+}
+
+.select,
+.input {
+  appearance: none;
+  background: var(--bg-color, #050505);
+  color: var(--text-color, #d0d0d0);
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.input::placeholder {
+  color: var(--muted-text-color, #555);
+}
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.checklist[aria-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-color, #d0d0d0);
+  cursor: pointer;
+}
+
+.empty {
+  font-size: 12px;
+  color: var(--muted-text-color, #666);
+  font-style: italic;
+}

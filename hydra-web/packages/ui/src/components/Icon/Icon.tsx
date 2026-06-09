@@ -223,3 +223,13 @@ export const IconArchive = (p: IconProps) => (
     <path d="M6.5 9h3" />
   </IconBase>
 );
+
+export const IconChart = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M2.5 13.5h11" />
+    <path d="M4.5 13.5V9" />
+    <path d="M7.5 13.5V5.5" />
+    <path d="M10.5 13.5V8" />
+    <path d="M13 13.5V3.5" />
+  </IconBase>
+);

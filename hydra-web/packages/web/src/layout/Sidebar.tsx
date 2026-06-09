@@ -319,6 +319,25 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
           {workspaceItems.map(renderItem)}
         </div>
 
+        {/* ── Analytics ── */}
+        <div className={styles.section}>
+          <div className={styles.sectionHead}>
+            <span>Analytics</span>
+          </div>
+          <NavLink
+            to="/analytics/throughput"
+            className={({ isActive }) =>
+              `${styles.item}${isActive ? ` ${styles.itemActive}` : ""}`
+            }
+            data-testid="sidebar-analytics-throughput"
+          >
+            <span className={styles.itemIcon}>
+              <Icons.IconChart />
+            </span>
+            <span className={styles.itemLabel}>Throughput</span>
+          </NavLink>
+        </div>
+
         {/* ── Views ── */}
         {displayName && (
           <div className={styles.section}>

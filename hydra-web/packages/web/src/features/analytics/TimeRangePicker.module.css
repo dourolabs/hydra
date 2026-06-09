@@ -1,0 +1,32 @@
+.group {
+  display: inline-flex;
+  border: 1px solid var(--border-color, #2a2a2a);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-color, #0e0e0e);
+}
+
+.button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--border-color, #2a2a2a);
+  color: var(--text-color, #d0d0d0);
+  font: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.button:last-child {
+  border-right: 0;
+}
+
+.button:hover {
+  background: var(--hover-color, #1a1a1a);
+}
+
+.buttonActive {
+  background: var(--accent-color, #1d3a1d);
+  color: var(--accent-fg, #b5ffb5);
+}

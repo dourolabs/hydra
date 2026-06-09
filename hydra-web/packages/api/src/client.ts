@@ -81,6 +81,24 @@ import type {
   ProjectStatusesResponse,
 } from "./projects";
 import type { StatusDefinition } from "./generated/StatusDefinition";
+import type {
+  PatchesOverTimeQuery,
+  PatchesOverTimeResponse,
+  PatchesTerminalMixQuery,
+  PatchesTerminalMixResponse,
+  PatchesTimeToMergeQuery,
+  PatchesTimeToMergeResponse,
+  PatchesInFlightOverTimeQuery,
+  PatchesInFlightOverTimeResponse,
+  IssuesCycleTimeQuery,
+  IssuesCycleTimeResponse,
+  IssuesTimeInStatusBreakdownQuery,
+  IssuesTimeInStatusBreakdownResponse,
+  IssuesPerStatusDistributionQuery,
+  IssuesPerStatusDistributionResponse,
+  IssuesOverTimeQuery,
+  IssuesOverTimeResponse,
+} from "./analytics";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -797,6 +815,94 @@ export class HydraApiClient {
   ): Promise<UpsertProjectResponse> {
     return this.del(
       `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Analytics — Throughput
+  //
+  // TODO: response types are inline placeholders in `./analytics`. Swap to
+  // ts-rs-generated types when Analytics PR 1 (i-hvaitdun) / PR 2 (i-lzxnkbfx)
+  // land in hydra-common.
+  // ---------------------------------------------------------------------------
+
+  /** GET /v1/analytics/throughput/patches/over_time */
+  getPatchesThroughputOverTime(
+    query: PatchesOverTimeQuery,
+  ): Promise<PatchesOverTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/over_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/patches/terminal_mix */
+  getPatchesThroughputTerminalMix(
+    query: PatchesTerminalMixQuery,
+  ): Promise<PatchesTerminalMixResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/terminal_mix",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/patches/time_to_merge */
+  getPatchesThroughputTimeToMerge(
+    query: PatchesTimeToMergeQuery,
+  ): Promise<PatchesTimeToMergeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/time_to_merge",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/patches/in_flight_over_time */
+  getPatchesThroughputInFlightOverTime(
+    query: PatchesInFlightOverTimeQuery,
+  ): Promise<PatchesInFlightOverTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/in_flight_over_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/cycle_time */
+  getIssuesThroughputCycleTime(
+    query: IssuesCycleTimeQuery,
+  ): Promise<IssuesCycleTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/cycle_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/time_in_status_breakdown */
+  getIssuesThroughputTimeInStatusBreakdown(
+    query: IssuesTimeInStatusBreakdownQuery,
+  ): Promise<IssuesTimeInStatusBreakdownResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/time_in_status_breakdown",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/per_status_distribution */
+  getIssuesThroughputPerStatusDistribution(
+    query: IssuesPerStatusDistributionQuery,
+  ): Promise<IssuesPerStatusDistributionResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/per_status_distribution",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/over_time */
+  getIssuesThroughputOverTime(
+    query: IssuesOverTimeQuery,
+  ): Promise<IssuesOverTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/over_time",
+      query as unknown as Record<string, unknown>,
     );
   }
 
