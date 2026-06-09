@@ -2451,12 +2451,18 @@ async fn issues_v2_project_id_not_null_migration_is_idempotent(pool: &PgPool) ->
 // ---------------------------------------------------------------------------
 
 async fn create_statuses_migration_schema_invariants(pool: &PgPool) -> Result<()> {
+    // `pg_index.indkey` is `int2vector`, which is not an `anyarray` in
+    // Postgres 16 — passing it directly to `array_position` errors at
+    // function lookup. Cast through `text` (its output form is a
+    // space-separated list) and split to get an ordinary `int[]` so
+    // `unnest ... WITH ORDINALITY` can yield a 1-indexed column order.
     let row = sqlx::query(
-        "SELECT array_agg(a.attname::text ORDER BY array_position(i.indkey, a.attnum)) AS cols \
+        "SELECT array_agg(a.attname::text ORDER BY k.ord) AS cols \
          FROM pg_index i \
          JOIN pg_class c ON c.oid = i.indrelid \
          JOIN pg_namespace n ON n.oid = c.relnamespace \
-         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey) \
+         JOIN unnest(string_to_array(i.indkey::text, ' ')::int[]) WITH ORDINALITY AS k(attnum, ord) ON TRUE \
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum \
          WHERE n.nspname = 'metis' AND c.relname = 'statuses' AND i.indisprimary",
     )
     .fetch_one(pool)
@@ -2468,12 +2474,13 @@ async fn create_statuses_migration_schema_invariants(pool: &PgPool) -> Result<()
     }
 
     let row = sqlx::query(
-        "SELECT array_agg(a.attname::text ORDER BY array_position(i.indkey, a.attnum)) AS cols \
+        "SELECT array_agg(a.attname::text ORDER BY k.ord) AS cols \
          FROM pg_index i \
          JOIN pg_class c ON c.oid = i.indrelid \
          JOIN pg_namespace n ON n.oid = c.relnamespace \
-         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey) \
          JOIN pg_class ic ON ic.oid = i.indexrelid \
+         JOIN unnest(string_to_array(i.indkey::text, ' ')::int[]) WITH ORDINALITY AS k(attnum, ord) ON TRUE \
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum \
          WHERE n.nspname = 'metis' AND c.relname = 'statuses' \
            AND ic.relname = 'statuses_project_key_idx'",
     )

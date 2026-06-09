@@ -135,6 +135,7 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_issues_v2_status_sequence_schema_invariants(&pool).await?;
     add_issues_v2_status_sequence_backfills_issues(&pool).await?;
     create_statuses_migration_is_idempotent(&pool).await?;
+    add_issues_v2_status_sequence_migration_is_idempotent(&pool).await?;
     add_issues_v2_status_sequence_migration_rejects_null_baseline().await?;
 
     issues_v2_project_id_not_null_migration_is_idempotent(&pool).await?;
@@ -495,7 +496,11 @@ async fn assert_store_level_form_response_smoke(pool: &SqlitePool) -> Result<()>
 // ---------------------------------------------------------------------------
 
 async fn assert_schema_invariants(pool: &SqlitePool) -> Result<()> {
-    // Tables added by 20260603020000_add_triggers_table.sql,
+    // Recently-added tables only — the older set is covered implicitly
+    // by the store-level smoke tests that read/write them. Listed
+    // explicitly so a future rename without a baseline bump fails this
+    // assertion loud. Tables here come from
+    // 20260603020000_add_triggers_table.sql,
     // 20260604000001_create_projects.sql, and
     // 20260613000000_create_statuses.sql.
     for table in ["triggers", "projects", "statuses"] {
@@ -2077,6 +2082,73 @@ async fn create_statuses_migration_is_idempotent(pool: &SqlitePool) -> Result<()
     let dup: i64 = row.try_get("dup")?;
     if dup != 0 {
         bail!("create_statuses re-apply produced {dup} duplicate (project_id, key) rows");
+    }
+    Ok(())
+}
+
+async fn add_issues_v2_status_sequence_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // The sqlite body cannot be re-executed verbatim — `ALTER TABLE ...
+    // ADD COLUMN` has no `IF NOT EXISTS` form in sqlite, so a second
+    // raw-SQL run would error on "duplicate column". The acceptance
+    // criterion explicitly covers this via the orchestration tracker:
+    // a second `run_migrations(&pool, None)` call must treat the
+    // already-applied 20260613010000 migration as a no-op, leaving every
+    // previously-backfilled `status_sequence` value untouched.
+    let before_rows = sqlx::query(
+        "SELECT id, version_number, status_sequence FROM issues_v2 \
+         WHERE status_sequence IS NOT NULL ORDER BY id, version_number",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot non-NULL issues_v2.status_sequence before tracker rerun")?;
+    let before: Vec<(String, i64, i64)> = before_rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("id").unwrap(),
+                r.try_get::<i64, _>("version_number").unwrap(),
+                r.try_get::<i64, _>("status_sequence").unwrap(),
+            )
+        })
+        .collect();
+
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-run sqlite migrations through the tracker for idempotency check")?;
+
+    let after_rows = sqlx::query(
+        "SELECT id, version_number, status_sequence FROM issues_v2 \
+         WHERE status_sequence IS NOT NULL ORDER BY id, version_number",
+    )
+    .fetch_all(pool)
+    .await
+    .context("re-snapshot non-NULL issues_v2.status_sequence after tracker rerun")?;
+    let after: Vec<(String, i64, i64)> = after_rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("id").unwrap(),
+                r.try_get::<i64, _>("version_number").unwrap(),
+                r.try_get::<i64, _>("status_sequence").unwrap(),
+            )
+        })
+        .collect();
+    if before != after {
+        bail!(
+            "add_issues_v2_status_sequence tracker rerun overwrote previously-backfilled rows: \
+             before={before:?}; after={after:?}"
+        );
+    }
+
+    let row = sqlx::query("SELECT COUNT(*) FROM issues_v2 WHERE status_sequence IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count NULL status_sequence rows after tracker rerun")?;
+    let null_count: i64 = row.try_get(0)?;
+    if null_count != 0 {
+        bail!(
+            "add_issues_v2_status_sequence tracker rerun left {null_count} NULL status_sequence rows"
+        );
     }
     Ok(())
 }

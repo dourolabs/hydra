@@ -1,8 +1,7 @@
 -- Create `metis.statuses` as the canonical store for per-project status
 -- definitions and backfill it from the existing `metis.projects.statuses`
 -- JSONB array on every latest-version project row (regardless of
--- `deleted`). See [[i-bqimglba]] for the migration design and
--- `/designs/per-project-issue-statuses.md` for the broader plan.
+-- `deleted`). See [[i-bqimglba]] for the migration design.
 --
 -- PR 1 of 4: pure additive schema; no application code reads or writes
 -- the new table yet. The JSONB `projects.statuses` column stays in
