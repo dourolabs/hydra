@@ -11,4 +11,4 @@ import type { Principal } from "./Principal";
  * form (an issue holds at most one form at a time). `None` on either
  * field leaves the corresponding field untouched.
  */
-export type StatusOnEnter = { assign_to?: Principal | null, attach_form?: DocumentPath | null, };
+export type StatusOnEnter = { assign_to?: Principal | null; attach_form?: DocumentPath | null };

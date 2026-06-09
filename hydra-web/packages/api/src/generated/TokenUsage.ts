@@ -3,4 +3,9 @@
 /**
  * Aggregated token totals reported by the worker at the end of a session run.
  */
-export type TokenUsage = { input_tokens: bigint, output_tokens: bigint, cache_read_input_tokens: bigint, cache_creation_input_tokens: bigint, };
+export type TokenUsage = {
+  input_tokens: bigint;
+  output_tokens: bigint;
+  cache_read_input_tokens: bigint;
+  cache_creation_input_tokens: bigint;
+};

@@ -10,4 +10,4 @@
  * server inside the worker is actually serving requests before forwarding
  * user traffic.
  */
-export type ProxyTarget = { port: number, ready_path?: string | null, };
+export type ProxyTarget = { port: number; ready_path?: string | null };

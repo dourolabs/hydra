@@ -10,30 +10,46 @@ import type { TaskError } from "./TaskError";
 import type { TokenUsage } from "./TokenUsage";
 import type { Username } from "./Username";
 
-export type Session = { creator: Username, spawned_from?: IssueId | null, 
-/**
- * Predecessor session for resumed runs. `None` for fresh sessions.
- */
-resumed_from?: SessionId | null, agent_config: AgentConfig, 
-/**
- * Server-supplied mount layout. Mandatory: no serde default;
- * deserialization fails loudly if the field is missing, so client
- * requests can't silently fall back to an empty layout.
- */
-mount_spec: MountSpec, image?: string | null, env_vars?: { [key in string]: string }, cpu_limit?: string | null, memory_limit?: string | null, secrets?: Array<string> | null, 
-/**
- * Mandatory: no serde default; deserialization fails loudly if the
- * field is missing rather than picking an arbitrary mode.
- */
-mode: SessionMode, status: Status, last_message?: string | null, error?: TaskError | null, deleted?: boolean, creation_time?: string | null, start_time?: string | null, end_time?: string | null, 
-/**
- * Aggregated token usage reported by the worker at the end of a run.
- * `None` until the worker submits a `Complete` status with usage data.
- */
-usage?: TokenUsage | null, 
-/**
- * Ports the worker has advertised as HTTP targets for the interactive
- * dev preview. Edited via `hydra worker proxy {start,stop}` and read by
- * the proxy reach path (PR 2). Default empty.
- */
-proxy_targets?: Array<ProxyTarget>, };
+export type Session = {
+  creator: Username;
+  spawned_from?: IssueId | null;
+  /**
+   * Predecessor session for resumed runs. `None` for fresh sessions.
+   */
+  resumed_from?: SessionId | null;
+  agent_config: AgentConfig;
+  /**
+   * Server-supplied mount layout. Mandatory: no serde default;
+   * deserialization fails loudly if the field is missing, so client
+   * requests can't silently fall back to an empty layout.
+   */
+  mount_spec: MountSpec;
+  image?: string | null;
+  env_vars?: { [key in string]: string };
+  cpu_limit?: string | null;
+  memory_limit?: string | null;
+  secrets?: Array<string> | null;
+  /**
+   * Mandatory: no serde default; deserialization fails loudly if the
+   * field is missing rather than picking an arbitrary mode.
+   */
+  mode: SessionMode;
+  status: Status;
+  last_message?: string | null;
+  error?: TaskError | null;
+  deleted?: boolean;
+  creation_time?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  /**
+   * Aggregated token usage reported by the worker at the end of a run.
+   * `None` until the worker submits a `Complete` status with usage data.
+   */
+  usage?: TokenUsage | null;
+  /**
+   * Ports the worker has advertised as HTTP targets for the interactive
+   * dev preview. Edited via `hydra worker proxy {start,stop}` and read by
+   * the proxy reach path (PR 2). Default empty.
+   */
+  proxy_targets?: Array<ProxyTarget>;
+};

@@ -4,4 +4,4 @@ import type { AssigneeRef } from "./AssigneeRef";
 /**
  * Who is permitted to call `hydra patches merge`. ANY match suffices.
  */
-export type MergerRule = { any_of: Array<AssigneeRef>, };
+export type MergerRule = { any_of: Array<AssigneeRef> };

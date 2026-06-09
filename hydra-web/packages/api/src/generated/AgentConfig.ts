@@ -16,4 +16,9 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * malformed `agent_name` fail to deserialize loudly rather than silently
  * passing through.
  */
-export type AgentConfig = { agent_name?: AgentName | null, model?: string | null, system_prompt?: string | null, mcp_config?: JsonValue | null, };
+export type AgentConfig = {
+  agent_name?: AgentName | null;
+  model?: string | null;
+  system_prompt?: string | null;
+  mcp_config?: JsonValue | null;
+};

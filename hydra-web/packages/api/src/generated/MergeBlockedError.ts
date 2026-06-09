@@ -21,4 +21,9 @@ import type { PatchId } from "./PatchId";
  * (get reviews → retry → get a merger → retry → merged) instead of
  * branching speculatively on later layers.
  */
-export type MergeBlockedError = { code: MergeBlockedCode, patch_id: PatchId, blocked_at_layer: BlockedAtLayer, reasons: Array<MergeBlockedReason>, };
+export type MergeBlockedError = {
+  code: MergeBlockedCode;
+  patch_id: PatchId;
+  blocked_at_layer: BlockedAtLayer;
+  reasons: Array<MergeBlockedReason>;
+};

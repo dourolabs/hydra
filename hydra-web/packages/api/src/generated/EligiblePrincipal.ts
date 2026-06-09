@@ -22,4 +22,8 @@ import type { Username } from "./Username";
  * (the username it resolves to right now, or `null` if it could not be
  * resolved — e.g. the patch has no parent issue).
  */
-export type EligiblePrincipal = { "kind": "user", name: Username, } | { "kind": "agent", name: AgentName, } | { "kind": "external", system: ExternalSystem, username: string, } | { "kind": "dynamic", ref: DynamicRef, resolved_to: string | null, };
+export type EligiblePrincipal =
+  | { kind: "user"; name: Username }
+  | { kind: "agent"; name: AgentName }
+  | { kind: "external"; system: ExternalSystem; username: string }
+  | { kind: "dynamic"; ref: DynamicRef; resolved_to: string | null };

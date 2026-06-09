@@ -15,9 +15,21 @@ import type { Username } from "./Username";
  * The `description` field is truncated to the first line (max 200 chars).
  * The `progress` field is truncated to the first 200 characters.
  */
-export type IssueSummary = { type: IssueType, title: string, description: string, creator: Username, 
-/**
- * Server-computed status definition; populated by the route handler
- * before serialization. The bare key lives at `status.key`.
- */
-status: StatusDefinition, project_id: ProjectId, assignee?: Principal | null, progress: string, dependencies: Array<IssueDependency>, patches: Array<PatchId>, deleted?: boolean, labels?: Array<LabelSummary>, };
+export type IssueSummary = {
+  type: IssueType;
+  title: string;
+  description: string;
+  creator: Username;
+  /**
+   * Server-computed status definition; populated by the route handler
+   * before serialization. The bare key lives at `status.key`.
+   */
+  status: StatusDefinition;
+  project_id: ProjectId;
+  assignee?: Principal | null;
+  progress: string;
+  dependencies: Array<IssueDependency>;
+  patches: Array<PatchId>;
+  deleted?: boolean;
+  labels?: Array<LabelSummary>;
+};

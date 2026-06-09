@@ -2,9 +2,11 @@
 import type { Session } from "./Session";
 import type { SessionId } from "./SessionId";
 
-export type CreateSessionResponse = { session_id: SessionId, 
-/**
- * Fully-lowered persisted session. Lets callers skip a follow-up
- * `GET /v1/sessions/:id`.
- */
-session: Session, };
+export type CreateSessionResponse = {
+  session_id: SessionId;
+  /**
+   * Fully-lowered persisted session. Lets callers skip a follow-up
+   * `GET /v1/sessions/:id`.
+   */
+  session: Session;
+};

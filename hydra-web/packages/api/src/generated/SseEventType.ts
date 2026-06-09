@@ -3,4 +3,27 @@
 /**
  * The SSE event type names sent in the `event:` field.
  */
-export type SseEventType = "issue_created" | "issue_updated" | "issue_deleted" | "patch_created" | "patch_updated" | "patch_deleted" | "session_created" | "session_updated" | "document_created" | "document_updated" | "document_deleted" | "label_created" | "label_updated" | "label_deleted" | "conversation_created" | "conversation_updated" | "session_event_created" | "session_state_updated" | "session_log" | "connected" | "resync" | "heartbeat" | "unknown";
+export type SseEventType =
+  | "issue_created"
+  | "issue_updated"
+  | "issue_deleted"
+  | "patch_created"
+  | "patch_updated"
+  | "patch_deleted"
+  | "session_created"
+  | "session_updated"
+  | "document_created"
+  | "document_updated"
+  | "document_deleted"
+  | "label_created"
+  | "label_updated"
+  | "label_deleted"
+  | "conversation_created"
+  | "conversation_updated"
+  | "session_event_created"
+  | "session_state_updated"
+  | "session_log"
+  | "connected"
+  | "resync"
+  | "heartbeat"
+  | "unknown";

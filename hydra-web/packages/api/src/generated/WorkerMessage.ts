@@ -11,4 +11,11 @@ import type { SessionId } from "./SessionId";
  * is awaiting `FirstMessage`. Phase 3 carries session events,
  * session-state uploads, and (on graceful shutdown) `EndSessionAck`.
  */
-export type WorkerMessage = { "type": "fresh" } | { "type": "reconnecting", last_received_session_event_index?: number | null, } | { "type": "request_transcript", prior_session_id: SessionId, } | { "type": "ready" } | { "type": "event", event: SessionEvent, } | { "type": "session_state_upload", data: number[], } | { "type": "end_session_ack" };
+export type WorkerMessage =
+  | { type: "fresh" }
+  | { type: "reconnecting"; last_received_session_event_index?: number | null }
+  | { type: "request_transcript"; prior_session_id: SessionId }
+  | { type: "ready" }
+  | { type: "event"; event: SessionEvent }
+  | { type: "session_state_upload"; data: number[] }
+  | { type: "end_session_ack" };

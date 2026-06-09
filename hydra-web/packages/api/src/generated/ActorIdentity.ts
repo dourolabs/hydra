@@ -3,4 +3,7 @@ import type { AgentName } from "./AgentName";
 import type { SessionId } from "./SessionId";
 import type { Username } from "./Username";
 
-export type ActorIdentity = { "type": "user", username: Username, } | { "type": "agent", name: AgentName, creator: Username, } | { "type": "adhoc", session_id: SessionId, creator: Username, };
+export type ActorIdentity =
+  | { type: "user"; username: Username }
+  | { type: "agent"; name: AgentName; creator: Username }
+  | { type: "adhoc"; session_id: SessionId; creator: Username };

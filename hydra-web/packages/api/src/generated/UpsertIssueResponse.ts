@@ -10,4 +10,4 @@ import type { IssueId } from "./IssueId";
  * The server builds it via the same `build_issue_response` helper used
  * by `GET /v1/issues/:id`, guaranteeing the wire shape matches.
  */
-export type UpsertIssueResponse = { issue_id: IssueId, version: bigint, issue: Issue, };
+export type UpsertIssueResponse = { issue_id: IssueId; version: bigint; issue: Issue };

@@ -5,4 +5,4 @@ import type { StatusDefinition } from "./StatusDefinition";
  * Response body for `GET /v1/projects/:project_ref/statuses`. Returned
  * as an ordered list matching the project's declaration order.
  */
-export type ProjectStatusesResponse = { statuses: Array<StatusDefinition>, };
+export type ProjectStatusesResponse = { statuses: Array<StatusDefinition> };

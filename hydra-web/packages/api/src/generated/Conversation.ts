@@ -6,4 +6,14 @@ import type { IssueId } from "./IssueId";
 import type { SessionSettings } from "./SessionSettings";
 import type { Username } from "./Username";
 
-export type Conversation = { conversation_id: ConversationId, title: string | null, agent_name: AgentName | null, status: ConversationStatus, creator: Username, session_settings?: SessionSettings, spawned_from?: IssueId | null, created_at: string, updated_at: string, };
+export type Conversation = {
+  conversation_id: ConversationId;
+  title: string | null;
+  agent_name: AgentName | null;
+  status: ConversationStatus;
+  creator: Username;
+  session_settings?: SessionSettings;
+  spawned_from?: IssueId | null;
+  created_at: string;
+  updated_at: string;
+};

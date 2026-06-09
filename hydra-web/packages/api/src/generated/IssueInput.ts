@@ -16,4 +16,20 @@ import type { Username } from "./Username";
  * Mirrors the wire [`Issue`] field set but drops `resolved_status`
  * (server-computed; never accepted on requests).
  */
-export type IssueInput = { type: IssueType, title: string, description: string, creator: Username, progress: string, status: StatusKey, project_id: ProjectId, assignee?: Principal | null, session_settings?: SessionSettings, dependencies: Array<IssueDependency>, patches: Array<PatchId>, deleted?: boolean, form?: Form | null, form_response?: FormResponse | null, feedback?: string | null, };
+export type IssueInput = {
+  type: IssueType;
+  title: string;
+  description: string;
+  creator: Username;
+  progress: string;
+  status: StatusKey;
+  project_id: ProjectId;
+  assignee?: Principal | null;
+  session_settings?: SessionSettings;
+  dependencies: Array<IssueDependency>;
+  patches: Array<PatchId>;
+  deleted?: boolean;
+  form?: Form | null;
+  form_response?: FormResponse | null;
+  feedback?: string | null;
+};

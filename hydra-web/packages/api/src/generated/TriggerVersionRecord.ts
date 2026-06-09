@@ -8,4 +8,11 @@ import type { TriggerId } from "./TriggerId";
  * `GET /v1/triggers/:id/versions/:n`, and entries in
  * `ListTriggerVersionsResponse`.
  */
-export type TriggerVersionRecord = { trigger_id: TriggerId, version: bigint, timestamp: string, trigger: Trigger, actor?: ActorRef | null, creation_time: string, };
+export type TriggerVersionRecord = {
+  trigger_id: TriggerId;
+  version: bigint;
+  timestamp: string;
+  trigger: Trigger;
+  actor?: ActorRef | null;
+  creation_time: string;
+};

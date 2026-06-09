@@ -3,4 +3,4 @@
 /**
  * Structured validation error response for form submissions.
  */
-export type FormValidationError = { error: string, field_errors: { [key in string]: string }, };
+export type FormValidationError = { error: string; field_errors: { [key in string]: string } };
