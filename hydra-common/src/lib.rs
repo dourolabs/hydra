@@ -168,7 +168,6 @@ mod ts_export {
         crate::labels::ListLabelsResponse::export_all(&cfg).expect("ListLabelsResponse");
 
         // API v1: issues
-        crate::issues::IssueStatus::export_all(&cfg).expect("IssueStatus");
         crate::issues::IssueType::export_all(&cfg).expect("IssueType");
         crate::issues::IssueDependencyType::export_all(&cfg).expect("IssueDependencyType");
         crate::issues::IssueDependency::export_all(&cfg).expect("IssueDependency");

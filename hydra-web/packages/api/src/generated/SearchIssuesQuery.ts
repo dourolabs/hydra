@@ -12,8 +12,8 @@ export type SearchIssuesQuery = {
   /**
    * Comma-separated list of [`StatusKey`] strings to filter on.
    *
-   * `StatusKey` is a transparent string newtype, so the five legacy
-   * `IssueStatus` strings (`open`, `in-progress`, `closed`, `dropped`,
+   * `StatusKey` is a transparent string newtype, so the legacy
+   * default-project keys (`open`, `in-progress`, `closed`, `dropped`,
    * `failed`) and per-project keys (e.g. `inbox`, `triage`) share the
    * same wire shape.
    */

@@ -1,6 +1,5 @@
 import type {
   CreateIssueAction,
-  IssueStatus,
   IssueType,
   TriggerAction,
   TriggerSchedule,
@@ -13,7 +12,8 @@ export interface ActionDraft {
   title: string;
   description: string;
   assignee: string;
-  status: IssueStatus | "";
+  projectId: string;
+  status: string;
   repoName: string;
 }
 
@@ -32,6 +32,7 @@ export function emptyAction(): ActionDraft {
     title: "",
     description: "",
     assignee: "",
+    projectId: "",
     status: "",
     repoName: "",
   };
@@ -57,7 +58,8 @@ function draftFromTriggerActions(actions: TriggerAction[]): ActionDraft[] {
       title: ci.title,
       description: ci.description,
       assignee: ci.assignee ?? "",
-      status: ci.status ?? "",
+      projectId: ci.project_id,
+      status: ci.status,
       repoName: ci.session_settings?.repo_name ?? "",
     };
   });
@@ -126,13 +128,15 @@ export function buildUpsertRequest(
   const actions: TriggerAction[] = [];
   for (const a of draft.actions) {
     if (!a.title.trim() || !a.description.trim()) return null;
+    if (!a.projectId || !a.status) return null;
     const ci: CreateIssueAction = {
       type: a.type,
       title: a.title,
       description: a.description,
+      project_id: a.projectId,
+      status: a.status,
     };
     if (a.assignee.trim()) ci.assignee = a.assignee.trim();
-    if (a.status) ci.status = a.status;
     if (a.repoName.trim()) {
       ci.session_settings = { repo_name: a.repoName.trim() };
     }

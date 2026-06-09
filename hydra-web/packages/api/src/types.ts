@@ -58,7 +58,6 @@ export type { IssueDependency } from "./generated/IssueDependency";
 export type { IssueInput } from "./generated/IssueInput";
 export type { IssueDependencyType } from "./generated/IssueDependencyType";
 export type { IssueId } from "./generated/IssueId";
-export type { IssueStatus } from "./generated/IssueStatus";
 export type { IssueSummary } from "./generated/IssueSummary";
 export type { IssueSummaryRecord } from "./generated/IssueSummaryRecord";
 export type { IssueType } from "./generated/IssueType";

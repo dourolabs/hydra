@@ -1,7 +1,8 @@
-use super::issues::{IssueStatus, IssueType, SessionSettings};
+use super::issues::{IssueType, SessionSettings};
+use super::projects::StatusKey;
 use super::users::Username;
 use crate::actor_ref::ActorRef;
-use crate::ids::TriggerId;
+use crate::ids::{ProjectId, TriggerId};
 use crate::versioning::VersionNumber;
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
@@ -88,7 +89,10 @@ pub enum Action {
 ///
 /// `title`, `description`, and `assignee` are template strings rendered
 /// through [`render`]. `assignee` is parsed as a `Principal` after
-/// rendering.
+/// rendering. Both `project_id` and `status` are required on the wire —
+/// no defaults, no inference. A persisted trigger row that pre-dates this
+/// requirement will fail to deserialize on next read; that is the
+/// explicit fail-loud outcome agreed with the deletion of `IssueStatus`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -100,8 +104,8 @@ pub struct CreateIssueAction {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<IssueStatus>,
+    pub project_id: ProjectId,
+    pub status: StatusKey,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
     pub session_settings: SessionSettings,
 }
@@ -112,7 +116,8 @@ impl CreateIssueAction {
         title: String,
         description: String,
         assignee: Option<String>,
-        status: Option<IssueStatus>,
+        project_id: ProjectId,
+        status: StatusKey,
         session_settings: SessionSettings,
     ) -> Self {
         Self {
@@ -120,6 +125,7 @@ impl CreateIssueAction {
             title,
             description,
             assignee,
+            project_id,
             status,
             session_settings,
         }
@@ -440,6 +446,7 @@ impl ScheduleFiring for Schedule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::status::status;
 
     fn sample_action() -> Action {
         Action::CreateIssue(CreateIssueAction::new(
@@ -447,7 +454,8 @@ mod tests {
             "Daily triage".to_string(),
             "Run triage for {{ now.date }}".to_string(),
             Some("users/alice".to_string()),
-            Some(IssueStatus::Open),
+            ProjectId::try_from("j-defaul".to_string()).expect("well-formed ProjectId"),
+            status("open"),
             SessionSettings::default(),
         ))
     }

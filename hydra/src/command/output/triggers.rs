@@ -101,9 +101,8 @@ fn render_test_action<W: Write>(writer: &mut W, action: &RenderedAction) -> Resu
             if let Some(assignee) = &rendered.assignee {
                 writeln!(writer, "  assignee: {assignee}")?;
             }
-            if let Some(status) = &rendered.status {
-                writeln!(writer, "  status: {status}")?;
-            }
+            writeln!(writer, "  project_id: {}", rendered.project_id)?;
+            writeln!(writer, "  status: {}", rendered.status)?;
             if let Some(repo) = &rendered.repo_name {
                 writeln!(writer, "  repo: {repo}")?;
             }
@@ -212,6 +211,7 @@ fn render_action<W: Write>(writer: &mut W, idx: usize, action: &Action) -> Resul
                 title,
                 description,
                 assignee,
+                project_id,
                 status,
                 session_settings,
                 ..
@@ -227,9 +227,8 @@ fn render_action<W: Write>(writer: &mut W, idx: usize, action: &Action) -> Resul
             if let Some(assignee) = assignee.as_deref() {
                 writeln!(writer, "     assignee: {assignee}")?;
             }
-            if let Some(status) = status {
-                writeln!(writer, "     status: {status}")?;
-            }
+            writeln!(writer, "     project_id: {project_id}")?;
+            writeln!(writer, "     status: {status}")?;
             if let Some(repo) = session_settings.repo_name.as_ref() {
                 writeln!(writer, "     repo: {repo}")?;
             }

@@ -10348,8 +10348,9 @@ mod tests {
     // ---- Trigger tests --------------------------------------------------
 
     fn sample_trigger_pg() -> Trigger {
-        use hydra_common::api::v1::issues::{IssueStatus, IssueType, SessionSettings};
+        use hydra_common::api::v1::issues::{IssueType, SessionSettings};
         use hydra_common::api::v1::users::Username as ApiUsername;
+        use hydra_common::test_utils::status::status;
         use hydra_common::triggers::{Action, CreateIssueAction, Schedule, Trigger as ApiTrigger};
         ApiTrigger::new(
             true,
@@ -10362,7 +10363,8 @@ mod tests {
                 "Daily triage".to_string(),
                 "Run triage for {{ now.date }}".to_string(),
                 Some("users/alice".to_string()),
-                Some(IssueStatus::Open),
+                crate::domain::projects::default_project_id(),
+                status("open"),
                 SessionSettings::default(),
             ))],
             ApiUsername::from("alice"),

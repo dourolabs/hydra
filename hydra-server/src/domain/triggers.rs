@@ -11,7 +11,6 @@ use crate::store::{RelationshipType, StoreError};
 use chrono::{DateTime, Utc};
 use hydra_common::HydraId;
 use hydra_common::api::v1::users::Username as ApiUsername;
-use hydra_common::issues::IssueStatus;
 use hydra_common::principal::Principal;
 use hydra_common::triggers::{
     Action, CreateIssueAction, Schedule, Trigger, parse_cron_expression, render, validate_template,
@@ -59,8 +58,6 @@ pub enum ValidationError {
     },
     #[error("action {action_index}: unsupported issue type")]
     UnknownIssueType { action_index: usize },
-    #[error("action {action_index}: unsupported issue status")]
-    UnknownIssueStatus { action_index: usize },
 }
 
 /// Validate a [`Trigger`]'s schedule, actions, and template fields.
@@ -104,13 +101,10 @@ fn validate_create_issue(
     action_index: usize,
     action: &CreateIssueAction,
 ) -> Result<(), ValidationError> {
-    use hydra_common::issues::{IssueStatus, IssueType};
+    use hydra_common::issues::IssueType;
 
     if matches!(action.issue_type, IssueType::Unknown) {
         return Err(ValidationError::UnknownIssueType { action_index });
-    }
-    if matches!(action.status, Some(IssueStatus::Unknown)) {
-        return Err(ValidationError::UnknownIssueStatus { action_index });
     }
 
     for (field, value) in [
@@ -257,8 +251,8 @@ async fn run_create_issue(
         description,
         creator.clone().into(),
         String::new(),
-        action.status.unwrap_or(IssueStatus::Open).into(),
-        crate::domain::projects::default_project_id(),
+        action.status.clone(),
+        action.project_id.clone(),
         assignee,
         Some(action.session_settings.clone().into()),
         Vec::new(),
@@ -330,7 +324,8 @@ mod tests {
     use super::*;
     use cron::Schedule as CronSchedule;
     use hydra_common::api::v1::issues::SessionSettings;
-    use hydra_common::issues::{IssueStatus, IssueType};
+    use hydra_common::issues::IssueType;
+    use hydra_common::test_utils::status::status;
     use hydra_common::users::Username;
     use std::str::FromStr;
 
@@ -466,7 +461,8 @@ mod tests {
             title.to_string(),
             description.to_string(),
             assignee.map(str::to_string),
-            Some(IssueStatus::Open),
+            crate::domain::projects::default_project_id(),
+            status("open"),
             settings,
         ))
     }
@@ -659,25 +655,6 @@ mod tests {
         let err = trigger.validate().unwrap_err();
         assert!(
             matches!(err, ValidationError::UnknownIssueType { action_index: 0 }),
-            "got {err:?}"
-        );
-    }
-
-    #[test]
-    fn validate_rejects_unknown_issue_status() {
-        let mut action = create_issue("title", "desc", None, None);
-        let Action::CreateIssue(ref mut a) = action;
-        a.status = Some(IssueStatus::Unknown);
-        let trigger = trigger_with_actions(
-            Schedule::Cron {
-                expression: "* * * * *".to_string(),
-                timezone: None,
-            },
-            vec![action],
-        );
-        let err = trigger.validate().unwrap_err();
-        assert!(
-            matches!(err, ValidationError::UnknownIssueStatus { action_index: 0 }),
             "got {err:?}"
         );
     }

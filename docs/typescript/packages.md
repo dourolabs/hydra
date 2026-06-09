@@ -37,7 +37,7 @@ These already exist — extend them, don't fork them:
 
 | Module | What's there |
 |---|---|
-| `statusMapping.ts` | `normalizeIssueStatus`, `normalizeSessionStatus`, `normalizePatchStatus`, `normalizeCiState` → `BadgeStatus` |
+| `statusMapping.ts` | `normalizeSessionStatus`, `normalizePatchStatus`, `normalizeCiState` → `BadgeStatus`. Issue statuses are project-scoped — render via `features/projects/StatusChip` against `issue.status` (a `StatusDefinition`) instead of normalizing the key string. |
 | `time.ts` | `formatDuration`, `getRuntime` — all time formatting belongs here |
 | `text.ts` | `descriptionSnippet` and similar string trimming |
 | `actors.ts` | `actorDisplayName`, `actorAvatarName` for actor refs |
