@@ -2778,20 +2778,13 @@ async fn add_issues_v2_status_sequence_backfills_issues(pool: &PgPool) -> Result
             );
         }
     }
-
-    // Catch-all: no metis.issues_v2 row may remain with NULL status_sequence
-    // — the pre-flight guard in the migration body would have failed loud,
-    // so this is belt-and-braces verification post-rollforward.
-    let row = sqlx::query("SELECT COUNT(*) FROM metis.issues_v2 WHERE status_sequence IS NULL")
-        .fetch_one(pool)
-        .await
-        .context("count NULL status_sequence rows post-rollforward")?;
-    let count: i64 = row.try_get(0)?;
-    if count != 0 {
-        bail!(
-            "expected 0 metis.issues_v2 rows with NULL status_sequence post-backfill; got {count}"
-        );
-    }
+    // Note: no catch-all NULL check post-rollforward. The migration body's
+    // `DO $$ ... RAISE EXCEPTION` already guarantees no pre-migration row
+    // remained NULL (otherwise the migration would have aborted before this
+    // test runs). `assert_store_level_smoke` inserts fresh rows through the
+    // Store layer *after* migrations roll forward, and the Store does not
+    // write `status_sequence` yet (PR 2 wires it up), so those rows
+    // legitimately sit at NULL until PR 3 tightens the column.
     Ok(())
 }
 
