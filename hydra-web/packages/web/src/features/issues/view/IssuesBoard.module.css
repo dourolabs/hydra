@@ -34,6 +34,16 @@
   touch-action: none;
 }
 
+/* Full-width header that follows the cursor inside <DragOverlay>. It fills
+   the overlay (sized to the section's measured width), lifted with a shadow
+   and grabbing cursor so the drag reads as "carrying the project header". */
+.projectBarDragPreview {
+  width: 100%;
+  cursor: grabbing;
+  background: var(--bg-2);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
 .projectBarDraggable:active {
   cursor: grabbing;
 }
