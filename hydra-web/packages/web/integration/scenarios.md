@@ -79,6 +79,10 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@repos:edit-merge-policy` — User can view, edit, clear, and round-trip a repository's `merge_policy` via the Repository edit modal's JSON textarea, with inline error on invalid JSON
 
+## Triggers
+
+- `@triggers:project-status-picker-lifecycle` — In the Add Trigger modal's `TriggerForm`, the per-action Status picker is disabled until a Project is picked; switching projects clears the selected status; and switching to a different project re-derives the Status options from the new project's `/v1/projects/<id>/statuses` response (the prior project's options disappear, the new project's options appear once the fetch lands).
+
 ## Error Handling
 
 - `@errors:404` — User sees a not-found message for non-existent entities
