@@ -8,6 +8,7 @@
 //! the status.
 
 use crate::document_path::DocumentPath;
+use crate::ids::HydraId;
 use crate::principal::Principal;
 use crate::{Rgb, VersionNumber, api::v1::users::Username, ids::ProjectId};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -26,6 +27,7 @@ pub enum KeyError {
     Empty,
     TooLong { actual: usize, max: usize },
     InvalidCharacters,
+    ReservedHydraIdShape,
 }
 
 impl fmt::Display for KeyError {
@@ -38,6 +40,9 @@ impl fmt::Display for KeyError {
             KeyError::InvalidCharacters => {
                 f.write_str("key must contain only lowercase ASCII letters, digits, and '-'")
             }
+            KeyError::ReservedHydraIdShape => f.write_str(
+                "keys cannot use a single-letter prefix followed by `-`; reserved for HydraIds",
+            ),
         }
     }
 }
@@ -59,6 +64,9 @@ fn validate_key(value: &str) -> Result<(), KeyError> {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
         return Err(KeyError::InvalidCharacters);
+    }
+    if HydraId::is_id_or_reserved_shape(value) {
+        return Err(KeyError::ReservedHydraIdShape);
     }
     Ok(())
 }
@@ -513,6 +521,65 @@ mod tests {
     fn key_deserialize_validates() {
         let err = serde_json::from_str::<StatusKey>("\"InProgress\"").unwrap_err();
         assert!(err.to_string().contains("lowercase"));
+    }
+
+    #[test]
+    fn key_try_new_rejects_reserved_hydra_id_shape() {
+        for shape in ["i-foo", "p-bar", "s-todo", "j-foo", "x-foobar", "a-"] {
+            assert_eq!(
+                StatusKey::try_new(shape),
+                Err(KeyError::ReservedHydraIdShape),
+                "expected `{shape}` to be rejected as reserved shape via try_new"
+            );
+            assert_eq!(
+                ProjectKey::try_new(shape),
+                Err(KeyError::ReservedHydraIdShape),
+                "expected `{shape}` to be rejected as reserved shape via try_new (ProjectKey)"
+            );
+        }
+    }
+
+    #[test]
+    fn key_from_str_rejects_reserved_hydra_id_shape() {
+        let err: KeyError = "i-progress".parse::<StatusKey>().unwrap_err();
+        assert_eq!(err, KeyError::ReservedHydraIdShape);
+        let err: KeyError = "j-foo".parse::<ProjectKey>().unwrap_err();
+        assert_eq!(err, KeyError::ReservedHydraIdShape);
+    }
+
+    #[test]
+    fn key_deserialize_rejects_reserved_hydra_id_shape() {
+        let err = serde_json::from_str::<StatusKey>("\"i-progress\"").unwrap_err();
+        assert!(
+            err.to_string().contains("reserved for HydraIds"),
+            "expected reserved-shape mention; got: {err}"
+        );
+        let err = serde_json::from_str::<ProjectKey>("\"j-foo\"").unwrap_err();
+        assert!(
+            err.to_string().contains("reserved for HydraIds"),
+            "expected reserved-shape mention; got: {err}"
+        );
+    }
+
+    #[test]
+    fn key_try_new_accepts_safe_lookalikes() {
+        for safe in [
+            "renamed-x-foo",
+            "ab-foo",
+            "default",
+            "open",
+            "in-progress",
+            "eng-high",
+        ] {
+            assert!(
+                StatusKey::try_new(safe).is_ok(),
+                "expected `{safe}` to pass StatusKey::try_new"
+            );
+            assert!(
+                ProjectKey::try_new(safe).is_ok(),
+                "expected `{safe}` to pass ProjectKey::try_new"
+            );
+        }
     }
 
     #[test]

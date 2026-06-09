@@ -132,6 +132,16 @@ impl HydraId {
         ProjectId::try_from(self.clone()).ok()
     }
 
+    /// Returns `true` iff `s` matches the `[a-z]-...` shape reserved for
+    /// `HydraId` values (any single ASCII lowercase letter, followed by `-`,
+    /// followed by anything). This shape is forbidden for `ProjectKey` /
+    /// `StatusKey` so a string's prefix alone disambiguates "id or key" at
+    /// any boundary. Byte-level so `validate_key` stays regex-free.
+    pub fn is_id_or_reserved_shape(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        bytes.len() >= 2 && bytes[0].is_ascii_lowercase() && bytes[1] == b'-'
+    }
+
     pub fn validate_str(value: &str) -> Result<(), HydraIdError> {
         if value.starts_with(ISSUE_PREFIX) {
             IssueId::validate_str(value)
@@ -1040,5 +1050,54 @@ mod tests {
         let id = format!("{PROJECT_PREFIX}abcdef");
         let hydra: HydraId = id.parse().expect("hydra id should parse");
         assert_eq!(hydra.as_ref(), id);
+    }
+
+    #[test]
+    fn is_id_or_reserved_shape_accepts_every_allocated_prefix() {
+        for prefix in [
+            ISSUE_PREFIX,
+            PATCH_PREFIX,
+            SESSION_PREFIX,
+            DOCUMENT_PREFIX,
+            LABEL_PREFIX,
+            CONVERSATION_PREFIX,
+            TRIGGER_PREFIX,
+            PROJECT_PREFIX,
+        ] {
+            let sample = format!("{prefix}abcdef");
+            assert!(
+                HydraId::is_id_or_reserved_shape(&sample),
+                "expected `{sample}` to match reserved shape"
+            );
+        }
+    }
+
+    #[test]
+    fn is_id_or_reserved_shape_accepts_unallocated_letter_prefix() {
+        assert!(HydraId::is_id_or_reserved_shape("x-foobar"));
+        assert!(HydraId::is_id_or_reserved_shape("q-test"));
+        // Trailing bytes can be anything — only the [a-z]- shape matters.
+        assert!(HydraId::is_id_or_reserved_shape("a-"));
+        assert!(HydraId::is_id_or_reserved_shape("a-X_!"));
+    }
+
+    #[test]
+    fn is_id_or_reserved_shape_rejects_uppercase_or_digit_first_char() {
+        assert!(!HydraId::is_id_or_reserved_shape("X-foo"));
+        assert!(!HydraId::is_id_or_reserved_shape("1-foo"));
+    }
+
+    #[test]
+    fn is_id_or_reserved_shape_rejects_no_dash_second_char() {
+        assert!(!HydraId::is_id_or_reserved_shape("if-foo"));
+        assert!(!HydraId::is_id_or_reserved_shape("i_foo"));
+        assert!(!HydraId::is_id_or_reserved_shape("ab-foo"));
+    }
+
+    #[test]
+    fn is_id_or_reserved_shape_rejects_short_inputs() {
+        assert!(!HydraId::is_id_or_reserved_shape(""));
+        assert!(!HydraId::is_id_or_reserved_shape("a"));
+        assert!(!HydraId::is_id_or_reserved_shape("-"));
     }
 }

@@ -146,6 +146,12 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     cutover_to_statuses_table_fk_rejects_unknown_sequence(&pool).await?;
     cutover_to_statuses_table_fk_rejects_status_delete_with_active_issue(&pool).await?;
 
+    reserve_hydra_id_shape_rewrites_project_keys(&pool).await?;
+    reserve_hydra_id_shape_rewrites_status_keys(&pool).await?;
+    reserve_hydra_id_shape_no_reserved_shape_remains(&pool).await?;
+    reserve_hydra_id_shape_domain_roundtrip(&pool).await?;
+    reserve_hydra_id_shape_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -2331,4 +2337,174 @@ async fn add_issues_v2_status_sequence_migration_rejects_null_baseline() -> Resu
              row; instead it completed successfully"
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// 20260615000000_reserve_hydra_id_shape_in_keys — SQLite parity.
+// Sister to `migration_roundtrip::reserve_hydra_id_shape_*`. Coverage
+// matrix is identical: SQL-level rewrite assertions on projects and
+// statuses, no-reserved-shape-anywhere invariant, typed
+// `Store::get_project` / `Store::list_projects` round-trip, and
+// migration-body idempotency.
+// ---------------------------------------------------------------------------
+
+async fn reserve_hydra_id_shape_rewrites_project_keys(pool: &SqlitePool) -> Result<()> {
+    let expected: &[(&str, &str)] = &[
+        ("j-rsvshapa", "renamed-j-foo"),
+        ("j-rsvshapb", "engineering"),
+        ("j-rsvshapc", "renamed-x-old"),
+    ];
+    for (id, want_key) in expected {
+        let row = sqlx::query("SELECT key FROM projects WHERE id = ?1 AND is_latest = 1")
+            .bind(*id)
+            .fetch_one(pool)
+            .await
+            .with_context(|| format!("read projects.key for {id}"))?;
+        let got: String = row.try_get("key")?;
+        if got.as_str() != *want_key {
+            bail!("projects({id}).key: expected {want_key:?}; got {got:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_rewrites_status_keys(pool: &SqlitePool) -> Result<()> {
+    let expected: &[(i64, &str)] = &[
+        (1, "renamed-i-progress"),
+        (2, "done"),
+        (3, "renamed-s-todo-seq3"),
+        (4, "renamed-s-todo"),
+    ];
+    for (sequence, want_key) in expected {
+        let row = sqlx::query(
+            "SELECT key FROM statuses WHERE project_id = 'j-rsvshapa' AND sequence = ?1",
+        )
+        .bind(*sequence)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read statuses.key for (j-rsvshapa, seq={sequence})"))?;
+        let got: String = row.try_get("key")?;
+        if got.as_str() != *want_key {
+            bail!("statuses(j-rsvshapa, seq={sequence}).key: expected {want_key:?}; got {got:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_no_reserved_shape_remains(pool: &SqlitePool) -> Result<()> {
+    let row = sqlx::query("SELECT COUNT(*) FROM projects WHERE key GLOB '[a-z]-*'")
+        .fetch_one(pool)
+        .await
+        .context("count projects.key rows still matching reserved shape")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!("expected 0 projects rows with key matching `[a-z]-*`; got {count}");
+    }
+    let row = sqlx::query("SELECT COUNT(*) FROM statuses WHERE key GLOB '[a-z]-*'")
+        .fetch_one(pool)
+        .await
+        .context("count statuses.key rows still matching reserved shape")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!("expected 0 statuses rows with key matching `[a-z]-*`; got {count}");
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_domain_roundtrip(pool: &SqlitePool) -> Result<()> {
+    use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey, StatusKey};
+
+    let store = SqliteStore::new(pool.clone());
+
+    let cases: &[(&str, &str, &[&str])] = &[
+        (
+            "j-rsvshapa",
+            "renamed-j-foo",
+            &[
+                "renamed-i-progress",
+                "done",
+                "renamed-s-todo-seq3",
+                "renamed-s-todo",
+            ],
+        ),
+        ("j-rsvshapb", "engineering", &[]),
+        ("j-rsvshapc", "renamed-x-old", &[]),
+    ];
+    for (id, want_key, want_status_keys) in cases {
+        let project_id =
+            ProjectId::from_str(id).with_context(|| format!("parse project id '{id}'"))?;
+        let fetched = store
+            .get_project(&project_id, false)
+            .await
+            .with_context(|| {
+                format!("SqliteStore::get_project({id}) post-reserve-hydra-id-shape")
+            })?;
+        let ApiProject { key, statuses, .. } = &fetched.item;
+        let expected_key =
+            ProjectKey::try_new(*want_key).expect("expected key passes new validator");
+        if key != &expected_key {
+            bail!("{id}: expected key={want_key:?}; got {key:?}");
+        }
+        if statuses.len() != want_status_keys.len() {
+            bail!(
+                "{id}: expected {} statuses; got {}",
+                want_status_keys.len(),
+                statuses.len()
+            );
+        }
+        for (got, want_key_str) in statuses.iter().zip(want_status_keys.iter()) {
+            let want_key = StatusKey::try_new(*want_key_str)
+                .expect("expected status key passes new validator");
+            if got.key != want_key {
+                bail!(
+                    "{id}: status key mismatch: expected {want_key_str:?}; got {:?}",
+                    got.key
+                );
+            }
+        }
+    }
+
+    let listed = store
+        .list_projects(false)
+        .await
+        .context("SqliteStore::list_projects(false) post-reserve-hydra-id-shape")?;
+    let want: &[(&str, &str)] = &[
+        ("j-rsvshapa", "renamed-j-foo"),
+        ("j-rsvshapb", "engineering"),
+        ("j-rsvshapc", "renamed-x-old"),
+    ];
+    for (id, want_key) in want {
+        let row = listed
+            .iter()
+            .find(|(pid, _)| pid.as_ref() == *id)
+            .with_context(|| format!("list_projects: missing project {id}"))?;
+        if row.1.item.key.as_str() != *want_key {
+            bail!(
+                "list_projects({id}).key: expected {want_key:?}; got {:?}",
+                row.1.item.key
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn reserve_hydra_id_shape_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // Re-execute the migration body verbatim. The reserved-shape
+    // WHERE clauses match nothing post-rewrite, so the body's plan
+    // tables stay empty, the UPDATEs touch no rows, and the audit
+    // SELECTs print zero lines. Re-assert the expected post-rewrite
+    // key set to confirm.
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260615000000_reserve_hydra_id_shape_in_keys.sql"),
+    )
+    .context("read sqlite reserve_hydra_id_shape migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply sqlite reserve_hydra_id_shape migration body")?;
+    reserve_hydra_id_shape_rewrites_project_keys(pool).await?;
+    reserve_hydra_id_shape_rewrites_status_keys(pool).await?;
+    reserve_hydra_id_shape_no_reserved_shape_remains(pool).await?;
+    Ok(())
 }

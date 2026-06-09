@@ -16,7 +16,7 @@ statuses:
   # Triage / landing zone. No `on_enter`, no `prompt_path`: the issue sits
   # here until a human or automation moves it forward, and no agent session
   # is spawned on arrival.
-  - key: inbox                # status slug; lowercase letters, digits, `-`, ≤64 chars (see hydra-common `define_key_newtype!`).
+  - key: inbox                # status slug; lowercase letters, digits, `-`, ≤64 chars; cannot match the `[a-z]-…` shape reserved for HydraIds (see hydra-common `define_key_newtype!`).
     label: Inbox              # human-readable label shown in the UI.
     color: "#607d8b"          # CSS-style `#RRGGBB` hex color for the status chip.
     unblocks_parents: false   # When true, a child entering this status no longer counts as "blocking" its parent's readiness.
