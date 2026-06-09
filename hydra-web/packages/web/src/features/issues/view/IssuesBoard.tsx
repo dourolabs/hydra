@@ -24,11 +24,13 @@ import {
 import { Avatar, Icons, TypeChip } from "@hydra/ui";
 import type {
   IssueSummaryRecord,
+  ListIssuesResponse,
   ListProjectsResponse,
   Project,
   ProjectId,
   ProjectRecord,
   StatusDefinition,
+  StatusKey,
 } from "@hydra/api";
 import {
   principalAvatarKind,
@@ -124,6 +126,27 @@ function sortProjectsByPriority(list: ProjectRecord[]): ProjectRecord[] {
     .slice()
     .sort((a, b) => a.project.priority - b.project.priority);
 }
+
+// Custom dataTransfer MIME for issue-card drags. Picked up by the column
+// drop handler to disambiguate from arbitrary OS-level drags (file drops,
+// text selections, etc.) so neither side preventDefaults the wrong drop.
+const ISSUE_CARD_DRAG_MIME = "application/x.hydra-issue-card";
+
+interface IssueDragPayload {
+  issueId: string;
+  sourceProjectId: string;
+  sourceStatusKey: string;
+}
+
+interface IssueDropTarget {
+  projectId: string;
+  statusKey: string;
+}
+
+type IssueDropHandler = (
+  payload: IssueDragPayload,
+  target: IssueDropTarget,
+) => void;
 
 export function IssuesBoard({
   baseFilters,
@@ -326,6 +349,159 @@ export function IssuesBoard({
     },
   });
 
+  // Cross-column / cross-project issue-card drag. The mutation fetches the
+  // full Issue (so the truncated `IssueSummary` description / progress
+  // doesn't clobber the server-side body) and persists `status` +
+  // `project_id` via the existing update-issue endpoint.
+  const moveIssue = useMutation({
+    mutationFn: async ({
+      issueId,
+      targetProjectId,
+      targetStatusKey,
+    }: {
+      issueId: string;
+      sourceProjectId: string;
+      sourceStatusKey: string;
+      targetProjectId: string;
+      targetStatusKey: StatusKey;
+    }) => {
+      const record = await apiClient.getIssue(issueId);
+      return apiClient.updateIssue(issueId, {
+        issue: {
+          ...record.issue,
+          status: targetStatusKey,
+          project_id: targetProjectId,
+        },
+        session_id: null,
+      });
+    },
+    onMutate: async ({
+      issueId,
+      sourceProjectId,
+      sourceStatusKey,
+      targetProjectId,
+      targetStatusKey,
+    }) => {
+      await queryClient.cancelQueries({ queryKey: ["paginatedIssues"] });
+
+      const all = queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["paginatedIssues"] });
+
+      // Locate the source record so the optimistic insert into the target
+      // cell carries the same summary fields as the rendered card.
+      let sourceRecord: IssueSummaryRecord | undefined;
+      for (const q of all) {
+        const data = q.state.data as ListIssuesResponse[] | undefined;
+        if (!data) continue;
+        for (const page of data) {
+          const found = page.issues.find((r) => r.issue_id === issueId);
+          if (found) {
+            sourceRecord = found;
+            break;
+          }
+        }
+        if (sourceRecord) break;
+      }
+
+      const snapshots: Array<{
+        key: readonly unknown[];
+        data: unknown;
+      }> = [];
+
+      if (!sourceRecord) {
+        return { snapshots };
+      }
+
+      const updatedRecord: IssueSummaryRecord = {
+        ...sourceRecord,
+        issue: {
+          ...sourceRecord.issue,
+          project_id: targetProjectId,
+          status: { ...sourceRecord.issue.status, key: targetStatusKey },
+        },
+      };
+
+      for (const q of all) {
+        const key = q.queryKey;
+        const filters = (key as readonly unknown[])[1] as
+          | (IssueFilters & { project_id?: string; status?: string })
+          | undefined;
+        if (!filters || typeof filters !== "object") continue;
+        const data = q.state.data as ListIssuesResponse[] | undefined;
+        if (!data) continue;
+        const matchesSource =
+          filters.project_id === sourceProjectId &&
+          filters.status === sourceStatusKey;
+        const matchesTarget =
+          filters.project_id === targetProjectId &&
+          filters.status === targetStatusKey;
+        if (matchesSource) {
+          snapshots.push({ key, data });
+          const next = data.map((p) => ({
+            ...p,
+            issues: p.issues.filter((r) => r.issue_id !== issueId),
+          }));
+          queryClient.setQueryData(key, next);
+        } else if (matchesTarget) {
+          snapshots.push({ key, data });
+          // Dedupe before prepending in case the issue is somehow already
+          // in the target cell's cache (e.g. an SSE invalidate raced us).
+          const dedup = data.map((p) => ({
+            ...p,
+            issues: p.issues.filter((r) => r.issue_id !== issueId),
+          }));
+          const next =
+            dedup.length === 0
+              ? [{ issues: [updatedRecord], next_cursor: null }]
+              : [
+                  {
+                    ...dedup[0],
+                    issues: [updatedRecord, ...dedup[0].issues],
+                  },
+                  ...dedup.slice(1),
+                ];
+          queryClient.setQueryData(key, next);
+        }
+      }
+
+      return { snapshots };
+    },
+    onError: (err, _vars, context) => {
+      if (context) {
+        for (const s of context.snapshots) {
+          queryClient.setQueryData(s.key, s.data);
+        }
+      }
+      addToast(
+        err instanceof Error ? err.message : "Failed to move issue",
+        "error",
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+    },
+  });
+
+  const handleIssueDrop = useCallback<IssueDropHandler>(
+    (payload, target) => {
+      if (
+        payload.sourceProjectId === target.projectId &&
+        payload.sourceStatusKey === target.statusKey
+      ) {
+        return;
+      }
+      moveIssue.mutate({
+        issueId: payload.issueId,
+        sourceProjectId: payload.sourceProjectId,
+        sourceStatusKey: payload.sourceStatusKey,
+        targetProjectId: target.projectId,
+        targetStatusKey: target.statusKey,
+      });
+    },
+    [moveIssue],
+  );
+
   const projectSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -377,6 +553,7 @@ export function IssuesBoard({
       onGearClick: handleGearClick,
       onAddStatus: setNewStatusProjectId,
       onAddIssue: handleAddIssueClick,
+      onIssueDrop: handleIssueDrop,
     };
     return allowProjectReorder ? (
       <SortableProjectSection key={project.project_id} {...sectionProps} />
@@ -496,6 +673,7 @@ interface ProjectSectionProps {
   ) => void;
   onAddStatus: (projectId: string) => void;
   onAddIssue: (projectId: string, statusKey: string) => void;
+  onIssueDrop: IssueDropHandler;
 }
 
 interface SortableSectionHandleProps {
@@ -573,6 +751,7 @@ function ProjectSection({
   onGearClick,
   onAddStatus,
   onAddIssue,
+  onIssueDrop,
   sortableSetNodeRef,
   sortableStyle,
   sortableIsDragging,
@@ -662,6 +841,7 @@ function ProjectSection({
         onCardClick={onCardClick}
         onGearClick={onGearClick}
         onAddIssue={onAddIssue}
+        onIssueDrop={onIssueDrop}
       />
     );
   });
@@ -766,6 +946,7 @@ interface BoardColumnProps {
     cell: BoardCellQuery | undefined,
   ) => void;
   onAddIssue: (projectId: string, statusKey: string) => void;
+  onIssueDrop: IssueDropHandler;
 }
 
 interface SortableHandleProps {
@@ -817,6 +998,7 @@ function BoardColumn({
   onCardClick,
   onGearClick,
   onAddIssue,
+  onIssueDrop,
   setNodeRef,
   style,
   isDragging,
@@ -828,12 +1010,37 @@ function BoardColumn({
   const isInteractive = status.interactive === true;
   const colClasses = [styles.col];
   if (isDragging) colClasses.push(styles.colDragging);
+
+  const handleColumnDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer.types.includes(ISSUE_CARD_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleColumnDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const raw = e.dataTransfer.getData(ISSUE_CARD_DRAG_MIME);
+    if (!raw) return;
+    e.preventDefault();
+    let payload: IssueDragPayload;
+    try {
+      payload = JSON.parse(raw) as IssueDragPayload;
+    } catch {
+      return;
+    }
+    onIssueDrop(payload, {
+      projectId: project.project_id,
+      statusKey: status.key,
+    });
+  };
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={colClasses.join(" ")}
       data-testid={`board-col-${project.key}-${status.key}`}
+      onDragOver={handleColumnDragOver}
+      onDrop={handleColumnDrop}
     >
       <div
         className={
@@ -908,11 +1115,28 @@ function BoardColumn({
           const children = childStatusMap.get(id);
           const pct = progressFraction(children);
 
+          const handleCardDragStart = (
+            e: React.DragEvent<HTMLDivElement>,
+          ) => {
+            const payload: IssueDragPayload = {
+              issueId: id,
+              sourceProjectId: project.project_id,
+              sourceStatusKey: status.key,
+            };
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData(
+              ISSUE_CARD_DRAG_MIME,
+              JSON.stringify(payload),
+            );
+          };
           return (
             <div
               key={id}
               className={styles.card}
               onClick={() => onCardClick(id)}
+              draggable
+              onDragStart={handleCardDragStart}
+              data-testid={`board-card-${id}`}
             >
               {issue.type && issue.type !== "unknown" && (
                 <div className={styles.cardHead}>
