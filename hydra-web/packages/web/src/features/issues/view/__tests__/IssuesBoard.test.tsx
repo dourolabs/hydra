@@ -1324,6 +1324,94 @@ describe("IssuesBoard issue-card drag-and-drop", () => {
     expect(mockAddToast).toHaveBeenCalledWith("boom", "error");
   });
 
+  // Regression: the table-view `usePaginatedIssues` hook is a
+  // `useInfiniteQuery` whose `data` is `{ pages, pageParams }`, sharing the
+  // `["paginatedIssues", …]` prefix with the board cells. The optimistic
+  // cache walk must skip those entries — iterating their data as an array
+  // throws `data is not iterable` and the mutation never fires.
+  it("ignores cached infinite-query entries that share the paginatedIssues prefix", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+
+    // Seed the table-view (2-element key) entry FIRST so it precedes the
+    // board-cell entries in the cache iteration order — this is the order
+    // the source-record search loop would naturally encounter when a user
+    // visits the issues page (table is the default layout) and then
+    // switches to board.
+    const tableKey = ["paginatedIssues", {}] as const;
+    client.setQueryData(tableKey, {
+      pages: [{ issues: [rec], next_cursor: null }],
+      pageParams: [undefined],
+    });
+
+    // Board-cell (4-element key with "depth") entries.
+    const sourceKey = [
+      "paginatedIssues",
+      { project_id: "j-eng", status: "open" },
+      "depth",
+      1,
+    ] as const;
+    const targetKey = [
+      "paginatedIssues",
+      { project_id: "j-eng", status: "in-progress" },
+      "depth",
+      1,
+    ] as const;
+    client.setQueryData<ListIssuesResponse[]>(sourceKey, [
+      { issues: [rec], next_cursor: null },
+    ]);
+    client.setQueryData<ListIssuesResponse[]>(targetKey, [
+      { issues: [], next_cursor: null },
+    ]);
+
+    mockGetIssue.mockResolvedValueOnce({
+      issue_id: "i-aaa",
+      version: BigInt(1),
+      timestamp: "t",
+      issue: makeFullIssue("j-eng", "open"),
+      creation_time: "t",
+    });
+
+    renderBoard(client);
+    const card = screen.getByTestId("board-card-i-aaa");
+    const target = screen.getByTestId("board-col-engineering-in-progress");
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(card, { dataTransfer: dt });
+    fireEvent.dragOver(target, { dataTransfer: dt });
+    fireEvent.drop(target, { dataTransfer: dt });
+
+    // Mutation fires and the board cells are optimistically updated.
+    await waitFor(() => expect(mockUpdateIssue).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const src = client.getQueryData<ListIssuesResponse[]>(sourceKey);
+      const tgt = client.getQueryData<ListIssuesResponse[]>(targetKey);
+      expect(src?.[0].issues.map((r) => r.issue_id)).toEqual([]);
+      expect(tgt?.[0].issues.map((r) => r.issue_id)).toEqual(["i-aaa"]);
+    });
+    // No error toast — the infinite-query entry was skipped, not crashed on.
+    expect(mockAddToast).not.toHaveBeenCalled();
+    // The infinite-query entry itself was left untouched by the optimistic
+    // surgery (invalidation in onSettled is what refreshes it).
+    const tableSnapshot = client.getQueryData<{
+      pages: ListIssuesResponse[];
+      pageParams: unknown[];
+    }>(tableKey);
+    expect(tableSnapshot?.pages[0].issues.map((r) => r.issue_id)).toEqual([
+      "i-aaa",
+    ]);
+  });
+
   it("ignores drops that didn't originate from an issue card", () => {
     const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
     cellsByProject = new Map([

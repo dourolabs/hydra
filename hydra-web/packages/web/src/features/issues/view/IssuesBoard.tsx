@@ -384,9 +384,19 @@ export function IssuesBoard({
     }) => {
       await queryClient.cancelQueries({ queryKey: ["paginatedIssues"] });
 
+      // The `["paginatedIssues", …]` prefix is shared with the table-view
+      // `usePaginatedIssues` hook, which is a `useInfiniteQuery` whose `data`
+      // is `{ pages, pageParams }` — not the per-cell `ListIssuesResponse[]`
+      // produced by `useBoardIssuesByProject`. Filter to the board-cell key
+      // shape (`[…, filters, "depth", depth]`) so the optimistic surgery
+      // never tries to iterate the infinite-query payload.
       const all = queryClient
         .getQueryCache()
-        .findAll({ queryKey: ["paginatedIssues"] });
+        .findAll({ queryKey: ["paginatedIssues"] })
+        .filter((q) => {
+          const key = q.queryKey as readonly unknown[];
+          return key.length === 4 && key[2] === "depth";
+        });
 
       // Locate the source record so the optimistic insert into the target
       // cell carries the same summary fields as the rendered card.
