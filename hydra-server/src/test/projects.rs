@@ -531,6 +531,176 @@ async fn rename_project_status_to_existing_returns_400() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn project_routes_accept_key_alongside_id() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let create_resp: UpsertProjectResponse = client
+        .post(format!("{base}/v1/projects"))
+        .json(&UpsertProjectRequest::new(sample_project()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let project_id = create_resp.project_id.clone();
+
+    // GET by key
+    let fetched_by_key: ProjectRecord = client
+        .get(format!("{base}/v1/projects/engineering"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(fetched_by_key.project_id, project_id);
+    assert_eq!(fetched_by_key.project.key.as_str(), "engineering");
+
+    // GET /statuses by key
+    let statuses_by_key: ProjectStatusesResponse = client
+        .get(format!("{base}/v1/projects/engineering/statuses"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let keys: Vec<&str> = statuses_by_key
+        .statuses
+        .iter()
+        .map(|s| s.key.as_str())
+        .collect();
+    assert_eq!(keys, ["backlog", "in-development", "in-review", "released"]);
+
+    // POST /statuses/rename by key — round-trips and re-reads via id.
+    let rename_resp: UpsertProjectResponse = client
+        .post(format!("{base}/v1/projects/engineering/statuses/rename"))
+        .json(&RenameStatusRequest::new(
+            StatusKey::try_new("backlog").unwrap(),
+            StatusKey::try_new("triage").unwrap(),
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(rename_resp.project_id, project_id);
+
+    let statuses: ProjectStatusesResponse = client
+        .get(format!("{base}/v1/projects/{project_id}/statuses"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let keys: Vec<&str> = statuses.statuses.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(keys, ["triage", "in-development", "in-review", "released"]);
+
+    // PUT by key — full-replace updates the project.
+    let mut updated = sample_project();
+    updated.name = "Engineering v3".to_string();
+    let update_resp: UpsertProjectResponse = client
+        .put(format!("{base}/v1/projects/engineering"))
+        .json(&UpsertProjectRequest::new(updated))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(update_resp.project_id, project_id);
+    let after_update: ProjectRecord = client
+        .get(format!("{base}/v1/projects/engineering"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(after_update.project.name, "Engineering v3");
+
+    // DELETE by key.
+    let delete_resp: UpsertProjectResponse = client
+        .delete(format!("{base}/v1/projects/engineering"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(delete_resp.project_id, project_id);
+
+    // After deletion the key no longer resolves — verifies the key path
+    // routes through the same 404 surface as the id path.
+    let resp = client
+        .get(format!("{base}/v1/projects/engineering"))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn project_routes_404_quotes_key_in_body() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let resp = client
+        .get(format!("{base}/v1/projects/not-a-real-project"))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
+    let body = resp.text().await?;
+    assert!(
+        body.contains("not-a-real-project"),
+        "404 body must quote the missing key; got: {body}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn project_routes_404_for_id_shape_with_no_match() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    // id-shaped path that doesn't correspond to any real project.
+    let resp = client
+        .get(format!("{base}/v1/projects/j-zzzzzz"))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
+    let body = resp.text().await?;
+    assert!(
+        body.contains("j-zzzzzz"),
+        "404 body must quote the missing id; got: {body}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_project_statuses_resolves_via_key() -> anyhow::Result<()> {
+    // The seeded default project's key is literally `"default"`, so the
+    // `default` path segment must resolve through the key branch and
+    // return the legacy status list.
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let statuses: ProjectStatusesResponse = client
+        .get(format!("{base}/v1/projects/default/statuses"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let keys: Vec<&str> = statuses.statuses.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(keys, ["open", "in-progress", "closed", "dropped", "failed"]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn duplicate_project_key_returns_400() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();

@@ -407,41 +407,80 @@ impl ProjectStatusesResponse {
     }
 }
 
-/// Path segment for `GET /v1/projects/:project_id_or_default/statuses`. Either
-/// a real [`ProjectId`] or the literal `"default"` token addressing the
-/// seeded default project.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProjectIdOrDefault {
-    Default,
+/// A project-addressing path segment. Accepted by every external
+/// project surface (HTTP routes + CLI) — server-side code resolves
+/// down to a [`ProjectId`] before invoking the store layer.
+///
+/// `FromStr` / `Deserialize` dispatch on
+/// [`HydraId::is_id_or_reserved_shape`]: matching shapes parse as
+/// [`ProjectId`] (the existing `j-…` form), anything else parses as a
+/// [`ProjectKey`]. The construction-time enforcement that `ProjectKey`
+/// cannot share a HydraId shape (see [`KeyError::ReservedHydraIdShape`])
+/// guarantees the two forms are mutually exclusive by construction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub enum ProjectRef {
     Id(ProjectId),
+    Key(ProjectKey),
 }
 
-/// The wire token for the default project in `GET /v1/projects/:x/statuses`.
-pub const DEFAULT_PROJECT_TOKEN: &str = "default";
-
-impl fmt::Display for ProjectIdOrDefault {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl ProjectRef {
+    /// Returns the wire string for this reference — the same value
+    /// `Display` produces.
+    pub fn as_str(&self) -> &str {
         match self {
-            Self::Default => f.write_str(DEFAULT_PROJECT_TOKEN),
-            Self::Id(id) => fmt::Display::fmt(id, f),
+            Self::Id(id) => id.as_ref(),
+            Self::Key(key) => key.as_str(),
         }
     }
 }
 
-impl FromStr for ProjectIdOrDefault {
+impl fmt::Display for ProjectRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Id(id) => fmt::Display::fmt(id, f),
+            Self::Key(key) => fmt::Display::fmt(key, f),
+        }
+    }
+}
+
+impl FromStr for ProjectRef {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == DEFAULT_PROJECT_TOKEN {
-            return Ok(Self::Default);
+        if HydraId::is_id_or_reserved_shape(s) {
+            ProjectId::try_from(s.to_string())
+                .map(Self::Id)
+                .map_err(|err| format!("'{s}' is not a valid project id: {err}"))
+        } else {
+            ProjectKey::try_new(s)
+                .map(Self::Key)
+                .map_err(|err| format!("'{s}' is not a valid project key: {err}"))
         }
-        ProjectId::try_from(s.to_string())
-            .map(Self::Id)
-            .map_err(|err| {
-                format!(
-                    "'{s}' is neither a valid project id nor the literal `{DEFAULT_PROJECT_TOKEN}`: {err}"
-                )
-            })
+    }
+}
+
+impl<'de> Deserialize<'de> for ProjectRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        ProjectRef::from_str(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl From<ProjectId> for ProjectRef {
+    fn from(id: ProjectId) -> Self {
+        Self::Id(id)
+    }
+}
+
+impl From<ProjectKey> for ProjectRef {
+    fn from(key: ProjectKey) -> Self {
+        Self::Key(key)
     }
 }
 
@@ -770,6 +809,74 @@ mod tests {
         proj.priority = 1000.0;
         let value = serde_json::to_value(&proj).unwrap();
         assert_eq!(value.get("priority"), Some(&serde_json::json!(1000.0)));
+    }
+
+    #[test]
+    fn project_ref_parses_id_shape() {
+        let parsed: ProjectRef = "j-abcdef".parse().unwrap();
+        match parsed {
+            ProjectRef::Id(id) => assert_eq!(id.as_ref(), "j-abcdef"),
+            ProjectRef::Key(_) => panic!("expected ProjectRef::Id"),
+        }
+    }
+
+    #[test]
+    fn project_ref_parses_key_shape() {
+        let parsed: ProjectRef = "engineering".parse().unwrap();
+        match parsed {
+            ProjectRef::Key(key) => assert_eq!(key.as_str(), "engineering"),
+            ProjectRef::Id(_) => panic!("expected ProjectRef::Key"),
+        }
+    }
+
+    #[test]
+    fn project_ref_parses_default_token_as_key() {
+        // `"default"` no longer needs a dedicated variant: it is a valid
+        // ProjectKey and resolves through the key-lookup path to the
+        // seeded default project's id.
+        let parsed: ProjectRef = "default".parse().unwrap();
+        match parsed {
+            ProjectRef::Key(key) => assert_eq!(key.as_str(), "default"),
+            ProjectRef::Id(_) => panic!("expected ProjectRef::Key for \"default\""),
+        }
+    }
+
+    #[test]
+    fn project_ref_rejects_invalid_key_shape() {
+        // Uppercase characters aren't a key, and `Foo` isn't id-shaped,
+        // so the parse fails at the key validation step.
+        let err = "Foo".parse::<ProjectRef>().unwrap_err();
+        assert!(err.contains("not a valid project key"), "got: {err}");
+    }
+
+    #[test]
+    fn project_ref_rejects_id_shape_with_invalid_suffix() {
+        // `j-` has the id shape (single letter + `-`) but is too short
+        // to be a valid `ProjectId`. The dispatcher routes to the id
+        // branch so the error surfaces as an id error, not a key error.
+        let err = "j-".parse::<ProjectRef>().unwrap_err();
+        assert!(err.contains("not a valid project id"), "got: {err}");
+    }
+
+    #[test]
+    fn project_ref_deserialize_dispatches_to_key() {
+        let parsed: ProjectRef = serde_json::from_str("\"engineering\"").unwrap();
+        assert!(matches!(parsed, ProjectRef::Key(_)));
+    }
+
+    #[test]
+    fn project_ref_deserialize_dispatches_to_id() {
+        let parsed: ProjectRef = serde_json::from_str("\"j-abcdef\"").unwrap();
+        assert!(matches!(parsed, ProjectRef::Id(_)));
+    }
+
+    #[test]
+    fn project_ref_display_round_trips_both_shapes() {
+        let id_ref: ProjectRef = ProjectId::try_from("j-abcdef".to_string()).unwrap().into();
+        assert_eq!(id_ref.to_string(), "j-abcdef");
+
+        let key_ref: ProjectRef = ProjectKey::try_new("engineering").unwrap().into();
+        assert_eq!(key_ref.to_string(), "engineering");
     }
 
     #[test]

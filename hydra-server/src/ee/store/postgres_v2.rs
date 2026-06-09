@@ -4005,6 +4005,68 @@ impl ReadOnlyStore for PostgresStoreV2 {
         ))
     }
 
+    async fn get_project_by_key(
+        &self,
+        key: &ProjectKey,
+        include_deleted: bool,
+    ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
+        // The partial unique index `projects_key_unique_active_idx`
+        // covers `(is_latest, key) WHERE is_latest AND NOT deleted`.
+        // The happy path hits it directly; the `include_deleted` branch
+        // widens the filter to scan tombstoned rows too.
+        let mut sql = format!(
+            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
+             (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
+             p.prompt_path, p.priority, p.next_status_sequence \
+             FROM {TABLE_PROJECTS} p \
+             WHERE p.is_latest = true AND p.key = $1"
+        );
+        if !include_deleted {
+            sql.push_str(" AND p.deleted = false");
+        }
+        sql.push_str(" ORDER BY p.deleted ASC, p.created_at DESC LIMIT 1");
+
+        let row = sqlx::query_as::<_, ProjectRow>(&sql)
+            .bind(key.as_str())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let statuses = Self::fetch_statuses_for_project(&self.pool, &row.id).await?;
+        let project = Self::row_to_project(&row, statuses)?;
+
+        let version = VersionNumber::try_from(row.version_number).map_err(|_| {
+            StoreError::Internal(format!(
+                "invalid version number stored for project '{}'",
+                row.id
+            ))
+        })?;
+        let project_id: ProjectId = row
+            .id
+            .parse()
+            .map_err(|e| StoreError::Internal(format!("invalid project id stored: {e}")))?;
+        let creation_time = row.creation_time.unwrap_or(row.created_at);
+        let actor_ref = row
+            .actor
+            .map(serde_json::from_value::<ActorRef>)
+            .transpose()
+            .map_err(|e| StoreError::Internal(format!("failed to parse actor JSON: {e}")))?;
+
+        Ok(Some((
+            project_id,
+            Versioned::with_optional_actor(
+                project,
+                version,
+                row.created_at,
+                actor_ref,
+                creation_time,
+            ),
+        )))
+    }
+
     async fn list_projects(
         &self,
         include_deleted: bool,
@@ -10543,6 +10605,67 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let result = store.get_project(&ProjectId::new(), false).await;
         assert!(matches!(result, Err(StoreError::ProjectNotFound(_))));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_project_by_key_round_trip_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::ProjectKey;
+        let store = PostgresStoreV2::new(pool);
+        let (id, _) = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let key = ProjectKey::try_new("engineering").unwrap();
+        let (resolved_id, versioned) = store
+            .get_project_by_key(&key, false)
+            .await
+            .unwrap()
+            .expect("active key lookup should hit");
+        assert_eq!(resolved_id, id);
+        assert_eq!(versioned.item.name, "Engineering");
+        assert_eq!(versioned.item.statuses.len(), 2);
+
+        let missing = ProjectKey::try_new("does-not-exist").unwrap();
+        assert!(
+            store
+                .get_project_by_key(&missing, false)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn get_project_by_key_respects_include_deleted_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::ProjectKey;
+        let store = PostgresStoreV2::new(pool);
+        let (id, _) = store
+            .add_project(sample_project_pg(), &ActorRef::test())
+            .await
+            .unwrap();
+        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+
+        let key = ProjectKey::try_new("engineering").unwrap();
+
+        assert!(
+            store
+                .get_project_by_key(&key, false)
+                .await
+                .unwrap()
+                .is_none(),
+            "soft-deleted key must not surface when include_deleted: false"
+        );
+
+        let (resolved_id, versioned) = store
+            .get_project_by_key(&key, true)
+            .await
+            .unwrap()
+            .expect("soft-deleted key must surface when include_deleted: true");
+        assert_eq!(resolved_id, id);
+        assert!(versioned.item.deleted);
     }
 
     #[sqlx::test(migrations = "./migrations")]

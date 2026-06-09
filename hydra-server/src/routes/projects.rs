@@ -3,6 +3,13 @@
 //! Exposes project CRUD plus the per-project status set (the wire shape
 //! every issue's `resolved_status` is computed against). Auth + error
 //! mapping follow the existing `/v1/labels` pattern.
+//!
+//! Every per-project URL accepts either a [`ProjectId`] (`j-…`) or a
+//! [`ProjectKey`](hydra_common::api::v1::projects::ProjectKey) (slug),
+//! discriminated at the path-extractor by [`ProjectRef`]. Resolution
+//! happens at the route boundary via [`resolve_project_ref`] — domain
+//! and store calls below this layer continue to address projects
+//! exclusively by `ProjectId`.
 
 use crate::app::AppState;
 use crate::domain::actors::{Actor, ActorRef};
@@ -16,11 +23,42 @@ use hydra_common::ProjectId;
 use hydra_common::api::v1::{
     ApiError,
     projects::{
-        ListProjectsResponse, ProjectRecord, ProjectStatusesResponse, ProjectValidationError,
-        RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
+        ListProjectsResponse, ProjectRecord, ProjectRef, ProjectStatusesResponse,
+        ProjectValidationError, RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
     },
 };
 use tracing::{error, info};
+
+/// Resolve a path-segment [`ProjectRef`] to the concrete [`ProjectId`]
+/// the rest of the handler operates on. The id branch is a byte-level
+/// passthrough; the key branch hits the partial unique index
+/// `projects_key_unique_active_idx` via `get_project_by_key`.
+///
+/// `"key not found"` is mapped to a `404` whose body quotes the missing
+/// key — matching the existing id-shape 404 surface so callers see one
+/// consistent error contract regardless of which form they passed.
+async fn resolve_project_ref(
+    store: &dyn ReadOnlyStore,
+    project_ref: &ProjectRef,
+) -> Result<ProjectId, ApiError> {
+    match project_ref {
+        ProjectRef::Id(id) => Ok(id.clone()),
+        ProjectRef::Key(key) => {
+            let resolved = store.get_project_by_key(key, false).await.map_err(|err| {
+                error!(
+                    project_key = %key,
+                    error = %err,
+                    "project key lookup failed"
+                );
+                ApiError::internal(anyhow!("project store error: {err}"))
+            })?;
+            match resolved {
+                Some((project_id, _)) => Ok(project_id),
+                None => Err(ApiError::not_found(format!("project '{key}' not found"))),
+            }
+        }
+    }
+}
 
 /// POST /v1/projects — create a new project.
 pub async fn create_project(
@@ -67,15 +105,16 @@ pub async fn list_projects(
     Ok(Json(ListProjectsResponse::new(projects)))
 }
 
-/// GET /v1/projects/:project_id — fetch a single project.
+/// GET /v1/projects/:project_ref — fetch a single project.
 pub async fn get_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Path(project_id): Path<ProjectId>,
+    Path(project_ref): Path<ProjectRef>,
 ) -> Result<Json<ProjectRecord>, ApiError> {
+    let store: &dyn ReadOnlyStore = state.store.as_ref();
+    let project_id = resolve_project_ref(store, &project_ref).await?;
     info!(actor = %actor.name(), project_id = %project_id, "get_project invoked");
 
-    let store: &dyn ReadOnlyStore = state.store.as_ref();
     let versioned = store
         .get_project(&project_id, false)
         .await
@@ -95,13 +134,14 @@ pub async fn get_project(
     )))
 }
 
-/// PUT /v1/projects/:project_id — full-replace update (version-bumping).
+/// PUT /v1/projects/:project_ref — full-replace update (version-bumping).
 pub async fn update_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Path(project_id): Path<ProjectId>,
+    Path(project_ref): Path<ProjectRef>,
     Json(payload): Json<UpsertProjectRequest>,
 ) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
     info!(actor = %actor.name(), project_id = %project_id, "update_project invoked");
     let project = payload.project;
     project.validate().map_err(map_validation_error)?;
@@ -126,12 +166,13 @@ pub async fn update_project(
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
-/// DELETE /v1/projects/:project_id — soft-delete a project.
+/// DELETE /v1/projects/:project_ref — soft-delete a project.
 pub async fn delete_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Path(project_id): Path<ProjectId>,
+    Path(project_ref): Path<ProjectRef>,
 ) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
     info!(actor = %actor.name(), project_id = %project_id, "delete_project invoked");
 
     let actor_ref = ActorRef::from(&actor);
@@ -149,7 +190,7 @@ pub async fn delete_project(
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
-/// POST /v1/projects/:project_id/statuses/rename — rename a status key in place.
+/// POST /v1/projects/:project_ref/statuses/rename — rename a status key in place.
 ///
 /// Preserves the status's `(project_id, sequence)` identity, so any
 /// issues referencing the old key continue to resolve through the same
@@ -158,9 +199,10 @@ pub async fn delete_project(
 pub async fn rename_project_status(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Path(project_id): Path<ProjectId>,
+    Path(project_ref): Path<ProjectRef>,
     Json(payload): Json<RenameStatusRequest>,
 ) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
     info!(
         actor = %actor.name(),
         project_id = %project_id,
@@ -187,15 +229,16 @@ pub async fn rename_project_status(
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
-/// GET /v1/projects/:project_id/statuses — return the project's status list.
+/// GET /v1/projects/:project_ref/statuses — return the project's status list.
 pub async fn get_project_statuses(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
-    Path(project_id): Path<ProjectId>,
+    Path(project_ref): Path<ProjectRef>,
 ) -> Result<Json<ProjectStatusesResponse>, ApiError> {
+    let store: &dyn ReadOnlyStore = state.store.as_ref();
+    let project_id = resolve_project_ref(store, &project_ref).await?;
     info!(actor = %actor.name(), project_id = %project_id, "get_project_statuses invoked");
 
-    let store: &dyn ReadOnlyStore = state.store.as_ref();
     let versioned = store
         .get_project(&project_id, false)
         .await

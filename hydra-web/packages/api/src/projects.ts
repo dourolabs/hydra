@@ -9,7 +9,10 @@
 
 import type { Project } from "./generated/Project";
 import type { ProjectId } from "./generated/ProjectId";
+import type { ProjectRef } from "./generated/ProjectRef";
 import type { StatusDefinition } from "./generated/StatusDefinition";
+
+export type { ProjectRef };
 
 /**
  * Seeded default project id. Must stay byte-identical to

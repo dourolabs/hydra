@@ -7,7 +7,7 @@ use httpmock::prelude::*;
 use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
     api::v1::projects::{
-        Project, ProjectIdOrDefault, ProjectKey, StatusDefinition, StatusKey, UpsertProjectRequest,
+        Project, ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
     },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
     issues::{
@@ -640,21 +640,21 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let created_project = client.create_project(&upsert_project).await?;
     assert_eq!(created_project.project_id, project_id);
 
-    let updated_project = client.update_project(&project_id, &upsert_project).await?;
+    let project_ref = ProjectRef::Id(project_id.clone());
+
+    let updated_project = client.update_project(&project_ref, &upsert_project).await?;
     assert_eq!(updated_project.project_id, project_id);
 
-    let fetched_project = client.get_project(&project_id).await?;
+    let fetched_project = client.get_project(&project_ref).await?;
     assert_eq!(fetched_project.project_id, project_id);
 
     let listed_projects = client.list_projects().await?;
     assert_eq!(listed_projects.projects.len(), 1);
 
-    let statuses = client
-        .get_project_statuses(&ProjectIdOrDefault::Id(project_id.clone()))
-        .await?;
+    let statuses = client.get_project_statuses(&project_ref).await?;
     assert_eq!(statuses.statuses.len(), 1);
 
-    let deleted_project = client.delete_project(&project_id).await?;
+    let deleted_project = client.delete_project(&project_ref).await?;
     assert_eq!(deleted_project.project_id, project_id);
 
     // Documents
