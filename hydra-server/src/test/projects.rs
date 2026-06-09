@@ -431,7 +431,7 @@ async fn rename_project_status_route_round_trip() -> anyhow::Result<()> {
         .await?;
     let project_id = create_resp.project_id.clone();
 
-    let mut issue: hydra_common::api::v1::issues::Issue = Issue::new(
+    let mut input: hydra_common::api::v1::issues::IssueInput = Issue::new(
         IssueType::Task,
         "backlog item".to_string(),
         "test".to_string(),
@@ -448,10 +448,10 @@ async fn rename_project_status_route_round_trip() -> anyhow::Result<()> {
         None,
     )
     .into();
-    issue.project_id = project_id.clone();
+    input.project_id = project_id.clone();
     let created: UpsertIssueResponse = client
         .post(format!("{base}/v1/issues"))
-        .json(&UpsertIssueRequest::new(issue.into(), None))
+        .json(&UpsertIssueRequest::new(input, None))
         .send()
         .await?
         .error_for_status()?
@@ -494,7 +494,7 @@ async fn rename_project_status_route_round_trip() -> anyhow::Result<()> {
         .json()
         .await?;
     assert_eq!(
-        fetched.issue.status.as_str(),
+        fetched.issue.status.key.as_str(),
         "triage",
         "existing issue must read back with the renamed key"
     );
