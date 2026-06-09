@@ -9,20 +9,42 @@ import { createIssueRoutes } from "./issues.js";
 import { createPatchRoutes } from "./patches.js";
 import { createSessionRoutes } from "./sessions.js";
 import { createDocumentRoutes } from "./documents.js";
-import type { Issue, Patch, Session, Document, Status } from "@hydra/api";
+import type {
+  Issue,
+  Patch,
+  Session,
+  Document,
+  Status,
+  StatusDefinition,
+  StatusKey,
+} from "@hydra/api";
 
-function makeIssue(overrides: Partial<Issue> = {}): Issue {
+function placeholderStatus(key: StatusKey): StatusDefinition {
+  return {
+    key,
+    label: "",
+    color: "#888888",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+  };
+}
+
+function makeIssue(
+  overrides: Omit<Partial<Issue>, "status"> & { status?: StatusKey } = {},
+): Issue {
+  const { status, ...rest } = overrides;
   return {
     type: "task",
     title: "",
     description: "Default issue description",
     creator: "testuser",
-    status: "open",
+    status: placeholderStatus(status ?? "open"),
     project_id: "j-defaul",
     progress: "",
     dependencies: [],
     patches: [],
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -99,9 +121,11 @@ describe("Issue list filtering", () => {
     store.create("issues", "i-3", makeIssue({ status: "open" }), "issue");
     const data = await listIssues({ status: "open" });
     expect(data.issues).toHaveLength(2);
-    expect(data.issues.every((i: { issue: { status: string } }) => i.issue.status === "open")).toBe(
-      true,
-    );
+    expect(
+      data.issues.every(
+        (i: { issue: { status: { key: string } } }) => i.issue.status.key === "open",
+      ),
+    ).toBe(true);
   });
 
   it("filters by assignee", async () => {
@@ -206,7 +230,9 @@ describe("Issue list filtering", () => {
     const data = await listIssues({ status: "inbox" });
     expect(data.issues).toHaveLength(2);
     expect(
-      data.issues.every((i: { issue: { status: string } }) => i.issue.status === "inbox"),
+      data.issues.every(
+        (i: { issue: { status: { key: string } } }) => i.issue.status.key === "inbox",
+      ),
     ).toBe(true);
   });
 
@@ -218,7 +244,7 @@ describe("Issue list filtering", () => {
     const data = await listIssues({ status: "open,in-progress" });
     expect(data.issues).toHaveLength(2);
     const statuses = data.issues
-      .map((i: { issue: { status: string } }) => i.issue.status)
+      .map((i: { issue: { status: { key: string } } }) => i.issue.status.key)
       .sort();
     expect(statuses).toEqual(["in-progress", "open"]);
   });

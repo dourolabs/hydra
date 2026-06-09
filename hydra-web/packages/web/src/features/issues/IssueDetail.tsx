@@ -32,12 +32,7 @@ function BlockedItemLink({ issueId }: { issueId: string }) {
   const title = record?.issue.title || issueId;
   return (
     <span className={styles.blockedItem}>
-      {record && (
-        <StatusChip
-          definition={record.issue.resolved_status}
-          fallbackKey={record.issue.status}
-        />
-      )}
+      {record && <StatusChip status={record.issue.status} />}
       <Link to={`/issues/${issueId}`} className={styles.blockedLink}>
         {title}
       </Link>
@@ -117,7 +112,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <div className={styles.mainInner}>
           <div className={styles.titleRow}>
             <span className={styles.titleId}>{issueId}</span>
-            <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
+            <StatusChip status={issue.status} />
             {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
             <div className={styles.headActions}>
               {isRunning && <span className={styles.sessionTimer}>{durationText}</span>}

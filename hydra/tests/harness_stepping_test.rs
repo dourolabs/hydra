@@ -1,7 +1,9 @@
 mod harness;
 
 use anyhow::Result;
-use hydra_common::issues::{Issue, IssueStatus, IssueType, SessionSettings, UpsertIssueRequest};
+use hydra_common::issues::{
+    IssueInput, IssueStatus, IssueType, SessionSettings, UpsertIssueRequest,
+};
 use hydra_common::principal::Principal;
 use hydra_common::sessions::SearchSessionsQuery;
 use hydra_common::users::Username;
@@ -20,7 +22,7 @@ async fn create_spawnable_issue(
     let mut job_settings = SessionSettings::default();
     job_settings.repo_name = Some(repo);
 
-    let issue = Issue::new(
+    let input = IssueInput::new(
         IssueType::Task,
         "Test Title".to_string(),
         description.to_string(),
@@ -43,7 +45,7 @@ async fn create_spawnable_issue(
         None,
         None,
     );
-    let request = UpsertIssueRequest::new(issue.into(), None);
+    let request = UpsertIssueRequest::new(input, None);
     let response = harness
         .default_user()
         .client()

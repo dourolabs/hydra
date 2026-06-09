@@ -66,12 +66,12 @@ function isActive(s: SessionSummaryRecord): boolean {
 export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: IssueRailRowProps) {
   const navigate = useNavigate();
   const issue = record.issue;
-  const resolved = issue.resolved_status;
+  const resolved = issue.status;
   const hasActive = sessions?.some(isActive) ?? false;
   // Resolved status drives the dot color directly. Active sessions
   // override to the "in-progress" tone class even on terminal statuses
   // (a closed issue with a running session reads as still in flight).
-  const dotColor = hasActive ? undefined : resolved?.color;
+  const dotColor = hasActive ? undefined : resolved.color;
   const dotTone: BadgeStatus = hasActive ? "in-progress" : "open";
   const pct = progressFraction(childStatuses);
   const hasActiveChild = !!childStatuses?.some((c) => c.hasActiveTask);
@@ -114,7 +114,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
               data-testid={`rail-row-project-chip-${record.issue_id}`}
             />
           )}
-          {resolved?.label && (
+          {resolved.label && (
             <span className={styles.statusLabel}>{resolved.label}</span>
           )}
           {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}

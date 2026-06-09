@@ -94,7 +94,7 @@ describe("Issues", () => {
     const fetched = await client.getIssue(issueId);
     expect(fetched.issue_id).toBe(issueId);
     expect(fetched.issue.description).toBe("Contract test issue");
-    expect(fetched.issue.status).toBe("open");
+    expect(fetched.issue.status.key).toBe("open");
     expect(fetched.issue.assignee).toEqual({ User: { name: "alice" } });
     expect(fetched.creation_time).toBeTruthy();
 
@@ -102,7 +102,7 @@ describe("Issues", () => {
     const list = await client.listIssues();
     const found = list.issues.find((i) => i.issue_id === issueId);
     expect(found).toBeDefined();
-    expect(found!.issue.status).toBe("open");
+    expect(found!.issue.status.key).toBe("open");
 
     // Update
     const updatedPayload: UpsertIssueRequest = {
@@ -119,7 +119,7 @@ describe("Issues", () => {
 
     // Get after update
     const refetched = await client.getIssue(issueId);
-    expect(refetched.issue.status).toBe("in-progress");
+    expect(refetched.issue.status.key).toBe("in-progress");
     expect(refetched.issue.progress).toBe("Working on it");
 
     // Delete
@@ -153,12 +153,12 @@ describe("Issues", () => {
     // List all versions
     const versions = await client.listIssueVersions(issueId);
     expect(versions.versions.length).toBeGreaterThanOrEqual(2);
-    expect(versions.versions[0].issue.status).toBe("open");
-    expect(versions.versions[1].issue.status).toBe("closed");
+    expect(versions.versions[0].issue.status.key).toBe("open");
+    expect(versions.versions[1].issue.status.key).toBe("closed");
 
     // Get specific version
     const v1 = await client.getIssueVersion(issueId, 1);
-    expect(v1.issue.status).toBe("open");
+    expect(v1.issue.status.key).toBe("open");
   });
 
   it("list filtering by status", async () => {
@@ -170,12 +170,12 @@ describe("Issues", () => {
 
     const openIssues = await client.listIssues({ status: "open" });
     for (const issue of openIssues.issues) {
-      expect(issue.issue.status).toBe("open");
+      expect(issue.issue.status.key).toBe("open");
     }
 
     const closedIssues = await client.listIssues({ status: "closed" });
     for (const issue of closedIssues.issues) {
-      expect(issue.issue.status).toBe("closed");
+      expect(issue.issue.status.key).toBe("closed");
     }
   });
 });
@@ -1162,7 +1162,7 @@ describe("BFF proxy rewrite", () => {
     expect(resp.status).toBe(200);
     const body = await resp.json();
     for (const issue of body.issues) {
-      expect(issue.issue.status).toBe("open");
+      expect(issue.issue.status.key).toBe("open");
     }
   });
 
@@ -1345,8 +1345,7 @@ describe("Seed data", () => {
     // status badge without a second round trip.
     const inReview = await client.getIssue("i-seed00018");
     expect(inReview.issue.project_id).toBe("j-engv2");
-    expect(inReview.issue.status).toBe("in-review");
-    expect(inReview.issue.resolved_status).toMatchObject({
+    expect(inReview.issue.status).toMatchObject({
       key: "in-review",
       label: "In review",
       color: "#8b5cf6",
@@ -1357,8 +1356,7 @@ describe("Seed data", () => {
 
     const inDevelopment = await client.getIssue("i-seed00012");
     expect(inDevelopment.issue.project_id).toBe("j-engv2");
-    expect(inDevelopment.issue.status).toBe("in-development");
-    expect(inDevelopment.issue.resolved_status?.key).toBe("in-development");
+    expect(inDevelopment.issue.status.key).toBe("in-development");
 
     // Spread coverage: at least four distinct status keys across the
     // project_id-tagged seed issues, so the issues list renders varied chips.
@@ -1367,7 +1365,7 @@ describe("Seed data", () => {
     for (const item of list.issues) {
       const summary = await client.getIssue(item.issue_id);
       if (summary.issue.project_id === "j-engv2") {
-        taggedKeys.add(summary.issue.status);
+        taggedKeys.add(summary.issue.status.key);
       }
     }
     expect(taggedKeys.size).toBeGreaterThanOrEqual(4);
@@ -1381,7 +1379,6 @@ describe("Seed data", () => {
     // shape is gone — every issue now carries a real project id.
     const seed1 = await client.getIssue("i-seed00001");
     expect(seed1.issue.project_id).toBe("j-defaul");
-    expect(seed1.issue.resolved_status ?? null).toBeNull();
   });
 
   it("seed documents include all four prompt levels", async () => {

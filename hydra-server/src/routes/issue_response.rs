@@ -1,11 +1,11 @@
-//! Build [`api_issues::Issue`] responses with the server-computed
-//! `resolved_status` field populated.
+//! Build [`api::issues::Issue`] responses with the server-resolved
+//! [`StatusDefinition`] inlined on the `status` field.
 //!
 //! Centralizing the resolution here (rather than duplicating it per
 //! route) keeps the wire contract uniform: every `Issue` returned over
-//! the wire carries its `resolved_status` (label, color, flags)
+//! the wire carries its full status definition (label, color, flags)
 //! inline, so the frontend can render badges without a second round-trip
-//! and without re-implementing `(project_id, status) → StatusDefinition`
+//! and without re-implementing `(project_id, status_key) → StatusDefinition`
 //! resolution on the client.
 
 use crate::app::AppState;
@@ -15,8 +15,9 @@ use anyhow::anyhow;
 use hydra_common::api::v1::{self as api, ApiError};
 use tracing::error;
 
-/// Convert a domain [`Issue`] into an [`api::issues::Issue`] response,
-/// populating `resolved_status` via [`AppState::resolve_status`].
+/// Convert a domain [`DomainIssue`] into an [`api::issues::Issue`]
+/// response, resolving its status against the project via
+/// [`AppState::resolve_status`].
 pub async fn build_issue_response(
     state: &AppState,
     issue: DomainIssue,
@@ -25,26 +26,34 @@ pub async fn build_issue_response(
         .resolve_status(&issue)
         .await
         .map_err(map_resolve_error)?;
-    let mut api_issue: api::issues::Issue = issue.into();
-    api_issue.resolved_status = Some(resolved);
-    Ok(api_issue)
+    Ok(api::issues::Issue::new(
+        issue.issue_type.into(),
+        issue.title,
+        issue.description,
+        issue.creator.into(),
+        issue.progress,
+        resolved,
+        issue.project_id,
+        issue.assignee,
+        Some(issue.session_settings.into()),
+        issue.dependencies.into_iter().map(Into::into).collect(),
+        issue.patches,
+        issue.deleted,
+        issue.form,
+        issue.form_response,
+        issue.feedback,
+    ))
 }
 
 /// Same as [`build_issue_response`] but operates on a [`DomainIssue`]
-/// by reference, returning the constructed API issue. Useful for list
-/// endpoints that need to keep the original around for summary mapping.
+/// by reference, returning the constructed API summary. Useful for list
+/// endpoints that need to keep the original around for other mapping.
 pub async fn build_issue_summary_response(
     state: &AppState,
     issue: &DomainIssue,
 ) -> Result<api::issues::IssueSummary, ApiError> {
-    let resolved = state
-        .resolve_status(issue)
-        .await
-        .map_err(map_resolve_error)?;
-    let api_issue: api::issues::Issue = issue.clone().into();
-    let mut summary = api::issues::IssueSummary::from(&api_issue);
-    summary.resolved_status = Some(resolved);
-    Ok(summary)
+    let api_issue = build_issue_response(state, issue.clone()).await?;
+    Ok(api::issues::IssueSummary::from(&api_issue))
 }
 
 fn map_resolve_error(err: ResolveStatusError) -> ApiError {

@@ -20,7 +20,7 @@ use hydra_common::{
             ConnectedEventData, EntityEventData, EventsQuery, HeartbeatEventData,
             LAST_EVENT_ID_HEADER, ResyncEventData, SessionLogEventData, SseEventType,
         },
-        issues::{IssueSummary, IssueSummaryRecord},
+        issues::IssueSummaryRecord,
         patches::PatchVersionRecord,
         sessions::SessionVersionRecord,
     },
@@ -322,8 +322,9 @@ async fn serialize_entity(
 ) -> Option<serde_json::Value> {
     let value = match payload.as_ref() {
         MutationPayload::Issue { new, .. } => {
-            let api_issue: hydra_common::api::v1::issues::Issue = new.clone().into();
-            let summary = IssueSummary::from(&api_issue);
+            let summary = crate::routes::issue_response::build_issue_summary_response(state, new)
+                .await
+                .ok()?;
             let creation_time = if version == 1 {
                 timestamp
             } else {
@@ -911,7 +912,16 @@ mod tests {
             issue_obj.get("description").unwrap().as_str().unwrap(),
             "sse entity test"
         );
-        assert_eq!(issue_obj.get("status").unwrap().as_str().unwrap(), "open");
+        assert_eq!(
+            issue_obj
+                .get("status")
+                .unwrap()
+                .get("key")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "open"
+        );
     }
 
     #[tokio::test]
@@ -948,7 +958,13 @@ mod tests {
             "updated description"
         );
         assert_eq!(
-            issue_obj.get("status").unwrap().as_str().unwrap(),
+            issue_obj
+                .get("status")
+                .unwrap()
+                .get("key")
+                .unwrap()
+                .as_str()
+                .unwrap(),
             "in-progress"
         );
     }

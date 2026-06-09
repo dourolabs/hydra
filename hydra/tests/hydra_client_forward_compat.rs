@@ -11,7 +11,8 @@ use hydra_common::{
     },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
     issues::{
-        Issue, IssueDependencyType, IssueStatus, IssueType, SearchIssuesQuery, UpsertIssueRequest,
+        IssueDependencyType, IssueInput, IssueStatus, IssueType, SearchIssuesQuery,
+        UpsertIssueRequest,
     },
     login::LoginRequest,
     logs::LogsQuery,
@@ -531,7 +532,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     assert!(matches!(bundle, Bundle::Unknown));
 
     // Issues
-    let issue = Issue::new(
+    let input = IssueInput::new(
         IssueType::Bug,
         "Test Title".to_string(),
         "desc".to_string(),
@@ -550,7 +551,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         None,
         None,
     );
-    let issue_request = UpsertIssueRequest::new(issue.into(), None);
+    let issue_request = UpsertIssueRequest::new(input, None);
 
     let created_issue = client.create_issue(&issue_request).await?;
     assert_eq!(created_issue.issue_id, issue_id);
@@ -562,7 +563,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     // PR 3 wire change: status is a newtyped string (`StatusKey`). The
     // forward-compat payload's `"on-hold"` value now round-trips
     // verbatim instead of being collapsed into the `Unknown` enum variant.
-    assert_eq!(fetched_issue.issue.status.as_str(), "on-hold");
+    assert_eq!(fetched_issue.issue.status.key.as_str(), "on-hold");
     assert!(matches!(fetched_issue.issue.issue_type, IssueType::Unknown));
     assert!(matches!(
         fetched_issue
@@ -804,7 +805,15 @@ fn forward_issue_json(issue_id: &IssueId, dependency_id: &IssueId, patch_id: &Pa
             "description": "future issue",
             "creator": "alice",
             "progress": "blocked",
-            "status": "on-hold",
+            "status": {
+                "key": "on-hold",
+                "label": "On hold",
+                "color": "#abcdef",
+                "unblocks_parents": false,
+                "unblocks_dependents": false,
+                "cascades_to_children": false,
+                "future": "status-field"
+            },
             "project_id": "j-defaul",
             "assignee": {"Agent": {"name": "robot"}},
             "dependencies": [

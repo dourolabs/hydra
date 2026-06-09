@@ -506,6 +506,7 @@ pub(crate) fn write_view_fields(writer: &mut impl Write, view: &Value) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::issues::placeholder_status_def;
     use chrono::TimeZone;
     use hydra_common::api::v1::conversations::{
         Conversation as ApiConversation, ConversationStatus,
@@ -527,7 +528,7 @@ mod tests {
             String::new(),
             Username::from("creator"),
             String::new(),
-            status.into(),
+            placeholder_status_def(status.into()),
             ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),

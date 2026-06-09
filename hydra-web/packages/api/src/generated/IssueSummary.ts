@@ -6,7 +6,6 @@ import type { PatchId } from "./PatchId";
 import type { Principal } from "./Principal";
 import type { ProjectId } from "./ProjectId";
 import type { StatusDefinition } from "./StatusDefinition";
-import type { StatusKey } from "./StatusKey";
 import type { Username } from "./Username";
 
 /**
@@ -21,13 +20,12 @@ export type IssueSummary = {
   title: string;
   description: string;
   creator: Username;
-  status: StatusKey;
-  project_id: ProjectId;
   /**
    * Server-computed status definition; populated by the route handler
-   * before serialization (omitted on requests).
+   * before serialization. The bare key lives at `status.key`.
    */
-  resolved_status?: StatusDefinition | null;
+  status: StatusDefinition;
+  project_id: ProjectId;
   assignee?: Principal | null;
   progress: string;
   dependencies: Array<IssueDependency>;

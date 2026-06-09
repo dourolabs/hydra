@@ -9,6 +9,7 @@ import type {
   StatusDefinition,
 } from "@hydra/api";
 import type { ChildStatus } from "../../../dashboard/computeIssueProgress";
+import { makeStatusDef } from "../../../../test-utils/statusDef";
 
 // --- Hook mocks ---
 
@@ -122,8 +123,9 @@ function makeProject(
 
 function makeIssue(
   id: string,
-  overrides: Partial<IssueSummaryRecord["issue"]> = {},
+  overrides: Omit<Partial<IssueSummaryRecord["issue"]>, "status"> & { status?: string } = {},
 ): IssueSummaryRecord {
+  const { status, ...rest } = overrides;
   return {
     issue_id: id,
     version: 1n,
@@ -134,14 +136,14 @@ function makeIssue(
       title: `Issue ${id}`,
       description: "",
       creator: "alice",
-      status: "open",
+      status: makeStatusDef(status ?? "open"),
       project_id: "j-defaul",
       assignee: null,
       progress: "",
       dependencies: [],
       patches: [],
       labels: [],
-      ...overrides,
+      ...rest,
     },
   };
 }

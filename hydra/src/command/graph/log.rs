@@ -435,6 +435,7 @@ fn actor_display(actor: &Option<ActorRef>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::issues::placeholder_status_def;
     use chrono::TimeZone;
     use hydra_common::actor_ref::{ActorId, ActorRef};
     use hydra_common::api::v1::conversations::{
@@ -458,7 +459,7 @@ mod tests {
             String::new(),
             Username::from("creator"),
             String::new(),
-            status.into(),
+            placeholder_status_def(status.into()),
             ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),

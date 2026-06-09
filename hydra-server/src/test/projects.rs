@@ -239,7 +239,7 @@ async fn issue_with_project_id_and_custom_status_succeeds() -> anyhow::Result<()
         .await?;
     let project_id = create_resp.project_id;
 
-    let mut issue: hydra_common::api::v1::issues::Issue = Issue::new(
+    let mut input: hydra_common::api::v1::issues::IssueInput = Issue::new(
         IssueType::Task,
         "Custom project status".to_string(),
         "test".to_string(),
@@ -256,19 +256,19 @@ async fn issue_with_project_id_and_custom_status_succeeds() -> anyhow::Result<()
         None,
     )
     .into();
-    issue.project_id = project_id.clone();
+    input.project_id = project_id.clone();
 
     let created: UpsertIssueResponse = client
         .post(format!("{base}/v1/issues"))
-        .json(&UpsertIssueRequest::new(issue.into(), None))
+        .json(&UpsertIssueRequest::new(input, None))
         .send()
         .await?
         .error_for_status()?
         .json()
         .await?;
 
-    // Read back: resolved_status must reflect the project's `backlog`
-    // StatusDefinition, not a default-project entry.
+    // Read back: the response's status field carries the project's
+    // `backlog` StatusDefinition inline (label, color, flags).
     let fetched: IssueVersionRecord = client
         .get(format!("{base}/v1/issues/{}", created.issue_id))
         .send()
@@ -276,14 +276,9 @@ async fn issue_with_project_id_and_custom_status_succeeds() -> anyhow::Result<()
         .error_for_status()?
         .json()
         .await?;
-    assert_eq!(fetched.issue.status.as_str(), "backlog");
-    assert_eq!(fetched.issue.project_id, project_id);
-    let resolved = fetched
-        .issue
-        .resolved_status
-        .as_ref()
-        .expect("resolved_status must be populated on every response");
+    let resolved = &fetched.issue.status;
     assert_eq!(resolved.key.as_str(), "backlog");
+    assert_eq!(fetched.issue.project_id, project_id);
     assert_eq!(resolved.label, "Backlog");
     assert!(!resolved.unblocks_parents);
 
@@ -306,7 +301,7 @@ async fn issue_with_unknown_status_key_returns_400() -> anyhow::Result<()> {
         .await?;
     let project_id = create_resp.project_id;
 
-    let mut issue: hydra_common::api::v1::issues::Issue = Issue::new(
+    let mut input: hydra_common::api::v1::issues::IssueInput = Issue::new(
         IssueType::Task,
         "Bogus status".to_string(),
         "test".to_string(),
@@ -323,11 +318,11 @@ async fn issue_with_unknown_status_key_returns_400() -> anyhow::Result<()> {
         None,
     )
     .into();
-    issue.project_id = project_id;
+    input.project_id = project_id;
 
     let resp = client
         .post(format!("{base}/v1/issues"))
-        .json(&UpsertIssueRequest::new(issue.into(), None))
+        .json(&UpsertIssueRequest::new(input, None))
         .send()
         .await?;
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
@@ -349,7 +344,7 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
         IssueStatus::Dropped,
         IssueStatus::Failed,
     ] {
-        let issue: hydra_common::api::v1::issues::Issue = Issue::new(
+        let input: hydra_common::api::v1::issues::IssueInput = Issue::new(
             IssueType::Task,
             format!("Issue with status {status:?}"),
             "test".to_string(),
@@ -369,7 +364,7 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
 
         let created: UpsertIssueResponse = client
             .post(format!("{base}/v1/issues"))
-            .json(&UpsertIssueRequest::new(issue.into(), None))
+            .json(&UpsertIssueRequest::new(input, None))
             .send()
             .await?
             .error_for_status()?
@@ -384,17 +379,13 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
             .json()
             .await?;
         // Issues created via `Issue::new` now persist the seeded
-        // default-project id rather than NULL; status resolution still
-        // returns one of the five legacy statuses.
+        // default-project id rather than NULL; the response carries the
+        // server-resolved `StatusDefinition` inline on `status`.
         assert_eq!(
             fetched.issue.project_id.as_ref(),
             crate::domain::projects::DEFAULT_PROJECT_ID_STR
         );
-        let resolved = fetched
-            .issue
-            .resolved_status
-            .as_ref()
-            .expect("resolved_status must be populated for default-project issues");
+        let resolved = &fetched.issue.status;
         assert_eq!(resolved.key.as_str(), status.as_str());
 
         // Assert the seeded default-project flag values:

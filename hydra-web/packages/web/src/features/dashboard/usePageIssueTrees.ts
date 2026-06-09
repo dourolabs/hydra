@@ -140,7 +140,7 @@ function buildIssueTrees(set: CollectedSet): {
       if (!child) continue;
       childStatuses.push({
         id: childId,
-        status: child.issue.status,
+        status: child.issue.status.key,
         hasActiveTask: isActive(childId),
         // Phase 4b: assignee is now a typed `Principal`. The
         // "assigned to user" check compares against the

@@ -58,9 +58,7 @@ function makeIssueRecord(opts?: {
       title: "Add login button",
       description: "Add a login button to the homepage",
       creator: "alice",
-      status: "open",
-      project_id: opts?.projectId ?? "j-defaul",
-      resolved_status: {
+      status: {
         key: "open",
         label: opts?.statusLabel ?? "Open",
         color: "#3498db",
@@ -68,6 +66,7 @@ function makeIssueRecord(opts?: {
         unblocks_dependents: false,
         cascades_to_children: false,
       },
+      project_id: opts?.projectId ?? "j-defaul",
       assignee: null,
       progress: "",
       dependencies: [],

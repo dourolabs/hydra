@@ -113,16 +113,8 @@ vi.mock("../../projects/useProjects", () => ({
 }));
 
 vi.mock("../../projects/StatusChip", () => ({
-  StatusChip: ({
-    definition,
-    fallbackKey,
-  }: {
-    definition?: { key: string; label: string } | null;
-    fallbackKey?: string | null;
-  }) => (
-    <span data-testid={`status-chip-${definition?.key ?? fallbackKey ?? "empty"}`}>
-      {definition?.label ?? fallbackKey ?? ""}
-    </span>
+  StatusChip: ({ status }: { status: { key: string; label: string } }) => (
+    <span data-testid={`status-chip-${status.key}`}>{status.label}</span>
   ),
 }));
 

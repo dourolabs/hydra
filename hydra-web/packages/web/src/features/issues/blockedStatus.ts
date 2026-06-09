@@ -40,11 +40,11 @@ export function computeBlockedStatus<
       continue;
     }
 
-    if (target.issue.status === "closed") continue;
+    if (target.issue.status.key === "closed") continue;
 
     blockedBy.push(dep.issue_id);
 
-    if (HARD_BLOCKED_STATUSES.has(target.issue.status)) {
+    if (HARD_BLOCKED_STATUSES.has(target.issue.status.key)) {
       hardBlockedBy.push(dep.issue_id);
     }
   }

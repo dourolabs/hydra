@@ -189,6 +189,7 @@ fn render_pretty(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::issues::placeholder_status_def;
     use chrono::{DateTime, TimeZone, Utc};
     use hydra_common::api::v1::issues::{Issue, IssueStatus, IssueType, SessionSettings};
     use hydra_common::api::v1::patches::{Patch, PatchStatus, PatchVersionRecord};
@@ -208,7 +209,7 @@ mod tests {
             "long-form description body".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            placeholder_status_def(IssueStatus::Open.into()),
             ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),

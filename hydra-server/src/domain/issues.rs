@@ -451,17 +451,19 @@ impl From<SessionSettings> for api::issues::SessionSettings {
 
 impl From<api::issues::Issue> for Issue {
     fn from(value: api::issues::Issue) -> Self {
-        // `resolved_status` is a server-computed read-only response field
-        // derived from `(project_id, status)` at read time; dropping it on
-        // the way in preserves the "never stored" invariant so a stale
-        // client echo can't shadow the authoritative project definition.
+        // Response-only `status` carries the full `StatusDefinition`;
+        // the domain stores only the key, which is the canonical at-rest
+        // identifier (project keys are unique within a project). Dropping
+        // the resolved fields on the way in preserves the "never stored"
+        // invariant so a stale client echo can't shadow the authoritative
+        // project definition.
         Self {
             issue_type: value.issue_type.into(),
             title: value.title,
             description: value.description,
             creator: value.creator.into(),
             progress: value.progress,
-            status: value.status,
+            status: value.status.key,
             project_id: value.project_id,
             assignee: value.assignee,
             session_settings: value.session_settings.into(),
@@ -499,13 +501,7 @@ impl From<api::issues::IssueInput> for Issue {
 
 impl From<Issue> for api::issues::IssueInput {
     fn from(value: Issue) -> Self {
-        api::issues::Issue::from(value).into()
-    }
-}
-
-impl From<Issue> for api::issues::Issue {
-    fn from(value: Issue) -> Self {
-        api::issues::Issue::new(
+        api::issues::IssueInput::new(
             value.issue_type.into(),
             value.title,
             value.description,

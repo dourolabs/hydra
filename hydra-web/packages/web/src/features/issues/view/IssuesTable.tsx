@@ -278,7 +278,7 @@ function StatusPipRow({ section }: { section: ProjectSection }) {
   if (section.statuses.length === 0) return null;
   const counts = new Map<string, number>();
   for (const rec of section.issues) {
-    const key = rec.issue.status;
+    const key = rec.issue.status.key;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return (
@@ -347,10 +347,7 @@ function IssueDataRow({
       </td>
       <td className={styles.colStatus}>
         <div className={styles.statusCell}>
-          <StatusChip
-            definition={issue.resolved_status}
-            fallbackKey={issue.status}
-          />
+          <StatusChip status={issue.status} />
           {blocked && (
             <span
               className={styles.blockedTag}

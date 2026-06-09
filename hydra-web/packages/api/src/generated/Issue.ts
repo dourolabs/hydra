@@ -8,7 +8,6 @@ import type { Principal } from "./Principal";
 import type { ProjectId } from "./ProjectId";
 import type { SessionSettings } from "./SessionSettings";
 import type { StatusDefinition } from "./StatusDefinition";
-import type { StatusKey } from "./StatusKey";
 import type { Username } from "./Username";
 
 export type Issue = {
@@ -18,12 +17,14 @@ export type Issue = {
   creator: Username;
   progress: string;
   /**
-   * Status key for this issue; resolved against its project's status
-   * list. The wire string is unchanged for the five legacy statuses
-   * (`open`, `in-progress`, `closed`, `dropped`, `failed`) so older
-   * clients keep working.
+   * Server-computed status definition (display props + dependency
+   * flags), resolved against the issue's project's status list at
+   * response time. The bare key lives at `status.key`. Never stored:
+   * always populated on responses so frontends don't need a second
+   * round trip to render the status chip. Create / update requests
+   * go through [`IssueInput`], which carries only [`StatusKey`].
    */
-  status: StatusKey;
+  status: StatusDefinition;
   /**
    * Project this issue belongs to. Always present on the wire — the
    * `seed_default_project` migration backfilled every legacy NULL row
@@ -32,15 +33,6 @@ export type Issue = {
    * DB layer.
    */
   project_id: ProjectId;
-  /**
-   * Server-computed status definition (display props + dependency
-   * flags) for [`Self::status`], resolved against the issue's project's
-   * status list. Never stored: always populated on responses so
-   * frontends don't need a second round trip to render the status
-   * chip, and omitted on create / update requests (the server
-   * re-resolves from [`Self::status`]).
-   */
-  resolved_status?: StatusDefinition | null;
   assignee?: Principal | null;
   session_settings?: SessionSettings;
   dependencies: Array<IssueDependency>;

@@ -116,7 +116,7 @@ pub fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObj
             let issue: Issue = decode_activity_object(entry)?;
             Ok(ActivityObjectSummary::Issue {
                 issue_type: issue.issue_type,
-                status: issue.status,
+                status: issue.status.key,
                 description: issue.description,
                 assignee: issue.assignee,
                 progress: issue.progress,

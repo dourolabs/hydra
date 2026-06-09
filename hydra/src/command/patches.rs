@@ -1503,6 +1503,7 @@ async fn changelog_patch(
 mod tests {
     use super::*;
     use crate::client::HydraClient;
+    use crate::command::issues::placeholder_status_def;
     use crate::command::output::ResolvedOutputFormat;
     use crate::git::{
         commit_changes as git_commit_changes, configure_repo as git_configure_repo,
@@ -1711,7 +1712,7 @@ mod tests {
                 "test issue".to_string(),
                 Username::from("test-creator"),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2843,7 +2844,7 @@ mod tests {
                 "test".to_string(),
                 Username::from("creator"),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some({

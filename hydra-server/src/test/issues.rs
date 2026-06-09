@@ -597,18 +597,33 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    // List responses populate `resolved_status` from the default project;
-    // mirror that on the expected summary so structural equality holds.
+    // List responses inline the server-resolved `StatusDefinition` on
+    // `status`; mirror that on the expected summary so structural
+    // equality holds.
     let expected_summary = |issue: Issue| {
-        let api_issue = hydra_common::api::v1::issues::Issue::from(issue);
-        let mut summary = hydra_common::api::v1::issues::IssueSummary::from(&api_issue);
-        summary.resolved_status = Some(
-            crate::domain::projects::default_project_seed()
-                .find_status(&api_issue.status)
-                .expect("default project covers all legacy IssueStatus values")
-                .clone(),
+        let input: hydra_common::api::v1::issues::IssueInput = issue.into();
+        let resolved = crate::domain::projects::default_project_seed()
+            .find_status(&input.status)
+            .expect("default project covers all legacy IssueStatus values")
+            .clone();
+        let api_issue = hydra_common::api::v1::issues::Issue::new(
+            input.issue_type,
+            input.title,
+            input.description,
+            input.creator,
+            input.progress,
+            resolved,
+            input.project_id,
+            input.assignee,
+            Some(input.session_settings),
+            input.dependencies,
+            input.patches,
+            input.deleted,
+            input.form,
+            input.form_response,
+            input.feedback,
         );
-        summary
+        hydra_common::api::v1::issues::IssueSummary::from(&api_issue)
     };
 
     assert_eq!(filtered_issues.issues.len(), 1);
@@ -1282,7 +1297,7 @@ async fn create_issue_with_form(
     base_url: &str,
     form: Form,
 ) -> anyhow::Result<IssueId> {
-    let mut api_issue: hydra_common::api::v1::issues::Issue = issue(
+    let mut input: hydra_common::api::v1::issues::IssueInput = issue(
         IssueType::Task,
         "issue with form",
         default_user(),
@@ -1293,11 +1308,11 @@ async fn create_issue_with_form(
         Vec::new(),
     )
     .into();
-    api_issue.form = Some(form);
+    input.form = Some(form);
 
     let created: UpsertIssueResponse = client
         .post(format!("{base_url}/v1/issues"))
-        .json(&UpsertIssueRequest::new(api_issue.into(), None))
+        .json(&UpsertIssueRequest::new(input, None))
         .send()
         .await?
         .error_for_status()?
@@ -1344,7 +1359,7 @@ async fn submit_form_action_valid_submission() -> anyhow::Result<()> {
         .json()
         .await?;
     assert_eq!(
-        fetched.issue.status.as_str(),
+        fetched.issue.status.key.as_str(),
         hydra_common::api::v1::issues::IssueStatus::Closed.as_str()
     );
     // Form should still be present
@@ -1423,7 +1438,7 @@ async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::R
         .json()
         .await?;
     assert_eq!(
-        fetched.issue.status.as_str(),
+        fetched.issue.status.key.as_str(),
         hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
     );
     assert_eq!(
@@ -1529,7 +1544,7 @@ async fn submit_form_action_record_only_does_not_change_status() -> anyhow::Resu
         .json()
         .await?;
     assert_eq!(
-        fetched.issue.status.as_str(),
+        fetched.issue.status.key.as_str(),
         hydra_common::api::v1::issues::IssueStatus::Open.as_str()
     );
 
@@ -1768,7 +1783,7 @@ async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
     assert_eq!(resp.issue.feedback, Some("fix this".to_string()));
     // Status should remain InProgress (not terminal)
     assert_eq!(
-        resp.issue.status.as_str(),
+        resp.issue.status.key.as_str(),
         hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
     );
 
@@ -1821,7 +1836,7 @@ async fn submit_feedback_leaves_closed_status_unchanged() -> anyhow::Result<()> 
 
     assert_eq!(resp.issue.feedback, Some("please reopen".to_string()));
     assert_eq!(
-        resp.issue.status.as_str(),
+        resp.issue.status.key.as_str(),
         hydra_common::api::v1::issues::IssueStatus::Closed.as_str(),
         "closed issues stay closed when feedback is submitted"
     );
@@ -1872,7 +1887,7 @@ async fn submit_feedback_leaves_failed_status_unchanged() -> anyhow::Result<()> 
 
     assert_eq!(resp.issue.feedback, Some("try again".to_string()));
     assert_eq!(
-        resp.issue.status.as_str(),
+        resp.issue.status.key.as_str(),
         hydra_common::api::v1::issues::IssueStatus::Failed.as_str(),
         "failed issues stay failed when feedback is submitted"
     );

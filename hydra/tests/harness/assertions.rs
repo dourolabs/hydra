@@ -54,7 +54,7 @@ pub trait IssueAssertions {
 impl IssueAssertions for IssueVersionRecord {
     fn assert_status(&self, expected: IssueStatus) {
         assert_eq!(
-            self.issue.status.as_str(),
+            self.issue.status.key.as_str(),
             expected.as_str(),
             "issue {}: expected status {:?}, got {:?}",
             self.issue_id,
@@ -81,7 +81,7 @@ impl IssueAssertions for IssueVersionRecord {
 
         let matching = children.iter().find(|child| {
             child.issue.description.contains(desc_contains)
-                && child.issue.status.as_str() == status.as_str()
+                && child.issue.status.key.as_str() == status.as_str()
         });
 
         if matching.is_none() {
@@ -127,7 +127,7 @@ impl IssueAssertions for IssueVersionRecord {
 
         let matching = children.iter().find(|child| {
             child.issue.description.contains(desc_contains)
-                && child.issue.status.as_str() == status.as_str()
+                && child.issue.status.key.as_str() == status.as_str()
         });
 
         if matching.is_none() {
@@ -190,7 +190,7 @@ pub trait IssueSummaryAssertions {
 impl IssueSummaryAssertions for IssueSummaryRecord {
     fn assert_status(&self, expected: IssueStatus) {
         assert_eq!(
-            self.issue.status.as_str(),
+            self.issue.status.key.as_str(),
             expected.as_str(),
             "issue {}: expected status {:?}, got {:?}",
             self.issue_id,
@@ -217,7 +217,7 @@ impl IssueSummaryAssertions for IssueSummaryRecord {
 
         let matching = children.iter().find(|child| {
             child.issue.description.contains(desc_contains)
-                && child.issue.status.as_str() == status.as_str()
+                && child.issue.status.key.as_str() == status.as_str()
         });
 
         if matching.is_none() {
@@ -437,7 +437,7 @@ pub fn find_children_by_type_and_status<'a>(
         .iter()
         .filter(|i| {
             i.issue.issue_type == issue_type
-                && i.issue.status.as_str() == status.as_str()
+                && i.issue.status.key.as_str() == status.as_str()
                 && i.issue.dependencies.iter().any(|d| {
                     d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
                 })
@@ -500,7 +500,7 @@ pub fn find_summary_children_by_type_and_status<'a>(
         .iter()
         .filter(|i| {
             i.issue.issue_type == issue_type
-                && i.issue.status.as_str() == status.as_str()
+                && i.issue.status.key.as_str() == status.as_str()
                 && i.issue.dependencies.iter().any(|d| {
                     d.dependency_type == IssueDependencyType::ChildOf && d.issue_id == *parent_id
                 })

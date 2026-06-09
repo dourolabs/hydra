@@ -3,6 +3,9 @@ import type { Store } from "../store.js";
 import { generateId } from "../id.js";
 import type {
   Issue,
+  IssueInput,
+  StatusDefinition,
+  StatusKey,
   UpsertIssueRequest,
   UpsertIssueResponse,
   IssueVersionRecord,
@@ -12,6 +15,32 @@ import type {
   IssueSummary,
 } from "@hydra/api";
 import { getLabelsForObject, resolveLabelNames } from "./labels.js";
+
+/** Synthesize a [`StatusDefinition`] for a known key. The mock server
+ *  doesn't track per-project status lists, so it stamps placeholder
+ *  display props (empty label, neutral color). Real server responses
+ *  inline the project's authoritative `StatusDefinition`.
+ */
+function placeholderStatusDef(key: StatusKey): StatusDefinition {
+  return {
+    key,
+    label: "",
+    color: "#888888",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+  };
+}
+
+function inputToIssue(input: IssueInput): Issue {
+  const { status, ...rest } = input;
+  return {
+    ...rest,
+    status: placeholderStatusDef(status),
+    dependencies: input.dependencies ?? [],
+    patches: input.patches ?? [],
+  };
+}
 
 const COLLECTION = "issues";
 const SSE_PREFIX = "issue";
@@ -47,7 +76,6 @@ function toSummaryRecord(
     creator: issue.creator,
     status: issue.status,
     project_id: issue.project_id,
-    resolved_status: issue.resolved_status,
     assignee: issue.assignee,
     progress: (issue.progress ?? "").slice(0, 200),
     dependencies: issue.dependencies,
@@ -71,11 +99,7 @@ export function createIssueRoutes(store: Store): Hono {
   app.post("/v1/issues", async (c) => {
     const body = await c.req.json<UpsertIssueRequest>();
     const id = generateId("issue");
-    const issue: Issue = {
-      ...body.issue,
-      dependencies: body.issue.dependencies ?? [],
-      patches: body.issue.patches ?? [],
-    };
+    const issue: Issue = inputToIssue(body.issue);
     const entry = store.create<Issue>(COLLECTION, id, issue, SSE_PREFIX);
 
     // Resolve label_names: create missing labels and associate them with the issue
@@ -94,11 +118,7 @@ export function createIssueRoutes(store: Store): Hono {
   app.put("/v1/issues/:id", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<UpsertIssueRequest>();
-    const issue: Issue = {
-      ...body.issue,
-      dependencies: body.issue.dependencies ?? [],
-      patches: body.issue.patches ?? [],
-    };
+    const issue: Issue = inputToIssue(body.issue);
     const entry = store.update<Issue>(COLLECTION, id, issue, SSE_PREFIX);
     const resp: UpsertIssueResponse = {
       issue_id: id,
@@ -182,7 +202,7 @@ export function createIssueRoutes(store: Store): Hono {
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
       if (statuses.length > 0) {
-        filtered = filtered.filter(({ entry }) => statuses.includes(entry.data.status));
+        filtered = filtered.filter(({ entry }) => statuses.includes(entry.data.status.key));
       }
     }
     if (projectId) {

@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { issueTypeDisplayLabel } from "@hydra/ui";
 import type { Principal, IssueVersionRecord } from "@hydra/api";
 import { formatPrincipalPath } from "../principal/formatPrincipal";
-import { StatusChip } from "../projects/StatusChip";
 import { apiClient } from "../../api/client";
 import { ActivityTimeline } from "../activity/ActivityTimeline";
 import type { Change } from "../activity/types";
@@ -58,11 +57,11 @@ function diffIssueVersions(
   const prevIssue = prev.issue;
   const currIssue = curr.issue;
 
-  if (prevIssue.status !== currIssue.status) {
+  if (prevIssue.status.key !== currIssue.status.key) {
     changes.push({
       field: "status",
-      before: prevIssue.status,
-      after: currIssue.status,
+      before: prevIssue.status.key,
+      after: currIssue.status.key,
     });
   }
   if (!principalsEqual(prevIssue.assignee, currIssue.assignee)) {
@@ -156,13 +155,16 @@ function ProgressValue({ value }: { value: string }) {
 
 function IssueChangeEntry({ change }: { change: Change }) {
   if (change.field === "status" && change.before && change.after) {
+    // Activity log entries only carry the bare status key (the project's
+    // resolved `StatusDefinition` isn't included). Render the keys
+    // directly rather than synthesizing a chip without label/color.
     return (
       <div className={styles.change}>
         <span className={styles.changeLabel}>Status</span>
         <span className={styles.statusTransition}>
-          <StatusChip fallbackKey={change.before} />
+          {change.before}
           <span className={styles.arrow}>{"\u2192"}</span>
-          <StatusChip fallbackKey={change.after} />
+          {change.after}
         </span>
       </div>
     );
@@ -252,7 +254,7 @@ function CreationSubItems({ version }: { version: IssueVersionRecord }) {
       </span>
       <span className={styles.creationSubItem}>
         <span className={styles.creationSubItemLabel}>Status:</span>
-        {issue.status}
+        {issue.status.key}
       </span>
       <span className={styles.creationSubItem}>
         <span className={styles.creationSubItemLabel}>Assignee:</span>

@@ -75,16 +75,8 @@ vi.mock("../../../api/client", () => ({
 // so tests can assert which options the dropdown produced without pulling in
 // the StatusChip CSS module.
 vi.mock("../../projects/StatusChip", () => ({
-  StatusChip: ({
-    definition,
-    fallbackKey,
-  }: {
-    definition?: { key: string } | null;
-    fallbackKey?: string | null;
-  }) => (
-    <span data-testid={`status-chip-${definition?.key ?? fallbackKey ?? "empty"}`}>
-      {definition?.key ?? fallbackKey ?? ""}
-    </span>
+  StatusChip: ({ status }: { status: { key: string } }) => (
+    <span data-testid={`status-chip-${status.key}`}>{status.key}</span>
   ),
 }));
 

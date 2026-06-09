@@ -201,7 +201,7 @@ export function useBoardIssuesByProject(
       const deduped = dedupeIssues(rawAll);
       const visible = filteredOut
         ? []
-        : deduped.filter((rec) => rec.issue.status === statusKey);
+        : deduped.filter((rec) => rec.issue.status.key === statusKey);
 
       const lastPage = pages[pages.length - 1];
       const serverHasNext = !!lastPage?.next_cursor;

@@ -8,8 +8,9 @@ use hydra_common::{
         AgentSpec, Bundle, CreateSessionRequest, MountItem, MountSpec, RelativePath, SessionMode,
     },
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, IssueVersionRecord,
-        ListIssuesResponse, SearchIssuesQuery, SessionSettings, UpsertIssueRequest,
+        IssueDependency, IssueDependencyType, IssueInput, IssueStatus, IssueType,
+        IssueVersionRecord, ListIssuesResponse, SearchIssuesQuery, SessionSettings,
+        UpsertIssueRequest,
     },
     patches::{
         GithubPr, ListPatchesResponse, Patch, PatchStatus, PatchVersionRecord, SearchPatchesQuery,
@@ -134,7 +135,7 @@ impl UserHandle {
 
     /// Create a new issue with the given description. Returns the new issue's ID.
     pub async fn create_issue(&self, description: &str) -> Result<IssueId> {
-        let issue = Issue::new(
+        let input = IssueInput::new(
             IssueType::Task,
             "Test Title".to_string(),
             description.to_string(),
@@ -151,7 +152,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue.into(), None);
+        let request = UpsertIssueRequest::new(input, None);
         let response = self
             .client
             .create_issue(&request)
@@ -162,7 +163,7 @@ impl UserHandle {
 
     /// Create a child issue under the given parent. Returns the new issue's ID.
     pub async fn create_child_issue(&self, parent: &IssueId, description: &str) -> Result<IssueId> {
-        let issue = Issue::new(
+        let input = IssueInput::new(
             IssueType::Task,
             "Test Title".to_string(),
             description.to_string(),
@@ -182,7 +183,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue.into(), None);
+        let request = UpsertIssueRequest::new(input, None);
         let response = self
             .client
             .create_issue(&request)
@@ -198,9 +199,9 @@ impl UserHandle {
             .get_issue(id, false)
             .await
             .context("UserHandle::update_issue_status: failed to get issue")?;
-        let mut issue = existing.issue;
-        issue.status = status.into();
-        let request = UpsertIssueRequest::new(issue.into(), None);
+        let mut input: IssueInput = existing.issue.into();
+        input.status = status.into();
+        let request = UpsertIssueRequest::new(input, None);
         self.client
             .update_issue(id, &request)
             .await
@@ -337,7 +338,7 @@ impl UserHandle {
         assignee: Option<&str>,
         job_settings: Option<SessionSettings>,
     ) -> Result<IssueId> {
-        let issue = Issue::new(
+        let input = IssueInput::new(
             issue_type,
             "Test Title".to_string(),
             description.to_string(),
@@ -363,7 +364,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue.into(), None);
+        let request = UpsertIssueRequest::new(input, None);
         let response = self
             .client
             .create_issue(&request)
@@ -388,7 +389,7 @@ impl UserHandle {
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
     ) -> Result<IssueId> {
-        let issue = Issue::new(
+        let input = IssueInput::new(
             issue_type,
             "Test Title".to_string(),
             description.to_string(),
@@ -414,7 +415,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue.into(), None);
+        let request = UpsertIssueRequest::new(input, None);
         let response = self
             .client
             .create_issue(&request)

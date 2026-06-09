@@ -25,12 +25,7 @@ function DepRow({
   const title = record?.issue.title || issueId;
   return (
     <Link to={`/issues/${issueId}`} className={styles.depRow} title={title}>
-      {record && (
-        <StatusChip
-          definition={record.issue.resolved_status}
-          fallbackKey={record.issue.status}
-        />
-      )}
+      {record && <StatusChip status={record.issue.status} />}
       <span className={styles.depRowTitle}>{title}</span>
     </Link>
   );
@@ -73,7 +68,7 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
             onClick={onOpenStatusModal}
             data-testid="status-chip"
           >
-            <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
+            <StatusChip status={issue.status} />
             <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path
                 fillRule="evenodd"

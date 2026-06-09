@@ -15,7 +15,7 @@ use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
-    api::v1::projects::StatusKey,
+    api::v1::projects::{StatusDefinition, StatusKey},
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
@@ -25,9 +25,28 @@ use hydra_common::{
     },
     principal::{Principal, PrincipalParseError},
     users::Username,
-    HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
+    HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName, Rgb,
 };
 use std::str::FromStr;
+
+/// Synthesize a [`StatusDefinition`] for a known status key. CLI write
+/// paths build display-only [`Issue`] records from request payloads
+/// (which carry only [`StatusKey`]), so they fill in display props with
+/// placeholder values rather than round-tripping to the server for
+/// resolution. Pretty rendering only reads `status.key`, and the
+/// conversion back to [`hydra_common::issues::IssueInput`] for the wire
+/// drops everything but the key.
+pub(crate) fn placeholder_status_def(key: StatusKey) -> StatusDefinition {
+    StatusDefinition::new(
+        key,
+        String::new(),
+        Rgb::try_from("#888888".to_string()).expect("well-formed default rgb"),
+        false,
+        false,
+        false,
+        None,
+    )
+}
 
 /// clap value parser for `--assignee`. Phase 4b requires the full
 /// canonical path form (`users/<name>`, `agents/<name>`, or
@@ -622,7 +641,7 @@ async fn fetch_issues(
                 bail!("Issue '{issue_id}' does not match the requested type.");
             }
         }
-        if !status.is_empty() && !status.iter().any(|s| s == &record.issue.status) {
+        if !status.is_empty() && !status.iter().any(|s| s == &record.issue.status.key) {
             bail!("Issue '{issue_id}' does not match the requested status.");
         }
         if let Some(ref expected_project) = project_id {
@@ -674,7 +693,7 @@ async fn fetch_issues(
                 );
             }
         }
-        if !status.is_empty() && !status.iter().any(|s| s == &issue.issue.status) {
+        if !status.is_empty() && !status.iter().any(|s| s == &issue.issue.status.key) {
             bail!(
                 "Issue {} does not match the requested status.",
                 issue.issue_id
@@ -924,7 +943,7 @@ async fn create_issue(
         description.to_string(),
         creator,
         progress,
-        status,
+        placeholder_status_def(status),
         project_id.unwrap_or_else(ProjectId::default_project),
         assignee,
         job_settings,
@@ -1128,7 +1147,9 @@ async fn update_issue(
             description.unwrap_or(current.issue.description),
             current.issue.creator,
             progress_update.unwrap_or(current.issue.progress),
-            status.unwrap_or(current.issue.status),
+            status
+                .map(placeholder_status_def)
+                .unwrap_or(current.issue.status),
             project_id,
             assignee.unwrap_or(current.issue.assignee),
             job_settings,
@@ -1387,7 +1408,7 @@ mod tests {
                 description.into(),
                 empty_user(),
                 String::new(),
-                status.into(),
+                placeholder_status_def(status.into()),
                 ProjectId::default_project(),
                 assignee.map(user_principal),
                 None,
@@ -1419,7 +1440,7 @@ mod tests {
                     "First issue".into(),
                     empty_user(),
                     String::new(),
-                    IssueStatus::Open.into(),
+                    placeholder_status_def(IssueStatus::Open.into()),
                     ProjectId::default_project(),
                     None,
                     None,
@@ -1489,7 +1510,7 @@ mod tests {
                 "Edge case bug".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::InProgress.into(),
+                placeholder_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -1545,7 +1566,7 @@ mod tests {
                     "Edge case bug".into(),
                     empty_user(),
                     String::new(),
-                    IssueStatus::Open.into(),
+                    placeholder_status_def(IssueStatus::Open.into()),
                     ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
@@ -1600,7 +1621,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                IssueStatus::Closed.into(),
+                placeholder_status_def(IssueStatus::Closed.into()),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 None,
@@ -1671,7 +1692,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                IssueStatus::Closed.into(),
+                placeholder_status_def(IssueStatus::Closed.into()),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 Some(job_settings.clone()),
@@ -1745,7 +1766,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -1772,7 +1793,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
@@ -1848,7 +1869,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -1881,7 +1902,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(expected_settings.clone()),
@@ -1950,7 +1971,7 @@ mod tests {
                 "Issue with secrets".into(),
                 Username::from("creator-a"),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(job_settings.clone()),
@@ -2021,7 +2042,7 @@ mod tests {
                 "Parent issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -2048,7 +2069,7 @@ mod tests {
                 "Child issue".into(),
                 Username::from("creator-a"),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
@@ -2202,7 +2223,7 @@ mod tests {
                 "Updated issue description".into(),
                 empty_user(),
                 "New progress".into(),
-                IssueStatus::Closed.into(),
+                placeholder_status_def(IssueStatus::Closed.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-b")),
                 Some(job_settings.clone()),
@@ -2291,7 +2312,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                IssueStatus::InProgress.into(),
+                placeholder_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
@@ -2316,7 +2337,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::InProgress.into(),
+                placeholder_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2400,7 +2421,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                IssueStatus::InProgress.into(),
+                placeholder_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 Some(job_settings),
@@ -2425,7 +2446,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                IssueStatus::InProgress.into(),
+                placeholder_status_def(IssueStatus::InProgress.into()),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
@@ -2511,7 +2532,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2535,7 +2556,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(expected_settings),
@@ -2620,7 +2641,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(existing_settings),
@@ -2642,7 +2663,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                IssueStatus::Open.into(),
+                placeholder_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some(SessionSettings::default()),
@@ -2723,7 +2744,7 @@ mod tests {
                     "First issue\nwith context".into(),
                     empty_user(),
                     "Working on repro".into(),
-                    IssueStatus::Open.into(),
+                    placeholder_status_def(IssueStatus::Open.into()),
                     ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
@@ -2751,7 +2772,7 @@ mod tests {
                     "Follow-up work".into(),
                     empty_user(),
                     String::new(),
-                    IssueStatus::InProgress.into(),
+                    placeholder_status_def(IssueStatus::InProgress.into()),
                     ProjectId::default_project(),
                     None,
                     None,

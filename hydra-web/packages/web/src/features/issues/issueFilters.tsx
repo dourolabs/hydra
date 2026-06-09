@@ -36,8 +36,8 @@ function buildStatusOptions(statuses: StatusDefinition[]): FilterOption[] {
     // `color` / `icon`, so the chip and row both render the project's
     // declared display props rather than the hardcoded `BadgeStatus`
     // palette used by the legacy 5-enum dropdown.
-    chip: <StatusChip definition={s} />,
-    render: <StatusChip definition={s} />,
+    chip: <StatusChip status={s} />,
+    render: <StatusChip status={s} />,
   }));
 }
 
@@ -227,7 +227,7 @@ export function useIssueFilters(
         singleSelect: true,
         options: statusOpts,
         apply: (rec, filter) =>
-          valueIncludes(rec.issue.status, filter.values),
+          valueIncludes(rec.issue.status.key, filter.values),
       },
       project: {
         label: "Project",

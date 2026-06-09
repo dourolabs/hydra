@@ -829,7 +829,7 @@ function BoardColumn({
         data-testid={`board-col-head-${project.key}-${status.key}`}
         {...(dragHandleProps ?? {})}
       >
-        <StatusChip definition={status} />
+        <StatusChip status={status} />
         {!hideIssues && (
           <span className={styles.colCount}>{colIssues.length}</span>
         )}

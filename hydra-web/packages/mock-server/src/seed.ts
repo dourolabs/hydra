@@ -12,6 +12,7 @@ import type {
   Conversation,
   Project,
   SessionEvent,
+  StatusDefinition,
   Trigger,
   UserSummary,
 } from "@hydra/api";
@@ -45,7 +46,18 @@ interface VersionDelta<T> {
   patch: Partial<T>;
 }
 
-type IssueFixture = Issue & VersionedFixture<Issue>;
+/** Legacy issue fixture shape: `status` is a bare key string and the
+ *  full `StatusDefinition` rides on the optional `resolved_status` slot
+ *  (mirroring the pre-collapse wire). `normalizeIssue` lifts the
+ *  definition onto `status` before the entity hits the store.
+ */
+type IssueFixture = Omit<Issue, "status"> & {
+  status: string;
+  resolved_status?: StatusDefinition | null;
+} & VersionedFixture<Omit<Issue, "status"> & {
+    status: string;
+    resolved_status?: StatusDefinition | null;
+  }>;
 type SessionFixture = Session & VersionedFixture<Session>;
 type PatchFixture = Patch & VersionedFixture<Patch>;
 
@@ -101,30 +113,30 @@ function splitVersioned<T>(fixture: T & VersionedFixture<T>): {
   };
 }
 
-function seedVersionedEntity<T extends object>(
+function seedVersionedEntity<TFixture extends object, TStored extends object = TFixture>(
   store: Store,
   collection: string,
   id: string,
-  fixture: T & VersionedFixture<T>,
-  finalize: (latest: T) => T,
+  fixture: TFixture & VersionedFixture<TFixture>,
+  finalize: (latest: TFixture) => TStored,
 ): void {
-  const { current, history, lastUpdatedAt } = splitVersioned<T>(fixture);
+  const { current, history, lastUpdatedAt } = splitVersioned<TFixture>(fixture);
 
   if (history.length === 0) {
     const data = finalize(current);
     const timestamp = lastUpdatedAt ?? new Date().toISOString();
-    store.seedVersion<T>(collection, id, data, timestamp);
+    store.seedVersion<TStored>(collection, id, data, timestamp);
     return;
   }
 
   // Apply forward-chronological partial diffs starting from history[0] (the
   // creation state). Each subsequent entry is merged onto the running state.
-  let running = { ...history[0].patch } as T;
-  store.seedVersion<T>(collection, id, finalize(running), history[0].timestamp);
+  let running = { ...history[0].patch } as TFixture;
+  store.seedVersion<TStored>(collection, id, finalize(running), history[0].timestamp);
 
   for (let i = 1; i < history.length; i++) {
-    running = { ...running, ...history[i].patch } as T;
-    store.seedVersion<T>(collection, id, finalize(running), history[i].timestamp);
+    running = { ...running, ...history[i].patch } as TFixture;
+    store.seedVersion<TStored>(collection, id, finalize(running), history[i].timestamp);
   }
 
   // Final version: the fixture's main state. Timestamp defaults to one
@@ -132,12 +144,37 @@ function seedVersionedEntity<T extends object>(
   const lastHistoryTs = history[history.length - 1].timestamp;
   const finalTimestamp =
     lastUpdatedAt ?? new Date(new Date(lastHistoryTs).getTime() + 60_000).toISOString();
-  store.seedVersion<T>(collection, id, finalize(current), finalTimestamp);
+  store.seedVersion<TStored>(collection, id, finalize(current), finalTimestamp);
 }
 
-function normalizeIssue(issue: Issue): Issue {
+function placeholderStatusDef(key: string): StatusDefinition {
+  return {
+    key,
+    label: "",
+    color: "#888888",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+  };
+}
+
+function normalizeIssue(
+  issue: Omit<Issue, "status"> & {
+    status: string | StatusDefinition;
+    resolved_status?: StatusDefinition | null;
+  },
+): Issue {
+  // The legacy fixture shape carries the bare key on `status` and the
+  // resolved `StatusDefinition` on `resolved_status`. Lift the
+  // definition onto `status` (collapsing the two fields), falling back
+  // to a placeholder when no definition was provided.
+  const resolved =
+    typeof issue.status === "string"
+      ? issue.resolved_status ?? placeholderStatusDef(issue.status)
+      : issue.status;
   return {
     ...issue,
+    status: resolved,
     // Backfill `project_id` for legacy seed fixtures that pre-date the
     // wire-side NOT NULL tightening — the mirror of the
     // `seed_default_project` backfill on real DBs.
@@ -163,7 +200,7 @@ export function loadSeedData(store: Store): void {
   const seed = loadFixture();
 
   for (const [id, issue] of Object.entries(seed.issues)) {
-    seedVersionedEntity<Issue>(store, "issues", id, issue, normalizeIssue);
+    seedVersionedEntity<IssueFixture, Issue>(store, "issues", id, issue, normalizeIssue);
   }
 
   for (const [id, task] of Object.entries(seed.sessions)) {
