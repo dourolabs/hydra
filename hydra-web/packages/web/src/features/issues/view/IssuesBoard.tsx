@@ -56,6 +56,7 @@ import {
 } from "../usePaginatedIssues";
 import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
 import { AgoTime } from "../../../components/Runtime/Runtime";
+import { useProjectCollapseState } from "./useProjectCollapseState";
 import styles from "./IssuesBoard.module.css";
 
 interface IssuesBoardProps {
@@ -136,6 +137,7 @@ export function IssuesBoard({
   const { addToast } = useToast();
   const { data: allProjects } = useProjects();
   const { open: openIssueCreate } = useIssueCreateModal();
+  const { isCollapsed, onToggle: onToggleCollapse } = useProjectCollapseState();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
 
   const projects: BoardProjectDescriptor[] = useMemo(() => {
@@ -371,6 +373,8 @@ export function IssuesBoard({
       projectIssueCount,
       childStatusMap,
       hideIssues,
+      collapsed: isCollapsed(project.project_id),
+      onToggleCollapsed: onToggleCollapse,
       dragActive: activeProjectId !== null,
       onCardClick: handleCardClick,
       onOpenSettings: setSettingsProjectId,
@@ -483,6 +487,8 @@ interface ProjectSectionProps {
   projectIssueCount: number;
   childStatusMap: Map<string, ChildStatus[]>;
   hideIssues: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: (projectId: string) => void;
   // True while any project section is being dragged. Every section collapses
   // to just its bar so the reorder list is a row of uniform-height headers —
   // far more reliable for dnd-kit than reordering full-height sections.
@@ -567,6 +573,8 @@ function ProjectSection({
   projectIssueCount,
   childStatusMap,
   hideIssues,
+  collapsed,
+  onToggleCollapsed,
   dragActive,
   onCardClick,
   onOpenSettings,
@@ -698,6 +706,30 @@ function ProjectSection({
         data-testid={`board-project-bar-${project.key}`}
         {...(sortableDragHandleProps ?? {})}
       >
+        <button
+          type="button"
+          className={
+            collapsed
+              ? `${styles.projectCollapseToggle} ${styles.projectCollapseToggleCollapsed}`
+              : styles.projectCollapseToggle
+          }
+          onClick={(e) => {
+            // The whole bar is the drag handle; suppress propagation so the
+            // dnd-kit listeners can't misread a chevron click as a tiny drag.
+            e.stopPropagation();
+            onToggleCollapsed(project.project_id);
+          }}
+          aria-expanded={!collapsed}
+          aria-label={
+            collapsed
+              ? `Expand project ${project.name}`
+              : `Collapse project ${project.name}`
+          }
+          title={collapsed ? "Expand project" : "Collapse project"}
+          data-testid={`board-project-collapse-${project.key}`}
+        >
+          <Icons.IconChevronDown size={14} />
+        </button>
         <div className={styles.projectBarLeft}>
           <ProjectChip
             projectKey={project.key}
@@ -735,18 +767,30 @@ function ProjectSection({
           headers (reliable drop targets) and hides the body of the section
           that's travelling with the cursor inside <DragOverlay>. */}
       {!dragActive && (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
+        <div
+          className={
+            collapsed
+              ? `${styles.projectGroupBody} ${styles.projectGroupBodyCollapsed}`
+              : styles.projectGroupBody
+          }
+          data-testid={`board-project-body-${project.key}`}
+          aria-hidden={collapsed}
         >
-          <SortableContext
-            items={sortableIds}
-            strategy={horizontalListSortingStrategy}
-          >
-            {columnsRow}
-          </SortableContext>
-        </DndContext>
+          <div className={styles.projectGroupBodyInner}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={sortableIds}
+                strategy={horizontalListSortingStrategy}
+              >
+                {columnsRow}
+              </SortableContext>
+            </DndContext>
+          </div>
+        </div>
       )}
     </section>
   );
