@@ -679,6 +679,8 @@ pub(crate) fn build_claude_args(
     let mut args = vec![
         "--print".to_string(),
         "--dangerously-skip-permissions".to_string(),
+        "--disallowed-tools".to_string(),
+        "AskUserQuestion".to_string(),
         "--verbose".to_string(),
         "--output-format".to_string(),
         "stream-json".to_string(),
@@ -1045,6 +1047,8 @@ mod tests {
             vec![
                 "--print",
                 "--dangerously-skip-permissions",
+                "--disallowed-tools",
+                "AskUserQuestion",
                 "--verbose",
                 "--output-format",
                 "stream-json",
@@ -1068,6 +1072,8 @@ mod tests {
             vec![
                 "--print",
                 "--dangerously-skip-permissions",
+                "--disallowed-tools",
+                "AskUserQuestion",
                 "--verbose",
                 "--output-format",
                 "stream-json",

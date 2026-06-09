@@ -16,6 +16,10 @@ Documents are synced to `$HYDRA_DOCUMENTS_DIR` before your session starts. Prefe
 
 When referencing a Hydra object (issue, patch, document, conversation, session) in any field that is rendered as markdown — issue descriptions, progress notes, comments, patch titles/descriptions, review bodies — use double-bracket form: `[[i-abcd12]]`, `[[p-xxxxxx]]`, `[[d-yyyyyy]]`, etc. The renderer turns this into a titled link automatically, so the bare id is sufficient — don't also write the title. Code blocks and placeholders in command syntax (e.g. `<id>`) render literally and are unaffected.
 
+## No in-session questions
+
+Do not ask the user clarifying questions during the session — there is no human attached to answer them. Make a reasonable decision and proceed; surface the assumption in your progress notes or patch description. If you are genuinely blocked and need user input, file a new issue assigned to the user that captures the question.
+
 ## Handling user feedback
 
 After gathering context, check the `feedback` field on your issue. If populated:
