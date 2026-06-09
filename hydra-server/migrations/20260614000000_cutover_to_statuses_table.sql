@@ -28,11 +28,6 @@
 --    projects already backfilled by PR 1 are untouched and projects
 --    inserted between then and now (whose JSONB statuses were never
 --    mirrored into `metis.statuses`) get caught up here.
---    Note: catch-up is insert-only. Modifications to
---    `projects.statuses` JSONB during the deploy gap (label/color
---    edits, key renames, reorders, status removal) are not
---    reconciled — the existing `metis.statuses` row wins. The step-3
---    NULL guard catches the worst case (orphaned issue) cleanly.
 INSERT INTO metis.statuses (
     project_id,
     sequence,
