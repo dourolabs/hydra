@@ -100,7 +100,7 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
           await apiClient.createProjectStatus(ref, status);
         }
       }
-      for (const [key, _] of existingByKey) {
+      for (const key of existingByKey.keys()) {
         if (!nextKeys.has(key)) {
           await apiClient.deleteProjectStatus(ref, key);
         }

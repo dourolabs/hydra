@@ -495,7 +495,8 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let project_status_delete_path = format!("{project_statuses_path}/open");
     let project_id_for_status_delete = project_id.clone();
     server.mock(move |when, then| {
-        when.method(DELETE).path(project_status_delete_path.as_str());
+        when.method(DELETE)
+            .path(project_status_delete_path.as_str());
         then.status(200).json_body(json!({
             "project_id": project_id_for_status_delete,
             "version": 5,

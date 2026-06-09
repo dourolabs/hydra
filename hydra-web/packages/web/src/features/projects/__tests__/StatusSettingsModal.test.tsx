@@ -316,6 +316,7 @@ const updateProjectStatusSpy = vi.fn(
   }),
 );
 const deleteProjectStatusSpy = vi.fn(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async (_id: string, _key: string): Promise<{ project_id: string; version: number }> => ({
     project_id: _id,
     version: 1,

@@ -234,6 +234,16 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("reserve_hydra_id_shape: re-applying body is a no-op")?;
 
+    add_statuses_position_schema_invariants(&pool)
+        .await
+        .context("add_statuses_position: position column is NOT NULL on metis.statuses")?;
+    add_statuses_position_backfills_to_sequence(&pool)
+        .await
+        .context("add_statuses_position: every statuses row has position = sequence")?;
+    add_statuses_position_domain_roundtrip(&pool)
+        .await
+        .context("add_statuses_position: Store::get_project round-trips position values")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -243,6 +253,9 @@ async fn migration_roundtrip() -> Result<()> {
     assert_actor_variant_cleanup(&pool)
         .await
         .context("actor_variant_cleanup idempotent second-pass assertions")?;
+    add_statuses_position_backfills_to_sequence(&pool)
+        .await
+        .context("add_statuses_position: idempotent rerun preserves position values")?;
 
     Ok(())
 }
@@ -332,6 +345,77 @@ async fn cutover_to_statuses_table_fk_rejects_status_delete_with_active_issue(
             "expected FK to reject DELETE of metis.statuses row while an issue still references it"
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// 20260616000000_add_statuses_position. Adds `position DOUBLE PRECISION
+// NOT NULL DEFAULT 0` to `metis.statuses` and backfills `position =
+// sequence` so the post-cutover display order matches today's
+// `sequence ASC` order.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_position_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "statuses", "position").await? {
+        bail!("expected `metis.statuses.position` column to exist post-rollforward");
+    }
+    if column_is_nullable(pool, "statuses", "position").await? {
+        bail!("expected `metis.statuses.position` to be NOT NULL");
+    }
+    Ok(())
+}
+
+async fn add_statuses_position_backfills_to_sequence(pool: &PgPool) -> Result<()> {
+    // `j-rtrip` is inserted by `assert_recent_migration_data_shape`
+    // post-rollforward (i.e. after this migration runs), so its
+    // position falls through to the column default 0 rather than the
+    // backfill value. Exclude it from the backfill assertion.
+    let rows = sqlx::query(
+        "SELECT project_id, sequence, position FROM metis.statuses WHERE project_id != 'j-rtrip'",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read metis.statuses for position backfill check")?;
+    if rows.is_empty() {
+        bail!("expected at least one metis.statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let position: f64 = row.try_get("position")?;
+        if (position - sequence as f64).abs() > f64::EPSILON {
+            bail!(
+                "metis.statuses({project_id}, sequence={sequence}): expected position={sequence}.0; got {position}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_position_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    // Read j-defaul back through the production `get_project` path —
+    // verifies that the new `position` column is included in the
+    // `StatusRow` SELECT projection and round-trips into the
+    // `StatusDefinition` value.
+    let store = PostgresStoreV2::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("PostgresStoreV2::get_project(j-defaul) post-position-migration")?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for (idx, status) in fetched.item.statuses.iter().enumerate() {
+        let expected = (idx + 1) as f64;
+        if (status.position - expected).abs() > f64::EPSILON {
+            bail!(
+                "j-defaul.statuses[{idx}] ({key:?}): expected position={expected}; got {got}",
+                key = status.key,
+                got = status.position,
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Drop and recreate the `metis` schema, and drop the sqlx migration tracking
