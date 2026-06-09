@@ -157,15 +157,19 @@
 
 /* Hover/focus-revealed Restore button on archived rail rows. The rail row
    wrapper is itself a role="button", so we also surface the action on
-   focus-within for tab-traversal users. */
+   focus-within for tab-traversal users. `pointer-events: none` while
+   hidden so the invisible button can't be tapped on touch devices (no
+   `:hover`), which would otherwise silently fire a restore. */
 .restoreButton {
   margin-left: auto;
   flex-shrink: 0;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--tx-fast);
 }
 
 .archived:hover .restoreButton,
 .archived:focus-within .restoreButton {
   opacity: 1;
+  pointer-events: auto;
 }

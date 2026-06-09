@@ -366,17 +366,21 @@
 
 /* Hover-revealed Restore action on an archived card. Mirrors the table-row
    pattern: hidden by default, surfaces on hover or keyboard focus within
-   the card. */
+   the card. `pointer-events: none` while hidden so the invisible button
+   can't be tapped on touch devices (no `:hover`), which would otherwise
+   silently fire a restore. */
 .cardRestoreButton {
   margin-left: auto;
   flex-shrink: 0;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--tx-fast);
 }
 
 .cardArchived:hover .cardRestoreButton,
 .cardArchived:focus-within .cardRestoreButton {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .cardHead {
