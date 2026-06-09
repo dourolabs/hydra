@@ -11,7 +11,6 @@
 .projectGroup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   min-height: 0;
 }
 
@@ -58,6 +57,71 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
+}
+
+.projectCollapseToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  color: var(--fg-2);
+  cursor: pointer;
+  /* Match the chevron-down → chevron-right look by rotating the icon when
+     collapsed. Same transition timing as the body collapse keeps the two
+     in sync. */
+  transition:
+    color var(--tx-fast),
+    background var(--tx-fast),
+    border-color var(--tx-fast),
+    transform 180ms ease;
+}
+
+.projectCollapseToggle:hover {
+  background: var(--bg-2);
+  border-color: var(--line);
+  color: var(--fg-0);
+}
+
+.projectCollapseToggle:focus-visible {
+  outline: 1px solid var(--line-strong);
+  outline-offset: 1px;
+}
+
+.projectCollapseToggleCollapsed {
+  transform: rotate(-90deg);
+}
+
+.projectGroupBody {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  /* Replaces the parent's flex `gap` so the gap itself collapses with the
+     body. With the gap left on .projectGroup, an 8px sliver lingered below
+     the bar when collapsed. */
+  margin-top: 8px;
+  /* Smooth collapse / expand. grid-template-rows from 1fr → 0fr is the
+     modern auto-height transition trick; opacity and margin-top ride along
+     so the body fades and the gap closes while it shrinks. */
+  transition:
+    grid-template-rows 180ms ease,
+    opacity 180ms ease,
+    margin-top 180ms ease;
+}
+
+.projectGroupBodyCollapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+}
+
+.projectGroupBodyInner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .projectBarRight {

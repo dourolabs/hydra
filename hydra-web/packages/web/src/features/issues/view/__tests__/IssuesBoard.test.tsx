@@ -166,6 +166,7 @@ vi.mock("@hydra/ui", () => ({
   Icons: {
     IconSettings: () => <span data-testid="icon-settings" />,
     IconSpark: () => <span data-testid="icon-spark" />,
+    IconChevronDown: () => <span data-testid="icon-chevron-down" />,
   },
 }));
 
@@ -828,6 +829,93 @@ describe("IssuesBoard hideIssues (Projects tab)", () => {
     expect(
       within(cols[1]).getByTestId("board-col-head-engineering-in-progress"),
     ).toBeDefined();
+  });
+});
+
+describe("IssuesBoard project collapse chevron", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+      makeProject("j-design", "design", DEFAULT_STATUSES, "Design"),
+    ];
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("renders a collapse chevron on every project bar, expanded by default", () => {
+    renderBoard();
+
+    const engChevron = screen.getByTestId("board-project-collapse-engineering");
+    const designChevron = screen.getByTestId("board-project-collapse-design");
+    expect(engChevron.getAttribute("aria-expanded")).toBe("true");
+    expect(designChevron.getAttribute("aria-expanded")).toBe("true");
+    // Body wrappers exist in the expanded state.
+    expect(screen.getByTestId("board-project-body-engineering")).toBeDefined();
+    expect(screen.getByTestId("board-project-body-design")).toBeDefined();
+  });
+
+  it("clicking the chevron collapses only that project's body", () => {
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+
+    const engChevron = screen.getByTestId("board-project-collapse-engineering");
+    expect(engChevron.getAttribute("aria-expanded")).toBe("false");
+    expect(engChevron.className).toContain("projectCollapseToggleCollapsed");
+
+    const engBody = screen.getByTestId("board-project-body-engineering");
+    expect(engBody.className).toContain("projectGroupBodyCollapsed");
+    expect(engBody.getAttribute("aria-hidden")).toBe("true");
+
+    // The other project stays expanded.
+    const designBody = screen.getByTestId("board-project-body-design");
+    expect(designBody.className).not.toContain("projectGroupBodyCollapsed");
+    expect(designBody.getAttribute("aria-hidden")).toBe("false");
+  });
+
+  it("clicking the chevron a second time re-expands the project", () => {
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+
+    const engChevron = screen.getByTestId("board-project-collapse-engineering");
+    expect(engChevron.getAttribute("aria-expanded")).toBe("true");
+    const engBody = screen.getByTestId("board-project-body-engineering");
+    expect(engBody.className).not.toContain("projectGroupBodyCollapsed");
+  });
+
+  it("persists the collapsed project ids in localStorage", () => {
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+
+    const raw = window.localStorage.getItem("hydra:board-project-collapsed");
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!)).toEqual(["j-eng"]);
+  });
+
+  it("rehydrates the collapsed set from localStorage on mount", () => {
+    window.localStorage.setItem(
+      "hydra:board-project-collapsed",
+      JSON.stringify(["j-design"]),
+    );
+    renderBoard();
+
+    expect(
+      screen
+        .getByTestId("board-project-collapse-design")
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    expect(
+      screen.getByTestId("board-project-body-design").className,
+    ).toContain("projectGroupBodyCollapsed");
+    // engineering stays expanded.
+    expect(
+      screen
+        .getByTestId("board-project-collapse-engineering")
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 });
 
