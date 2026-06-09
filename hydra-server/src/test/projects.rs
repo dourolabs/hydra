@@ -13,7 +13,8 @@ use hydra_common::api::v1::{
     issues::{IssueVersionRecord, UpsertIssueRequest, UpsertIssueResponse},
     projects::{
         ListProjectsResponse, Project, ProjectKey, ProjectRecord, ProjectStatusesResponse,
-        StatusDefinition, StatusKey, UpsertProjectRequest, UpsertProjectResponse,
+        RenameStatusRequest, StatusDefinition, StatusKey, UpsertProjectRequest,
+        UpsertProjectResponse,
     },
     users::Username as ApiUsername,
 };
@@ -420,6 +421,121 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
         }
     }
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn rename_project_status_route_round_trip() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let create_resp: UpsertProjectResponse = client
+        .post(format!("{base}/v1/projects"))
+        .json(&UpsertProjectRequest::new(sample_project()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let project_id = create_resp.project_id.clone();
+
+    let mut issue: hydra_common::api::v1::issues::Issue = Issue::new(
+        IssueType::Task,
+        "backlog item".to_string(),
+        "test".to_string(),
+        default_user(),
+        String::new(),
+        StatusKey::try_new("backlog").unwrap(),
+        crate::domain::projects::default_project_id(),
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        None,
+        None,
+        None,
+    )
+    .into();
+    issue.project_id = project_id.clone();
+    let created: UpsertIssueResponse = client
+        .post(format!("{base}/v1/issues"))
+        .json(&UpsertIssueRequest::new(issue.into(), None))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let rename_resp: UpsertProjectResponse = client
+        .post(format!("{base}/v1/projects/{project_id}/statuses/rename"))
+        .json(&RenameStatusRequest::new(
+            StatusKey::try_new("backlog").unwrap(),
+            StatusKey::try_new("triage").unwrap(),
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(rename_resp.project_id, project_id);
+    assert_eq!(rename_resp.version, 2);
+
+    let statuses: ProjectStatusesResponse = client
+        .get(format!("{base}/v1/projects/{project_id}/statuses"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let keys: Vec<&str> = statuses.statuses.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        ["triage", "in-development", "in-review", "released"],
+        "renamed key must surface in the project's status list"
+    );
+
+    let fetched: IssueVersionRecord = client
+        .get(format!("{base}/v1/issues/{}", created.issue_id))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(
+        fetched.issue.status.as_str(),
+        "triage",
+        "existing issue must read back with the renamed key"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn rename_project_status_to_existing_returns_400() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let create_resp: UpsertProjectResponse = client
+        .post(format!("{base}/v1/projects"))
+        .json(&UpsertProjectRequest::new(sample_project()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let project_id = create_resp.project_id;
+
+    let resp = client
+        .post(format!("{base}/v1/projects/{project_id}/statuses/rename"))
+        .json(&RenameStatusRequest::new(
+            StatusKey::try_new("backlog").unwrap(),
+            StatusKey::try_new("in-development").unwrap(),
+        ))
+        .send()
+        .await?;
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
     Ok(())
 }
 

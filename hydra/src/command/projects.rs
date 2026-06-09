@@ -10,8 +10,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::api::v1::projects::{
-    Project, ProjectIdOrDefault, ProjectKey, ProjectRecord, StatusDefinition, StatusKey,
-    UpsertProjectRequest, UpsertProjectResponse,
+    Project, ProjectIdOrDefault, ProjectKey, ProjectRecord, RenameStatusRequest, StatusDefinition,
+    StatusKey, UpsertProjectRequest, UpsertProjectResponse,
 };
 use hydra_common::ProjectId;
 use std::path::{Path, PathBuf};
@@ -48,6 +48,10 @@ pub enum ProjectsCommand {
 pub enum StatusCommand {
     /// Update fields on a single status within a project.
     Update(UpdateStatusArgs),
+    /// Rename a status key in place. Existing issues are not orphaned
+    /// (their `status_sequence` storage identity is preserved) and read
+    /// back as the new key.
+    Rename(RenameStatusArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -135,6 +139,21 @@ pub struct UpdateStatusArgs {
     /// `/` (the server is authoritative).
     #[arg(long = "prompt-path", value_name = "PATH")]
     pub prompt_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RenameStatusArgs {
+    /// Project id whose status is being renamed.
+    #[arg(value_name = "PROJECT_ID")]
+    pub project_id: ProjectId,
+
+    /// Current status key.
+    #[arg(value_name = "FROM_KEY")]
+    pub from: StatusKey,
+
+    /// New status key.
+    #[arg(value_name = "TO_KEY")]
+    pub to: StatusKey,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -226,6 +245,14 @@ pub async fn run(
         ProjectsCommand::Status { command } => match command {
             StatusCommand::Update(args) => {
                 let record = update_status(client, args).await?;
+                render(
+                    ProjectRecords(&[record]),
+                    context.output_format,
+                    &mut buffer,
+                )?;
+            }
+            StatusCommand::Rename(args) => {
+                let record = rename_status(client, args).await?;
                 render(
                     ProjectRecords(&[record]),
                     context.output_format,
@@ -329,6 +356,40 @@ async fn update_status(
         .update_project(&args.project_id, &request)
         .await
         .with_context(|| format!("failed to update project '{}'", args.project_id))?;
+    Ok(ProjectRecord::new(
+        response.project_id,
+        response.version,
+        project,
+    ))
+}
+
+async fn rename_status(
+    client: &dyn HydraClientInterface,
+    args: RenameStatusArgs,
+) -> Result<ProjectRecord> {
+    let current = client
+        .get_project(&args.project_id)
+        .await
+        .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
+
+    let request = RenameStatusRequest::new(args.from.clone(), args.to.clone());
+    let response = client
+        .rename_project_status(&args.project_id, &request)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to rename status '{}' to '{}' on project '{}'",
+                args.from, args.to, args.project_id,
+            )
+        })?;
+
+    let mut project = current.project;
+    for status in project.statuses.iter_mut() {
+        if status.key == args.from {
+            status.key = args.to.clone();
+            break;
+        }
+    }
     Ok(ProjectRecord::new(
         response.project_id,
         response.version,

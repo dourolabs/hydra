@@ -364,6 +364,25 @@ impl ListProjectsResponse {
     }
 }
 
+/// Request body for `POST /v1/projects/:id/statuses/rename`. Renames a
+/// single status key in place — the storage `(project_id, sequence)`
+/// identity is preserved, so any issues referencing the old key continue
+/// to resolve through the same sequence and read back as `to`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct RenameStatusRequest {
+    pub from: StatusKey,
+    pub to: StatusKey,
+}
+
+impl RenameStatusRequest {
+    pub fn new(from: StatusKey, to: StatusKey) -> Self {
+        Self { from, to }
+    }
+}
+
 /// Response body for `GET /v1/projects/:id/statuses`. Returned as an
 /// ordered list matching the project's declaration order.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
