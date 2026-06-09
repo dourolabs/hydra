@@ -455,12 +455,11 @@ describe("StatusSettingsModal", () => {
 
     const label = screen.getByTestId("status-settings-label") as HTMLInputElement;
     expect(label.value).toBe("In progress");
-    const key = screen.getByTestId("status-settings-key") as HTMLInputElement;
-    expect(key.value).toBe("in-progress");
-    expect(key.disabled).toBe(true);
+    // The key is no longer shown — it is derived from the name on save.
+    expect(screen.queryByTestId("status-settings-key")).toBeNull();
   });
 
-  it("Save fires updateProject with the modified status in the full project shape", () => {
+  it("Save fires updateProject with the modified status, re-deriving the key from the name", () => {
     const project = makeProject([
       makeStatus("open", { label: "Open" }),
       makeStatus("in-progress", { label: "In progress" }),
@@ -484,8 +483,36 @@ describe("StatusSettingsModal", () => {
     const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
     expect(next).toHaveLength(2);
     expect(next[0].key).toBe("open");
-    expect(next[1].key).toBe("in-progress");
+    // Key follows the renamed name: "Doing" → "doing".
+    expect(next[1].key).toBe("doing");
     expect(next[1].label).toBe("Doing");
+  });
+
+  it("disables Save and surfaces an error when the renamed key collides with a sibling", () => {
+    const project = makeProject([
+      makeStatus("open", { label: "Open" }),
+      makeStatus("in-progress", { label: "In progress" }),
+    ]);
+    render(
+      <StatusSettingsModal
+        open={true}
+        onClose={() => {}}
+        projectRecord={project}
+        statusKey="in-progress"
+        issueCount={0}
+      />,
+    );
+
+    // Rename "In progress" to collide with the sibling "open" status.
+    fireEvent.change(screen.getByTestId("status-settings-label"), {
+      target: { value: "Open" },
+    });
+
+    const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(
+      screen.getByTestId("status-settings-new-error").textContent,
+    ).toContain("already exists");
   });
 
   it("does not render move-left / move-right buttons (drag-and-drop owns reordering)", () => {
@@ -701,7 +728,7 @@ describe("StatusSettingsModal", () => {
   });
 
   describe("new mode", () => {
-    it("renders only a Name input and inline Prompt editor — no Key, no advanced fields", () => {
+    it("renders the same rich form as edit — Name, assignee picker, prompt editor; no Key field", () => {
       const project = makeProject([
         makeStatus("open"),
         makeStatus("in-progress"),
@@ -715,16 +742,15 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      const name = screen.getByTestId("status-settings-name") as HTMLInputElement;
-      expect(name.value).toBe("");
-      // Inline markdown editor is mounted directly (no toggle, no path field).
+      // The Name field and advanced controls mirror the edit modal.
+      expect(screen.getByTestId("status-settings-label")).toBeDefined();
+      expect(screen.getByTestId("status-settings-assignee")).toBeDefined();
+      // Prompt is the same inline markdown editor as edit mode, always visible.
       expect(screen.getByTestId("status-settings-prompt-body")).toBeDefined();
-      // Advanced edit-mode UI must not appear in the simplified Add flow.
-      expect(screen.queryByTestId("status-settings-key")).toBeNull();
-      expect(screen.queryByTestId("status-settings-label")).toBeNull();
-      expect(screen.queryByTestId("status-settings-prompt-path")).toBeNull();
+      // The resolved save path is shown (no editable path field, no toggle).
       expect(screen.queryByTestId("status-settings-prompt-path-toggle")).toBeNull();
-      expect(screen.queryByTestId("status-settings-assignee")).toBeNull();
+      // The key is derived from the name, never shown as its own field.
+      expect(screen.queryByTestId("status-settings-key")).toBeNull();
     });
 
     it("hides the delete control in new mode", () => {
@@ -744,7 +770,7 @@ describe("StatusSettingsModal", () => {
       expect(screen.queryByTestId("status-settings-delete")).toBeNull();
     });
 
-    it("Save derives the key by slugifying the name and appends the status with an auto prompt_path", async () => {
+    it("Save derives the key from the name and appends the status", async () => {
       const project = makeProject([
         makeStatus("open", { label: "Open" }),
         makeStatus("in-progress", { label: "In progress" }),
@@ -758,7 +784,7 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      fireEvent.change(screen.getByTestId("status-settings-name"), {
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
         target: { value: "In Review" },
       });
       await act(async () => {
@@ -776,35 +802,13 @@ describe("StatusSettingsModal", () => {
       ]);
       const added = projectPayload.project.statuses[2];
       expect(added.label).toBe("In Review");
-      expect(added.prompt_path).toBe("/projects/engineering/statuses/in-review.md");
-    });
-
-    it("disables Save and shows error when the derived key collides", () => {
-      const project = makeProject([
-        makeStatus("open"),
-        makeStatus("in-progress"),
-      ]);
-      render(
-        <StatusSettingsModal
-          open={true}
-          mode="new"
-          onClose={() => {}}
-          projectRecord={project}
-        />,
+      // The status points at the derived auto path.
+      expect(added.prompt_path).toBe(
+        "/projects/engineering/statuses/in-review.md",
       );
-
-      fireEvent.change(screen.getByTestId("status-settings-name"), {
-        target: { value: "Open" },
-      });
-
-      const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
-      expect(save.disabled).toBe(true);
-      expect(
-        screen.getByTestId("status-settings-new-error").textContent,
-      ).toContain("already exists");
     });
 
-    it("disables Save when the name has no slug-able characters", () => {
+    it("shows the resolved save path, filling in the name's slug", () => {
       const project = makeProject([makeStatus("open")]);
       render(
         <StatusSettingsModal
@@ -815,25 +819,21 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      fireEvent.change(screen.getByTestId("status-settings-name"), {
-        target: { value: "@@@" },
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
+        target: { value: "In Review" },
       });
-      const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
-      expect(save.disabled).toBe(true);
       expect(
-        screen.getByTestId("status-settings-new-error").textContent,
-      ).toContain("letter or digit");
+        screen.getByTestId("status-settings-prompt-path").textContent,
+      ).toContain("/projects/engineering/statuses/in-review.md");
     });
 
-    it("writes the prompt document at the auto path before creating the status", async () => {
+    it("writes the prompt document at the derived path on save", async () => {
       const project = makeProject([makeStatus("open")]);
-      // No existing doc at the auto path → 404 → createDocument fires.
+      // No existing doc at the derived path → 404 → createDocument fires.
       getDocumentByPathSpy.mockImplementation(async () => {
         throw new ApiErrorMock(404, "not found");
       });
-      createDocumentSpy.mockImplementation(async () => ({
-        document_id: "d-new",
-      }));
+      createDocumentSpy.mockImplementation(async () => ({ document_id: "d-new" }));
 
       render(
         <StatusSettingsModal
@@ -843,7 +843,8 @@ describe("StatusSettingsModal", () => {
           projectRecord={project}
         />,
       );
-      fireEvent.change(screen.getByTestId("status-settings-name"), {
+
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
         target: { value: "Blocked" },
       });
       fireEvent.change(screen.getByTestId("status-settings-prompt-body"), {
@@ -867,50 +868,6 @@ describe("StatusSettingsModal", () => {
       expect(updateProjectSpy).toHaveBeenCalledTimes(1);
     });
 
-    it("upserts the prompt document when one already exists at the auto path", async () => {
-      const project = makeProject([makeStatus("open")]);
-      getDocumentByPathSpy.mockImplementation(async () => ({
-        document_id: "d-existing",
-        version: 4,
-        timestamp: "2026-01-01T00:00:00Z",
-        document: {
-          title: "old title",
-          body_markdown: "old body",
-          path: "/projects/engineering/statuses/blocked.md",
-        },
-      }));
-      updateDocumentSpy.mockImplementation(async () => ({
-        document_id: "d-existing",
-      }));
-
-      render(
-        <StatusSettingsModal
-          open={true}
-          mode="new"
-          onClose={() => {}}
-          projectRecord={project}
-        />,
-      );
-      fireEvent.change(screen.getByTestId("status-settings-name"), {
-        target: { value: "Blocked" },
-      });
-      fireEvent.change(screen.getByTestId("status-settings-prompt-body"), {
-        target: { value: "Fresh body" },
-      });
-      await act(async () => {
-        fireEvent.click(screen.getByTestId("status-settings-save"));
-      });
-
-      expect(createDocumentSpy).not.toHaveBeenCalled();
-      expect(updateDocumentSpy).toHaveBeenCalledTimes(1);
-      const docCall = updateDocumentSpy.mock.calls[0];
-      expect(docCall[0]).toBe("d-existing");
-      expect(
-        (docCall[1] as { document: { body_markdown: string } }).document
-          .body_markdown,
-      ).toBe("Fresh body");
-    });
-
     it("skips the document write when the prompt body is empty", async () => {
       const project = makeProject([makeStatus("open")]);
       render(
@@ -921,7 +878,7 @@ describe("StatusSettingsModal", () => {
           projectRecord={project}
         />,
       );
-      fireEvent.change(screen.getByTestId("status-settings-name"), {
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
         target: { value: "Blocked" },
       });
       await act(async () => {
@@ -931,14 +888,74 @@ describe("StatusSettingsModal", () => {
       expect(getDocumentByPathSpy).not.toHaveBeenCalled();
       expect(createDocumentSpy).not.toHaveBeenCalled();
       expect(updateDocumentSpy).not.toHaveBeenCalled();
-      // The status still records the auto path so a later editor knows
-      // where to write the document.
+      // The status still records the derived path so a later edit finds the doc.
       const projectPayload = updateProjectSpy.mock.calls[0][1] as {
         project: { statuses: StatusDefinition[] };
       };
       expect(projectPayload.project.statuses[1].prompt_path).toBe(
         "/projects/engineering/statuses/blocked.md",
       );
+    });
+
+    it("disables Save and shows an error when the derived key collides", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
+        target: { value: "Open" },
+      });
+
+      const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(
+        screen.getByTestId("status-settings-new-error").textContent,
+      ).toContain("already exists");
+    });
+
+    it("disables Save when the name has no slug-able characters", () => {
+      const project = makeProject([makeStatus("open")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
+        target: { value: "@@@" },
+      });
+      const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(
+        screen.getByTestId("status-settings-new-error").textContent,
+      ).toContain("letter or digit");
+    });
+
+    it("disables Save when the name is blank", () => {
+      const project = makeProject([makeStatus("open")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          mode="new"
+          onClose={() => {}}
+          projectRecord={project}
+        />,
+      );
+
+      const save = screen.getByTestId("status-settings-save") as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
     });
 
     it("closes after a successful save", async () => {
@@ -953,7 +970,7 @@ describe("StatusSettingsModal", () => {
         />,
       );
 
-      fireEvent.change(screen.getByTestId("status-settings-name"), {
+      fireEvent.change(screen.getByTestId("status-settings-label"), {
         target: { value: "Blocked" },
       });
       await act(async () => {
@@ -1083,8 +1100,8 @@ describe("StatusSettingsModal", () => {
 
   });
 
-  describe("Prompt document editor (PR-11)", () => {
-    it("renders the PromptDocumentEditor in place of the prompt path Input", () => {
+  describe("inline prompt editor", () => {
+    it("renders the markdown editor inline (always visible) with the resolved path", () => {
       const project = makeProject([
         makeStatus("open"),
         makeStatus("in-progress"),
@@ -1098,27 +1115,18 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
-      // Container + toggle are owned by PromptDocumentEditor.
+      // Textarea is mounted directly — no toggle, no editable path Input.
+      expect(screen.getByTestId("status-settings-prompt-body")).toBeDefined();
       expect(
-        screen.getByTestId("status-settings-prompt-path-container"),
-      ).toBeDefined();
-      expect(
-        screen.getByTestId("status-settings-prompt-path-toggle"),
-      ).toBeDefined();
-      // Path input still exposes the same testId for editing.
-      expect(screen.getByTestId("status-settings-prompt-path")).toBeDefined();
-      // Collapsed by default — textarea/save are not mounted.
-      expect(
-        screen.queryByTestId("status-settings-prompt-path-textarea"),
+        screen.queryByTestId("status-settings-prompt-path-toggle"),
       ).toBeNull();
+      // The resolved save path is shown read-only.
       expect(
-        screen.queryByTestId("status-settings-prompt-path-save"),
-      ).toBeNull();
-      // Critically: no doc fetch is triggered while collapsed.
-      expect(lastPromptQueryFnRef.fn).toBeNull();
+        screen.getByTestId("status-settings-prompt-path").textContent,
+      ).toContain("/projects/engineering/statuses/in-progress.md");
     });
 
-    it("expanding fetches the doc at /projects/<key>/statuses/<status-key>.md by default", () => {
+    it("loads the prompt document at the status's path by default", () => {
       const project = makeProject([
         makeStatus("open"),
         makeStatus("in-progress"),
@@ -1132,19 +1140,15 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
-
-      fireEvent.click(
-        screen.getByTestId("status-settings-prompt-path-toggle"),
-      );
-      // The body mounts and registers a useQuery against the default path
-      // since the status has no prompt_path set.
+      // The editor seeds itself from a useQuery against the default path since
+      // the status has no explicit prompt_path set.
       expect(lastPromptQueryKeyRef.key).toEqual([
         "documentByPath",
         "/projects/engineering/statuses/in-progress.md",
       ]);
     });
 
-    it("uses the existing prompt_path over the default when one is set", () => {
+    it("loads from the status's existing prompt_path when one is set", () => {
       const project = makeProject([
         makeStatus("open"),
         makeStatus("in-progress", {
@@ -1160,21 +1164,21 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
-
-      fireEvent.click(
-        screen.getByTestId("status-settings-prompt-path-toggle"),
-      );
       expect(lastPromptQueryKeyRef.key).toEqual([
         "documentByPath",
         "/custom/status.md",
       ]);
     });
 
-    it("editing the path input persists into the modal draft via patch", () => {
-      const project = makeProject([
-        makeStatus("open"),
-        makeStatus("in-progress"),
-      ]);
+    it("seeds the textarea with the loaded document body", () => {
+      promptQueryState = {
+        isLoading: false,
+        isError: false,
+        isSuccess: true,
+        data: { document: { body_markdown: "loaded body" } },
+        error: null,
+      };
+      const project = makeProject([makeStatus("in-progress")]);
       render(
         <StatusSettingsModal
           open={true}
@@ -1184,12 +1188,63 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
-      fireEvent.change(screen.getByTestId("status-settings-prompt-path"), {
-        target: { value: "/my/explicit/path.md" },
+      const body = screen.getByTestId(
+        "status-settings-prompt-body",
+      ) as HTMLTextAreaElement;
+      expect(body.value).toBe("loaded body");
+    });
+
+    it("Save writes the edited prompt to the derived path", async () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress", { label: "In progress" }),
+      ]);
+      getDocumentByPathSpy.mockImplementation(async () => ({
+        document_id: "d-existing",
+        version: 2,
+        timestamp: "2026-01-01T00:00:00Z",
+        document: {
+          title: "t",
+          body_markdown: "old",
+          path: "/projects/engineering/statuses/in-progress.md",
+        },
+      }));
+      updateDocumentSpy.mockImplementation(async () => ({
+        document_id: "d-existing",
+      }));
+
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-prompt-body"), {
+        target: { value: "fresh prompt" },
       });
-      fireEvent.click(screen.getByTestId("status-settings-save"));
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+      });
+
+      expect(updateDocumentSpy).toHaveBeenCalledTimes(1);
+      const docCall = updateDocumentSpy.mock.calls[0];
+      expect(docCall[0]).toBe("d-existing");
+      expect(
+        (docCall[1] as { document: { body_markdown: string; path: string } })
+          .document,
+      ).toMatchObject({
+        body_markdown: "fresh prompt",
+        path: "/projects/engineering/statuses/in-progress.md",
+      });
+      // Project save still fires, recording the derived prompt_path.
       const next = mutateSpy.mock.calls[0][0] as StatusDefinition[];
-      expect(next[1].prompt_path).toBe("/my/explicit/path.md");
+      expect(next[1].prompt_path).toBe(
+        "/projects/engineering/statuses/in-progress.md",
+      );
     });
   });
 
