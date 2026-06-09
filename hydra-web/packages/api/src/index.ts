@@ -25,6 +25,7 @@ export type {
 
 export * from "./types";
 
+export { DEFAULT_PROJECT_ID } from "./projects";
 export type {
   UpsertProjectRequest,
   UpsertProjectResponse,

@@ -1,8 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+import { DEFAULT_PROJECT_ID } from "@hydra/api";
 import { apiClient } from "../../api/client";
-
-/** Seeded default project id. Mirrors `ProjectId::default_project()` on the server. */
-const DEFAULT_PROJECT_ID = "j-defaul";
 
 export function useProjects() {
   return useQuery({
