@@ -32,6 +32,11 @@
 --    were inserted in the deploy gap between PR 1 merging and this
 --    migration deploying. `INSERT OR IGNORE` makes already-backfilled
 --    rows a no-op.
+--    Note: catch-up is insert-only. Modifications to
+--    `projects.statuses` JSON during the deploy gap (label/color
+--    edits, key renames, reorders, status removal) are not
+--    reconciled — the existing `statuses` row wins. The step-3 NULL
+--    guard catches the worst case (orphaned issue) cleanly.
 INSERT OR IGNORE INTO statuses (
     project_id,
     sequence,

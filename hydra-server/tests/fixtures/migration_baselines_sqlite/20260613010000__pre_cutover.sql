@@ -1,4 +1,4 @@
--- baseline-version: 20260613020000
+-- baseline-version: 20260613010000
 -- SQLite pre-cutover baseline. INSERTs are valid against the schema
 -- state after sqlite migration
 -- `20260613010000_add_issues_v2_status_sequence.sql` and immediately
