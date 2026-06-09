@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
+import { DEFAULT_PROJECT_ID } from "@hydra/api";
 import type { IssueType, LabelRecord, Principal, StatusKey } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
@@ -101,7 +102,9 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     "hydra:draft:issue-create-modal:labelNames",
     [],
   );
-  // Empty string = unselected (= default project synthesized server-side).
+  // Empty string = unselected — falls back to the seeded default project
+  // (`j-defaul`) at submit time so the create request still carries a
+  // populated project_id.
   const [projectId, setProjectId, clearProjectIdDraft] = useFormDraft(
     "hydra:draft:issue-create-modal:projectId",
     "",
@@ -114,8 +117,8 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     "",
   );
 
-  // Status options follow the selected project (or DefaultProject when
-  // unselected). Same hook the IssueUpdateModal uses.
+  // Status options follow the selected project (or the seeded default
+  // project when unselected). Same hook the IssueUpdateModal uses.
   const { data: projectStatuses } = useProjectStatuses(projectId || null);
 
   const [picker, setPicker] = useState<PickerKey>(null);
@@ -206,13 +209,13 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
           creator: params.creator,
           progress: "",
           status: params.status,
+          project_id: params.projectId || DEFAULT_PROJECT_ID,
           dependencies: [],
           patches: [],
           ...(params.assignee && { assignee: params.assignee }),
           ...(params.repoName && {
             session_settings: { repo_name: params.repoName },
           }),
-          ...(params.projectId && { project_id: params.projectId }),
         },
         session_id: null,
         ...(params.labelNames &&

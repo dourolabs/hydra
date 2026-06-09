@@ -160,13 +160,12 @@ vi.mock("@hydra/ui", () => ({
   ),
 }));
 
-const createDocumentSpy = vi.fn(async () => ({
-  document_id: "d-1",
-}));
-const createProjectSpy = vi.fn(async () => ({
-  project_id: "j-new",
-  version: 1n,
-}));
+const createDocumentSpy = vi.fn<
+  (req: unknown) => Promise<{ document_id: string }>
+>(async () => ({ document_id: "d-1" }));
+const createProjectSpy = vi.fn<
+  (req: unknown) => Promise<{ project_id: string; version: bigint }>
+>(async () => ({ project_id: "j-new", version: 1n }));
 vi.mock("../../../api/client", () => ({
   apiClient: {
     createDocument: createDocumentSpy,

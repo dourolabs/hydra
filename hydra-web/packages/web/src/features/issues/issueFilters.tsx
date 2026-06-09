@@ -116,8 +116,8 @@ export function useIssueFilters(
   const { data: projects } = useProjects();
 
   // The current project filter (single-select) re-scopes the Status filter
-  // dropdown to that project's declared statuses. Falls back to the
-  // synthesized DefaultProject (legacy 5-enum list) when no project is set.
+  // dropdown to that project's declared statuses. Falls back to the seeded
+  // default project's statuses (legacy 5-enum list) when no project is set.
   const projectFilter = filters.find((f) => f.id === "project");
   const currentProjectFilterId = projectFilter?.values[0] ?? null;
   const { data: projectStatusesResp } = useProjectStatuses(

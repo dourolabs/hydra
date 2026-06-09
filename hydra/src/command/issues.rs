@@ -29,14 +29,6 @@ use hydra_common::{
 };
 use std::str::FromStr;
 
-/// Tri-state for the `--project` / `--clear-project` pair on `hydra issues update`:
-/// `Unchanged` keeps the existing value, `Set` replaces it, `Clear` detaches.
-enum ProjectUpdate {
-    Unchanged,
-    Set(ProjectId),
-    Clear,
-}
-
 /// clap value parser for `--assignee`. Phase 4b requires the full
 /// canonical path form (`users/<name>`, `agents/<name>`, or
 /// `external/<system>/<name>`). Bare strings (e.g. `alice`) are rejected
@@ -216,19 +208,9 @@ pub enum IssueCommands {
         #[arg(long, value_name = "STATUS_KEY")]
         status: Option<StatusKey>,
 
-        /// Move the issue to a different project (by id or key), or clear
-        /// it with `--clear-project`.
-        #[arg(
-            long,
-            value_name = "PROJECT_ID_OR_KEY",
-            conflicts_with = "clear_project"
-        )]
+        /// Move the issue to a different project (by id or key).
+        #[arg(long, value_name = "PROJECT_ID_OR_KEY")]
         project: Option<ProjectRef>,
-
-        /// Detach the issue from its current project (falls back to the
-        /// default project's status semantics).
-        #[arg(long = "clear-project")]
-        clear_project: bool,
 
         /// Updated assignee. Requires the full canonical path form:
         /// `users/<name>`, `agents/<name>`, or `external/<system>/<name>`.
@@ -500,7 +482,6 @@ pub async fn run(
             title,
             status,
             project,
-            clear_project,
             assignee,
             clear_assignee,
             description,
@@ -528,12 +509,9 @@ pub async fn run(
             clear_feedback,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
-            let project_update = if clear_project {
-                ProjectUpdate::Clear
-            } else if let Some(reference) = project {
-                ProjectUpdate::Set(reference.resolve(client).await?)
-            } else {
-                ProjectUpdate::Unchanged
+            let project_id = match project {
+                Some(reference) => Some(reference.resolve(client).await?),
+                None => None,
             };
             update_issue(
                 client,
@@ -541,7 +519,7 @@ pub async fn run(
                 r#type,
                 title,
                 status,
-                project_update,
+                project_id,
                 assignee,
                 clear_assignee,
                 description,
@@ -990,7 +968,7 @@ async fn update_issue(
     issue_type: Option<IssueType>,
     title: Option<String>,
     status: Option<StatusKey>,
-    project_update: ProjectUpdate,
+    project: Option<ProjectId>,
     assignee: Option<Principal>,
     clear_assignee: bool,
     description: Option<String>,
@@ -1086,7 +1064,7 @@ async fn update_issue(
     let no_changes = issue_type.is_none()
         && title.is_none()
         && status.is_none()
-        && matches!(project_update, ProjectUpdate::Unchanged)
+        && project.is_none()
         && assignee.is_none()
         && description.is_none()
         && dependencies_update.is_none()
@@ -1132,7 +1110,7 @@ async fn update_issue(
     let issue_fields_changed = issue_type.is_some()
         || title.is_some()
         || status.is_some()
-        || !matches!(project_update, ProjectUpdate::Unchanged)
+        || project.is_some()
         || assignee.is_some()
         || description.is_some()
         || dependencies_update.is_some()
@@ -1143,13 +1121,7 @@ async fn update_issue(
         || form_update.is_some();
 
     let result = if issue_fields_changed {
-        let project_id = match project_update {
-            ProjectUpdate::Unchanged => current.issue.project_id,
-            ProjectUpdate::Set(id) => id,
-            // Detach: every issue now lives in some project, so "clear"
-            // routes back to the seeded default project.
-            ProjectUpdate::Clear => ProjectId::default_project(),
-        };
+        let project_id = project.unwrap_or(current.issue.project_id);
         let updated_issue = Issue::new(
             issue_type.unwrap_or(current.issue.issue_type),
             title.unwrap_or(current.issue.title),
@@ -2266,7 +2238,7 @@ mod tests {
             Some(IssueType::Bug),
             None,
             Some(IssueStatus::Closed.into()),
-            ProjectUpdate::Unchanged,
+            None,
             Some(user_principal("owner-b")),
             false,
             Some("Updated issue description".into()),
@@ -2377,7 +2349,7 @@ mod tests {
             None,
             None,
             None,
-            ProjectUpdate::Unchanged,
+            None,
             None,
             true,
             None,
@@ -2489,7 +2461,7 @@ mod tests {
             None,
             None,
             None,
-            ProjectUpdate::Unchanged,
+            None,
             None,
             false,
             None,
@@ -2596,7 +2568,7 @@ mod tests {
             None,
             None,
             None,
-            ProjectUpdate::Unchanged,
+            None,
             None,
             false,
             None,
@@ -2703,7 +2675,7 @@ mod tests {
             None,
             None,
             None,
-            ProjectUpdate::Unchanged,
+            None,
             None,
             false,
             None,

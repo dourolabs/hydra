@@ -389,7 +389,7 @@ describe("IssueCreateModal", () => {
     expect(screen.getByTestId("issue-create-status-picker")).toBeDefined();
   });
 
-  it("submits with no project_id and status=\"open\" when nothing is selected", () => {
+  it("submits the seeded default project_id and status=\"open\" when nothing is selected", () => {
     render(
       <IssueCreateModal open onClose={() => {}} assignees={{ agents: [], users: [] }} />,
     );
@@ -401,10 +401,10 @@ describe("IssueCreateModal", () => {
 
     expect(createIssueMock).toHaveBeenCalledTimes(1);
     const body = createIssueMock.mock.calls[0][0] as {
-      issue: { status: string; project_id?: string };
+      issue: { status: string; project_id: string };
     };
     expect(body.issue.status).toBe("open");
-    expect(body.issue.project_id).toBeUndefined();
+    expect(body.issue.project_id).toBe("j-defaul");
   });
 
   it("submits project_id + chosen status when both pickers are set", () => {

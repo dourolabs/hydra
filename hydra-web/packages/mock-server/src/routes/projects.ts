@@ -11,63 +11,6 @@ import type {
 } from "@hydra/api";
 
 const COLLECTION = "projects";
-const DEFAULT_PROJECT_KEY = "default";
-
-// Mirrors `hydra-server/src/domain/projects.rs::default_project()`. Keep the
-// status list, flag semantics, and colors aligned with the real backend so
-// project-less issues resolve to the same five wire strings the frontend
-// expects ("Open", "In progress", "Closed", "Dropped", "Failed").
-function defaultProject(): Project {
-  return {
-    key: DEFAULT_PROJECT_KEY,
-    name: "Default",
-    statuses: [
-      {
-        key: "open",
-        label: "Open",
-        color: "#3498db",
-        unblocks_parents: false,
-        unblocks_dependents: false,
-        cascades_to_children: false,
-      },
-      {
-        key: "in-progress",
-        label: "In progress",
-        color: "#f1c40f",
-        unblocks_parents: false,
-        unblocks_dependents: false,
-        cascades_to_children: false,
-      },
-      {
-        key: "closed",
-        label: "Closed",
-        color: "#2ecc71",
-        unblocks_parents: true,
-        unblocks_dependents: true,
-        cascades_to_children: false,
-      },
-      {
-        key: "dropped",
-        label: "Dropped",
-        color: "#795548",
-        unblocks_parents: true,
-        unblocks_dependents: false,
-        cascades_to_children: true,
-      },
-      {
-        key: "failed",
-        label: "Failed",
-        color: "#e74c3c",
-        unblocks_parents: true,
-        unblocks_dependents: false,
-        cascades_to_children: true,
-      },
-    ],
-    creator: "system",
-    deleted: false,
-    priority: 1000,
-  };
-}
 
 function generateProjectId(): string {
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -89,14 +32,6 @@ function toStatusesResponse(project: Project): ProjectStatusesResponse {
 
 export function createProjectRoutes(store: Store): Hono {
   const app = new Hono();
-
-  // GET /v1/projects/default/statuses — synthesized DefaultProject options
-  // for issues with no `project_id`. Registered before the parameterized
-  // `:projectId/statuses` route so Hono dispatches "default" here instead of
-  // treating it as a stored ProjectId.
-  app.get("/v1/projects/default/statuses", (c) => {
-    return c.json(toStatusesResponse(defaultProject()));
-  });
 
   // GET /v1/projects
   app.get("/v1/projects", (c) => {
@@ -139,17 +74,6 @@ export function createProjectRoutes(store: Store): Hono {
   // GET /v1/projects/:projectId
   app.get("/v1/projects/:projectId", (c) => {
     const projectId = c.req.param("projectId");
-    if (projectId === DEFAULT_PROJECT_KEY) {
-      // Mirror the real backend: the default project is read-only and not
-      // fetchable by ID. Callers should use the /statuses endpoint.
-      return c.json(
-        {
-          error:
-            "the default project is read-only; use GET /v1/projects/default/statuses to fetch its status list",
-        },
-        400,
-      );
-    }
     const entry = store.get<Project>(COLLECTION, projectId);
     if (!entry) {
       return c.json({ error: `project '${projectId}' not found` }, 404);

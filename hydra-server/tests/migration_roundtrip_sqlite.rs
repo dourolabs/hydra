@@ -121,8 +121,24 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
 
     issues_v2_project_id_is_not_null(&pool).await?;
     issues_v2_project_id_rejects_null_insert(&pool).await?;
-    issues_v2_project_id_not_null_migration_is_idempotent(&pool).await?;
     issues_v2_project_id_not_null_migration_rejects_null_baseline().await?;
+
+    // Schema- and data-shape assertions for the two new statuses
+    // migrations land before the issues_v2_project_id_not_null
+    // idempotency rerun further down, which does a full
+    // CREATE / INSERT / DROP / RENAME rebuild of `issues_v2` against
+    // an explicit (pre-status_sequence) column list — re-running that
+    // body destroys the `status_sequence` column we just added.
+    create_statuses_migration_schema_invariants(&pool).await?;
+    create_statuses_migration_backfills_default_seed(&pool).await?;
+    create_statuses_migration_backfills_custom_project(&pool).await?;
+    add_issues_v2_status_sequence_schema_invariants(&pool).await?;
+    add_issues_v2_status_sequence_backfills_issues(&pool).await?;
+    create_statuses_migration_is_idempotent(&pool).await?;
+    add_issues_v2_status_sequence_migration_is_idempotent(&pool).await?;
+    add_issues_v2_status_sequence_migration_rejects_null_baseline().await?;
+
+    issues_v2_project_id_not_null_migration_is_idempotent(&pool).await?;
 
     Ok(())
 }
@@ -480,9 +496,14 @@ async fn assert_store_level_form_response_smoke(pool: &SqlitePool) -> Result<()>
 // ---------------------------------------------------------------------------
 
 async fn assert_schema_invariants(pool: &SqlitePool) -> Result<()> {
-    // Tables added by 20260603020000_add_triggers_table.sql and
-    // 20260604000001_create_projects.sql.
-    for table in ["triggers", "projects"] {
+    // Recently-added tables only — the older set is covered implicitly
+    // by the store-level smoke tests that read/write them. Listed
+    // explicitly so a future rename without a baseline bump fails this
+    // assertion loud. Tables here come from
+    // 20260603020000_add_triggers_table.sql,
+    // 20260604000001_create_projects.sql, and
+    // 20260613000000_create_statuses.sql.
+    for table in ["triggers", "projects", "statuses"] {
         if !table_exists(pool, table).await? {
             bail!("expected `{table}` table to exist after rollforward");
         }
@@ -533,6 +554,8 @@ async fn assert_schema_invariants(pool: &SqlitePool) -> Result<()> {
         "projects_is_latest_idx",
         "projects_latest_idx",
         "issues_v2_project_id_idx",
+        "statuses_project_key_idx",
+        "issues_v2_project_status_sequence_idx",
     ] {
         if !index_exists(pool, index).await? {
             bail!("expected index `{index}` to exist after rollforward");
@@ -1705,6 +1728,483 @@ async fn issues_v2_project_id_not_null_migration_rejects_null_baseline() -> Resu
         }
         Ok(_) => bail!(
             "expected the migration body to fail loud on a NULL project_id \
+             row; instead it completed successfully"
+        ),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 20260613000000_create_statuses /
+// 20260613010000_add_issues_v2_status_sequence — SQLite parity for the
+// new `statuses` table and `issues_v2.status_sequence` backfill. Asserts
+// the table exists with PK `(project_id, sequence)` and unique
+// `(project_id, key)`, that the default-project JSONB seed backfills 1:1,
+// that a custom baseline project's full-column-shape rows
+// (`on_enter` JSON blob + `prompt_path` + `interactive: true`) round-trip,
+// that every `issues_v2` row's `status_sequence` resolves back to its
+// status key, that re-applying the `create_statuses` body adds no
+// duplicates, and that the `add_issues_v2_status_sequence` pre-flight
+// guard refuses to complete against a fresh schema-at-baseline pool
+// with a stranded `(project_id, status)` row that has no matching
+// `statuses` row. Covers [[i-jvmpqwwe]] acceptance criteria (a)–(d).
+// ---------------------------------------------------------------------------
+
+async fn create_statuses_migration_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    // SQLite primary key + unique index lookup goes through
+    // `pragma_index_list` + `pragma_index_info`. The PK index name is
+    // `sqlite_autoindex_statuses_1` for the first PRIMARY KEY constraint,
+    // but the more robust check is to walk `pragma_index_list` and verify
+    // we have a unique-primary-key entry whose columns are
+    // `(project_id, sequence)`.
+    let pk_cols = read_pk_columns(pool, "statuses").await?;
+    if pk_cols != vec!["project_id".to_string(), "sequence".to_string()] {
+        bail!("statuses PK: expected [project_id, sequence]; got {pk_cols:?}");
+    }
+
+    let cols = read_unique_index_columns(pool, "statuses_project_key_idx").await?;
+    if cols != vec!["project_id".to_string(), "key".to_string()] {
+        bail!("statuses_project_key_idx: expected unique [project_id, key]; got {cols:?}");
+    }
+    Ok(())
+}
+
+async fn read_pk_columns(pool: &SqlitePool, table: &str) -> Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT name FROM pragma_table_info(?1) \
+         WHERE pk > 0 ORDER BY pk",
+    )
+    .bind(table)
+    .fetch_all(pool)
+    .await
+    .with_context(|| format!("read primary key columns for {table}"))?;
+    let mut cols = Vec::with_capacity(rows.len());
+    for row in rows {
+        cols.push(row.try_get::<String, _>("name")?);
+    }
+    Ok(cols)
+}
+
+async fn read_unique_index_columns(pool: &SqlitePool, index: &str) -> Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT il.\"unique\" AS is_unique, ii.name AS col \
+         FROM pragma_index_list((SELECT tbl_name FROM sqlite_master WHERE name = ?1)) il \
+         JOIN pragma_index_info(?1) ii \
+         WHERE il.name = ?1 \
+         ORDER BY ii.seqno",
+    )
+    .bind(index)
+    .fetch_all(pool)
+    .await
+    .with_context(|| format!("read columns for index {index}"))?;
+    if rows.is_empty() {
+        bail!("index {index} not found");
+    }
+    let is_unique: i64 = rows[0].try_get("is_unique")?;
+    if is_unique == 0 {
+        bail!("index {index}: expected unique=true; got 0");
+    }
+    let mut cols = Vec::with_capacity(rows.len());
+    for row in rows {
+        cols.push(row.try_get::<String, _>("col")?);
+    }
+    Ok(cols)
+}
+
+async fn create_statuses_migration_backfills_default_seed(pool: &SqlitePool) -> Result<()> {
+    let expected_seed = default_project_seed().statuses;
+    let rows = sqlx::query(
+        "SELECT sequence, key, label, color, \
+                unblocks_parents, unblocks_dependents, cascades_to_children, \
+                on_enter, prompt_path, interactive \
+         FROM statuses WHERE project_id = 'j-defaul' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read statuses for j-defaul")?;
+    if rows.len() != 5 {
+        bail!("statuses(j-defaul): expected 5 rows; got {}", rows.len());
+    }
+    for (i, row) in rows.iter().enumerate() {
+        let sequence: i64 = row.try_get("sequence")?;
+        if sequence != (i + 1) as i64 {
+            bail!(
+                "statuses(j-defaul)[{i}]: expected sequence={}; got {sequence}",
+                i + 1
+            );
+        }
+        let key: String = row.try_get("key")?;
+        let label: String = row.try_get("label")?;
+        let color: String = row.try_get("color")?;
+        let unblocks_parents: i64 = row.try_get("unblocks_parents")?;
+        let unblocks_dependents: i64 = row.try_get("unblocks_dependents")?;
+        let cascades_to_children: i64 = row.try_get("cascades_to_children")?;
+        let on_enter: Option<String> = row.try_get("on_enter")?;
+        let prompt_path: Option<String> = row.try_get("prompt_path")?;
+        let interactive: i64 = row.try_get("interactive")?;
+
+        let expected = &expected_seed[i];
+        let bool_to_int = |b: bool| if b { 1_i64 } else { 0 };
+        if key != expected.key.as_str()
+            || label != expected.label
+            || color != expected.color.as_ref()
+            || unblocks_parents != bool_to_int(expected.unblocks_parents)
+            || unblocks_dependents != bool_to_int(expected.unblocks_dependents)
+            || cascades_to_children != bool_to_int(expected.cascades_to_children)
+            || prompt_path != expected.prompt_path
+            || interactive != bool_to_int(expected.interactive)
+        {
+            bail!(
+                "statuses(j-defaul)[{i}]: row did not match default_project_seed()[{i}]:\n  \
+                 got: (key={key}, label={label}, color={color}, ub_par={unblocks_parents}, \
+                 ub_dep={unblocks_dependents}, casc={cascades_to_children}, \
+                 prompt_path={prompt_path:?}, interactive={interactive})\n  \
+                 expected: {expected:?}"
+            );
+        }
+        // The default seed has no on_enter on any status.
+        if on_enter.is_some() {
+            bail!(
+                "statuses(j-defaul)[{i}].on_enter: expected NULL (default seed has none); got {on_enter:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn create_statuses_migration_backfills_custom_project(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT sequence, key, label, color, \
+                unblocks_parents, unblocks_dependents, cascades_to_children, \
+                on_enter, prompt_path, interactive \
+         FROM statuses WHERE project_id = 'j-stsfixt' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read statuses for j-stsfixt")?;
+    if rows.len() != 3 {
+        bail!("statuses(j-stsfixt): expected 3 rows; got {}", rows.len());
+    }
+
+    struct Expected {
+        sequence: i64,
+        key: &'static str,
+        label: &'static str,
+        color: &'static str,
+        unblocks_parents: i64,
+        unblocks_dependents: i64,
+        cascades_to_children: i64,
+        on_enter: Option<serde_json::Value>,
+        prompt_path: Option<&'static str>,
+        interactive: i64,
+    }
+
+    let expectations: [Expected; 3] = [
+        Expected {
+            sequence: 1,
+            key: "draft",
+            label: "Draft",
+            color: "#cccccc",
+            unblocks_parents: 0,
+            unblocks_dependents: 0,
+            cascades_to_children: 0,
+            on_enter: None,
+            prompt_path: None,
+            interactive: 0,
+        },
+        Expected {
+            sequence: 2,
+            key: "reviewing",
+            label: "Reviewing",
+            color: "#f1c40f",
+            unblocks_parents: 0,
+            unblocks_dependents: 0,
+            cascades_to_children: 0,
+            on_enter: Some(serde_json::json!({"assign_to": {"Agent": {"name": "reviewer"}}})),
+            prompt_path: Some("/projects/stsfixt/reviewing.md"),
+            interactive: 1,
+        },
+        Expected {
+            sequence: 3,
+            key: "merged",
+            label: "Merged",
+            color: "#2ecc71",
+            unblocks_parents: 1,
+            unblocks_dependents: 1,
+            cascades_to_children: 0,
+            on_enter: None,
+            prompt_path: None,
+            interactive: 0,
+        },
+    ];
+
+    for (row, expected) in rows.iter().zip(expectations.iter()) {
+        let sequence: i64 = row.try_get("sequence")?;
+        let key: String = row.try_get("key")?;
+        let label: String = row.try_get("label")?;
+        let color: String = row.try_get("color")?;
+        let unblocks_parents: i64 = row.try_get("unblocks_parents")?;
+        let unblocks_dependents: i64 = row.try_get("unblocks_dependents")?;
+        let cascades_to_children: i64 = row.try_get("cascades_to_children")?;
+        let on_enter_text: Option<String> = row.try_get("on_enter")?;
+        let on_enter_value = on_enter_text
+            .as_deref()
+            .map(serde_json::from_str::<serde_json::Value>)
+            .transpose()
+            .context("decode j-stsfixt.statuses.on_enter JSON")?;
+        let prompt_path: Option<String> = row.try_get("prompt_path")?;
+        let interactive: i64 = row.try_get("interactive")?;
+
+        if sequence != expected.sequence
+            || key != expected.key
+            || label != expected.label
+            || color != expected.color
+            || unblocks_parents != expected.unblocks_parents
+            || unblocks_dependents != expected.unblocks_dependents
+            || cascades_to_children != expected.cascades_to_children
+            || on_enter_value != expected.on_enter
+            || prompt_path.as_deref() != expected.prompt_path
+            || interactive != expected.interactive
+        {
+            bail!(
+                "statuses(j-stsfixt) sequence={sequence}: did not match expected\n  \
+                 got: (key={key}, label={label}, color={color}, ub_par={unblocks_parents}, \
+                 ub_dep={unblocks_dependents}, casc={cascades_to_children}, on_enter={on_enter_value:?}, \
+                 prompt_path={prompt_path:?}, interactive={interactive})\n  \
+                 expected: sequence={}, key={}",
+                expected.sequence,
+                expected.key
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_issues_v2_status_sequence_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "issues_v2", "status_sequence").await? {
+        bail!("expected `issues_v2.status_sequence` column to exist after rollforward");
+    }
+    if !column_is_nullable(pool, "issues_v2", "status_sequence").await? {
+        bail!(
+            "expected `issues_v2.status_sequence` to be nullable (FK + NOT NULL deferred to PR 3); \
+             got NOT NULL"
+        );
+    }
+    Ok(())
+}
+
+async fn add_issues_v2_status_sequence_backfills_issues(pool: &SqlitePool) -> Result<()> {
+    let cases: &[(&str, &str, &str, i64)] = &[
+        ("i-stsopena", "j-defaul", "open", 1),
+        ("i-stsiprog", "j-defaul", "in-progress", 2),
+        ("i-stsclosd", "j-defaul", "closed", 3),
+        ("i-stsdropd", "j-defaul", "dropped", 4),
+        ("i-stsfaild", "j-defaul", "failed", 5),
+        ("i-stsrevwg", "j-stsfixt", "reviewing", 2),
+    ];
+    for (issue_id, project_id, status_key, expected_sequence) in cases {
+        let row = sqlx::query(
+            "SELECT i.status_sequence, s.key AS resolved_key \
+             FROM issues_v2 i \
+             LEFT JOIN statuses s \
+                ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE i.id = ?1 AND i.is_latest = 1",
+        )
+        .bind(issue_id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read status_sequence for {issue_id}"))?;
+        let status_sequence: Option<i64> = row.try_get("status_sequence")?;
+        let resolved_key: Option<String> = row.try_get("resolved_key")?;
+        if status_sequence != Some(*expected_sequence) {
+            bail!(
+                "{issue_id} (project={project_id}, status={status_key}): \
+                 expected status_sequence={expected_sequence}; got {status_sequence:?}"
+            );
+        }
+        if resolved_key.as_deref() != Some(*status_key) {
+            bail!(
+                "{issue_id} (project={project_id}, status={status_key}): \
+                 join to statuses must recover key; got {resolved_key:?}"
+            );
+        }
+    }
+
+    let row = sqlx::query("SELECT COUNT(*) FROM issues_v2 WHERE status_sequence IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count NULL status_sequence rows post-rollforward")?;
+    let count: i64 = row.try_get(0)?;
+    if count != 0 {
+        bail!("expected 0 issues_v2 rows with NULL status_sequence post-backfill; got {count}");
+    }
+    Ok(())
+}
+
+async fn create_statuses_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // The create_statuses body is naturally idempotent:
+    //   * `CREATE TABLE IF NOT EXISTS`
+    //   * `CREATE UNIQUE INDEX IF NOT EXISTS`
+    //   * `INSERT OR IGNORE`
+    // Re-applying the body must not produce duplicate `(project_id,
+    // sequence)` rows or duplicate `(project_id, key)` rows. (A new
+    // project inserted between runs *will* be picked up on re-apply,
+    // which is correct — the upstream test seeds `j-migsmoke` post-
+    // rollforward in `assert_recent_migration_store_smoke`; that
+    // project's statuses are unbackfilled until this re-apply, so the
+    // re-apply legitimately adds them. We check for duplicates, not
+    // for a frozen row count.)
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260613000000_create_statuses.sql"),
+    )
+    .context("read sqlite create_statuses migration body for idempotency rerun")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-apply sqlite create_statuses migration body")?;
+
+    let row = sqlx::query(
+        "SELECT COUNT(*) - COUNT(DISTINCT project_id || ':' || sequence) AS dup FROM statuses",
+    )
+    .fetch_one(pool)
+    .await
+    .context("count duplicate (project_id, sequence) rows in statuses")?;
+    let dup: i64 = row.try_get("dup")?;
+    if dup != 0 {
+        bail!("create_statuses re-apply produced {dup} duplicate (project_id, sequence) rows");
+    }
+    let row = sqlx::query(
+        "SELECT COUNT(*) - COUNT(DISTINCT project_id || ':' || key) AS dup FROM statuses",
+    )
+    .fetch_one(pool)
+    .await
+    .context("count duplicate (project_id, key) rows in statuses")?;
+    let dup: i64 = row.try_get("dup")?;
+    if dup != 0 {
+        bail!("create_statuses re-apply produced {dup} duplicate (project_id, key) rows");
+    }
+    Ok(())
+}
+
+async fn add_issues_v2_status_sequence_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // The sqlite body cannot be re-executed verbatim — `ALTER TABLE ...
+    // ADD COLUMN` has no `IF NOT EXISTS` form in sqlite, so a second
+    // raw-SQL run would error on "duplicate column". The acceptance
+    // criterion explicitly covers this via the orchestration tracker:
+    // a second `run_migrations(&pool, None)` call must treat the
+    // already-applied 20260613010000 migration as a no-op, leaving every
+    // previously-backfilled `status_sequence` value untouched.
+    let before_rows = sqlx::query(
+        "SELECT id, version_number, status_sequence FROM issues_v2 \
+         WHERE status_sequence IS NOT NULL ORDER BY id, version_number",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot non-NULL issues_v2.status_sequence before tracker rerun")?;
+    let before: Vec<(String, i64, i64)> = before_rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("id").unwrap(),
+                r.try_get::<i64, _>("version_number").unwrap(),
+                r.try_get::<i64, _>("status_sequence").unwrap(),
+            )
+        })
+        .collect();
+
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-run sqlite migrations through the tracker for idempotency check")?;
+
+    let after_rows = sqlx::query(
+        "SELECT id, version_number, status_sequence FROM issues_v2 \
+         WHERE status_sequence IS NOT NULL ORDER BY id, version_number",
+    )
+    .fetch_all(pool)
+    .await
+    .context("re-snapshot non-NULL issues_v2.status_sequence after tracker rerun")?;
+    let after: Vec<(String, i64, i64)> = after_rows
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>("id").unwrap(),
+                r.try_get::<i64, _>("version_number").unwrap(),
+                r.try_get::<i64, _>("status_sequence").unwrap(),
+            )
+        })
+        .collect();
+    if before != after {
+        bail!(
+            "add_issues_v2_status_sequence tracker rerun overwrote previously-backfilled rows: \
+             before={before:?}; after={after:?}"
+        );
+    }
+
+    let row = sqlx::query("SELECT COUNT(*) FROM issues_v2 WHERE status_sequence IS NULL")
+        .fetch_one(pool)
+        .await
+        .context("count NULL status_sequence rows after tracker rerun")?;
+    let null_count: i64 = row.try_get(0)?;
+    if null_count != 0 {
+        bail!(
+            "add_issues_v2_status_sequence tracker rerun left {null_count} NULL status_sequence rows"
+        );
+    }
+    Ok(())
+}
+
+/// Pre-flight guard for the issues_v2.status_sequence backfill. Against
+/// a fresh schema-at-baseline pool with an issue row whose
+/// `(project_id, status)` has no matching `statuses` row, the migration
+/// body must fail loud rather than silently leaving the issue
+/// orphan-pointing.
+async fn add_issues_v2_status_sequence_migration_rejects_null_baseline() -> Result<()> {
+    let pool = SqliteStore::init_pool("sqlite::memory:")
+        .await
+        .context("init in-memory sqlite pool for status_sequence null-baseline test")?;
+
+    // Roll forward to the create_statuses migration so `statuses` exists
+    // but `status_sequence` has not been added yet.
+    sqlite_store::run_migrations(&pool, Some(20260613000000))
+        .await
+        .context("roll forward to 20260613000000 baseline for null-guard test")?;
+
+    // Seed an issue whose `(project_id, status)` does not match any
+    // existing `statuses` row. The default project's seeded statuses
+    // never include `ghost`, so the join will yield NULL and the
+    // pre-flight guard must trip.
+    sqlx::query(
+        "INSERT INTO issues_v2 (id, version_number, issue_type, description, creator, project_id, status, is_latest) \
+         VALUES ('i-nullseq', 1, 'task', 'guard test row', 'system', 'j-defaul', 'ghost', 1)",
+    )
+    .execute(&pool)
+    .await
+    .context("insert orphan-status row")?;
+
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sqlite-migrations/20260613010000_add_issues_v2_status_sequence.sql"),
+    )
+    .context("read sqlite add_issues_v2_status_sequence migration body for null-baseline test")?;
+
+    let result = sqlx::raw_sql(&body).execute(&pool).await;
+    match result {
+        Err(err) => {
+            // The scratch table's CHECK (null_count = 0) trips; the
+            // error mentions either the constraint name or the column.
+            let msg = err.to_string();
+            if !msg.to_ascii_lowercase().contains("check")
+                && !msg.contains("null_count")
+                && !msg.contains("_status_sequence_null_guard")
+            {
+                bail!(
+                    "expected the migration error to surface the CHECK / null_count guard; got: {msg}"
+                );
+            }
+            Ok(())
+        }
+        Ok(_) => bail!(
+            "expected the migration body to fail loud on an orphan (project_id, status) \
              row; instead it completed successfully"
         ),
     }

@@ -11,6 +11,13 @@ import type { Project } from "./generated/Project";
 import type { ProjectId } from "./generated/ProjectId";
 import type { StatusDefinition } from "./generated/StatusDefinition";
 
+/**
+ * Seeded default project id. Must stay byte-identical to
+ * `ProjectId::default_project()` in `hydra-common/src/ids.rs` and the id
+ * inserted by `hydra-server/.../20260607000000_seed_default_project.sql`.
+ */
+export const DEFAULT_PROJECT_ID: ProjectId = "j-defaul";
+
 export interface UpsertProjectRequest {
   project: Project;
 }
