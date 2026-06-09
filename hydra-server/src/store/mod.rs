@@ -16,7 +16,7 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::{Project, ProjectKey};
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::principal::Principal;
@@ -1212,6 +1212,24 @@ pub trait Store: ReadOnlyStore {
     async fn delete_project(
         &self,
         id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError>;
+
+    /// Renames a status key in place on a project. The status's
+    /// `(project_id, sequence)` identity is preserved, so any issues
+    /// referencing the old key continue to resolve through the same
+    /// sequence and read back as `to`.
+    ///
+    /// Returns the new project version number, or
+    /// `StoreError::ProjectNotFound` if the project does not exist, or
+    /// `StoreError::InvalidIssueStatus` if `from` is not declared on
+    /// the project or `to` already exists. If `from == to`, returns
+    /// the current latest version without writing a new row.
+    async fn rename_status(
+        &self,
+        id: &ProjectId,
+        from: &StatusKey,
+        to: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 

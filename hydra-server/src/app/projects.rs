@@ -61,6 +61,16 @@ impl AppState {
         self.store.delete_project(id, actor).await
     }
 
+    pub async fn rename_status(
+        &self,
+        id: &ProjectId,
+        from: &StatusKey,
+        to: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.store.rename_status(id, from, to, actor).await
+    }
+
     /// Resolve an issue's `(project_id, status)` pair to a
     /// [`StatusDefinition`].
     ///

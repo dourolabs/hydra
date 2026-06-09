@@ -1229,6 +1229,16 @@ impl StoreWithEvents {
         self.inner.delete_project(id, actor).await
     }
 
+    pub async fn rename_status(
+        &self,
+        id: &ProjectId,
+        from: &hydra_common::api::v1::projects::StatusKey,
+        to: &hydra_common::api::v1::projects::StatusKey,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.rename_status(id, from, to, actor).await
+    }
+
     // ---- Label association mutations ----
 
     pub async fn add_label_association(

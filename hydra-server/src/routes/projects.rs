@@ -17,7 +17,7 @@ use hydra_common::api::v1::{
     ApiError,
     projects::{
         ListProjectsResponse, ProjectRecord, ProjectStatusesResponse, ProjectValidationError,
-        UpsertProjectRequest, UpsertProjectResponse,
+        RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
     },
 };
 use tracing::{error, info};
@@ -145,6 +145,44 @@ pub async fn delete_project(
         project_id = %project_id,
         version,
         "delete_project completed"
+    );
+    Ok(Json(UpsertProjectResponse::new(project_id, version)))
+}
+
+/// POST /v1/projects/:project_id/statuses/rename — rename a status key in place.
+///
+/// Preserves the status's `(project_id, sequence)` identity, so any
+/// issues referencing the old key continue to resolve through the same
+/// sequence and read back as the new key. Returns the bumped project
+/// version (matches `update_project`'s shape).
+pub async fn rename_project_status(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(project_id): Path<ProjectId>,
+    Json(payload): Json<RenameStatusRequest>,
+) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        from = %payload.from,
+        to = %payload.to,
+        "rename_project_status invoked"
+    );
+
+    let actor_ref = ActorRef::from(&actor);
+    let version = state
+        .rename_status(&project_id, &payload.from, &payload.to, &actor_ref)
+        .await
+        .map_err(|e| match e {
+            StoreError::InvalidIssueStatus(msg) => ApiError::bad_request(msg),
+            other => map_project_not_found(other, &project_id),
+        })?;
+
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        version,
+        "rename_project_status completed"
     );
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
