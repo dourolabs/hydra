@@ -70,7 +70,17 @@ export class Store {
       throw new StoreError(404, `${collectionName} '${id}' not found`);
     }
     const latest = versions[versions.length - 1];
-    if (latest.deleted) {
+    // Restore is signalled by an update payload whose `deleted` flag is
+    // explicitly `false`; for any other update against a soft-deleted entry
+    // we keep the 404 so stale clients can't accidentally overwrite the
+    // tombstone state.
+    const restoring =
+      latest.deleted === true &&
+      typeof data === "object" &&
+      data !== null &&
+      "deleted" in (data as object) &&
+      (data as { deleted?: unknown }).deleted === false;
+    if (latest.deleted && !restoring) {
       throw new StoreError(404, `${collectionName} '${id}' not found`);
     }
     const now = new Date().toISOString();

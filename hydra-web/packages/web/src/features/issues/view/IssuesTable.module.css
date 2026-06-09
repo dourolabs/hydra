@@ -146,6 +146,21 @@
   background: var(--bg-2);
 }
 
+/* Hover-revealed Restore action on archived rows. Matches the DocumentRow
+   pattern (opacity transition) and also reveals on keyboard focus so a
+   tab-traversal user can find it. */
+.restoreButton {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--tx-fast);
+}
+
+.archived:hover .restoreButton,
+.archived:focus-within .restoreButton {
+  opacity: 1;
+}
+
 .assignee {
   display: inline-flex;
   align-items: center;

@@ -364,6 +364,21 @@
   background: var(--bg-2);
 }
 
+/* Hover-revealed Restore action on an archived card. Mirrors the table-row
+   pattern: hidden by default, surfaces on hover or keyboard focus within
+   the card. */
+.cardRestoreButton {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--tx-fast);
+}
+
+.cardArchived:hover .cardRestoreButton,
+.cardArchived:focus-within .cardRestoreButton {
+  opacity: 1;
+}
+
 .cardHead {
   display: flex;
   align-items: center;
