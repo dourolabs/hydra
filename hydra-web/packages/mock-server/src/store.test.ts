@@ -76,6 +76,32 @@ describe("Store", () => {
       store.delete("items", "id-1", "issue");
       expect(() => store.update("items", "id-1", { name: "v2" }, "issue")).toThrow(StoreError);
     });
+
+    it("restores a soft-deleted entity when payload sets deleted: false", () => {
+      const store = new Store();
+      store.create("items", "id-1", { name: "test" }, "issue");
+      store.delete("items", "id-1", "issue");
+      const entry = store.update("items", "id-1", { name: "test", deleted: false }, "issue");
+      expect(entry.version).toBe(3);
+      expect(entry.deleted).toBeUndefined();
+      expect(store.get("items", "id-1")?.data).toEqual({ name: "test", deleted: false });
+    });
+
+    it("throws 404 when a non-restore payload omits the deleted flag", () => {
+      const store = new Store();
+      store.create("items", "id-1", { name: "test" }, "issue");
+      store.delete("items", "id-1", "issue");
+      expect(() => store.update("items", "id-1", { name: "renamed" }, "issue")).toThrow(StoreError);
+    });
+
+    it("throws 404 when a non-restore payload keeps deleted: true", () => {
+      const store = new Store();
+      store.create("items", "id-1", { name: "test" }, "issue");
+      store.delete("items", "id-1", "issue");
+      expect(() => store.update("items", "id-1", { name: "test", deleted: true }, "issue")).toThrow(
+        StoreError,
+      );
+    });
   });
 
   describe("delete", () => {
