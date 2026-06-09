@@ -1,7 +1,7 @@
 use super::*;
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
 use crate::domain::actors::ActorRef;
-use crate::domain::issues::{Issue, IssueStatus, IssueType};
+use crate::domain::issues::{Issue, IssueType};
 use crate::domain::users::Username;
 use crate::policy::config::{PolicyConfig, PolicyEntry, PolicyList};
 use crate::policy::context::{AutomationContext, Operation, OperationPayload, RestrictionContext};
@@ -10,6 +10,7 @@ use crate::store::MemoryStore;
 use crate::test_utils;
 use chrono::Utc;
 use hydra_common::IssueId;
+use hydra_common::test_utils::status::status;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -20,7 +21,7 @@ fn dummy_issue() -> Issue {
         "test".to_string(),
         Username::from("creator"),
         String::new(),
-        IssueStatus::Open.into(),
+        status("open"),
         crate::domain::projects::default_project_id(),
         None,
         None,
@@ -164,7 +165,7 @@ impl Automation for FailingAutomation {
 }
 
 fn make_issue_payload() -> OperationPayload {
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::issues::{Issue, IssueType};
 
     OperationPayload::Issue {
         issue_id: Some(IssueId::new()),
@@ -174,7 +175,7 @@ fn make_issue_payload() -> OperationPayload {
             "test issue".to_string(),
             Username::from("tester"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -815,7 +816,7 @@ fn default_config_enables_all_builtin_policies() {
 /// creator fields. If we omit it from config, the operation should succeed.
 #[tokio::test]
 async fn disabling_restriction_allows_blocked_operation() {
-    use crate::domain::issues::{Issue, IssueStatus, IssueType};
+    use crate::domain::issues::{Issue, IssueType};
 
     // Engine with all restrictions including require_creator
     let full_engine = crate::app::AppState::build_policy_engine(None);
@@ -827,7 +828,7 @@ async fn disabling_restriction_allows_blocked_operation() {
         "test".to_string(),
         Username::from(""),
         String::new(),
-        IssueStatus::Open.into(),
+        status("open"),
         crate::domain::projects::default_project_id(),
         None,
         None,

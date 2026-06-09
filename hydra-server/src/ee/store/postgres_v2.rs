@@ -5997,10 +5997,7 @@ mod tests {
     use crate::{
         domain::{
             documents::Document,
-            issues::{
-                Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
-                SessionSettings,
-            },
+            issues::{Issue, IssueDependency, IssueDependencyType, IssueType, SessionSettings},
             patches::{CommitRange, GitOid, GithubPr, Patch, PatchStatus, Review},
             users::{User, Username},
         },
@@ -6014,6 +6011,7 @@ mod tests {
             Action, ActionStyle, Effect, Field, Form, FormResponse, Input, SelectOption,
         },
         repositories::{Repository, SearchRepositoriesQuery},
+        test_utils::status::status,
     };
     use std::{collections::HashMap, collections::HashSet, str::FromStr, sync::Arc};
 
@@ -6033,7 +6031,7 @@ mod tests {
             "details".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -6226,7 +6224,7 @@ mod tests {
             "full description".to_string(),
             Username::from("issue-creator"),
             "50%".to_string(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::User {
                 name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
@@ -6316,7 +6314,7 @@ mod tests {
                         style: ActionStyle::Primary,
                         requires: vec!["name".to_string(), "agree".to_string()],
                         effect: Effect::UpdateIssue {
-                            status: IssueStatus::Closed.into(),
+                            status: status("closed"),
                             set_feedback_from: None,
                         },
                     },
@@ -7292,7 +7290,7 @@ mod tests {
             "original_unique_description_abc123".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -7311,7 +7309,7 @@ mod tests {
             "changed_unique_description_xyz789".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -8366,7 +8364,7 @@ mod tests {
             "a bug".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -8384,7 +8382,7 @@ mod tests {
             "closed task".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Closed.into(),
+            status("closed"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -8411,8 +8409,7 @@ mod tests {
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
 
         // Count only closed
-        let query =
-            SearchIssuesQuery::new(None, vec![IssueStatus::Closed.into()], None, None, None);
+        let query = SearchIssuesQuery::new(None, vec![status("closed")], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
     }
 
@@ -8629,7 +8626,7 @@ mod tests {
 
         let mut updated = sample_issue(vec![]);
         updated.progress = "v3 progress".to_string();
-        updated.status = IssueStatus::InProgress.into();
+        updated.status = status("in-progress");
         store.update_issue(&ids[0], updated, &actor).await.unwrap();
 
         // list_issues should return 3 issues, each at their latest version.
@@ -8640,10 +8637,7 @@ mod tests {
         // The first issue (ids[0]) should reflect the latest update.
         let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
         assert_eq!(first.1.item.progress, "v3 progress");
-        assert_eq!(
-            first.1.item.status,
-            StatusKey::from(IssueStatus::InProgress)
-        );
+        assert_eq!(first.1.item.status, status("in-progress"));
         assert_eq!(first.1.version, 3);
 
         // Paginate with limit=2 and verify we get 2 results, then use cursor
@@ -8660,8 +8654,7 @@ mod tests {
         assert_eq!(store.count_issues(&count_query).await.unwrap(), 3);
 
         // Filter by status=InProgress should return only the updated issue.
-        let query =
-            SearchIssuesQuery::new(None, vec![IssueStatus::InProgress.into()], None, None, None);
+        let query = SearchIssuesQuery::new(None, vec![status("in-progress")], None, None, None);
         let filtered = store.list_issues(&query).await.unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].0, ids[0]);

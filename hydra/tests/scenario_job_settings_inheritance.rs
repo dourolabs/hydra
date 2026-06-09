@@ -2,8 +2,9 @@ mod harness;
 
 use anyhow::Result;
 use harness::{find_summary_children_of, test_job_settings, JobAssertions, TestHarness};
-use hydra_common::issues::{IssueStatus, IssueType, SessionSettings};
+use hydra_common::issues::{IssueType, SessionSettings};
 use hydra_common::sessions::{Bundle, MountItem};
+use hydra_common::test_utils::status::status;
 use std::str::FromStr;
 
 /// Scenario 16: Job Settings Inheritance
@@ -35,7 +36,7 @@ async fn job_settings_inheritance_through_spawning_pipeline() -> Result<()> {
         .create_issue_with_settings(
             "Task with custom job settings",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(job_settings),
         )
@@ -128,7 +129,7 @@ async fn pm_creates_child_with_repo_settings_via_cli() -> Result<()> {
         .create_issue_with_settings(
             "Parent issue for child test",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("pm"),
             Some(test_job_settings(&repo)),
         )

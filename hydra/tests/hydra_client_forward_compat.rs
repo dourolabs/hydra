@@ -10,10 +10,7 @@ use hydra_common::{
         Project, ProjectIdOrDefault, ProjectKey, StatusDefinition, StatusKey, UpsertProjectRequest,
     },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
-    issues::{
-        IssueDependencyType, IssueInput, IssueStatus, IssueType, SearchIssuesQuery,
-        UpsertIssueRequest,
-    },
+    issues::{IssueDependencyType, IssueInput, IssueType, SearchIssuesQuery, UpsertIssueRequest},
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
@@ -23,6 +20,7 @@ use hydra_common::{
     session_status::SessionStatusUpdate,
     sessions::{Bundle, CreateSessionRequest, SearchSessionsQuery},
     task_status::Status,
+    test_utils::status::status,
     users::Username,
     whoami::ActorIdentity,
     DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName, SessionId,
@@ -546,7 +544,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "desc".to_string(),
         Username::from("creator"),
         "progress".to_string(),
-        IssueStatus::Open.into(),
+        status("open"),
         ProjectId::default_project(),
         Some(hydra_common::principal::Principal::User {
             name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),

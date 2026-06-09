@@ -162,7 +162,6 @@ fn rgb(value: &str) -> Rgb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::issues::IssueStatus;
 
     #[test]
     fn default_project_id_is_well_formed() {
@@ -188,18 +187,11 @@ mod tests {
     #[test]
     fn every_legacy_status_string_resolves() {
         let project = default_project_seed();
-        for status in [
-            IssueStatus::Open,
-            IssueStatus::InProgress,
-            IssueStatus::Closed,
-            IssueStatus::Dropped,
-            IssueStatus::Failed,
-        ] {
-            let key = StatusKey::try_new(status.as_str()).unwrap();
+        for status_slug in ["open", "in-progress", "closed", "dropped", "failed"] {
+            let key = StatusKey::try_new(status_slug).unwrap();
             assert!(
                 project.find_status(&key).is_some(),
-                "default project is missing status '{}'",
-                status.as_str()
+                "default project is missing status '{status_slug}'"
             );
         }
     }

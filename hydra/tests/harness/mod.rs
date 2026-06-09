@@ -11,8 +11,7 @@ use hydra::client::{HydraClient, HydraClientInterface, HydraClientTimeouts};
 use hydra::config::{AppConfig, ServerSection};
 use hydra_common::{
     issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType, SessionSettings,
-        UpsertIssueRequest,
+        Issue, IssueDependency, IssueDependencyType, IssueType, SessionSettings, UpsertIssueRequest,
     },
     patches::{PatchStatus, UpsertPatchRequest},
     repositories::Repository,

@@ -3091,7 +3091,7 @@ mod tests {
     use crate::{
         domain::{
             actors::{ActorId, ActorRef},
-            issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
+            issues::{Issue, IssueDependency, IssueDependencyType, IssueType},
             patches::{GithubPr, Patch, PatchStatus},
             task_status::Event,
             users::{User, Username},
@@ -3105,6 +3105,7 @@ mod tests {
         api::v1::repositories::{AssigneeRef, DynamicRef, MergePolicy, MergerRule, ReviewerGroup},
         api::v1::users::Username as ApiUsername,
         repositories::{Repository, SearchRepositoriesQuery},
+        test_utils::status::status,
     };
     use std::{collections::HashSet, str::FromStr, sync::Arc};
 
@@ -3178,7 +3179,7 @@ mod tests {
             "issue details".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -5801,21 +5802,20 @@ mod tests {
 
         // Create a closed issue
         let mut closed_issue = sample_issue(vec![]);
-        closed_issue.status = IssueStatus::Closed.into();
+        closed_issue.status = status("closed");
         let (closed_issue_id, _) = store
             .add_issue(closed_issue, &ActorRef::test())
             .await
             .unwrap();
 
         // Filter by open status
-        let query = SearchIssuesQuery::new(None, vec![IssueStatus::Open.into()], None, None, None);
+        let query = SearchIssuesQuery::new(None, vec![status("open")], None, None, None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, open_issue_id);
 
         // Filter by closed status
-        let query =
-            SearchIssuesQuery::new(None, vec![IssueStatus::Closed.into()], None, None, None);
+        let query = SearchIssuesQuery::new(None, vec![status("closed")], None, None, None);
         let issues = store.list_issues(&query).await.unwrap();
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].0, closed_issue_id);
@@ -7747,7 +7747,7 @@ mod tests {
             "a bug".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -7765,7 +7765,7 @@ mod tests {
             "closed task".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Closed.into(),
+            status("closed"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -7795,7 +7795,7 @@ mod tests {
         // Count only closed
         let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::Closed.into()],
+            vec![status("closed")],
             None,
             None,
             None,

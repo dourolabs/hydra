@@ -1858,6 +1858,7 @@ impl ReadOnlyStore for StoreWithEvents {
 mod tests {
     use super::*;
     use crate::store::{MemoryStore, Status};
+    use hydra_common::test_utils::status::status;
 
     #[test]
     fn seq_numbers_are_monotonically_increasing() {
@@ -1871,7 +1872,7 @@ mod tests {
     }
 
     fn dummy_issue() -> Issue {
-        use crate::domain::issues::{IssueStatus, IssueType};
+        use crate::domain::issues::IssueType;
         use crate::domain::users::Username;
 
         Issue::new(
@@ -1880,7 +1881,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -1951,7 +1952,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_with_events_emits_on_add_issue() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -1965,7 +1966,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -1997,7 +1998,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_with_events_emits_on_update_issue() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -2011,7 +2012,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -2029,7 +2030,7 @@ mod tests {
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         let mut updated = issue;
-        updated.status = IssueStatus::InProgress.into();
+        updated.status = status("in-progress");
         store
             .update_issue_with_actor(&issue_id, updated, ActorRef::test())
             .await
@@ -2051,7 +2052,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_with_events_emits_on_delete_issue() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -2065,7 +2066,7 @@ mod tests {
             "test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -2103,7 +2104,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_event_carries_new_entity_payload() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -2117,7 +2118,7 @@ mod tests {
             "payload test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -2139,7 +2140,7 @@ mod tests {
                 MutationPayload::Issue { old, new, .. } => {
                     assert!(old.is_none(), "create event should have no old state");
                     assert_eq!(new.description, "payload test");
-                    assert_eq!(new.status, IssueStatus::Open.as_status_key());
+                    assert_eq!(new.status, status("open"));
                 }
                 other => panic!("expected Issue payload, got {other:?}"),
             },
@@ -2149,7 +2150,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_event_carries_old_and_new_entity_payload() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -2163,7 +2164,7 @@ mod tests {
             "before update".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -2181,7 +2182,7 @@ mod tests {
         let _ = rx.recv().await.unwrap(); // consume IssueCreated
 
         let mut updated = issue;
-        updated.status = IssueStatus::InProgress.into();
+        updated.status = status("in-progress");
         updated.description = "after update".to_string();
         store
             .update_issue_with_actor(&issue_id, updated, ActorRef::test())
@@ -2193,9 +2194,9 @@ mod tests {
             ServerEvent::IssueUpdated { payload, .. } => match payload.as_ref() {
                 MutationPayload::Issue { old, new, .. } => {
                     let old = old.as_ref().expect("update event should carry old state");
-                    assert_eq!(old.status, IssueStatus::Open.as_status_key());
+                    assert_eq!(old.status, status("open"));
                     assert_eq!(old.description, "before update");
-                    assert_eq!(new.status, IssueStatus::InProgress.as_status_key());
+                    assert_eq!(new.status, status("in-progress"));
                     assert_eq!(new.description, "after update");
                 }
                 other => panic!("expected Issue payload, got {other:?}"),
@@ -2206,7 +2207,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_event_carries_old_entity_payload() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -2220,7 +2221,7 @@ mod tests {
             "to be deleted".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -2332,7 +2333,7 @@ mod tests {
     #[tokio::test]
     async fn actor_context_carried_through_events() {
         use crate::domain::actors::ActorId;
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -2346,7 +2347,7 @@ mod tests {
             "actor test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -2386,7 +2387,7 @@ mod tests {
 
     #[tokio::test]
     async fn actor_context_preserves_system_variant() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
         let bus = Arc::new(EventBus::new());
@@ -2400,7 +2401,7 @@ mod tests {
             "system actor test".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,

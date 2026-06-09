@@ -164,6 +164,7 @@ mod tests {
     use crate::store::Status;
     use crate::test_utils;
     use chrono::Utc;
+    use hydra_common::test_utils::status::status;
     use hydra_common::{IssueId, RepoName};
     use std::collections::HashMap;
     use std::str::FromStr;
@@ -289,7 +290,7 @@ mod tests {
             "desc".to_string(),
             Username::from("alice"),
             String::new(),
-            crate::domain::issues::IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,

@@ -284,6 +284,7 @@ mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
     use crate::test_utils::test_state;
+    use hydra_common::test_utils::status::status;
 
     #[tokio::test]
     async fn create_label_normalizes_name() {
@@ -687,7 +688,6 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_issue_with_label_ids_syncs_labels() {
-        use crate::domain::issues::IssueStatus;
         use hydra_common::api::v1 as api;
 
         let state = test_state();
@@ -700,7 +700,7 @@ mod tests {
             .await
             .unwrap();
 
-        let issue = crate::app::test_helpers::issue_with_status("test", IssueStatus::Open, vec![]);
+        let issue = crate::app::test_helpers::issue_with_status("test", status("open"), vec![]);
         let mut request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         request.label_ids = Some(vec![label_a.clone(), label_b.clone()]);
 
@@ -715,7 +715,7 @@ mod tests {
 
         // Update to only keep label_a
         let updated_issue =
-            crate::app::test_helpers::issue_with_status("test updated", IssueStatus::Open, vec![]);
+            crate::app::test_helpers::issue_with_status("test updated", status("open"), vec![]);
         let mut update_request = api::issues::UpsertIssueRequest::new(updated_issue.into(), None);
         update_request.label_ids = Some(vec![label_a.clone()]);
 
@@ -731,12 +731,11 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_issue_with_label_names_creates_and_assigns() {
-        use crate::domain::issues::IssueStatus;
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
-        let issue = crate::app::test_helpers::issue_with_status("test", IssueStatus::Open, vec![]);
+        let issue = crate::app::test_helpers::issue_with_status("test", status("open"), vec![]);
         let mut request = api::issues::UpsertIssueRequest::new(issue.into(), None);
         request.label_names = Some(vec!["new-label".to_string()]);
 
@@ -753,14 +752,13 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_label_to_single_level_children() {
-        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use crate::domain::issues::{IssueDependency, IssueDependencyType};
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
         // Create parent issue
-        let parent =
-            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent = crate::app::test_helpers::issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -772,11 +770,8 @@ mod tests {
 
         // Create child issue
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = crate::app::test_helpers::issue_with_status(
-            "child",
-            IssueStatus::Open,
-            vec![child_dep],
-        );
+        let child =
+            crate::app::test_helpers::issue_with_status("child", status("open"), vec![child_dep]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -812,14 +807,14 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_label_to_multi_level_children() {
-        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use crate::domain::issues::{IssueDependency, IssueDependencyType};
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
         // Create grandparent → parent → child chain
         let grandparent =
-            crate::app::test_helpers::issue_with_status("grandparent", IssueStatus::Open, vec![]);
+            crate::app::test_helpers::issue_with_status("grandparent", status("open"), vec![]);
         let (grandparent_id, _) = state
             .upsert_issue(
                 None,
@@ -830,11 +825,8 @@ mod tests {
             .unwrap();
 
         let parent_dep = IssueDependency::new(IssueDependencyType::ChildOf, grandparent_id.clone());
-        let parent = crate::app::test_helpers::issue_with_status(
-            "parent",
-            IssueStatus::Open,
-            vec![parent_dep],
-        );
+        let parent =
+            crate::app::test_helpers::issue_with_status("parent", status("open"), vec![parent_dep]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -845,11 +837,8 @@ mod tests {
             .unwrap();
 
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = crate::app::test_helpers::issue_with_status(
-            "child",
-            IssueStatus::Open,
-            vec![child_dep],
-        );
+        let child =
+            crate::app::test_helpers::issue_with_status("child", status("open"), vec![child_dep]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -889,12 +878,11 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_label_with_no_children_is_noop() {
-        use crate::domain::issues::IssueStatus;
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
-        let issue = crate::app::test_helpers::issue_with_status("solo", IssueStatus::Open, vec![]);
+        let issue = crate::app::test_helpers::issue_with_status("solo", status("open"), vec![]);
         let (issue_id, _) = state
             .upsert_issue(
                 None,
@@ -920,14 +908,13 @@ mod tests {
 
     #[tokio::test]
     async fn child_issue_inherits_parent_labels_on_creation() {
-        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use crate::domain::issues::{IssueDependency, IssueDependencyType};
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
         // Create parent and assign labels
-        let parent =
-            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent = crate::app::test_helpers::issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -957,11 +944,8 @@ mod tests {
 
         // Create child with child-of dependency — should inherit both labels
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = crate::app::test_helpers::issue_with_status(
-            "child",
-            IssueStatus::Open,
-            vec![child_dep],
-        );
+        let child =
+            crate::app::test_helpers::issue_with_status("child", status("open"), vec![child_dep]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -982,14 +966,13 @@ mod tests {
 
     #[tokio::test]
     async fn child_issue_no_inheritance_when_parent_has_no_labels() {
-        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use crate::domain::issues::{IssueDependency, IssueDependencyType};
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
         // Create parent with no labels
-        let parent =
-            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent = crate::app::test_helpers::issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -1001,11 +984,8 @@ mod tests {
 
         // Create child
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = crate::app::test_helpers::issue_with_status(
-            "child",
-            IssueStatus::Open,
-            vec![child_dep],
-        );
+        let child =
+            crate::app::test_helpers::issue_with_status("child", status("open"), vec![child_dep]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -1022,14 +1002,13 @@ mod tests {
 
     #[tokio::test]
     async fn child_issue_inherits_and_merges_with_explicit_labels() {
-        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use crate::domain::issues::{IssueDependency, IssueDependencyType};
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
         // Create parent and assign a label
-        let parent =
-            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent = crate::app::test_helpers::issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -1057,11 +1036,8 @@ mod tests {
 
         // Create child with child-of dependency AND explicit label
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = crate::app::test_helpers::issue_with_status(
-            "child",
-            IssueStatus::Open,
-            vec![child_dep],
-        );
+        let child =
+            crate::app::test_helpers::issue_with_status("child", status("open"), vec![child_dep]);
         let mut request = api::issues::UpsertIssueRequest::new(child.into(), None);
         request.label_ids = Some(vec![explicit_label.clone()]);
 
@@ -1158,14 +1134,13 @@ mod tests {
 
     #[tokio::test]
     async fn cascade_label_skips_non_recursive_label() {
-        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use crate::domain::issues::{IssueDependency, IssueDependencyType};
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
         // Create parent issue
-        let parent =
-            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent = crate::app::test_helpers::issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -1177,11 +1152,8 @@ mod tests {
 
         // Create child issue
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = crate::app::test_helpers::issue_with_status(
-            "child",
-            IssueStatus::Open,
-            vec![child_dep],
-        );
+        let child =
+            crate::app::test_helpers::issue_with_status("child", status("open"), vec![child_dep]);
         let (child_id, _) = state
             .upsert_issue(
                 None,
@@ -1216,14 +1188,13 @@ mod tests {
 
     #[tokio::test]
     async fn child_issue_does_not_inherit_non_recursive_parent_labels() {
-        use crate::domain::issues::{IssueDependency, IssueDependencyType, IssueStatus};
+        use crate::domain::issues::{IssueDependency, IssueDependencyType};
         use hydra_common::api::v1 as api;
 
         let state = test_state();
 
         // Create parent and assign both recursive and non-recursive labels
-        let parent =
-            crate::app::test_helpers::issue_with_status("parent", IssueStatus::Open, vec![]);
+        let parent = crate::app::test_helpers::issue_with_status("parent", status("open"), vec![]);
         let (parent_id, _) = state
             .upsert_issue(
                 None,
@@ -1253,11 +1224,8 @@ mod tests {
 
         // Create child — should only inherit the recursive label
         let child_dep = IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone());
-        let child = crate::app::test_helpers::issue_with_status(
-            "child",
-            IssueStatus::Open,
-            vec![child_dep],
-        );
+        let child =
+            crate::app::test_helpers::issue_with_status("child", status("open"), vec![child_dep]);
         let (child_id, _) = state
             .upsert_issue(
                 None,

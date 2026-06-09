@@ -6193,9 +6193,9 @@ fn apply_pagination_sql_sqlite(
 mod tests {
     use super::*;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::IssueStatus;
     use chrono::Duration;
     use hydra_common::SessionId;
+    use hydra_common::test_utils::status::status;
     use std::collections::HashSet;
 
     async fn create_test_store() -> SqliteStore {
@@ -6827,7 +6827,7 @@ mod tests {
             "issue details".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -6846,7 +6846,7 @@ mod tests {
             "full description".to_string(),
             Username::from("issue-creator"),
             "50%".to_string(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::User {
                 name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
@@ -7151,14 +7151,14 @@ mod tests {
             .unwrap();
 
         let mut closed_issue = sample_issue(vec![]);
-        closed_issue.status = IssueStatus::Closed.into();
+        closed_issue.status = status("closed");
         store
             .add_issue(closed_issue, &ActorRef::test())
             .await
             .unwrap();
 
         let mut query = SearchIssuesQuery::default();
-        query.status = vec![IssueStatus::Open.into()];
+        query.status = vec![status("open")];
         let results = store.list_issues(&query).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, id);
@@ -7175,14 +7175,14 @@ mod tests {
             .unwrap();
 
         let mut in_progress_issue = sample_issue(vec![]);
-        in_progress_issue.status = IssueStatus::InProgress.into();
+        in_progress_issue.status = status("in-progress");
         let (ip_id, _) = store
             .add_issue(in_progress_issue, &ActorRef::test())
             .await
             .unwrap();
 
         let mut closed_issue = sample_issue(vec![]);
-        closed_issue.status = IssueStatus::Closed.into();
+        closed_issue.status = status("closed");
         store
             .add_issue(closed_issue, &ActorRef::test())
             .await
@@ -7190,7 +7190,7 @@ mod tests {
 
         // Filter by open + in-progress should return 2 issues
         let mut query = SearchIssuesQuery::default();
-        query.status = vec![IssueStatus::Open.into(), IssueStatus::InProgress.into()];
+        query.status = vec![status("open"), status("in-progress")];
         let results = store.list_issues(&query).await.unwrap();
         assert_eq!(results.len(), 2);
         let result_ids: HashSet<_> = results.iter().map(|(id, _)| id.clone()).collect();
@@ -7205,7 +7205,7 @@ mod tests {
 
         // Single status filter should still work
         let mut query = SearchIssuesQuery::default();
-        query.status = vec![IssueStatus::Closed.into()];
+        query.status = vec![status("closed")];
         let results = store.list_issues(&query).await.unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -9949,7 +9949,7 @@ mod tests {
             "a bug".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Open.into(),
+            status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -9967,7 +9967,7 @@ mod tests {
             "closed task".to_string(),
             Username::from("creator"),
             String::new(),
-            IssueStatus::Closed.into(),
+            status("closed"),
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -9997,7 +9997,7 @@ mod tests {
         // Count only closed
         let query = hydra_common::api::v1::issues::SearchIssuesQuery::new(
             None,
-            vec![IssueStatus::Closed.into()],
+            vec![status("closed")],
             None,
             None,
             None,
@@ -13656,7 +13656,7 @@ mod tests {
     /// is read back, because issues store the sequence, not the key.
     #[tokio::test]
     async fn cutover_status_key_rename_does_not_orphan_issues_sqlite() {
-        use crate::domain::issues::{Issue, IssueStatus, IssueType};
+        use crate::domain::issues::{Issue, IssueType};
         use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
         use hydra_common::api::v1::users::Username as ApiUsername;
         let store = create_test_store().await;
@@ -13711,7 +13711,6 @@ mod tests {
         // Reading the issue back: status must be the *current* key.
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(fetched.item.status.as_str(), "bb");
-        let _ = IssueStatus::Open; // keep import in scope across cfg
     }
 
     /// FK enforcement: writing an issue with a `status_sequence` that

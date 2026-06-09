@@ -2,10 +2,7 @@ mod harness;
 
 use anyhow::{Context, Result};
 use harness::{find_issue_summary_by_description, test_job_settings, IssueAssertions};
-use hydra_common::{
-    issues::{IssueStatus, IssueType},
-    task_status::Status,
-};
+use hydra_common::{issues::IssueType, task_status::Status, test_utils::status::status};
 use std::str::FromStr;
 
 /// Scenario 5: SWE agent failure and re-planning
@@ -46,7 +43,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
         .create_issue_with_settings(
             "Implement caching layer",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("pm"),
             Some(test_job_settings(&repo)),
         )
@@ -83,7 +80,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
         .create_issue_full(
             IssueType::Task,
             "Add cache invalidation logic",
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings(&repo)),
             vec![
@@ -102,7 +99,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 
     // Verify parent is in-progress.
     let parent = user.get_issue(&parent_id).await?;
-    parent.assert_status(IssueStatus::InProgress);
+    parent.assert_status(status("in-progress"));
 
     // ── Step 3: SWE picks up child 1 and explicitly fails ────────────
     let swe_tasks = harness.await_sessions(&child1_id, 1).await?;
@@ -119,7 +116,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     assert_eq!(swe_result.final_status, Status::Complete);
 
     let child1_failed = user.get_issue(&child1_id).await?;
-    child1_failed.assert_status(IssueStatus::Failed);
+    child1_failed.assert_status(status("failed"));
 
     // ── Step 4: User drops the blocked sibling ───────────────────────
     // Child 2 is blocked-on the failed child 1. Cascade only walks
@@ -127,10 +124,10 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     // the unified readiness rule, the parent is not ready while any
     // direct child is non-terminal — so dropping child 2 is the gate
     // that lets PM re-spawn.
-    user.update_issue_status(&child2_id, IssueStatus::Dropped)
+    user.update_issue_status(&child2_id, status("dropped"))
         .await?;
     let child2_dropped = user.get_issue(&child2_id).await?;
-    child2_dropped.assert_status(IssueStatus::Dropped);
+    child2_dropped.assert_status(status("dropped"));
 
     // ── Step 5: Parent becomes ready for re-spawning ─────────────────
     // All direct children are now terminal (child 1 failed, child 2
@@ -167,11 +164,11 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 
     // Verify original child is still failed.
     let child1_still_failed = user.get_issue(&child1_id).await?;
-    child1_still_failed.assert_status(IssueStatus::Failed);
+    child1_still_failed.assert_status(status("failed"));
 
     // Verify new child is open.
     let child3_check = user.get_issue(&child3_id).await?;
-    child3_check.assert_status(IssueStatus::Open);
+    child3_check.assert_status(status("open"));
 
     // ── Step 7: SWE succeeds on replacement child and closes it ──────
     let swe_tasks_round2 = harness.await_sessions(&child3_id, 1).await?;
@@ -195,7 +192,7 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
     assert_eq!(result.final_status, Status::Complete);
 
     let child3_closed = user.get_issue(&child3_id).await?;
-    child3_closed.assert_status(IssueStatus::Closed);
+    child3_closed.assert_status(status("closed"));
 
     // ── Step 8: PM re-spawns and closes parent ──────────────────────
     // All children are terminal (child 1 failed, child 2 blocked/dropped,
@@ -220,25 +217,25 @@ async fn swe_agent_failure_triggers_replanning() -> Result<()> {
 
     // ── Final verification ───────────────────────────────────────────
     let parent_final = user.get_issue(&parent_id).await?;
-    parent_final.assert_status(IssueStatus::Closed);
+    parent_final.assert_status(status("closed"));
 
     let child1_final = user.get_issue(&child1_id).await?;
-    child1_final.assert_status(IssueStatus::Failed);
+    child1_final.assert_status(status("failed"));
 
     let child3_final = user.get_issue(&child3_id).await?;
-    child3_final.assert_status(IssueStatus::Closed);
+    child3_final.assert_status(status("closed"));
 
     // Verify the parent has the correct children structure.
     let all_issues = user.list_issues().await?;
     parent_final.assert_has_child_with_status_in_summaries(
         &all_issues.issues,
         "Redis cache",
-        IssueStatus::Failed,
+        status("failed"),
     );
     parent_final.assert_has_child_with_status_in_summaries(
         &all_issues.issues,
         "Memcached",
-        IssueStatus::Closed,
+        status("closed"),
     );
 
     Ok(())
@@ -283,7 +280,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .create_issue_with_settings(
             "Implement search feature",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("pm"),
             Some(test_job_settings(&repo)),
         )
@@ -319,7 +316,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .create_issue_full(
             IssueType::Task,
             "Add search result ranking",
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings(&repo)),
             vec![
@@ -338,7 +335,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
 
     // Verify parent is in-progress.
     let parent = user.get_issue(&parent_id).await?;
-    parent.assert_status(IssueStatus::InProgress);
+    parent.assert_status(status("in-progress"));
 
     // ── Step 3: SWE picks up child 1 (job starts) ───────────────────
     let swe_tasks = harness.await_sessions(&child1_id, 1).await?;
@@ -350,11 +347,11 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
 
     // ── Step 4: User drops child 1 ────────────────────────────────
     // User decides they don't like the plan and sets child 1 to dropped.
-    user.update_issue_status(&child1_id, IssueStatus::Dropped)
+    user.update_issue_status(&child1_id, status("dropped"))
         .await?;
 
     let child1_dropped = user.get_issue(&child1_id).await?;
-    child1_dropped.assert_status(IssueStatus::Dropped);
+    child1_dropped.assert_status(status("dropped"));
 
     // Reconcile task status: the kill_tasks_on_issue_failure automation
     // killed the SWE job in the engine, but the task record still shows
@@ -366,10 +363,10 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     // child-of edges, so the user drops child 2 explicitly. This makes
     // every direct child of the parent terminal, satisfying the unified
     // readiness rule for parent re-spawn.
-    user.update_issue_status(&child2_id, IssueStatus::Dropped)
+    user.update_issue_status(&child2_id, status("dropped"))
         .await?;
     let child2_dropped = user.get_issue(&child2_id).await?;
-    child2_dropped.assert_status(IssueStatus::Dropped);
+    child2_dropped.assert_status(status("dropped"));
 
     // ── Step 6: Parent becomes ready for re-spawning ─────────────────
     let pm_tasks_round2 = harness.await_sessions(&parent_id, 2).await?;
@@ -404,11 +401,11 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
 
     // Verify original child is still dropped.
     let child1_still_dropped = user.get_issue(&child1_id).await?;
-    child1_still_dropped.assert_status(IssueStatus::Dropped);
+    child1_still_dropped.assert_status(status("dropped"));
 
     // Verify new child is open.
     let child3_check = user.get_issue(&child3_id).await?;
-    child3_check.assert_status(IssueStatus::Open);
+    child3_check.assert_status(status("open"));
 
     // ── Step 8: SWE succeeds on replacement child and closes it ──────
     let swe_tasks_round2 = harness.await_sessions(&child3_id, 1).await?;
@@ -431,7 +428,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
         .await?;
 
     let child3_closed = user.get_issue(&child3_id).await?;
-    child3_closed.assert_status(IssueStatus::Closed);
+    child3_closed.assert_status(status("closed"));
 
     // ── Step 9: PM re-spawns and closes parent ──────────────────────
     let pm_close_tasks = harness.await_sessions(&parent_id, 3).await?;
@@ -454,33 +451,33 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
 
     // ── Final verification ───────────────────────────────────────────
     let parent_final = user.get_issue(&parent_id).await?;
-    parent_final.assert_status(IssueStatus::Closed);
+    parent_final.assert_status(status("closed"));
 
     let child1_final = user.get_issue(&child1_id).await?;
-    child1_final.assert_status(IssueStatus::Dropped);
+    child1_final.assert_status(status("dropped"));
 
     let child2_final = user.get_issue(&child2_id).await?;
-    child2_final.assert_status(IssueStatus::Dropped);
+    child2_final.assert_status(status("dropped"));
 
     let child3_final = user.get_issue(&child3_id).await?;
-    child3_final.assert_status(IssueStatus::Closed);
+    child3_final.assert_status(status("closed"));
 
     // Verify children structure.
     let all_issues = user.list_issues().await?;
     parent_final.assert_has_child_with_status_in_summaries(
         &all_issues.issues,
         "Elasticsearch",
-        IssueStatus::Dropped,
+        status("dropped"),
     );
     parent_final.assert_has_child_with_status_in_summaries(
         &all_issues.issues,
         "search result ranking",
-        IssueStatus::Dropped,
+        status("dropped"),
     );
     parent_final.assert_has_child_with_status_in_summaries(
         &all_issues.issues,
         "SQLite FTS5",
-        IssueStatus::Closed,
+        status("closed"),
     );
 
     Ok(())

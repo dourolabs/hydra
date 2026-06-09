@@ -161,7 +161,7 @@ mod tests {
     use crate::domain::agents::Agent;
     use crate::domain::conversations::{Conversation, ConversationStatus};
     use crate::domain::documents::Document;
-    use crate::domain::issues::{IssueStatus, SessionSettings};
+    use crate::domain::issues::SessionSettings;
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use chrono::Utc;
@@ -170,6 +170,7 @@ mod tests {
         Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
     };
     use hydra_common::api::v1::users::Username as ApiUsername;
+    use hydra_common::test_utils::status::status;
     use std::sync::Arc;
 
     async fn register_agent(state: &crate::app::AppState, name: &str) {
@@ -288,7 +289,7 @@ mod tests {
         let (project_id, interactive_key, backlog_key) =
             seed_project_with_interactive(&state).await;
 
-        let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("test", status("open"), vec![]);
         issue.project_id = project_id;
         issue.status = interactive_key.clone();
         let (issue_id, _) = state
@@ -331,7 +332,7 @@ mod tests {
         let (project_id, interactive_key, backlog_key) =
             seed_project_with_interactive(&state).await;
 
-        let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("test", status("open"), vec![]);
         issue.project_id = project_id;
         issue.status = backlog_key.clone();
         let (issue_id, _) = state
@@ -370,7 +371,7 @@ mod tests {
         register_agent(&state, "swe").await;
         let (project_id, interactive_key, _) = seed_project_with_interactive(&state).await;
 
-        let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("test", status("open"), vec![]);
         issue.project_id = project_id;
         issue.status = interactive_key.clone();
         let (issue_id, _) = state
@@ -408,7 +409,7 @@ mod tests {
         let (project_id, interactive_key, backlog_key) =
             seed_project_with_interactive(&state).await;
 
-        let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("test", status("open"), vec![]);
         issue.project_id = project_id;
         issue.status = interactive_key.clone();
         let (issue_id, _) = state
@@ -448,7 +449,7 @@ mod tests {
         let (project_id, interactive_key, backlog_key) =
             seed_project_with_interactive(&state).await;
 
-        let mut issue_a = issue_with_status("a", IssueStatus::Open, vec![]);
+        let mut issue_a = issue_with_status("a", status("open"), vec![]);
         issue_a.project_id = project_id.clone();
         issue_a.status = interactive_key.clone();
         let (issue_a_id, _) = state
@@ -457,7 +458,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut issue_b = issue_with_status("b", IssueStatus::Open, vec![]);
+        let mut issue_b = issue_with_status("b", status("open"), vec![]);
         issue_b.project_id = project_id;
         issue_b.status = interactive_key.clone();
         let (issue_b_id, _) = state

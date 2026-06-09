@@ -254,23 +254,23 @@ mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{
-        Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType,
-    };
+    use crate::domain::issues::{Issue, IssueDependency, IssueDependencyType, IssueType};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
     use chrono::Utc;
+    use hydra_common::api::v1::projects::StatusKey;
+    use hydra_common::test_utils::status::status;
     use std::sync::Arc;
 
-    fn make_issue(status: IssueStatus, deps: Vec<IssueDependency>) -> Issue {
+    fn make_issue(status: StatusKey, deps: Vec<IssueDependency>) -> Issue {
         Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
             "test".to_string(),
             Username::from("tester"),
             String::new(),
-            status.into(),
+            status,
             crate::domain::projects::default_project_id(),
             None,
             None,
@@ -288,14 +288,14 @@ mod tests {
         let store = handles.store.clone();
 
         // Create parent and child
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Open,
+            status("open"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -305,14 +305,14 @@ mod tests {
 
         // Update parent to Dropped
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::test(),
         });
@@ -335,10 +335,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(
-            child_result.item.status,
-            IssueStatus::Dropped.as_status_key()
-        );
+        assert_eq!(child_result.item.status, status("dropped"));
     }
 
     #[tokio::test]
@@ -350,7 +347,7 @@ mod tests {
         let store = handles.store.clone();
 
         // Create issue A (will fail)
-        let issue_a = make_issue(IssueStatus::Open, Vec::new());
+        let issue_a = make_issue(status("open"), Vec::new());
         let (id_a, _) = store
             .add_issue(issue_a.clone(), &ActorRef::test())
             .await
@@ -358,7 +355,7 @@ mod tests {
 
         // Create issue B that is blocked on A
         let issue_b = make_issue(
-            IssueStatus::Open,
+            status("open"),
             vec![IssueDependency::new(
                 IssueDependencyType::BlockedOn,
                 id_a.clone(),
@@ -370,14 +367,14 @@ mod tests {
         // it should stay Open even though the cascade fires for child-of
         // descendants.
         let mut failed_a = issue_a;
-        failed_a.status = IssueStatus::Failed.into();
+        failed_a.status = status("failed");
         store
             .update_issue(&id_a, failed_a.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: failed_a,
             actor: ActorRef::test(),
         });
@@ -401,7 +398,7 @@ mod tests {
 
         // B should remain Open (not dropped)
         let b_result = store.get_issue(&id_b, false).await.unwrap();
-        assert_eq!(b_result.item.status, IssueStatus::Open.as_status_key());
+        assert_eq!(b_result.item.status, status("open"));
     }
 
     #[tokio::test]
@@ -412,14 +409,14 @@ mod tests {
         let store = handles.store.clone();
 
         // Create parent and child
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Open,
+            status("open"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -429,14 +426,14 @@ mod tests {
 
         // Fail the parent — children should now also be Failed (not Dropped).
         let mut failed_parent = parent;
-        failed_parent.status = IssueStatus::Failed.into();
+        failed_parent.status = status("failed");
         store
             .update_issue(&parent_id, failed_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: failed_parent,
             actor: ActorRef::test(),
         });
@@ -459,10 +456,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(
-            child_result.item.status,
-            IssueStatus::Failed.as_status_key()
-        );
+        assert_eq!(child_result.item.status, status("failed"));
     }
 
     #[tokio::test]
@@ -471,14 +465,14 @@ mod tests {
         let store = handles.store.clone();
 
         // Create parent and child
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Open,
+            status("open"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -488,14 +482,14 @@ mod tests {
 
         // Drop the parent — children should be dropped.
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::test(),
         });
@@ -518,10 +512,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(
-            child_result.item.status,
-            IssueStatus::Dropped.as_status_key()
-        );
+        assert_eq!(child_result.item.status, status("dropped"));
     }
 
     #[tokio::test]
@@ -529,7 +520,7 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let issue = make_issue(IssueStatus::Failed, Vec::new());
+        let issue = make_issue(status("failed"), Vec::new());
         let (issue_id, _) = store
             .add_issue(issue.clone(), &ActorRef::test())
             .await
@@ -566,14 +557,14 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Closed,
+            status("closed"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -582,14 +573,14 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::test(),
         });
@@ -612,10 +603,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(
-            child_result.item.status,
-            IssueStatus::Closed.as_status_key()
-        );
+        assert_eq!(child_result.item.status, status("closed"));
     }
 
     #[tokio::test]
@@ -623,14 +611,14 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Failed,
+            status("failed"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -639,14 +627,14 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::test(),
         });
@@ -669,10 +657,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(
-            child_result.item.status,
-            IssueStatus::Failed.as_status_key()
-        );
+        assert_eq!(child_result.item.status, status("failed"));
     }
 
     #[tokio::test]
@@ -680,14 +665,14 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Dropped,
+            status("dropped"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -696,14 +681,14 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::test(),
         });
@@ -726,10 +711,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(
-            child_result.item.status,
-            IssueStatus::Dropped.as_status_key()
-        );
+        assert_eq!(child_result.item.status, status("dropped"));
     }
 
     #[tokio::test]
@@ -738,14 +720,14 @@ mod tests {
         let store = handles.store.clone();
 
         // Create parent -> closed child -> open grandchild
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Closed,
+            status("closed"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -754,7 +736,7 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let grandchild = make_issue(
-            IssueStatus::Open,
+            status("open"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 child_id.clone(),
@@ -766,14 +748,14 @@ mod tests {
             .unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::test(),
         });
@@ -797,17 +779,11 @@ mod tests {
 
         // Closed child should stay closed
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(
-            child_result.item.status,
-            IssueStatus::Closed.as_status_key()
-        );
+        assert_eq!(child_result.item.status, status("closed"));
 
         // Open grandchild should be dropped
         let grandchild_result = store.get_issue(&grandchild_id, false).await.unwrap();
-        assert_eq!(
-            grandchild_result.item.status,
-            IssueStatus::Dropped.as_status_key()
-        );
+        assert_eq!(grandchild_result.item.status, status("dropped"));
     }
 
     #[tokio::test]
@@ -817,14 +793,14 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Open,
+            status("open"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -833,14 +809,14 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut closed_parent = parent;
-        closed_parent.status = IssueStatus::Closed.into();
+        closed_parent.status = status("closed");
         store
             .update_issue(&parent_id, closed_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: closed_parent,
             actor: ActorRef::test(),
         });
@@ -861,7 +837,7 @@ mod tests {
         automation.execute(&ctx).await.unwrap();
 
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Open.as_status_key());
+        assert_eq!(child_result.item.status, status("open"));
     }
 
     #[tokio::test]
@@ -869,14 +845,14 @@ mod tests {
         let handles = test_utils::test_state_handles();
         let store = handles.store.clone();
 
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let child = make_issue(
-            IssueStatus::Open,
+            status("open"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
                 parent_id.clone(),
@@ -885,10 +861,10 @@ mod tests {
         let (child_id, _) = store.add_issue(child, &ActorRef::test()).await.unwrap();
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::Automation {
                 automation_name: AUTOMATION_NAME.to_string(),
@@ -915,7 +891,7 @@ mod tests {
 
         // Child should remain Open — the automation must not act on its own events.
         let child_result = store.get_issue(&child_id, false).await.unwrap();
-        assert_eq!(child_result.item.status, IssueStatus::Open.as_status_key());
+        assert_eq!(child_result.item.status, status("open"));
     }
 
     /// Exercises the per-call project cache: a parent with multiple
@@ -930,7 +906,7 @@ mod tests {
 
         // Build a parent with three direct children, where one child also
         // has two grandchildren. All share the default project.
-        let parent = make_issue(IssueStatus::Open, Vec::new());
+        let parent = make_issue(status("open"), Vec::new());
         let (parent_id, _) = store
             .add_issue(parent.clone(), &ActorRef::test())
             .await
@@ -939,7 +915,7 @@ mod tests {
         let mut direct_child_ids = Vec::new();
         for _ in 0..3 {
             let child = make_issue(
-                IssueStatus::Open,
+                status("open"),
                 vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,
                     parent_id.clone(),
@@ -952,7 +928,7 @@ mod tests {
         let mut grandchild_ids = Vec::new();
         for _ in 0..2 {
             let grandchild = make_issue(
-                IssueStatus::InProgress,
+                status("in-progress"),
                 vec![IssueDependency::new(
                     IssueDependencyType::ChildOf,
                     direct_child_ids[0].clone(),
@@ -966,14 +942,14 @@ mod tests {
         }
 
         let mut dropped_parent = parent;
-        dropped_parent.status = IssueStatus::Dropped.into();
+        dropped_parent.status = status("dropped");
         store
             .update_issue(&parent_id, dropped_parent.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let payload = Arc::new(MutationPayload::Issue {
-            old: Some(make_issue(IssueStatus::Open, Vec::new())),
+            old: Some(make_issue(status("open"), Vec::new())),
             new: dropped_parent,
             actor: ActorRef::test(),
         });
@@ -999,7 +975,7 @@ mod tests {
             let result = store.get_issue(id, false).await.unwrap();
             assert_eq!(
                 result.item.status,
-                IssueStatus::Dropped.as_status_key(),
+                status("dropped"),
                 "descendant {id} should be dropped"
             );
         }

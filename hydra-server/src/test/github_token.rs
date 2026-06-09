@@ -3,7 +3,7 @@ use crate::{
     config::AuthConfig,
     domain::{
         actors::{Actor, ActorRef, store_github_token_secrets},
-        issues::{Issue, IssueStatus, IssueType},
+        issues::{Issue, IssueType},
         secrets::SecretManager,
         sessions::Session,
         task_status::Status,
@@ -17,6 +17,7 @@ use crate::{
 };
 use chrono::Utc;
 use httpmock::prelude::*;
+use hydra_common::test_utils::status::status;
 use hydra_common::{ActorId, SessionId, github::GithubTokenResponse};
 use reqwest::{Client, header};
 use std::collections::HashMap;
@@ -95,7 +96,7 @@ async fn github_token_returns_for_task_actor() -> anyhow::Result<()> {
                 "task".to_string(),
                 username.clone(),
                 String::new(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,
@@ -226,7 +227,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
                 "task".to_string(),
                 username.clone(),
                 String::new(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,
@@ -327,7 +328,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
                 "task".to_string(),
                 username.clone(),
                 String::new(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,

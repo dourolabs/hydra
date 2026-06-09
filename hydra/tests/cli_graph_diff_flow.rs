@@ -15,7 +15,7 @@ mod harness;
 use anyhow::Result;
 use hydra_common::api::v1::conversations::{CreateConversationRequest, SendMessageRequest};
 use hydra_common::api::v1::relations::CreateRelationRequest;
-use hydra_common::issues::IssueStatus;
+use hydra_common::test_utils::status::status;
 use serde_json::Value;
 
 /// Parse stdout as JSONL into a Vec of Value.
@@ -44,7 +44,7 @@ async fn diff_emits_modified_record_when_issue_status_changes_in_window() -> Res
 
     // Mutate the child after a brief delay so its version timestamps are
     // distinct, then run a diff that covers both versions.
-    user.update_issue_status(&_child, IssueStatus::InProgress)
+    user.update_issue_status(&_child, status("in-progress"))
         .await?;
 
     // -1h covers any version timestamps from the in-memory store. The

@@ -2,6 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use harness::find_issue_summary_by_description;
+use hydra_common::test_utils::status::status;
 use std::str::FromStr;
 
 /// Scenario 7a: Cannot close an issue with open children.
@@ -72,10 +73,10 @@ async fn cannot_close_issue_with_open_children() -> Result<()> {
 
     // Verify both are closed.
     let parent = user.get_issue(&parent_id).await?;
-    harness::IssueAssertions::assert_status(&parent, hydra_common::issues::IssueStatus::Closed);
+    harness::IssueAssertions::assert_status(&parent, status("closed"));
 
     let child = user.get_issue(&child_id).await?;
-    harness::IssueAssertions::assert_status(&child, hydra_common::issues::IssueStatus::Closed);
+    harness::IssueAssertions::assert_status(&child, status("closed"));
 
     Ok(())
 }
@@ -145,9 +146,9 @@ async fn cannot_close_issue_with_open_blockers() -> Result<()> {
         .await?;
 
     let blocker = user.get_issue(&blocker_id).await?;
-    harness::IssueAssertions::assert_status(&blocker, hydra_common::issues::IssueStatus::Closed);
+    harness::IssueAssertions::assert_status(&blocker, status("closed"));
     let blocked = user.get_issue(&blocked_id).await?;
-    harness::IssueAssertions::assert_status(&blocked, hydra_common::issues::IssueStatus::Closed);
+    harness::IssueAssertions::assert_status(&blocked, status("closed"));
 
     Ok(())
 }
@@ -198,14 +199,8 @@ async fn failed_blocker_allows_closure() -> Result<()> {
     let blocked = find_issue_summary_by_description(&issues.issues, "blocked B")
         .expect("blocked issue should exist");
 
-    harness::IssueSummaryAssertions::assert_status(
-        blocker,
-        hydra_common::issues::IssueStatus::Failed,
-    );
-    harness::IssueSummaryAssertions::assert_status(
-        blocked,
-        hydra_common::issues::IssueStatus::Closed,
-    );
+    harness::IssueSummaryAssertions::assert_status(blocker, status("failed"));
+    harness::IssueSummaryAssertions::assert_status(blocked, status("closed"));
 
     Ok(())
 }

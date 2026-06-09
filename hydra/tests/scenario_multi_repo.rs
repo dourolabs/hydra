@@ -3,8 +3,9 @@ mod harness;
 use anyhow::Result;
 use harness::{find_summary_children_of, test_job_settings, TestHarness};
 use hydra_common::{
-    issues::{IssueDependencyType, IssueStatus, IssueType},
+    issues::{IssueDependencyType, IssueType},
     task_status::Status,
+    test_utils::status::status,
 };
 use std::str::FromStr;
 
@@ -34,7 +35,7 @@ async fn multi_repo_workflow() -> Result<()> {
         .create_issue_with_settings(
             "Add new agent queue",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("pm"),
             Some(test_job_settings(&repo_app)),
         )
@@ -128,12 +129,12 @@ async fn multi_repo_workflow() -> Result<()> {
     );
 
     // Close child 1.
-    user.update_issue_status(&child1_id, IssueStatus::Closed)
+    user.update_issue_status(&child1_id, status("closed"))
         .await?;
 
     // Mark child 2 as in-progress so the automation evaluates it now that
     // its blocker (child 1) is resolved.
-    user.update_issue_status(&child2_id, IssueStatus::InProgress)
+    user.update_issue_status(&child2_id, status("in-progress"))
         .await?;
 
     // child 2 is now ready (blocker resolved).
