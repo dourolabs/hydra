@@ -5,7 +5,6 @@ use crate::{
             render, CommandContext, DeletedIssueOutcome, IssueRecords, IssueSummaryRecords,
             ResolvedOutputFormat, SubmitFormOutcome,
         },
-        projects::ProjectRef,
         utils::resolve_username,
     },
     output_writer::write_stdout,
@@ -15,7 +14,7 @@ use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
-    api::v1::projects::StatusKey,
+    api::v1::projects::{ProjectRef, StatusKey},
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
@@ -28,6 +27,21 @@ use hydra_common::{
     HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
 };
 use std::str::FromStr;
+
+/// Resolve a [`ProjectRef`] to a concrete [`ProjectId`] for the
+/// `Issue.project_id` JSON field. Routes through the server-side
+/// resolver in `GET /v1/projects/:project_ref` (which accepts either
+/// form), so the CLI never carries its own key-lookup logic.
+async fn resolve_project_ref(
+    client: &dyn HydraClientInterface,
+    project_ref: &ProjectRef,
+) -> Result<ProjectId> {
+    Ok(client
+        .get_project(project_ref)
+        .await
+        .with_context(|| format!("failed to resolve project '{project_ref}'"))?
+        .project_id)
+}
 
 /// clap value parser for `--assignee`. Phase 4b requires the full
 /// canonical path form (`users/<name>`, `agents/<name>`, or
@@ -402,7 +416,7 @@ pub async fn run(
         } => {
             let label_ids = resolve_label_names_to_ids(client, &labels).await?;
             let project_id = match project {
-                Some(reference) => Some(reference.resolve(client).await?),
+                Some(reference) => Some(resolve_project_ref(client, &reference).await?),
                 None => None,
             };
             let issues = fetch_issues(
@@ -446,7 +460,7 @@ pub async fn run(
             let parsed_form = parse_form_flag(form, form_inline)?;
             let creator = resolve_username(client).await?;
             let project_id = match project {
-                Some(reference) => Some(reference.resolve(client).await?),
+                Some(reference) => Some(resolve_project_ref(client, &reference).await?),
                 None => None,
             };
             create_issue(
@@ -510,7 +524,7 @@ pub async fn run(
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             let project_id = match project {
-                Some(reference) => Some(reference.resolve(client).await?),
+                Some(reference) => Some(resolve_project_ref(client, &reference).await?),
                 None => None,
             };
             update_issue(
@@ -3194,7 +3208,7 @@ mod tests {
                     );
                     let project = project.expect("project flag should parse");
                     match project {
-                        crate::command::projects::ProjectRef::Key(key) => {
+                        ProjectRef::Key(key) => {
                             assert_eq!(key.as_str(), "engineering-v2");
                         }
                         other => panic!("expected ProjectRef::Key, got {other:?}"),

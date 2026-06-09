@@ -323,17 +323,17 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::projects::list_projects).post(routes::projects::create_project),
         )
         .route(
-            "/v1/projects/:project_id",
+            "/v1/projects/:project_ref",
             get(routes::projects::get_project)
                 .put(routes::projects::update_project)
                 .delete(routes::projects::delete_project),
         )
         .route(
-            "/v1/projects/:project_id/statuses",
+            "/v1/projects/:project_ref/statuses",
             get(routes::projects::get_project_statuses),
         )
         .route(
-            "/v1/projects/:project_id/statuses/rename",
+            "/v1/projects/:project_ref/statuses/rename",
             post(routes::projects::rename_project_status),
         )
         .route(

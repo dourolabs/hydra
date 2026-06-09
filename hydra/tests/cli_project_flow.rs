@@ -2,7 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use hydra_common::api::v1::projects::{
-    Project, ProjectKey, StatusDefinition, StatusKey, UpsertProjectRequest,
+    Project, ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
 };
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -76,7 +76,8 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
     let project_id = listed.project_id.clone();
 
     // Get by id round-trips the body.
-    let fetched = user.client().get_project(&project_id).await?;
+    let project_ref = ProjectRef::Id(project_id.clone());
+    let fetched = user.client().get_project(&project_ref).await?;
     assert_eq!(fetched.project.key.as_str(), "engineering");
     assert_eq!(fetched.project.statuses.len(), 3);
 
@@ -105,7 +106,7 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
         "Engineering Org",
     ])
     .await?;
-    let after_rename = user.client().get_project(&project_id).await?;
+    let after_rename = user.client().get_project(&project_ref).await?;
     assert_eq!(after_rename.project.name, "Engineering Org");
     assert_eq!(
         after_rename.project.statuses.len(),

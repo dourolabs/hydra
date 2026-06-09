@@ -10,12 +10,10 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::api::v1::projects::{
-    Project, ProjectIdOrDefault, ProjectKey, ProjectRecord, RenameStatusRequest, StatusDefinition,
+    Project, ProjectKey, ProjectRecord, ProjectRef, RenameStatusRequest, StatusDefinition,
     StatusKey, UpsertProjectRequest, UpsertProjectResponse,
 };
-use hydra_common::ProjectId;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectsCommand {
@@ -72,9 +70,9 @@ pub struct CreateProjectArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct GetProjectArgs {
-    /// Project id (e.g. `j-abc123`).
-    #[arg(value_name = "PROJECT_ID")]
-    pub project_id: ProjectId,
+    /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
+    #[arg(value_name = "PROJECT_ID_OR_KEY")]
+    pub project_ref: ProjectRef,
 
     /// Emit the project's body in `--body-file` YAML shape (statuses)
     /// on stdout, suitable for piping back into
@@ -98,9 +96,9 @@ pub struct SampleConfigArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct UpdateProjectArgs {
-    /// Project id to update.
-    #[arg(value_name = "PROJECT_ID")]
-    pub project_id: ProjectId,
+    /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
+    #[arg(value_name = "PROJECT_ID_OR_KEY")]
+    pub project_ref: ProjectRef,
 
     /// New project key. Defaults to the existing value.
     #[arg(long, value_name = "KEY")]
@@ -125,9 +123,9 @@ pub struct UpdateProjectArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct UpdateStatusArgs {
-    /// Project id whose status is being updated.
-    #[arg(value_name = "PROJECT_ID")]
-    pub project_id: ProjectId,
+    /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
+    #[arg(value_name = "PROJECT_ID_OR_KEY")]
+    pub project_ref: ProjectRef,
 
     /// Status key (within the project) to update.
     #[arg(value_name = "STATUS_KEY")]
@@ -143,9 +141,9 @@ pub struct UpdateStatusArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct RenameStatusArgs {
-    /// Project id whose status is being renamed.
-    #[arg(value_name = "PROJECT_ID")]
-    pub project_id: ProjectId,
+    /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
+    #[arg(value_name = "PROJECT_ID_OR_KEY")]
+    pub project_ref: ProjectRef,
 
     /// Current status key.
     #[arg(value_name = "FROM_KEY")]
@@ -158,17 +156,17 @@ pub struct RenameStatusArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct DeleteProjectArgs {
-    /// Project id to delete.
-    #[arg(value_name = "PROJECT_ID")]
-    pub project_id: ProjectId,
+    /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
+    #[arg(value_name = "PROJECT_ID_OR_KEY")]
+    pub project_ref: ProjectRef,
 }
 
 #[derive(Debug, Clone, Args)]
 pub struct StatusesProjectArgs {
-    /// Project id or the literal `default` for the seeded default
-    /// project.
-    #[arg(value_name = "PROJECT_ID_OR_DEFAULT")]
-    pub project: ProjectIdOrDefault,
+    /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`). Pass
+    /// the literal `default` for the seeded default project's statuses.
+    #[arg(value_name = "PROJECT_ID_OR_KEY")]
+    pub project_ref: ProjectRef,
 }
 
 pub async fn run(
@@ -200,9 +198,9 @@ pub async fn run(
         }
         ProjectsCommand::Get(args) => {
             let record = client
-                .get_project(&args.project_id)
+                .get_project(&args.project_ref)
                 .await
-                .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
+                .with_context(|| format!("failed to fetch project '{}'", args.project_ref))?;
             if args.body_yaml {
                 let yaml = render_body_yaml(&record.project)?;
                 buffer.extend_from_slice(yaml.as_bytes());
@@ -224,17 +222,20 @@ pub async fn run(
         }
         ProjectsCommand::Delete(args) => {
             let response = client
-                .delete_project(&args.project_id)
+                .delete_project(&args.project_ref)
                 .await
-                .with_context(|| format!("failed to delete project '{}'", args.project_id))?;
+                .with_context(|| format!("failed to delete project '{}'", args.project_ref))?;
             write_delete_summary(context.output_format, &response, &mut buffer)?;
         }
         ProjectsCommand::Statuses(args) => {
             let response = client
-                .get_project_statuses(&args.project)
+                .get_project_statuses(&args.project_ref)
                 .await
                 .with_context(|| {
-                    format!("failed to fetch statuses for project '{}'", args.project)
+                    format!(
+                        "failed to fetch statuses for project '{}'",
+                        args.project_ref
+                    )
                 })?;
             render(
                 ProjectStatuses(&response),
@@ -293,9 +294,9 @@ async fn update_project(
     args: UpdateProjectArgs,
 ) -> Result<ProjectRecord> {
     let current = client
-        .get_project(&args.project_id)
+        .get_project(&args.project_ref)
         .await
-        .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
+        .with_context(|| format!("failed to fetch project '{}'", args.project_ref))?;
 
     let statuses = if let Some(path) = args.body_file.as_ref() {
         let body = load_body_file(path)?;
@@ -318,9 +319,9 @@ async fn update_project(
 
     let request = UpsertProjectRequest::new(project.clone());
     let response = client
-        .update_project(&args.project_id, &request)
+        .update_project(&args.project_ref, &request)
         .await
-        .with_context(|| format!("failed to update project '{}'", args.project_id))?;
+        .with_context(|| format!("failed to update project '{}'", args.project_ref))?;
     Ok(ProjectRecord::new(
         response.project_id,
         response.version,
@@ -333,9 +334,9 @@ async fn update_status(
     args: UpdateStatusArgs,
 ) -> Result<ProjectRecord> {
     let current = client
-        .get_project(&args.project_id)
+        .get_project(&args.project_ref)
         .await
-        .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
+        .with_context(|| format!("failed to fetch project '{}'", args.project_ref))?;
 
     let mut project = current.project.clone();
     let status = project
@@ -345,7 +346,7 @@ async fn update_status(
         .with_context(|| {
             format!(
                 "project '{}' has no status with key '{}'",
-                args.project_id, args.status_key
+                args.project_ref, args.status_key
             )
         })?;
 
@@ -353,9 +354,9 @@ async fn update_status(
 
     let request = UpsertProjectRequest::new(project.clone());
     let response = client
-        .update_project(&args.project_id, &request)
+        .update_project(&args.project_ref, &request)
         .await
-        .with_context(|| format!("failed to update project '{}'", args.project_id))?;
+        .with_context(|| format!("failed to update project '{}'", args.project_ref))?;
     Ok(ProjectRecord::new(
         response.project_id,
         response.version,
@@ -368,18 +369,18 @@ async fn rename_status(
     args: RenameStatusArgs,
 ) -> Result<ProjectRecord> {
     let current = client
-        .get_project(&args.project_id)
+        .get_project(&args.project_ref)
         .await
-        .with_context(|| format!("failed to fetch project '{}'", args.project_id))?;
+        .with_context(|| format!("failed to fetch project '{}'", args.project_ref))?;
 
     let request = RenameStatusRequest::new(args.from.clone(), args.to.clone());
     let response = client
-        .rename_project_status(&args.project_id, &request)
+        .rename_project_status(&args.project_ref, &request)
         .await
         .with_context(|| {
             format!(
                 "failed to rename status '{}' to '{}' on project '{}'",
-                args.from, args.to, args.project_id,
+                args.from, args.to, args.project_ref,
             )
         })?;
 
@@ -480,52 +481,6 @@ fn write_delete_summary<W: std::io::Write>(
     Ok(())
 }
 
-/// Parse a `--project <id-or-key>` value: try a `ProjectId` first, and if
-/// that fails, fall back to treating the input as a `ProjectKey`. Returns
-/// an enum so callers can dispatch resolution (key lookups hit the list
-/// endpoint).
-#[derive(Debug, Clone)]
-pub enum ProjectRef {
-    Id(ProjectId),
-    Key(ProjectKey),
-}
-
-impl FromStr for ProjectRef {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if let Ok(id) = ProjectId::try_from(value.to_string()) {
-            return Ok(ProjectRef::Id(id));
-        }
-        ProjectKey::try_new(value)
-            .map(ProjectRef::Key)
-            .map_err(|err| {
-                format!("'{value}' is neither a valid project id nor a valid project key: {err}")
-            })
-    }
-}
-
-impl ProjectRef {
-    /// Resolve to a `ProjectId` by listing projects when given a key.
-    pub async fn resolve(&self, client: &dyn HydraClientInterface) -> Result<ProjectId> {
-        match self {
-            ProjectRef::Id(id) => Ok(id.clone()),
-            ProjectRef::Key(key) => {
-                let projects = client
-                    .list_projects()
-                    .await
-                    .context("failed to list projects to resolve project key")?
-                    .projects;
-                projects
-                    .into_iter()
-                    .find(|record| &record.project.key == key)
-                    .map(|record| record.project_id)
-                    .with_context(|| format!("no project found with key '{key}'"))
-            }
-        }
-    }
-}
-
 /// Richly-commented sample project body file. Round-trips through
 /// [`load_body_file`] (see `sample_project_body_yaml_round_trips` below)
 /// and is the documented starting point for `--body-file` authoring.
@@ -534,30 +489,6 @@ const SAMPLE_PROJECT_BODY_YAML: &str = include_str!("sample_project_body.yaml");
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn project_ref_parses_id() {
-        let r = ProjectRef::from_str("j-abcdef").unwrap();
-        match r {
-            ProjectRef::Id(_) => {}
-            ProjectRef::Key(_) => panic!("expected an id"),
-        }
-    }
-
-    #[test]
-    fn project_ref_parses_key() {
-        let r = ProjectRef::from_str("engineering").unwrap();
-        match r {
-            ProjectRef::Key(key) => assert_eq!(key.as_str(), "engineering"),
-            ProjectRef::Id(_) => panic!("expected a key"),
-        }
-    }
-
-    #[test]
-    fn project_ref_rejects_invalid_token() {
-        let err = ProjectRef::from_str("Bad Value!").unwrap_err();
-        assert!(err.contains("neither a valid project id nor a valid project key"));
-    }
 
     #[test]
     fn apply_prompt_path_arg_none_keeps_current() {
@@ -807,7 +738,7 @@ mod tests {
             Some(Commands::Projects {
                 command: ProjectsCommand::Get(args),
             }) => {
-                assert_eq!(args.project_id.to_string(), "j-abcdef");
+                assert_eq!(args.project_ref.to_string(), "j-abcdef");
                 assert!(args.body_yaml);
             }
             _ => panic!("expected `projects get` subcommand"),

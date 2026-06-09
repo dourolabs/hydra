@@ -27,6 +27,7 @@ export * from "./types";
 
 export { DEFAULT_PROJECT_ID } from "./projects";
 export type {
+  ProjectRef,
   UpsertProjectRequest,
   UpsertProjectResponse,
   ProjectRecord,

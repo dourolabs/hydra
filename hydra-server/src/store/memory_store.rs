@@ -25,7 +25,7 @@ use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::{Project, StatusDefinition, StatusKey};
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
@@ -1705,6 +1705,38 @@ impl ReadOnlyStore for MemoryStore {
         }
 
         Ok(versioned)
+    }
+
+    async fn get_project_by_key(
+        &self,
+        key: &ProjectKey,
+        include_deleted: bool,
+    ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
+        // Prefer an active (non-deleted) row when one exists — mirrors
+        // the partial unique index `projects_key_unique_active_idx` used
+        // by the SQL backends, which only constrains uniqueness on
+        // non-deleted rows.
+        let mut deleted_match: Option<(ProjectId, Versioned<Project>)> = None;
+        for entry in self.projects.iter() {
+            let Some(mut versioned) = Self::latest_versioned(entry.value()) else {
+                continue;
+            };
+            if &versioned.item.key != key {
+                continue;
+            }
+            if let Some(idx_mutex) = self.statuses_indexes.get(entry.key()) {
+                let idx = idx_mutex.lock().expect("statuses index mutex poisoned");
+                versioned.item.statuses = idx.ordered_statuses();
+            }
+            if versioned.item.deleted {
+                if include_deleted && deleted_match.is_none() {
+                    deleted_match = Some((entry.key().clone(), versioned));
+                }
+                continue;
+            }
+            return Ok(Some((entry.key().clone(), versioned)));
+        }
+        Ok(deleted_match)
     }
 
     async fn list_projects(
@@ -9795,6 +9827,65 @@ mod tests {
             store.get_project(&id, false).await,
             Err(StoreError::ProjectNotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn get_project_by_key_round_trip() {
+        use hydra_common::api::v1::projects::ProjectKey;
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let key = ProjectKey::try_new("engineering").unwrap();
+        let (resolved_id, versioned) = store
+            .get_project_by_key(&key, false)
+            .await
+            .unwrap()
+            .expect("active key lookup should hit");
+        assert_eq!(resolved_id, id);
+        assert_eq!(versioned.item.name, "Engineering");
+        assert_eq!(versioned.item.statuses.len(), 2);
+
+        let missing = ProjectKey::try_new("does-not-exist").unwrap();
+        assert!(
+            store
+                .get_project_by_key(&missing, false)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn get_project_by_key_respects_include_deleted() {
+        use hydra_common::api::v1::projects::ProjectKey;
+        let store = MemoryStore::new();
+        let (id, _) = store
+            .add_project(sample_project(), &ActorRef::test())
+            .await
+            .unwrap();
+        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+
+        let key = ProjectKey::try_new("engineering").unwrap();
+
+        assert!(
+            store
+                .get_project_by_key(&key, false)
+                .await
+                .unwrap()
+                .is_none(),
+            "soft-deleted key must not surface when include_deleted: false"
+        );
+
+        let resurrected = store
+            .get_project_by_key(&key, true)
+            .await
+            .unwrap()
+            .expect("soft-deleted key must surface when include_deleted: true");
+        assert_eq!(resurrected.0, id);
+        assert!(resurrected.1.item.deleted);
     }
 
     #[tokio::test]

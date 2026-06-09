@@ -784,6 +784,20 @@ pub trait ReadOnlyStore: Send + Sync {
         include_deleted: bool,
     ) -> Result<Versioned<Project>, StoreError>;
 
+    /// Lookup a project by its [`ProjectKey`] via the partial unique
+    /// `projects_key_unique_active_idx` index. Returns `Ok(None)` when
+    /// no active row matches the key — distinct from a deeper store
+    /// error so the route layer can map "miss" to a 404 cleanly.
+    ///
+    /// `include_deleted`: when `false`, soft-deleted projects are
+    /// filtered out (the partial index already excludes them, but the
+    /// memory store mirrors this branch explicitly).
+    async fn get_project_by_key(
+        &self,
+        key: &ProjectKey,
+        include_deleted: bool,
+    ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError>;
+
     /// Lists all projects.
     ///
     /// By default, deleted projects are filtered out unless `include_deleted: true`.

@@ -72,6 +72,7 @@ import type { SearchTriggersQuery } from "./generated/SearchTriggersQuery";
 import type { ListTriggersResponse } from "./generated/ListTriggersResponse";
 import type { ListTriggerVersionsResponse } from "./generated/ListTriggerVersionsResponse";
 import type {
+  ProjectRef,
   UpsertProjectRequest,
   UpsertProjectResponse,
   ProjectRecord,
@@ -736,24 +737,27 @@ export class HydraApiClient {
     return this.get("/v1/projects");
   }
 
-  /** GET /v1/projects/:projectId */
-  getProject(projectId: string): Promise<ProjectRecord> {
-    return this.get(`/v1/projects/${encodeURIComponent(projectId)}`);
+  /** GET /v1/projects/:projectRef — accepts either an id (`j-…`) or key. */
+  getProject(projectRef: ProjectRef): Promise<ProjectRecord> {
+    return this.get(`/v1/projects/${encodeURIComponent(projectRef)}`);
   }
 
-  /** PUT /v1/projects/:projectId */
-  updateProject(projectId: string, request: UpsertProjectRequest): Promise<UpsertProjectResponse> {
-    return this.put(`/v1/projects/${encodeURIComponent(projectId)}`, request);
+  /** PUT /v1/projects/:projectRef — accepts either an id (`j-…`) or key. */
+  updateProject(
+    projectRef: ProjectRef,
+    request: UpsertProjectRequest,
+  ): Promise<UpsertProjectResponse> {
+    return this.put(`/v1/projects/${encodeURIComponent(projectRef)}`, request);
   }
 
-  /** DELETE /v1/projects/:projectId */
-  deleteProject(projectId: string): Promise<UpsertProjectResponse> {
-    return this.del(`/v1/projects/${encodeURIComponent(projectId)}`);
+  /** DELETE /v1/projects/:projectRef — accepts either an id (`j-…`) or key. */
+  deleteProject(projectRef: ProjectRef): Promise<UpsertProjectResponse> {
+    return this.del(`/v1/projects/${encodeURIComponent(projectRef)}`);
   }
 
-  /** GET /v1/projects/:projectId/statuses */
-  getProjectStatuses(projectId: string): Promise<ProjectStatusesResponse> {
-    return this.get(`/v1/projects/${encodeURIComponent(projectId)}/statuses`);
+  /** GET /v1/projects/:projectRef/statuses — accepts either an id (`j-…`) or key. */
+  getProjectStatuses(projectRef: ProjectRef): Promise<ProjectStatusesResponse> {
+    return this.get(`/v1/projects/${encodeURIComponent(projectRef)}/statuses`);
   }
 
   // ---------------------------------------------------------------------------
