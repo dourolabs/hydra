@@ -33,6 +33,26 @@ test.describe("Issues page row-level 'Restore' action @issues:restore-archived",
       }
     });
 
+    // Stall the PUT response until released, so the row drop must come from
+    // the optimistic update on the paginated list cache rather than from the
+    // server round-trip + refetch. The row is rendered from the list cache
+    // (IssueSummaryRecord.issue.deleted), not the issue detail cache, so the
+    // detail-cache-only optimistic update is insufficient — this gating
+    // proves we touch the right cache.
+    let releaseUpdate!: () => void;
+    const updateReleased = new Promise<void>((r) => (releaseUpdate = r));
+    await page.route(
+      `**/api/v1/issues/${TARGET_ISSUE}`,
+      async (route, req) => {
+        if (req.method() !== "PUT") {
+          await route.fallback();
+          return;
+        }
+        await updateReleased;
+        await route.fallback();
+      },
+    );
+
     await page.goto(`${ISSUES_PATH}?includeArchived=1`);
     await expect(page.getByTestId("filter-chip-includeArchived")).toBeVisible();
 
@@ -49,6 +69,17 @@ test.describe("Issues page row-level 'Restore' action @issues:restore-archived",
 
     await restoreBtn.click();
 
+    // While the PUT is still in flight, the ARCHIVED tag must already be
+    // gone — optimistic update on the list cache.
+    await expect(
+      page.getByTestId(`issues-row-archived-${TARGET_ISSUE}`),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId(`issues-list-row-${TARGET_ISSUE}`),
+    ).not.toHaveAttribute("data-archived", "true");
+
+    releaseUpdate();
+
     // A PUT to /v1/issues/:id should fire with `deleted: false` in the body.
     await expect
       .poll(() =>
@@ -60,9 +91,9 @@ test.describe("Issues page row-level 'Restore' action @issues:restore-archived",
       )
       .toBe(true);
 
-    // The include-archived view continues to show the row (the chip is
-    // still on), but after the list refetch it renders without the ARCHIVED
-    // flag because the server now reports `deleted: false`.
+    // After the server confirms and the list refetches, the row stays
+    // visible (chip is still on) and still renders without the ARCHIVED
+    // flag.
     await expect(
       page.getByTestId(`issues-row-archived-${TARGET_ISSUE}`),
     ).toHaveCount(0);
