@@ -22,7 +22,7 @@ use hydra_common::{
     api::v1::merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
     api::v1::projects::{
         ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
-        UpsertProjectRequest, UpsertProjectResponse,
+        RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
     },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
@@ -329,6 +329,11 @@ pub trait HydraClientInterface: Send + Sync {
         request: &UpsertProjectRequest,
     ) -> Result<UpsertProjectResponse>;
     async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse>;
+    async fn rename_project_status(
+        &self,
+        project_id: &ProjectId,
+        request: &RenameStatusRequest,
+    ) -> Result<UpsertProjectResponse>;
     async fn get_project_statuses(
         &self,
         project: &ProjectIdOrDefault,
@@ -1656,6 +1661,30 @@ impl HydraClient {
             .context("failed to decode delete project response")
     }
 
+    /// Call `POST /v1/projects/:project_id/statuses/rename` to rename a
+    /// status key in place. Preserves the status's storage identity, so
+    /// existing issues continue to resolve through the same sequence.
+    pub async fn rename_project_status(
+        &self,
+        project_id: &ProjectId,
+        request: &RenameStatusRequest,
+    ) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_id}/statuses/rename"))?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit rename status request")?
+            .error_for_status_with_body("hydra-server rejected rename status request")
+            .await?;
+
+        response
+            .json::<UpsertProjectResponse>()
+            .await
+            .context("failed to decode rename status response")
+    }
+
     /// Call `GET /v1/projects/:project/statuses` to list the project's status
     /// definitions. Pass [`ProjectIdOrDefault::Default`] to get the
     /// seeded default project's statuses.
@@ -2921,6 +2950,14 @@ impl HydraClientInterface for HydraClient {
 
     async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
         HydraClient::delete_project(self, project_id).await
+    }
+
+    async fn rename_project_status(
+        &self,
+        project_id: &ProjectId,
+        request: &RenameStatusRequest,
+    ) -> Result<UpsertProjectResponse> {
+        HydraClient::rename_project_status(self, project_id, request).await
     }
 
     async fn get_project_statuses(

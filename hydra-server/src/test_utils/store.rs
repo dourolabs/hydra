@@ -21,7 +21,7 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::Project;
+use hydra_common::api::v1::projects::{Project, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
@@ -749,6 +749,16 @@ impl Store for FailingStore {
     async fn delete_project(
         &self,
         _id: &ProjectId,
+        _actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn rename_status(
+        &self,
+        _id: &ProjectId,
+        _from: &StatusKey,
+        _to: &StatusKey,
         _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         fail()

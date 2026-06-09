@@ -270,14 +270,14 @@ impl MemoryStore {
         let mut existing_by_key: HashMap<StatusKey, i64> = idx.by_key.clone();
         let mut new_rows: BTreeMap<i64, StatusDefinition> = BTreeMap::new();
         let mut new_by_key: HashMap<StatusKey, i64> = HashMap::new();
+        let mut next_sequence_after = idx.next_sequence;
 
         for def in incoming {
             let seq = if let Some(s) = existing_by_key.remove(&def.key) {
                 s
             } else {
-                let s = idx.next_sequence;
-                idx.next_sequence = idx
-                    .next_sequence
+                let s = next_sequence_after;
+                next_sequence_after = next_sequence_after
                     .checked_add(1)
                     .ok_or_else(|| StoreError::Internal("status sequence overflow".to_string()))?;
                 s
@@ -310,6 +310,7 @@ impl MemoryStore {
 
         idx.rows = new_rows;
         idx.by_key = new_by_key;
+        idx.next_sequence = next_sequence_after;
         Ok(())
     }
 
@@ -2937,6 +2938,64 @@ impl Store for MemoryStore {
         let mut project = current.item;
         project.deleted = true;
         self.update_project(id, project, actor).await
+    }
+
+    async fn rename_status(
+        &self,
+        id: &ProjectId,
+        from: &StatusKey,
+        to: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let current = self.get_project(id, false).await?;
+        if from == to {
+            return Ok(current.version);
+        }
+
+        let mut entry = self
+            .projects
+            .get_mut(id)
+            .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let versions = entry.value_mut();
+
+        let idx_mutex = self
+            .statuses_indexes
+            .get(id)
+            .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let mut idx = idx_mutex.lock().expect("statuses index mutex poisoned");
+
+        if idx.by_key.contains_key(to) {
+            return Err(StoreError::InvalidIssueStatus(format!(
+                "status '{}' already exists on project '{id}'",
+                to.as_str()
+            )));
+        }
+        let sequence = idx.by_key.remove(from).ok_or_else(|| {
+            StoreError::InvalidIssueStatus(format!(
+                "status '{}' does not exist on project '{id}'",
+                from.as_str()
+            ))
+        })?;
+
+        if let Some(def) = idx.rows.get_mut(&sequence) {
+            def.key = to.clone();
+        }
+        idx.by_key.insert(to.clone(), sequence);
+
+        let latest = versions
+            .last()
+            .cloned()
+            .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let mut project = latest.item;
+        for status in project.statuses.iter_mut() {
+            if &status.key == from {
+                status.key = to.clone();
+                break;
+            }
+        }
+        let next_version = Self::next_version(versions);
+        versions.push(Self::versioned_now_with_actor(project, next_version, actor));
+        Ok(next_version)
     }
 }
 
@@ -9964,5 +10023,197 @@ mod tests {
             matches!(res, Err(StoreError::InvalidIssueStatus(_))),
             "expected rejection of removal-with-active-issue; got {res:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn cutover_apply_statuses_diff_rolls_back_next_sequence_on_validation_failure_memory() {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("rollback", &["a", "b"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let next_seq_before = store
+            .statuses_indexes
+            .get(&project_id)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .next_sequence;
+        assert_eq!(next_seq_before, 3);
+
+        let mut issue = sample_issue(vec![]);
+        issue.project_id = project_id.clone();
+        issue.status = StatusKey::try_new("b").unwrap();
+        store.add_issue(issue, &ActorRef::test()).await.unwrap();
+
+        // Removal of "b" must be rejected AND must leave next_sequence
+        // unchanged — even though the diff also adds a new key "c"
+        // that would otherwise consume sequence 3.
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses.retain(|s| s.key.as_str() != "b");
+        updated.statuses.push(StatusDefinition::new(
+            StatusKey::try_new("c").unwrap(),
+            "c".to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ));
+        let res = store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await;
+        assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
+        let next_seq_after_fail = store
+            .statuses_indexes
+            .get(&project_id)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .next_sequence;
+        assert_eq!(
+            next_seq_after_fail, next_seq_before,
+            "next_sequence must not advance on validation failure"
+        );
+
+        // A subsequent successful update adding a new key gets the
+        // sequence the failed call would have consumed.
+        let mut updated = store.get_project(&project_id, false).await.unwrap().item;
+        updated.statuses.push(StatusDefinition::new(
+            StatusKey::try_new("c").unwrap(),
+            "c".to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        ));
+        store
+            .update_project(&project_id, updated, &ActorRef::test())
+            .await
+            .unwrap();
+        let c_seq = store
+            .statuses_indexes
+            .get(&project_id)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .by_key
+            .get(&StatusKey::try_new("c").unwrap())
+            .copied();
+        assert_eq!(c_seq, Some(3));
+    }
+
+    // ---- rename_status ----
+
+    /// Renaming a status preserves the underlying `(project_id, sequence)`
+    /// storage identity: an issue created against the old key keeps its
+    /// recorded `status_sequence` and reads back as the new key.
+    #[tokio::test]
+    async fn rename_status_preserves_issue_sequence_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("rn", &["a", "b", "c"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let mut issue = sample_issue(vec![]);
+        issue.project_id = project_id.clone();
+        issue.status = StatusKey::try_new("b").unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let before_seq = *store
+            .issue_status_sequences
+            .get(&(issue_id.clone(), 1))
+            .expect("issue must have recorded sequence")
+            .value();
+
+        let from = StatusKey::try_new("b").unwrap();
+        let to = StatusKey::try_new("bb").unwrap();
+        let v = store
+            .rename_status(&project_id, &from, &to, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v, 2, "project version must bump on rename");
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.status.as_str(), "bb");
+
+        let after_seq = *store
+            .issue_status_sequences
+            .get(&(issue_id, 1))
+            .expect("issue must keep its sequence")
+            .value();
+        assert_eq!(
+            after_seq, before_seq,
+            "rename must not change the issue's status_sequence"
+        );
+
+        let project = store.get_project(&project_id, false).await.unwrap().item;
+        let keys: Vec<&str> = project.statuses.iter().map(|s| s.key.as_str()).collect();
+        assert_eq!(keys, vec!["a", "bb", "c"]);
+    }
+
+    #[tokio::test]
+    async fn rename_status_to_existing_key_returns_invalid_status_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("rn2", &["a", "b"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let from = StatusKey::try_new("a").unwrap();
+        let to = StatusKey::try_new("b").unwrap();
+        let res = store
+            .rename_status(&project_id, &from, &to, &ActorRef::test())
+            .await;
+        assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
+    }
+
+    #[tokio::test]
+    async fn rename_status_unknown_from_key_returns_invalid_status_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("rn3", &["a", "b"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let from = StatusKey::try_new("nope").unwrap();
+        let to = StatusKey::try_new("c").unwrap();
+        let res = store
+            .rename_status(&project_id, &from, &to, &ActorRef::test())
+            .await;
+        assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
+    }
+
+    /// `from == to` is a no-op: it must not bump the project version
+    /// and must not write a new row.
+    #[tokio::test]
+    async fn rename_status_same_from_and_to_is_noop_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("rn4", &["a"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let v = store
+            .rename_status(
+                &project_id,
+                &StatusKey::try_new("a").unwrap(),
+                &StatusKey::try_new("a").unwrap(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v, 1, "no-op rename must not bump version");
+    }
+
+    #[tokio::test]
+    async fn rename_status_project_not_found_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let bogus = ProjectId::new();
+        let res = store
+            .rename_status(
+                &bogus,
+                &StatusKey::try_new("a").unwrap(),
+                &StatusKey::try_new("b").unwrap(),
+                &ActorRef::test(),
+            )
+            .await;
+        assert!(matches!(res, Err(StoreError::ProjectNotFound(_))));
     }
 }

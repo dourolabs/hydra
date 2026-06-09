@@ -1498,13 +1498,21 @@ impl PostgresStoreV2 {
                 .map_err(map_sqlx_error)?;
             }
         }
-        for (_key, seq) in existing_by_key {
+        for (key, seq) in existing_by_key {
             sqlx::query("DELETE FROM metis.statuses WHERE project_id = $1 AND sequence = $2")
                 .bind(project_id)
                 .bind(seq)
                 .execute(&mut **tx)
                 .await
-                .map_err(map_sqlx_error)?;
+                .map_err(|err| {
+                    if is_status_sequence_fk_violation_pg(&err) {
+                        StoreError::InvalidIssueStatus(format!(
+                            "cannot remove status '{key}' from project '{project_id}': an issue still references it"
+                        ))
+                    } else {
+                        map_sqlx_error(err)
+                    }
+                })?;
         }
         Ok(next_sequence)
     }
@@ -2409,6 +2417,21 @@ fn is_project_key_unique_violation_pg(err: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db_err) = err {
         if db_err.code().as_deref() == Some("23505") {
             return db_err.constraint() == Some("projects_key_unique_active_idx");
+        }
+    }
+    false
+}
+
+/// True iff `err` is a Postgres FK-violation on
+/// `issues_v2_status_sequence_fkey` — the RESTRICT that blocks deleting
+/// a `metis.statuses` row while an `issues_v2` row still references it.
+/// Used by `apply_statuses_diff_in_tx` to translate the raw sqlx error
+/// into [`StoreError::InvalidIssueStatus`] so the route layer can
+/// surface a 400 instead of an opaque 500.
+fn is_status_sequence_fk_violation_pg(err: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = err {
+        if db_err.code().as_deref() == Some("23503") {
+            return db_err.constraint() == Some("issues_v2_status_sequence_fkey");
         }
     }
     false
@@ -5788,6 +5811,105 @@ impl Store for PostgresStoreV2 {
         let mut project = current.item;
         project.deleted = true;
         self.update_project(id, project, actor).await
+    }
+
+    async fn rename_status(
+        &self,
+        id: &ProjectId,
+        from: &StatusKey,
+        to: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let row = sqlx::query_as::<_, (i64, String, String, String, bool, Option<String>, f64, i64)>(&format!(
+            "SELECT version_number, key, name, creator, deleted, prompt_path, priority, next_status_sequence \
+             FROM {TABLE_PROJECTS} \
+             WHERE id = $1 AND is_latest = true \
+             FOR UPDATE"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let row = row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let (
+            latest_version,
+            project_key,
+            project_name,
+            project_creator,
+            project_deleted,
+            project_prompt_path,
+            project_priority,
+            next_status_sequence,
+        ) = row;
+
+        let latest_version = VersionNumber::try_from(latest_version).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+        if from == to {
+            return Ok(latest_version);
+        }
+
+        let to_exists: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM metis.statuses WHERE project_id = $1 AND key = $2 LIMIT 1",
+        )
+        .bind(id.as_ref())
+        .bind(to.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        if to_exists.is_some() {
+            return Err(StoreError::InvalidIssueStatus(format!(
+                "status '{}' already exists on project '{id}'",
+                to.as_str()
+            )));
+        }
+
+        let result =
+            sqlx::query("UPDATE metis.statuses SET key = $1 WHERE project_id = $2 AND key = $3")
+                .bind(to.as_str())
+                .bind(id.as_ref())
+                .bind(from.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(map_sqlx_error)?;
+        if result.rows_affected() == 0 {
+            return Err(StoreError::InvalidIssueStatus(format!(
+                "status '{}' does not exist on project '{id}'",
+                from.as_str()
+            )));
+        }
+
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+        let next_version_i64 = i64::try_from(next_version).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+
+        let actor_json = actor_to_json(actor);
+        sqlx::query(&format!(
+            "INSERT INTO {TABLE_PROJECTS} \
+             (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+        ))
+        .bind(id.as_ref())
+        .bind(next_version_i64)
+        .bind(&project_key)
+        .bind(&project_name)
+        .bind(&project_creator)
+        .bind(project_deleted)
+        .bind(&actor_json)
+        .bind(project_prompt_path.as_deref())
+        .bind(project_priority)
+        .bind(next_status_sequence)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok(next_version)
     }
 }
 
@@ -11004,6 +11126,160 @@ mod tests {
         let res = store
             .update_project(&project_id, updated, &ActorRef::test())
             .await;
-        assert!(res.is_err());
+        assert!(
+            matches!(res, Err(StoreError::InvalidIssueStatus(_))),
+            "expected InvalidIssueStatus when removing a status with active issues, got {res:?}"
+        );
+    }
+
+    // ---- rename_status (PR-3) ----
+
+    /// Renaming a status via the trait method must (a) flow through reads
+    /// as the new key, (b) preserve `metis.issues_v2.status_sequence` on
+    /// the issue row, and (c) bump the project's `version_number`. This
+    /// is the value-of-cutover assertion PR-2's model was designed to
+    /// enable.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn rename_status_preserves_issue_sequence_pg(pool: PgStorePool) {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("rn", &["a", "b", "c"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let issue = Issue::new(
+            IssueType::Task,
+            "rename".to_string(),
+            "test".to_string(),
+            hydra_common::api::v1::users::Username::from("alice").into(),
+            String::new(),
+            StatusKey::try_new("b").unwrap(),
+            project_id.clone(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let before_seq: i64 = sqlx::query_scalar(
+            "SELECT status_sequence FROM metis.issues_v2 WHERE id = $1 AND is_latest = TRUE",
+        )
+        .bind(issue_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let from = StatusKey::try_new("b").unwrap();
+        let to = StatusKey::try_new("bb").unwrap();
+        let v = store
+            .rename_status(&project_id, &from, &to, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v, 2, "project version must bump on rename");
+
+        let fetched = store.get_issue(&issue_id, false).await.unwrap();
+        assert_eq!(fetched.item.status.as_str(), "bb");
+
+        let after_seq: i64 = sqlx::query_scalar(
+            "SELECT status_sequence FROM metis.issues_v2 WHERE id = $1 AND is_latest = TRUE",
+        )
+        .bind(issue_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            after_seq, before_seq,
+            "rename must not change the issue's status_sequence"
+        );
+
+        let project = store.get_project(&project_id, false).await.unwrap().item;
+        let keys: Vec<&str> = project.statuses.iter().map(|s| s.key.as_str()).collect();
+        assert_eq!(keys, vec!["a", "bb", "c"]);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn rename_status_to_existing_key_returns_invalid_status_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("rn2", &["a", "b"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let res = store
+            .rename_status(
+                &project_id,
+                &StatusKey::try_new("a").unwrap(),
+                &StatusKey::try_new("b").unwrap(),
+                &ActorRef::test(),
+            )
+            .await;
+        assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn rename_status_unknown_from_key_returns_invalid_status_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("rn3", &["a", "b"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let res = store
+            .rename_status(
+                &project_id,
+                &StatusKey::try_new("nope").unwrap(),
+                &StatusKey::try_new("c").unwrap(),
+                &ActorRef::test(),
+            )
+            .await;
+        assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn rename_status_same_from_and_to_is_noop_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let project = cutover_sample_project_pg("rn4", &["a"]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let v = store
+            .rename_status(
+                &project_id,
+                &StatusKey::try_new("a").unwrap(),
+                &StatusKey::try_new("a").unwrap(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v, 1, "no-op rename must not bump version");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metis.projects WHERE id = $1")
+            .bind(project_id.as_ref())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "no-op rename must not write a new version row");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn rename_status_project_not_found_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let bogus = hydra_common::ProjectId::new();
+        let res = store
+            .rename_status(
+                &bogus,
+                &StatusKey::try_new("a").unwrap(),
+                &StatusKey::try_new("b").unwrap(),
+                &ActorRef::test(),
+            )
+            .await;
+        assert!(matches!(res, Err(StoreError::ProjectNotFound(_))));
     }
 }

@@ -34,7 +34,7 @@ use hydra_common::{
     api::v1::merge_check::MergeCheckResponse,
     api::v1::projects::{
         ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
-        UpsertProjectRequest, UpsertProjectResponse,
+        RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
     },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
@@ -352,6 +352,14 @@ impl HydraClientInterface for RelayCallCountingClient {
 
     async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
         self.inner.delete_project(project_id).await
+    }
+
+    async fn rename_project_status(
+        &self,
+        project_id: &ProjectId,
+        request: &RenameStatusRequest,
+    ) -> Result<UpsertProjectResponse> {
+        self.inner.rename_project_status(project_id, request).await
     }
 
     async fn get_project_statuses(

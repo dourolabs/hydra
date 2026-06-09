@@ -333,6 +333,10 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::projects::get_project_statuses),
         )
         .route(
+            "/v1/projects/:project_id/statuses/rename",
+            post(routes::projects::rename_project_status),
+        )
+        .route(
             "/v1/repositories",
             get(routes::repositories::list_repositories)
                 .post(routes::repositories::create_repository),
