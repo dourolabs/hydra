@@ -19,6 +19,12 @@ export interface IssueFilterUrlSpec {
   id: string;
   /** When true, the URL holds a single value; otherwise a comma-separated list. */
   singleSelect: boolean;
+  /**
+   * When true, the filter is a presence-only flag — the URL just carries the
+   * key (with value `"1"`) and the chip activates on read, with no value
+   * picker behaviour. Used for `?include_archived=1`.
+   */
+  presence?: boolean;
 }
 
 export const FILTER_URL_PARAMS: IssueFilterUrlSpec[] = [
@@ -31,6 +37,7 @@ export const FILTER_URL_PARAMS: IssueFilterUrlSpec[] = [
   { id: "relatedChat", singleSelect: false },
   { id: "relatedSession", singleSelect: false },
   { id: "parentOrChild", singleSelect: false },
+  { id: "includeArchived", singleSelect: true, presence: true },
 ];
 
 const FILTER_URL_PARAM_KEYS = new Set(FILTER_URL_PARAMS.map((spec) => spec.id));
@@ -72,6 +79,15 @@ export function filtersFromUrl(params: URLSearchParams): Filter[] {
   const out: Filter[] = [];
   for (const spec of FILTER_URL_PARAMS) {
     const raw = params.get(spec.id);
+    if (raw === null) continue;
+    if (spec.presence) {
+      // Presence flag — the key alone is the truth value; any truthy
+      // canonical value (`1`, `true`) keeps it active. Empty value or `0`
+      // clears it, mirroring how URL query toggles are commonly written.
+      if (raw === "" || raw === "0" || raw === "false") continue;
+      out.push({ _uid: `url:${spec.id}`, id: spec.id, op: "in", values: [] });
+      continue;
+    }
     if (!raw) continue;
     let values = parseValues(raw, spec.singleSelect);
     if (values.length === 0) continue;
@@ -109,6 +125,11 @@ export function filtersToUrl(
   next.delete("selected");
   for (const filter of filters) {
     if (!FILTER_URL_PARAM_KEYS.has(filter.id)) continue;
+    const spec = FILTER_URL_PARAMS.find((s) => s.id === filter.id);
+    if (spec?.presence) {
+      next.set(filter.id, "1");
+      continue;
+    }
     if (filter.values.length === 0) continue;
     next.set(filter.id, filter.values.join(","));
   }

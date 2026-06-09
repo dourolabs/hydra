@@ -343,6 +343,27 @@
   background: var(--bg-3);
 }
 
+.cardArchived {
+  opacity: 0.62;
+}
+
+.cardArchived .cardTitle {
+  color: var(--fg-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+}
+
+.cardArchivedTag {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+}
+
 .cardHead {
   display: flex;
   align-items: center;

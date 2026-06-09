@@ -66,6 +66,7 @@ function isActive(s: SessionSummaryRecord): boolean {
 export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: IssueRailRowProps) {
   const navigate = useNavigate();
   const issue = record.issue;
+  const archived = issue.deleted === true;
   const resolved = issue.status;
   const hasActive = sessions?.some(isActive) ?? false;
   // Resolved status drives the dot color directly. Active sessions
@@ -83,7 +84,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
 
   return (
     <div
-      className={styles.row}
+      className={archived ? `${styles.row} ${styles.archived}` : styles.row}
       onClick={() => navigate(to)}
       role="button"
       tabIndex={0}
@@ -94,6 +95,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
         }
       }}
       data-testid={`related-rail-row-issue-${record.issue_id}`}
+      data-archived={archived ? "true" : undefined}
     >
       {dotColor ? (
         <span
@@ -116,6 +118,14 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
           )}
           {resolved.label && (
             <span className={styles.statusLabel}>{resolved.label}</span>
+          )}
+          {archived && (
+            <span
+              className={styles.archivedTag}
+              data-testid={`related-rail-row-archived-${record.issue_id}`}
+            >
+              ARCHIVED
+            </span>
           )}
           {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
           {issue.assignee && assigneeName && (

@@ -139,9 +139,13 @@ export function FilterBar<T>({
       const next: Filter = { _uid: uid, id, op: "in", values: [] };
       setFilters([...filters, next]);
       closeMenu();
-      setPendingOpenUid(uid);
+      // Presence filters carry no value, so skip the value-picker open step;
+      // the chip is already active just by being on the bar.
+      if (definitions[id]?.kind !== "presence") {
+        setPendingOpenUid(uid);
+      }
     },
-    [filters, setFilters, closeMenu],
+    [filters, setFilters, closeMenu, definitions],
   );
 
   const handleRemove = useCallback(
@@ -184,13 +188,14 @@ export function FilterBar<T>({
       {filters.map((filter) => {
         const def = definitions[filter.id];
         if (!def) return null;
+        const isPresence = def.kind === "presence";
         return (
           <FilterChip
             key={filter._uid}
             filter={filter}
             definition={def}
             open={pickerOpenUid === filter._uid}
-            onOpen={() => openPicker(filter._uid)}
+            onOpen={isPresence ? undefined : () => openPicker(filter._uid)}
             onRemove={() => handleRemove(filter._uid)}
             chipRef={(el) => {
               if (el) chipRefs.current.set(filter._uid, el);
