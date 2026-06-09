@@ -36,28 +36,24 @@ const listProjects = vi.fn(() =>
     ],
   }),
 );
+const defaultProjectStatuses = [
+  { key: "open", label: "Open", color: "#111" },
+  { key: "in-progress", label: "In progress", color: "#222" },
+  { key: "failed", label: "Failed", color: "#333" },
+  { key: "closed", label: "Closed", color: "#444" },
+  { key: "dropped", label: "Dropped", color: "#555" },
+];
+const engv2Statuses = [
+  { key: "inbox", label: "Inbox", color: "#aaa" },
+  { key: "backlog", label: "Backlog", color: "#bbb" },
+  { key: "pending", label: "Pending", color: "#ccc" },
+  { key: "in-development", label: "In dev", color: "#ddd" },
+  { key: "in-review", label: "In review", color: "#eee" },
+  { key: "pending-release", label: "Pending release", color: "#fff" },
+];
 const getProjectStatuses = vi.fn((projectId: string) =>
   Promise.resolve({
-    statuses: [
-      { key: "inbox", label: "Inbox", color: "#aaa" },
-      { key: "backlog", label: "Backlog", color: "#bbb" },
-      { key: "pending", label: "Pending", color: "#ccc" },
-      { key: "in-development", label: "In dev", color: "#ddd" },
-      { key: "in-review", label: "In review", color: "#eee" },
-      { key: "pending-release", label: "Pending release", color: "#fff" },
-    ],
-    _project_id: projectId, // unused; here to satisfy the call signature
-  }),
-);
-const getDefaultProjectStatuses = vi.fn(() =>
-  Promise.resolve({
-    statuses: [
-      { key: "open", label: "Open", color: "#111" },
-      { key: "in-progress", label: "In progress", color: "#222" },
-      { key: "failed", label: "Failed", color: "#333" },
-      { key: "closed", label: "Closed", color: "#444" },
-      { key: "dropped", label: "Dropped", color: "#555" },
-    ],
+    statuses: projectId === "j-defaul" ? defaultProjectStatuses : engv2Statuses,
   }),
 );
 
@@ -71,7 +67,6 @@ vi.mock("../../../api/client", () => ({
     listUsers: () => listUsers(),
     listProjects: () => listProjects(),
     getProjectStatuses: (projectId: string) => getProjectStatuses(projectId),
-    getDefaultProjectStatuses: () => getDefaultProjectStatuses(),
   },
 }));
 
@@ -260,7 +255,7 @@ describe("useIssueFilters project + dynamic status options", () => {
 
     const values = result.current.status.options.map((o) => o.value);
     expect(values).toEqual(["open", "in-progress", "failed", "closed", "dropped"]);
-    expect(getDefaultProjectStatuses).toHaveBeenCalled();
+    expect(getProjectStatuses).toHaveBeenCalledWith("j-defaul");
   });
 
   it("re-scopes the Status filter options to the selected project when a project chip is active", async () => {

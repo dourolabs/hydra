@@ -4,10 +4,9 @@
 //! All lookups go through the project store: every issue is guaranteed
 //! to carry a real `ProjectId` (legacy NULL rows were backfilled by the
 //! `seed_default_project` migration and the column is NOT NULL since
-//! `20260612000000_issues_v2_project_id_not_null`), and create-time
-//! requests that omit the field are substituted with
-//! [`ProjectId::default_project()`] at the `IssueInput -> Issue`
-//! conversion boundary in the route layer.
+//! `20260612000000_issues_v2_project_id_not_null`). The wire request
+//! DTO [`hydra_common::api::v1::issues::IssueInput`] requires
+//! `project_id` to be populated.
 
 use crate::domain::actors::ActorRef;
 use crate::domain::issues::Issue;

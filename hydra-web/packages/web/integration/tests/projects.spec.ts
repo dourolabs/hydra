@@ -53,7 +53,8 @@ test.describe("Status modal options come from project @projects:status-modal-opt
   test("project-less issue uses default project's statuses @projects:status-modal-options", async ({
     authenticatedPage: page,
   }) => {
-    // Pick any seeded issue; seed issues default to project_id=null.
+    // Pick any seeded issue; seed issues without an explicit project_id are
+    // backfilled to the seeded default project (`j-defaul`) on load.
     await page.goto("/issues/i-seed00002");
     // Open the right rail's Details tab to access the status chip.
     await page.getByTestId("issue-rail-tab-details").click();

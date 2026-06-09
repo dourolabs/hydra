@@ -186,7 +186,10 @@ async fn default_project_statuses_route_returns_legacy_status_list() -> anyhow::
     let base = server.base_url();
 
     let statuses: ProjectStatusesResponse = client
-        .get(format!("{base}/v1/projects/default/statuses"))
+        .get(format!(
+            "{base}/v1/projects/{}/statuses",
+            crate::domain::projects::DEFAULT_PROJECT_ID_STR
+        ))
         .send()
         .await?
         .error_for_status()?

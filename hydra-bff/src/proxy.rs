@@ -263,6 +263,7 @@ mod tests {
                 "creator": "test-creator",
                 "progress": "",
                 "status": "open",
+                "project_id": "j-defaul",
                 "dependencies": [],
                 "patches": []
             }

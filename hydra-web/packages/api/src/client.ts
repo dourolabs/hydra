@@ -751,20 +751,9 @@ export class HydraApiClient {
     return this.del(`/v1/projects/${encodeURIComponent(projectId)}`);
   }
 
-  /**
-   * GET /v1/projects/:projectId/statuses
-   *
-   * Pass `"default"` (or use [`getDefaultProjectStatuses`]) for the
-   * seeded default project (`j-defaul`), which is the fallback project
-   * for issues created without an explicit `project_id`.
-   */
+  /** GET /v1/projects/:projectId/statuses */
   getProjectStatuses(projectId: string): Promise<ProjectStatusesResponse> {
     return this.get(`/v1/projects/${encodeURIComponent(projectId)}/statuses`);
-  }
-
-  /** GET /v1/projects/default/statuses */
-  getDefaultProjectStatuses(): Promise<ProjectStatusesResponse> {
-    return this.get("/v1/projects/default/statuses");
   }
 
   // ---------------------------------------------------------------------------

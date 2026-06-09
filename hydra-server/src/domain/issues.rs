@@ -195,9 +195,7 @@ pub struct Issue {
     /// reinterpret unknown keys.
     #[serde(default = "default_status_key")]
     pub status: StatusKey,
-    /// Project membership. Always set; back-compat substitution for clients
-    /// that omit the field lives on the wire request DTO
-    /// [`api::issues::IssueInput`] at the route layer.
+    /// Project membership. Required on every issue.
     pub project_id: ProjectId,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
@@ -479,12 +477,6 @@ impl From<api::issues::Issue> for Issue {
 
 impl From<api::issues::IssueInput> for Issue {
     fn from(value: api::issues::IssueInput) -> Self {
-        // Substitute the seeded default project id when the request
-        // omits `project_id`. This is the documented back-compat path
-        // for clients that pre-date per-project issue statuses.
-        let project_id = value
-            .project_id
-            .unwrap_or_else(crate::domain::projects::default_project_id);
         Self {
             issue_type: value.issue_type.into(),
             title: value.title,
@@ -492,7 +484,7 @@ impl From<api::issues::IssueInput> for Issue {
             creator: value.creator.into(),
             progress: value.progress,
             status: value.status,
-            project_id,
+            project_id: value.project_id,
             assignee: value.assignee,
             session_settings: value.session_settings.into(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
