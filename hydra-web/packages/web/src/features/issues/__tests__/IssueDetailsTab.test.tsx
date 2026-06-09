@@ -231,26 +231,21 @@ describe("IssueDetailsTab", () => {
       expect(chip.textContent).toBe("Engineering v2");
     });
 
-    it("falls back to the default project when issue has no project_id", () => {
-      useProjectMock.mockReturnValue({ data: undefined });
-      useProjectsMock.mockReturnValue({
-        data: [
-          {
-            project_id: "j-other",
-            version: 1,
-            project: { key: "other", name: "Other" },
-          },
-          {
-            project_id: "j-defaul",
-            version: 1,
-            project: { key: "default", name: "Default" },
-          },
-        ],
+    it("renders the seeded default project chip when issue.project_id is j-defaul", () => {
+      useProjectMock.mockReturnValue({
+        data: {
+          project_id: "j-defaul",
+          version: 1,
+          project: { key: "default", name: "Default" },
+        },
       });
       render(
-        <IssueDetailsTab record={makeRecord({})} onOpenStatusModal={() => {}} />,
+        <IssueDetailsTab
+          record={makeRecord({ project_id: "j-defaul" })}
+          onOpenStatusModal={() => {}}
+        />,
       );
-      expect(useProjectMock).toHaveBeenCalledWith(null);
+      expect(useProjectMock).toHaveBeenCalledWith("j-defaul");
       const chip = screen.getByTestId("project-chip");
       expect(chip.getAttribute("data-key")).toBe("default");
       expect(chip.textContent).toBe("Default");

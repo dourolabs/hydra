@@ -35,9 +35,7 @@ export function buildSections(
 
   const byProject = new Map<string, IssueSummaryRecord[]>();
   for (const rec of issues) {
-    const projectId = rec.issue.project_id ?? null;
-    const key =
-      projectId ?? (defaultProject?.project_id ?? UNRESOLVED_GROUP_KEY);
+    const key = rec.issue.project_id;
     const bucket = byProject.get(key);
     if (bucket) {
       bucket.push(rec);

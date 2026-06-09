@@ -1370,12 +1370,14 @@ describe("Seed data", () => {
     expect(taggedKeys.size).toBeGreaterThanOrEqual(4);
   });
 
-  it("issues without project_id still resolve through the DefaultProject mapping", async () => {
-    // i-seed00001 was not modified, so it has neither project_id nor
-    // resolved_status — the frontend falls back to DefaultProject (synthesized
-    // by /v1/projects/default/statuses).
+  it("issues lacking an explicit project_id default to the seeded default project", async () => {
+    // i-seed00001's fixture has no `project_id`; the seed-loader
+    // backfills it to `j-defaul` (the seeded default project), mirroring
+    // the real-server `seed_default_project` migration. The pre-PR
+    // "null project_id falls back to DefaultProject at render time"
+    // shape is gone — every issue now carries a real project id.
     const seed1 = await client.getIssue("i-seed00001");
-    expect(seed1.issue.project_id ?? null).toBeNull();
+    expect(seed1.issue.project_id).toBe("j-defaul");
     expect(seed1.issue.resolved_status ?? null).toBeNull();
   });
 

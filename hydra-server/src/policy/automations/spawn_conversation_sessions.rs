@@ -1481,7 +1481,7 @@ mod tests {
         }
 
         let mut issue = issue_with_status("v2 backlog issue", IssueStatus::Open, vec![]);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = StatusKey::try_new("backlog").unwrap();
         let (issue_id, _) = state
             .store

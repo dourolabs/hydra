@@ -290,6 +290,7 @@ mod tests {
             Username::from("alice"),
             String::new(),
             crate::domain::issues::IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),

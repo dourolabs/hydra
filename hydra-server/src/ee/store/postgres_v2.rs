@@ -411,7 +411,7 @@ impl PostgresStoreV2 {
             .bind(&form_json)
             .bind(&form_response_json)
             .bind(issue.feedback.as_deref())
-            .bind(issue.project_id.as_ref().map(|p| p.as_ref()))
+            .bind(issue.project_id.as_ref())
             .execute(executor)
             .await
             .map_err(map_sqlx_error)?;
@@ -511,11 +511,7 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to deserialize assignee_principal: {e}"))
             })?;
-        let project_id = row
-            .project_id
-            .as_ref()
-            .map(|s| ProjectId::try_from(s.clone()))
-            .transpose()
+        let project_id = ProjectId::try_from(row.project_id.clone())
             .map_err(|e| StoreError::Internal(format!("invalid project_id: {e}")))?;
         Ok(Issue {
             issue_type,
@@ -1525,8 +1521,7 @@ struct IssueRow {
     form_response: Option<Value>,
     #[sqlx(default)]
     feedback: Option<String>,
-    #[sqlx(default)]
-    project_id: Option<String>,
+    project_id: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -5663,6 +5658,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             dependencies,
@@ -5855,6 +5851,7 @@ mod tests {
             Username::from("issue-creator"),
             "50%".to_string(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::User {
                 name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
             }),
@@ -6920,6 +6917,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             vec![],
@@ -6938,6 +6936,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             vec![],
@@ -7992,6 +7991,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -8009,6 +8009,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Closed.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -8321,11 +8322,11 @@ mod tests {
         let project_b = ProjectId::new();
 
         let mut issue_a = sample_issue(vec![]);
-        issue_a.project_id = Some(project_a.clone());
+        issue_a.project_id = project_a.clone();
         let (id_a, _) = store.add_issue(issue_a, &actor).await.unwrap();
 
         let mut issue_b = sample_issue(vec![]);
-        issue_b.project_id = Some(project_b);
+        issue_b.project_id = project_b;
         store.add_issue(issue_b, &actor).await.unwrap();
 
         // Issue with no project must not match a project_id filter.
@@ -8350,17 +8351,17 @@ mod tests {
         let other_project = ProjectId::new();
 
         let mut target = sample_issue(vec![]);
-        target.project_id = Some(project.clone());
+        target.project_id = project.clone();
         target.status = StatusKey::try_new("inbox").unwrap();
         let (target_id, _) = store.add_issue(target, &actor).await.unwrap();
 
         let mut other_status = sample_issue(vec![]);
-        other_status.project_id = Some(project.clone());
+        other_status.project_id = project.clone();
         other_status.status = StatusKey::try_new("triage").unwrap();
         store.add_issue(other_status, &actor).await.unwrap();
 
         let mut other_proj = sample_issue(vec![]);
-        other_proj.project_id = Some(other_project);
+        other_proj.project_id = other_project;
         other_proj.status = StatusKey::try_new("inbox").unwrap();
         store.add_issue(other_proj, &actor).await.unwrap();
 
@@ -10348,14 +10349,13 @@ mod tests {
             .unwrap();
 
         let mut issue = sample_issue(Vec::new());
-        issue.project_id = Some(project_id.clone());
+        issue.project_id = project_id.clone();
         issue.status = hydra_common::api::v1::projects::StatusKey::try_new("backlog").unwrap();
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(
-            fetched.item.project_id.as_ref(),
-            Some(&project_id),
+            fetched.item.project_id, project_id,
             "get_issue must preserve project_id"
         );
 
@@ -10368,8 +10368,7 @@ mod tests {
             .find(|(id, _)| id == &issue_id)
             .expect("list_issues must return the project-bound issue");
         assert_eq!(
-            found.1.item.project_id.as_ref(),
-            Some(&project_id),
+            found.1.item.project_id, project_id,
             "list_issues must preserve project_id"
         );
 
@@ -10380,8 +10379,7 @@ mod tests {
         );
         for v in &versions {
             assert_eq!(
-                v.item.project_id.as_ref(),
-                Some(&project_id),
+                v.item.project_id, project_id,
                 "get_issue_versions must preserve project_id on every version"
             );
         }
@@ -10517,10 +10515,10 @@ mod tests {
             .unwrap();
 
         let issue = store.get_issue(&issue_id, false).await.unwrap().item;
-        assert_eq!(issue.project_id.as_ref(), Some(&default_project_id()));
+        assert_eq!(issue.project_id, default_project_id());
 
         let project = store
-            .get_project(issue.project_id.as_ref().unwrap(), false)
+            .get_project(&issue.project_id, false)
             .await
             .unwrap()
             .item;

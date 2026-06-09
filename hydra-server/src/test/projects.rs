@@ -243,6 +243,7 @@ async fn issue_with_project_id_and_custom_status_succeeds() -> anyhow::Result<()
         default_user(),
         String::new(),
         StatusKey::try_new("backlog").unwrap(),
+        crate::domain::projects::default_project_id(),
         None,
         None,
         Vec::new(),
@@ -252,11 +253,11 @@ async fn issue_with_project_id_and_custom_status_succeeds() -> anyhow::Result<()
         None,
     )
     .into();
-    issue.project_id = Some(project_id.clone());
+    issue.project_id = project_id.clone();
 
     let created: UpsertIssueResponse = client
         .post(format!("{base}/v1/issues"))
-        .json(&UpsertIssueRequest::new(issue, None))
+        .json(&UpsertIssueRequest::new(issue.into(), None))
         .send()
         .await?
         .error_for_status()?
@@ -273,7 +274,7 @@ async fn issue_with_project_id_and_custom_status_succeeds() -> anyhow::Result<()
         .json()
         .await?;
     assert_eq!(fetched.issue.status.as_str(), "backlog");
-    assert_eq!(fetched.issue.project_id.as_ref(), Some(&project_id));
+    assert_eq!(fetched.issue.project_id, project_id);
     let resolved = fetched
         .issue
         .resolved_status
@@ -309,6 +310,7 @@ async fn issue_with_unknown_status_key_returns_400() -> anyhow::Result<()> {
         default_user(),
         String::new(),
         StatusKey::try_new("not-a-real-status").unwrap(),
+        crate::domain::projects::default_project_id(),
         None,
         None,
         Vec::new(),
@@ -318,11 +320,11 @@ async fn issue_with_unknown_status_key_returns_400() -> anyhow::Result<()> {
         None,
     )
     .into();
-    issue.project_id = Some(project_id);
+    issue.project_id = project_id;
 
     let resp = client
         .post(format!("{base}/v1/issues"))
-        .json(&UpsertIssueRequest::new(issue, None))
+        .json(&UpsertIssueRequest::new(issue.into(), None))
         .send()
         .await?;
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
@@ -351,6 +353,7 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
             default_user(),
             String::new(),
             status.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -363,7 +366,7 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
 
         let created: UpsertIssueResponse = client
             .post(format!("{base}/v1/issues"))
-            .json(&UpsertIssueRequest::new(issue, None))
+            .json(&UpsertIssueRequest::new(issue.into(), None))
             .send()
             .await?
             .error_for_status()?
@@ -381,8 +384,8 @@ async fn default_project_issue_includes_resolved_status_on_every_legacy_key() ->
         // default-project id rather than NULL; status resolution still
         // returns one of the five legacy statuses.
         assert_eq!(
-            fetched.issue.project_id.as_ref().map(|p| p.as_ref()),
-            Some(crate::domain::projects::DEFAULT_PROJECT_ID_STR)
+            fetched.issue.project_id.as_ref(),
+            crate::domain::projects::DEFAULT_PROJECT_ID_STR
         );
         let resolved = fetched
             .issue

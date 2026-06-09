@@ -1520,7 +1520,7 @@ mod tests {
         },
         users::Username,
         whoami::{ActorIdentity, WhoAmIResponse},
-        RepoName,
+        ProjectId, RepoName,
     };
     use reqwest::Client as HttpClient;
     use std::{fs, str::FromStr};
@@ -1712,7 +1712,7 @@ mod tests {
                 Username::from("test-creator"),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 None,
                 Vec::new(),
@@ -2844,7 +2844,7 @@ mod tests {
                 Username::from("creator"),
                 String::new(),
                 IssueStatus::Open.into(),
-                None,
+                ProjectId::default_project(),
                 None,
                 Some({
                     let mut ss = SessionSettings::default();

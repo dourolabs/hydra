@@ -41,12 +41,12 @@ const NO_PROJECT_SENTINEL_STATUS_KEY: &str = "none";
 /// in the seed migration's `creator` column.
 pub const SYSTEM_USERNAME: &str = "system";
 
-/// Returns the stable [`ProjectId`] for the default project. Parses the
-/// `DEFAULT_PROJECT_ID_STR` constant; the unwrap is sound because the
-/// constant is validated by tests in this module.
+/// Returns the stable [`ProjectId`] for the default project. Thin
+/// wrapper over [`ProjectId::default_project`] so the literal lives in
+/// one place ([`hydra_common::ids`]) and the server-side helper stays
+/// available for existing call sites.
 pub fn default_project_id() -> ProjectId {
-    ProjectId::try_from(DEFAULT_PROJECT_ID_STR.to_string())
-        .expect("DEFAULT_PROJECT_ID_STR is a well-formed ProjectId")
+    ProjectId::default_project()
 }
 
 /// Build the default-project [`Project`] value seeded by SQL migrations

@@ -224,9 +224,8 @@ async fn child_project_has_key(
     child: &crate::domain::issues::Issue,
     target_key: &StatusKey,
 ) -> Result<bool, anyhow::Error> {
-    use crate::domain::projects::default_project_id;
     use crate::store::StoreError;
-    let project_id = child.project_id.clone().unwrap_or_else(default_project_id);
+    let project_id = child.project_id.clone();
     let store = app_state.store();
     let project = match store.get_project(&project_id, false).await {
         Ok(versioned) => versioned.item,
@@ -262,6 +261,7 @@ mod tests {
             Username::from("tester"),
             String::new(),
             status.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             deps,

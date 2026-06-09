@@ -289,7 +289,7 @@ mod tests {
             seed_project_with_interactive(&state).await;
 
         let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = interactive_key.clone();
         let (issue_id, _) = state
             .store
@@ -332,7 +332,7 @@ mod tests {
             seed_project_with_interactive(&state).await;
 
         let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = StatusKey::try_new("open").unwrap();
         let (issue_id, _) = state
             .store
@@ -371,7 +371,7 @@ mod tests {
         let (project_id, interactive_key, _) = seed_project_with_interactive(&state).await;
 
         let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = interactive_key.clone();
         let (issue_id, _) = state
             .store
@@ -409,7 +409,7 @@ mod tests {
             seed_project_with_interactive(&state).await;
 
         let mut issue = issue_with_status("test", IssueStatus::Open, vec![]);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         issue.status = interactive_key.clone();
         let (issue_id, _) = state
             .store
@@ -449,7 +449,7 @@ mod tests {
             seed_project_with_interactive(&state).await;
 
         let mut issue_a = issue_with_status("a", IssueStatus::Open, vec![]);
-        issue_a.project_id = Some(project_id.clone());
+        issue_a.project_id = project_id.clone();
         issue_a.status = interactive_key.clone();
         let (issue_a_id, _) = state
             .store
@@ -458,7 +458,7 @@ mod tests {
             .unwrap();
 
         let mut issue_b = issue_with_status("b", IssueStatus::Open, vec![]);
-        issue_b.project_id = Some(project_id);
+        issue_b.project_id = project_id;
         issue_b.status = interactive_key.clone();
         let (issue_b_id, _) = state
             .store

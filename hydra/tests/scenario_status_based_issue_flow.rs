@@ -160,7 +160,7 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
         Username::from("default"),
         String::new(),
         StatusKey::try_new("backlog").unwrap(),
-        Some(project_resp.project_id),
+        project_resp.project_id,
         None,
         Some(session_settings),
         Vec::new(),
@@ -172,7 +172,7 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
     );
     let resp = user
         .client()
-        .create_issue(&UpsertIssueRequest::new(parent, None))
+        .create_issue(&UpsertIssueRequest::new(parent.into(), None))
         .await
         .context("create parent issue")?;
     Ok(resp.issue_id)

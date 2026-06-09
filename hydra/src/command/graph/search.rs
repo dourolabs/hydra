@@ -194,7 +194,7 @@ mod tests {
     use hydra_common::api::v1::patches::{Patch, PatchStatus, PatchVersionRecord};
     use hydra_common::issues::IssueVersionRecord;
     use hydra_common::users::Username;
-    use hydra_common::{IssueId, PatchId};
+    use hydra_common::{IssueId, PatchId, ProjectId};
 
     fn ts() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap()
@@ -209,7 +209,7 @@ mod tests {
             Username::from("creator"),
             String::new(),
             IssueStatus::Open.into(),
-            None,
+            ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),
             Vec::new(),

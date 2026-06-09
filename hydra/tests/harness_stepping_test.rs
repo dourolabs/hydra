@@ -5,6 +5,7 @@ use hydra_common::issues::{Issue, IssueStatus, IssueType, SessionSettings, Upser
 use hydra_common::principal::Principal;
 use hydra_common::sessions::SearchSessionsQuery;
 use hydra_common::users::Username;
+use hydra_common::ProjectId;
 use std::str::FromStr;
 
 /// Helper: register an agent queue in the harness and create an issue
@@ -26,7 +27,7 @@ async fn create_spawnable_issue(
         Username::from("default"),
         String::new(),
         IssueStatus::Open.into(),
-        None,
+        ProjectId::default_project(),
         // The agent_queue assignment check is typed: it only picks up
         // `Principal::Agent { name: agent.name }`. The harness builder
         // (`with_agent`) seeds the agent row so `principal_exists` passes.
@@ -42,7 +43,7 @@ async fn create_spawnable_issue(
         None,
         None,
     );
-    let request = UpsertIssueRequest::new(issue, None);
+    let request = UpsertIssueRequest::new(issue.into(), None);
     let response = harness
         .default_user()
         .client()

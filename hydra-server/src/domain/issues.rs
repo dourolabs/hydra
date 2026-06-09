@@ -195,10 +195,10 @@ pub struct Issue {
     /// reinterpret unknown keys.
     #[serde(default = "default_status_key")]
     pub status: StatusKey,
-    /// Optional project membership. `None` resolves through the
-    /// synthesized default project (no DB row).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<ProjectId>,
+    /// Project membership. Always set; back-compat substitution for clients
+    /// that omit the field lives on the wire request DTO
+    /// [`api::issues::IssueInput`] at the route layer.
+    pub project_id: ProjectId,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
@@ -230,6 +230,7 @@ impl Issue {
         creator: Username,
         progress: String,
         status: StatusKey,
+        project_id: ProjectId,
         assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
@@ -245,7 +246,7 @@ impl Issue {
             creator,
             progress,
             status,
-            project_id: Some(crate::domain::projects::default_project_id()),
+            project_id,
             assignee,
             session_settings: session_settings.unwrap_or_default(),
             dependencies,
@@ -473,6 +474,40 @@ impl From<api::issues::Issue> for Issue {
             form_response: value.form_response,
             feedback: value.feedback,
         }
+    }
+}
+
+impl From<api::issues::IssueInput> for Issue {
+    fn from(value: api::issues::IssueInput) -> Self {
+        // Substitute the seeded default project id when the request
+        // omits `project_id`. This is the documented back-compat path
+        // for clients that pre-date per-project issue statuses.
+        let project_id = value
+            .project_id
+            .unwrap_or_else(crate::domain::projects::default_project_id);
+        Self {
+            issue_type: value.issue_type.into(),
+            title: value.title,
+            description: value.description,
+            creator: value.creator.into(),
+            progress: value.progress,
+            status: value.status,
+            project_id,
+            assignee: value.assignee,
+            session_settings: value.session_settings.into(),
+            dependencies: value.dependencies.into_iter().map(Into::into).collect(),
+            patches: value.patches,
+            deleted: value.deleted,
+            form: value.form,
+            form_response: value.form_response,
+            feedback: value.feedback,
+        }
+    }
+}
+
+impl From<Issue> for api::issues::IssueInput {
+    fn from(value: Issue) -> Self {
+        api::issues::Issue::from(value).into()
     }
 }
 

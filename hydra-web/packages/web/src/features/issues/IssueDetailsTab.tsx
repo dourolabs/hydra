@@ -8,7 +8,7 @@ import {
 } from "../principal/formatPrincipal";
 import { ProjectChip } from "../projects/ProjectChip";
 import { StatusChip } from "../projects/StatusChip";
-import { useProject, useProjects } from "../projects/useProjects";
+import { useProject } from "../projects/useProjects";
 import { formatTimestamp } from "../../utils/time";
 import { useIssuesByIds } from "./useIssue";
 import { computeBlockedStatus } from "./blockedStatus";
@@ -45,17 +45,10 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
   const { issue } = record;
   const issueId = record.issue_id;
   const settings = issue.session_settings;
-  const projectId = issue.project_id ?? null;
+  const projectId = issue.project_id;
 
   const { data: projectRecord } = useProject(projectId);
-  const { data: allProjects } = useProjects();
-  const project = useMemo(() => {
-    if (projectRecord) return projectRecord.project;
-    if (!projectId) {
-      return allProjects?.find((p) => p.project.key === "default")?.project;
-    }
-    return undefined;
-  }, [projectRecord, projectId, allProjects]);
+  const project = projectRecord?.project;
 
   const blockedOnIds = useMemo(
     () =>

@@ -63,7 +63,7 @@ function makeRecord(opts?: {
       description: "desc",
       creator: "alice",
       status: "open",
-      project_id: opts?.projectId ?? null,
+      project_id: opts?.projectId ?? "j-defaul",
       resolved_status:
         opts?.resolvedStatus === undefined ? makeStatus() : opts.resolvedStatus,
       assignee: opts?.assignee ?? null,

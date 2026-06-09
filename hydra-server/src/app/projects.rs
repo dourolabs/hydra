@@ -1,15 +1,16 @@
 //! `AppState::resolve_status` — single resolution point from
 //! `(project_id, status)` to a [`StatusDefinition`].
 //!
-//! All lookups go through the project store. When `Issue.project_id` is
-//! `None` (a residual shape — the `seed_default_project` migration
-//! backfills all rows to the stable default id), we resolve through the
-//! same store fetch using `default_project_id()` instead of branching
-//! into an in-process singleton.
+//! All lookups go through the project store: every issue is guaranteed
+//! to carry a real `ProjectId` (legacy NULL rows were backfilled by the
+//! `seed_default_project` migration and the column is NOT NULL since
+//! `20260612000000_issues_v2_project_id_not_null`), and create-time
+//! requests that omit the field are substituted with
+//! [`ProjectId::default_project()`] at the `IssueInput -> Issue`
+//! conversion boundary in the route layer.
 
 use crate::domain::actors::ActorRef;
 use crate::domain::issues::Issue;
-use crate::domain::projects::default_project_id;
 use crate::store::{ReadOnlyStore, StoreError};
 use hydra_common::api::v1::projects::{KeyError, Project, StatusDefinition, StatusKey};
 use hydra_common::{ProjectId, VersionNumber};
@@ -65,16 +66,17 @@ impl AppState {
     /// [`StatusDefinition`].
     ///
     /// The resolver fetches the project via the [`crate::store::Store`]
-    /// and looks up the status by key. An issue with `project_id ==
-    /// None` (residual shape; the seed migration backfills production
-    /// rows) is resolved through the seeded default project.
+    /// and looks up the status by key. `Issue.project_id` is
+    /// non-optional end-to-end (see the module docstring), so a missing
+    /// project is a hard `ResolveStatusError::ProjectNotFound` rather
+    /// than a silent fallback.
     pub async fn resolve_status(
         &self,
         issue: &Issue,
     ) -> Result<StatusDefinition, ResolveStatusError> {
         let key =
             StatusKey::try_new(issue.status.as_str()).map_err(ResolveStatusError::InvalidKey)?;
-        let project_id = issue.project_id.clone().unwrap_or_else(default_project_id);
+        let project_id = issue.project_id.clone();
         let store: &dyn ReadOnlyStore = self.store.as_ref();
         let project = match store.get_project(&project_id, false).await {
             Ok(versioned) => versioned.item,

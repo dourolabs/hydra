@@ -273,6 +273,7 @@ mod tests {
             Username::from("worker"),
             String::new(),
             status.into(),
+            crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
@@ -373,7 +374,7 @@ mod tests {
         .await;
 
         let mut issue = make_issue(IssueStatus::Open);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
             .add_issue(issue.clone(), &ActorRef::test())
@@ -433,7 +434,7 @@ mod tests {
         .await;
 
         let mut issue = make_issue(IssueStatus::Open);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
             .add_issue(issue.clone(), &ActorRef::test())
@@ -478,7 +479,7 @@ mod tests {
         // Use `closed` instead which has no on_enter.
 
         let mut issue = make_issue(IssueStatus::Open);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
             .add_issue(issue.clone(), &ActorRef::test())
@@ -545,7 +546,7 @@ mod tests {
         .await;
 
         let mut issue = make_issue(IssueStatus::Open);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         // Pre-assign the issue to the reviewer agent so re-entering
         // `in-review` produces no observable state change.
         issue.assignee = Some(Principal::Agent { name: agent });
@@ -661,7 +662,7 @@ mod tests {
             .unwrap();
 
         let mut issue = make_issue(IssueStatus::Open);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
             .add_issue(issue.clone(), &ActorRef::test())
@@ -714,7 +715,7 @@ mod tests {
         .await;
 
         let mut issue = make_issue(IssueStatus::Open);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
             .add_issue(issue.clone(), &ActorRef::test())
@@ -790,7 +791,7 @@ mod tests {
         .await;
 
         let mut issue = make_issue(IssueStatus::Open);
-        issue.project_id = Some(project_id);
+        issue.project_id = project_id;
         let (issue_id, _) = handles
             .store
             .add_issue(issue.clone(), &ActorRef::test())

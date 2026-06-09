@@ -17,7 +17,7 @@ use hydra_common::{
     },
     sessions::SearchSessionsQuery,
     users::Username,
-    IssueId, PatchId, RepoName, SessionId,
+    IssueId, PatchId, ProjectId, RepoName, SessionId,
 };
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -141,7 +141,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             IssueStatus::Open.into(),
-            None,
+            ProjectId::default_project(),
             None,
             None,
             Vec::new(),
@@ -151,7 +151,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue, None);
+        let request = UpsertIssueRequest::new(issue.into(), None);
         let response = self
             .client
             .create_issue(&request)
@@ -169,7 +169,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             IssueStatus::Open.into(),
-            None,
+            ProjectId::default_project(),
             None,
             None,
             vec![IssueDependency::new(
@@ -182,7 +182,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue, None);
+        let request = UpsertIssueRequest::new(issue.into(), None);
         let response = self
             .client
             .create_issue(&request)
@@ -200,7 +200,7 @@ impl UserHandle {
             .context("UserHandle::update_issue_status: failed to get issue")?;
         let mut issue = existing.issue;
         issue.status = status.into();
-        let request = UpsertIssueRequest::new(issue, None);
+        let request = UpsertIssueRequest::new(issue.into(), None);
         self.client
             .update_issue(id, &request)
             .await
@@ -344,7 +344,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status.into(),
-            None,
+            ProjectId::default_project(),
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent
@@ -363,7 +363,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue, None);
+        let request = UpsertIssueRequest::new(issue.into(), None);
         let response = self
             .client
             .create_issue(&request)
@@ -395,7 +395,7 @@ impl UserHandle {
             Username::from(self.name.as_str()),
             String::new(),
             status.into(),
-            None,
+            ProjectId::default_project(),
             assignee.map(|s| {
                 // Phase 4b: assignee is typed. Tests that want their
                 // issue picked up by the agent_queue must seed the agent
@@ -414,7 +414,7 @@ impl UserHandle {
             None,
             None,
         );
-        let request = UpsertIssueRequest::new(issue, None);
+        let request = UpsertIssueRequest::new(issue.into(), None);
         let response = self
             .client
             .create_issue(&request)
