@@ -7,6 +7,7 @@ import type {
   PatchSummaryRecord,
   SessionSummaryRecord,
 } from "@hydra/api";
+import { makeStatusDef } from "../../../test-utils/statusDef";
 
 // --- Mocks ---
 
@@ -144,7 +145,7 @@ function makeIssue(
       title,
       description: "desc",
       creator: "alice",
-      status: "open",
+      status: makeStatusDef("open"),
       project_id: "j-defaul",
       progress: "",
       dependencies: [],

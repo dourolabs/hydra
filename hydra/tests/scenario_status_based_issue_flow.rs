@@ -3,7 +3,7 @@ mod harness;
 use anyhow::{Context, Result};
 use hydra_common::{
     issues::{
-        Issue, IssueDependencyType, IssueType, SessionSettings, SubmitFormRequest,
+        IssueDependencyType, IssueInput, IssueType, SessionSettings, SubmitFormRequest,
         UpsertIssueRequest,
     },
     principal::Principal,
@@ -153,7 +153,7 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
     let repo = RepoName::from_str(REPO)?;
     let mut session_settings = SessionSettings::default();
     session_settings.repo_name = Some(repo);
-    let parent = Issue::new(
+    let parent = IssueInput::new(
         IssueType::Task,
         "Status-flow parent".to_string(),
         "drive a project-status flow end-to-end".to_string(),
@@ -172,7 +172,7 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
     );
     let resp = user
         .client()
-        .create_issue(&UpsertIssueRequest::new(parent.into(), None))
+        .create_issue(&UpsertIssueRequest::new(parent, None))
         .await
         .context("create parent issue")?;
     Ok(resp.issue_id)
@@ -311,17 +311,12 @@ async fn status_based_flow_approve_path() -> Result<()> {
 
     let child_after = user.get_issue(&child_id).await?;
     assert_eq!(
-        child_after.issue.status.as_str(),
+        child_after.issue.status.key.as_str(),
         "done",
         "approve action should transition child to `done`"
     );
-    let resolved = child_after
-        .issue
-        .resolved_status
-        .as_ref()
-        .context("server should populate resolved_status on response")?;
     assert!(
-        resolved.unblocks_parents,
+        child_after.issue.status.unblocks_parents,
         "`done` must mark unblocks_parents so the parent can close"
     );
     assert!(
@@ -361,7 +356,7 @@ async fn status_based_flow_reject_path() -> Result<()> {
 
     let child_after = user.get_issue(&child_id).await?;
     assert_eq!(
-        child_after.issue.status.as_str(),
+        child_after.issue.status.key.as_str(),
         "in-development",
         "reject action should transition child back to `in-development`"
     );

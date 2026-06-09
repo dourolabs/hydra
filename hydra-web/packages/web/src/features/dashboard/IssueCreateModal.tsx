@@ -520,10 +520,11 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
                 onToggle={() => setPicker(picker === "status" ? null : "status")}
                 wide
                 value={
-                  <StatusChip
-                    definition={selectedStatusDef ?? null}
-                    fallbackKey={effectiveStatusKey}
-                  />
+                  selectedStatusDef ? (
+                    <StatusChip status={selectedStatusDef} />
+                  ) : (
+                    <span>{effectiveStatusKey}</span>
+                  )
                 }
               >
                 {statusEntries.length === 0 ? (
@@ -538,7 +539,7 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
                         setPicker(null);
                       }}
                     >
-                      <StatusChip definition={s} />
+                      <StatusChip status={s} />
                       <span className={styles.popSpacer} />
                     </PickerRow>
                   ))

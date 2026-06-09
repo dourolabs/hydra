@@ -50,7 +50,7 @@ function makeStatus(over?: Partial<StatusDefinition>): StatusDefinition {
 function makeRecord(opts?: {
   assignee?: Principal | null;
   projectId?: string | null;
-  resolvedStatus?: StatusDefinition | null;
+  resolvedStatus?: StatusDefinition;
 }): IssueSummaryRecord {
   return {
     issue_id: "i-1",
@@ -62,10 +62,8 @@ function makeRecord(opts?: {
       title: "Wire avatar",
       description: "desc",
       creator: "alice",
-      status: "open",
+      status: opts?.resolvedStatus ?? makeStatus(),
       project_id: opts?.projectId ?? "j-defaul",
-      resolved_status:
-        opts?.resolvedStatus === undefined ? makeStatus() : opts.resolvedStatus,
       assignee: opts?.assignee ?? null,
       progress: "",
       dependencies: [],

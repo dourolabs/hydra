@@ -42,7 +42,7 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
   }
 
   const issue = data.issue;
-  const tone = toneForIssueStatus(issue.status);
+  const tone = toneForIssueStatus(issue.status.key);
   const excerpt = firstNonEmptyLine(issue.description);
   const assignee = issue.assignee ?? null;
   const assigneeName = assignee ? principalDisplayName(assignee) : null;
@@ -58,7 +58,7 @@ export function IssuePreviewCard({ id }: IssuePreviewCardProps) {
       ariaLabel={`Issue ${id}: ${title}`}
       topRow={
         <>
-          <StatusChip definition={issue.resolved_status} fallbackKey={issue.status} />
+          <StatusChip status={issue.status} />
           {projectKey && (
             <ProjectChip
               projectKey={projectKey}

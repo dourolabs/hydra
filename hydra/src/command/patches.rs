@@ -1509,6 +1509,7 @@ mod tests {
         resolve_head_oid as git_resolve_head_oid, stage_all_changes as git_stage_all_changes,
     };
     use crate::test_utils::ids::{issue_id, patch_id};
+    use crate::test_utils::status::make_status_def;
     use anyhow::{anyhow, Context};
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
@@ -1711,7 +1712,7 @@ mod tests {
                 "test issue".to_string(),
                 Username::from("test-creator"),
                 String::new(),
-                IssueStatus::Open.into(),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2843,7 +2844,7 @@ mod tests {
                 "test".to_string(),
                 Username::from("creator"),
                 String::new(),
-                IssueStatus::Open.into(),
+                make_status_def(IssueStatus::Open.into()),
                 ProjectId::default_project(),
                 None,
                 Some({

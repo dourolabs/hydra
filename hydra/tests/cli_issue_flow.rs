@@ -58,7 +58,7 @@ async fn cli_issue_flow_creates_and_lists_issue() -> Result<()> {
         .ok_or_else(|| anyhow!("expected issue to be created"))?;
 
     assert_eq!(
-        created_summary.issue.status.as_str(),
+        created_summary.issue.status.key.as_str(),
         IssueStatus::Open.as_str()
     );
 

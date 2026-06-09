@@ -12,6 +12,7 @@ import type {
   Conversation,
   Project,
   SessionEvent,
+  StatusDefinition,
   Trigger,
   UserSummary,
 } from "@hydra/api";
@@ -45,7 +46,18 @@ interface VersionDelta<T> {
   patch: Partial<T>;
 }
 
-type IssueFixture = Issue & VersionedFixture<Issue>;
+/** Legacy issue fixture shape: `status` is a bare key string and the
+ *  full `StatusDefinition` rides on the optional `resolved_status` slot
+ *  (mirroring the pre-collapse wire). `normalizeIssue` lifts the
+ *  definition onto `status` before the entity hits the store.
+ */
+type IssueFixture = Omit<Issue, "status"> & {
+  status: string;
+  resolved_status?: StatusDefinition | null;
+} & VersionedFixture<Omit<Issue, "status"> & {
+    status: string;
+    resolved_status?: StatusDefinition | null;
+  }>;
 type SessionFixture = Session & VersionedFixture<Session>;
 type PatchFixture = Patch & VersionedFixture<Patch>;
 
@@ -101,30 +113,30 @@ function splitVersioned<T>(fixture: T & VersionedFixture<T>): {
   };
 }
 
-function seedVersionedEntity<T extends object>(
+function seedVersionedEntity<TFixture extends object, TStored extends object = TFixture>(
   store: Store,
   collection: string,
   id: string,
-  fixture: T & VersionedFixture<T>,
-  finalize: (latest: T) => T,
+  fixture: TFixture & VersionedFixture<TFixture>,
+  finalize: (latest: TFixture) => TStored,
 ): void {
-  const { current, history, lastUpdatedAt } = splitVersioned<T>(fixture);
+  const { current, history, lastUpdatedAt } = splitVersioned<TFixture>(fixture);
 
   if (history.length === 0) {
     const data = finalize(current);
     const timestamp = lastUpdatedAt ?? new Date().toISOString();
-    store.seedVersion<T>(collection, id, data, timestamp);
+    store.seedVersion<TStored>(collection, id, data, timestamp);
     return;
   }
 
   // Apply forward-chronological partial diffs starting from history[0] (the
   // creation state). Each subsequent entry is merged onto the running state.
-  let running = { ...history[0].patch } as T;
-  store.seedVersion<T>(collection, id, finalize(running), history[0].timestamp);
+  let running = { ...history[0].patch } as TFixture;
+  store.seedVersion<TStored>(collection, id, finalize(running), history[0].timestamp);
 
   for (let i = 1; i < history.length; i++) {
-    running = { ...running, ...history[i].patch } as T;
-    store.seedVersion<T>(collection, id, finalize(running), history[i].timestamp);
+    running = { ...running, ...history[i].patch } as TFixture;
+    store.seedVersion<TStored>(collection, id, finalize(running), history[i].timestamp);
   }
 
   // Final version: the fixture's main state. Timestamp defaults to one
@@ -132,19 +144,59 @@ function seedVersionedEntity<T extends object>(
   const lastHistoryTs = history[history.length - 1].timestamp;
   const finalTimestamp =
     lastUpdatedAt ?? new Date(new Date(lastHistoryTs).getTime() + 60_000).toISOString();
-  store.seedVersion<T>(collection, id, finalize(current), finalTimestamp);
+  store.seedVersion<TStored>(collection, id, finalize(current), finalTimestamp);
 }
 
-function normalizeIssue(issue: Issue): Issue {
-  return {
-    ...issue,
+function makeIssueNormalizer(
+  projects: Record<string, Project> | undefined,
+): (
+  issue: Omit<Issue, "status"> & {
+    status: string | StatusDefinition;
+    resolved_status?: StatusDefinition | null;
+  },
+) => Issue {
+  return (issue) => {
     // Backfill `project_id` for legacy seed fixtures that pre-date the
     // wire-side NOT NULL tightening — the mirror of the
     // `seed_default_project` backfill on real DBs.
-    project_id: issue.project_id ?? "j-defaul",
-    dependencies: issue.dependencies ?? [],
-    patches: issue.patches ?? [],
+    const project_id = issue.project_id ?? "j-defaul";
+    // The legacy fixture shape carries the bare key on `status` and
+    // (optionally) the resolved `StatusDefinition` on `resolved_status`.
+    // Prefer an inline definition when the fixture provides one;
+    // otherwise resolve `(project_id, key)` against the seed's project
+    // status list — mirroring `AppState::resolve_status` server-side.
+    const resolved: StatusDefinition =
+      typeof issue.status !== "string"
+        ? issue.status
+        : (issue.resolved_status ?? resolveSeedStatus(projects, project_id, issue.status));
+    return {
+      ...issue,
+      status: resolved,
+      project_id,
+      dependencies: issue.dependencies ?? [],
+      patches: issue.patches ?? [],
+    };
   };
+}
+
+function resolveSeedStatus(
+  projects: Record<string, Project> | undefined,
+  projectId: string,
+  key: string,
+): StatusDefinition {
+  const project = projects?.[projectId];
+  if (!project) {
+    throw new Error(
+      `seed: project '${projectId}' not declared while resolving status '${key}'`,
+    );
+  }
+  const def = project.statuses.find((s) => s.key === key);
+  if (!def) {
+    throw new Error(
+      `seed: status '${key}' not declared on project '${projectId}'`,
+    );
+  }
+  return def;
 }
 
 function normalizePatch(patch: Patch): Patch {
@@ -162,8 +214,9 @@ export function loadSeedData(store: Store): void {
 
   const seed = loadFixture();
 
+  const normalizeIssue = makeIssueNormalizer(seed.projects);
   for (const [id, issue] of Object.entries(seed.issues)) {
-    seedVersionedEntity<Issue>(store, "issues", id, issue, normalizeIssue);
+    seedVersionedEntity<IssueFixture, Issue>(store, "issues", id, issue, normalizeIssue);
   }
 
   for (const [id, task] of Object.entries(seed.sessions)) {

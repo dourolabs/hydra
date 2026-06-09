@@ -452,7 +452,28 @@ async fn test_client_state(
     let issues = issues
         .into_iter()
         .map(|(id, versioned)| {
-            let api_issue: hydra_common::api::v1::issues::Issue = versioned.item.into();
+            let input: hydra_common::api::v1::issues::IssueInput = versioned.item.into();
+            // The summary assertions only inspect identity-level fields,
+            // not the status definition's display props, so use the shared
+            // test helper rather than round-tripping through the project store.
+            let resolved = crate::test_utils::status::make_status_def(input.status.clone());
+            let api_issue = hydra_common::api::v1::issues::Issue::new(
+                input.issue_type,
+                input.title,
+                input.description,
+                input.creator,
+                input.progress,
+                resolved,
+                input.project_id,
+                input.assignee,
+                Some(input.session_settings),
+                input.dependencies,
+                input.patches,
+                input.deleted,
+                input.form,
+                input.form_response,
+                input.feedback,
+            );
             let summary = hydra_common::api::v1::issues::IssueSummary::from(&api_issue);
             hydra_common::api::v1::issues::IssueSummaryRecord::new(
                 id,

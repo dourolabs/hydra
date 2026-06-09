@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { IssueSummaryRecord, PatchSummaryRecord } from "@hydra/api";
 import type { WorkItem } from "../dashboard/workItemTypes";
 import { topologicalSort, topologicalSortWorkItems } from "./topologicalSort";
+import { makeStatusDef } from "../../test-utils/statusDef";
 
 function makeRecord(
   id: string,
@@ -18,7 +19,7 @@ function makeRecord(
       title: "",
       description: "",
       creator: "test",
-      status: status as IssueSummaryRecord["issue"]["status"],
+      status: makeStatusDef(status),
       project_id: "j-defaul",
       progress: "",
       dependencies: dependencies as IssueSummaryRecord["issue"]["dependencies"],
@@ -167,7 +168,7 @@ function makeWorkItem(
         title: "",
         description: "",
         creator: "test",
-        status: "open" as IssueSummaryRecord["issue"]["status"],
+        status: makeStatusDef("open"),
         project_id: "j-defaul",
         progress: "",
         dependencies:

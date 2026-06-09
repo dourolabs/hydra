@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
-import type { IssueSummaryRecord } from "@hydra/api";
+import type { IssueSummaryRecord, StatusDefinition } from "@hydra/api";
 import { computeBlockedStatus } from "./blockedStatus";
+
+function makeStatusDef(key: string): StatusDefinition {
+  return {
+    key,
+    label: "",
+    color: "#888888",
+    unblocks_parents: false,
+    unblocks_dependents: false,
+    cascades_to_children: false,
+  };
+}
 
 function makeRecord(
   id: string,
@@ -17,7 +28,7 @@ function makeRecord(
       title: "",
       description: "",
       creator: "test",
-      status: status as IssueSummaryRecord["issue"]["status"],
+      status: makeStatusDef(status),
       project_id: "j-defaul",
       progress: "",
       dependencies: dependencies as IssueSummaryRecord["issue"]["dependencies"],

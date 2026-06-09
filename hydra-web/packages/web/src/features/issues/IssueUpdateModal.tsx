@@ -19,7 +19,7 @@ interface IssueUpdateModalProps {
 export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateModalProps) {
   const queryClient = useQueryClient();
 
-  const [status, setStatus] = useState<StatusKey>(issue.status);
+  const [status, setStatus] = useState<StatusKey>(issue.status.key);
   const [progress, setProgress] = useState(issue.progress);
 
   // Pull status options from the issue's project. The hook caches per
@@ -30,7 +30,7 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
     if (list.length === 0) {
       // Until the fetch resolves, keep the current status as the sole option so
       // the Select doesn't flip to an unrelated default and clobber state.
-      return [{ value: issue.status, label: issue.status }];
+      return [{ value: issue.status.key, label: issue.status.label }];
     }
     return list.map((s) => ({ value: s.key, label: s.label }));
   }, [projectStatuses, issue.status]);
@@ -38,7 +38,7 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
   // Reset form when modal opens with fresh issue data
   useEffect(() => {
     if (open) {
-      setStatus(issue.status);
+      setStatus(issue.status.key);
       setProgress(issue.progress);
     }
   }, [open, issue.status, issue.progress]);
@@ -49,6 +49,10 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
     { previous?: IssueVersionRecord }
   >({
     mutationFn: (params) =>
+      // The wire `IssueInput` carries the bare `StatusKey`; the spread
+      // of the response-shaped `issue` is followed by `status` /
+      // `progress` overrides so the resulting object matches the
+      // request type.
       apiClient.updateIssue(issueId, {
         issue: {
           ...issue,
@@ -66,11 +70,20 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
       await queryClient.cancelQueries({ queryKey: ["issue", issueId] });
       const previous = queryClient.getQueryData<IssueVersionRecord>(["issue", issueId]);
       if (previous) {
+        // Project the new key onto the cached `StatusDefinition` so the
+        // optimistic update keeps the response shape. Display props
+        // (label, color, flags) snap to the canonical resolution on the
+        // next server response.
+        const optimisticStatus =
+          projectStatuses?.statuses.find((s) => s.key === params.status) ?? {
+            ...previous.issue.status,
+            key: params.status,
+          };
         queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
           ...previous,
           issue: {
             ...previous.issue,
-            status: params.status,
+            status: optimisticStatus,
             progress: params.progress,
           },
         });

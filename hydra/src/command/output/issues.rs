@@ -58,10 +58,11 @@ impl Render for IssueRecords<'_> {
                 dependencies,
                 ..
             } = &issue_record.issue;
+            let status_key = &status.key;
 
             writeln!(
                 writer,
-                "Issue {} ({issue_type}, {status})",
+                "Issue {} ({issue_type}, {status_key})",
                 issue_record.issue_id
             )?;
             if !title.is_empty() {
@@ -158,10 +159,11 @@ impl Render for IssueSummaryRecords<'_> {
                 dependencies,
                 ..
             } = &issue_record.issue;
+            let status_key = &status.key;
 
             writeln!(
                 writer,
-                "Issue {} ({issue_type}, {status})",
+                "Issue {} ({issue_type}, {status_key})",
                 issue_record.issue_id
             )?;
             if !title.is_empty() {

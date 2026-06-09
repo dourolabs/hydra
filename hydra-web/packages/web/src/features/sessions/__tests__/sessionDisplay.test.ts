@@ -5,6 +5,7 @@ import type {
   SessionSummaryRecord,
 } from "@hydra/api";
 import { resolveSessionDisplay } from "../sessionDisplay";
+import { makeStatusDef } from "../../../test-utils/statusDef";
 
 function session(overrides: Partial<SessionSummaryRecord["session"]> = {}): SessionSummaryRecord {
   return {
@@ -31,7 +32,7 @@ function issueRecord(id: string, title: string, assignee?: string | null): Issue
       title,
       description: "",
       creator: "alice",
-      status: "in-progress",
+      status: makeStatusDef("in-progress"),
       project_id: "j-defaul",
       // Phase 4b: tests pass a bare username; wrap as `Principal::Agent`
       // since sessions historically used the assignee as the agent name.

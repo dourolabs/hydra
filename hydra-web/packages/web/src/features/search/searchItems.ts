@@ -50,7 +50,7 @@ export function issueToItem(
     id: record.issue_id,
     label: record.issue.title || record.issue_id,
     href: `/issues/${record.issue_id}`,
-    meta: record.issue.status.replace("-", " "),
+    meta: record.issue.status.key.replace("-", " "),
     projectKey: resolveProjectKey(projectsById, record.issue.project_id),
   };
 }

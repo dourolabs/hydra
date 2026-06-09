@@ -248,26 +248,19 @@ pub struct Issue {
     pub creator: Username,
     #[serde(default)]
     pub progress: String,
-    /// Status key for this issue; resolved against its project's status
-    /// list. The wire string is unchanged for the five legacy statuses
-    /// (`open`, `in-progress`, `closed`, `dropped`, `failed`) so older
-    /// clients keep working.
-    #[serde(default = "default_status_key")]
-    pub status: StatusKey,
+    /// Server-computed status definition (display props + dependency
+    /// flags), resolved against the issue's project's status list at
+    /// response time. The bare key lives at `status.key`. Never stored:
+    /// always populated on responses so frontends don't need a second
+    /// round trip to render the status chip. Create / update requests
+    /// go through [`IssueInput`], which carries only [`StatusKey`].
+    pub status: StatusDefinition,
     /// Project this issue belongs to. Always present on the wire — the
     /// `seed_default_project` migration backfilled every legacy NULL row
     /// to the seeded `j-defaul` project, and the
     /// `issues_v2_project_id_not_null` migration enforces NOT NULL at the
     /// DB layer.
     pub project_id: ProjectId,
-    /// Server-computed status definition (display props + dependency
-    /// flags) for [`Self::status`], resolved against the issue's project's
-    /// status list. Never stored: always populated on responses so
-    /// frontends don't need a second round trip to render the status
-    /// chip, and omitted on create / update requests (the server
-    /// re-resolves from [`Self::status`]).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved_status: Option<StatusDefinition>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
     #[serde(
@@ -298,7 +291,7 @@ impl Issue {
         description: String,
         creator: Username,
         progress: String,
-        status: StatusKey,
+        status: StatusDefinition,
         project_id: ProjectId,
         assignee: Option<Principal>,
         session_settings: Option<SessionSettings>,
@@ -317,7 +310,6 @@ impl Issue {
             progress,
             status,
             project_id,
-            resolved_status: None,
             assignee,
             session_settings: session_settings.unwrap_or_default(),
             dependencies,
@@ -372,6 +364,45 @@ pub struct IssueInput {
     pub feedback: Option<String>,
 }
 
+impl IssueInput {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        issue_type: IssueType,
+        title: String,
+        description: String,
+        creator: Username,
+        progress: String,
+        status: StatusKey,
+        project_id: ProjectId,
+        assignee: Option<Principal>,
+        session_settings: Option<SessionSettings>,
+        dependencies: Vec<IssueDependency>,
+        patches: Vec<PatchId>,
+        deleted: bool,
+        form: Option<Form>,
+        form_response: Option<FormResponse>,
+        feedback: Option<String>,
+    ) -> Self {
+        Self {
+            issue_type,
+            title,
+            description,
+            creator,
+            progress,
+            status,
+            project_id,
+            assignee,
+            session_settings: session_settings.unwrap_or_default(),
+            dependencies,
+            patches,
+            deleted,
+            form,
+            form_response,
+            feedback,
+        }
+    }
+}
+
 impl From<Issue> for IssueInput {
     fn from(value: Issue) -> Self {
         Self {
@@ -380,7 +411,7 @@ impl From<Issue> for IssueInput {
             description: value.description,
             creator: value.creator,
             progress: value.progress,
-            status: value.status,
+            status: value.status.key,
             project_id: value.project_id,
             assignee: value.assignee,
             session_settings: value.session_settings,
@@ -400,7 +431,7 @@ impl crate::graph::GraphView for Issue {
     fn view_l1(&self) -> Value {
         serde_json::json!({
             "title": self.title,
-            "status": self.status.as_str(),
+            "status": self.status.key.as_str(),
         })
     }
 
@@ -414,7 +445,7 @@ impl crate::graph::GraphView for Issue {
         };
         serde_json::json!({
             "title": self.title,
-            "status": self.status.as_str(),
+            "status": self.status.key.as_str(),
             "assignee": self.assignee,
             "progress": progress,
             "dependencies": self.dependencies,
@@ -558,18 +589,29 @@ impl UpsertIssueRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Response shape for the create / update issue endpoints.
+///
+/// Carries the resolved [`Issue`] (with status definition inlined) so
+/// callers don't have to follow up with a `GET` to render the result.
+/// The server builds it via the same `build_issue_response` helper used
+/// by `GET /v1/issues/:id`, guaranteeing the wire shape matches.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct UpsertIssueResponse {
     pub issue_id: IssueId,
     pub version: VersionNumber,
+    pub issue: Issue,
 }
 
 impl UpsertIssueResponse {
-    pub fn new(issue_id: IssueId, version: VersionNumber) -> Self {
-        Self { issue_id, version }
+    pub fn new(issue_id: IssueId, version: VersionNumber, issue: Issue) -> Self {
+        Self {
+            issue_id,
+            version,
+            issue,
+        }
     }
 }
 
@@ -684,13 +726,10 @@ pub struct IssueSummary {
     pub title: String,
     pub description: String,
     pub creator: Username,
-    #[serde(default = "default_status_key")]
-    pub status: StatusKey,
-    pub project_id: ProjectId,
     /// Server-computed status definition; populated by the route handler
-    /// before serialization (omitted on requests).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved_status: Option<StatusDefinition>,
+    /// before serialization. The bare key lives at `status.key`.
+    pub status: StatusDefinition,
+    pub project_id: ProjectId,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
     #[serde(default)]
@@ -725,7 +764,6 @@ impl From<&Issue> for IssueSummary {
             creator: issue.creator.clone(),
             status: issue.status.clone(),
             project_id: issue.project_id.clone(),
-            resolved_status: issue.resolved_status.clone(),
             assignee: issue.assignee.clone(),
             progress,
             dependencies: issue.dependencies.clone(),
@@ -1149,9 +1187,8 @@ mod tests {
             description: "test".to_string(),
             creator: Username::from("alice"),
             progress: String::new(),
-            status: status_key("open"),
+            status: status_def("open"),
             project_id: default_test_project_id(),
-            resolved_status: None,
             assignee: None,
             session_settings: Default::default(),
             dependencies: Vec::new(),
@@ -1184,9 +1221,8 @@ mod tests {
             description: "test".to_string(),
             creator: Username::from("alice"),
             progress: String::new(),
-            status: status_key("open"),
+            status: status_def("open"),
             project_id: default_test_project_id(),
-            resolved_status: None,
             assignee: None,
             session_settings: Default::default(),
             dependencies: Vec::new(),
@@ -1209,13 +1245,26 @@ mod tests {
 
     #[test]
     fn issue_version_record_deserializes_without_actor() {
-        let json = r#"{
+        let json = r##"{
             "issue_id": "i-test",
             "version": 1,
             "timestamp": "2024-01-01T00:00:00Z",
-            "issue": {"type": "task", "description": "test", "creator": "alice", "project_id": "j-defaul"},
+            "issue": {
+                "type": "task",
+                "description": "test",
+                "creator": "alice",
+                "project_id": "j-defaul",
+                "status": {
+                    "key": "open",
+                    "label": "Open",
+                    "color": "#abcdef",
+                    "unblocks_parents": false,
+                    "unblocks_dependents": false,
+                    "cascades_to_children": false
+                }
+            },
             "creation_time": "2024-01-01T00:00:00Z"
-        }"#;
+        }"##;
 
         let record: IssueVersionRecord =
             serde_json::from_str(json).expect("should deserialize without actor");
@@ -1224,6 +1273,18 @@ mod tests {
 
     fn status_key(value: &str) -> StatusKey {
         StatusKey::try_new(value).expect("well-formed status key")
+    }
+
+    fn status_def(key: &str) -> StatusDefinition {
+        StatusDefinition::new(
+            status_key(key),
+            key.to_string(),
+            "#abcdef".parse().expect("well-formed Rgb"),
+            false,
+            false,
+            false,
+            None,
+        )
     }
 
     fn default_test_project_id() -> ProjectId {
@@ -1237,9 +1298,8 @@ mod tests {
             description: description.to_string(),
             creator: Username::from("alice"),
             progress: "some progress text".to_string(),
-            status: status_key("in-progress"),
+            status: status_def("in-progress"),
             project_id: default_test_project_id(),
-            resolved_status: None,
             assignee: Some(Principal::User {
                 name: Username::from("bob"),
             }),
@@ -1306,7 +1366,7 @@ mod tests {
         assert_eq!(summary.issue_type, IssueType::Task);
         assert_eq!(summary.creator, Username::from("alice"));
         assert_eq!(summary.progress, "some progress text");
-        assert_eq!(summary.status, status_key("in-progress"));
+        assert_eq!(summary.status, status_def("in-progress"));
         assert_eq!(
             summary.assignee,
             Some(Principal::User {
@@ -1349,9 +1409,8 @@ mod tests {
                 description: "Investigate flaky CI".to_string(),
                 creator: Username::from("alice"),
                 progress: "started".to_string(),
-                status: super::status_key("in-progress"),
+                status: super::status_def("in-progress"),
                 project_id: super::default_test_project_id(),
-                resolved_status: None,
                 assignee: Some(Principal::User {
                     name: Username::from("bob"),
                 }),
