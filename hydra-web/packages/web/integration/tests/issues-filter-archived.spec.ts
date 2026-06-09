@@ -79,22 +79,24 @@ test.describe("Issues page 'Include archived' filter @issues:filter-include-arch
       page.getByTestId(`issues-row-archived-${TARGET_ISSUE}`),
     ).toBeVisible();
 
-    // Dismiss the chip. URL drops the flag and a fresh request goes out
-    // without `include_deleted`.
+    // Dismiss the chip. URL drops the flag and no further listIssues call
+    // carries `include_deleted`. The dismissed-state page may render from
+    // react-query's cache (the unfiltered key was warmed on first paint),
+    // so we assert the absence of stale flags rather than waiting for a
+    // specific fresh fetch — the user-visible "archived row hides" check
+    // below covers the rendering contract.
+    const baselineIssuesCount = listIssuesUrls.length;
     await page
       .getByTestId("filter-chip-includeArchived")
       .getByRole("button", { name: /remove include archived filter/i })
       .click();
     await expect(page).not.toHaveURL(/includeArchived/);
     await expect
-      .poll(() => {
-        const after = listIssuesUrls.findLast(
-          (u) => u.pathname === "/api/v1/issues",
-        );
-        return (
-          after !== undefined && after.searchParams.get("include_deleted") !== "true"
-        );
-      })
+      .poll(() =>
+        listIssuesUrls
+          .slice(baselineIssuesCount)
+          .every((u) => u.searchParams.get("include_deleted") !== "true"),
+      )
       .toBe(true);
 
     // Archived row hides again.

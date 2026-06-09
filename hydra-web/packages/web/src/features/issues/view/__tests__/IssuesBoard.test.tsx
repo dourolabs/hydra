@@ -38,8 +38,7 @@ vi.mock("../../usePaginatedIssues", () => ({
 
 vi.mock("../../../dashboard/usePageIssueTrees", () => ({
   usePageIssueTrees: () => ({
-    isActiveMap: new Map(),
-    childStatusMap: new Map(),
+    neighborhoodMap: new Map(),
     sessionsByIssue: new Map(),
     isLoading: false,
   }),
@@ -340,7 +339,6 @@ function renderBoard(
       <MemoryRouter>
         <IssuesBoard
           baseFilters={{}}
-          username="alice"
           filterRootId={null}
           hideIssues={opts.hideIssues}
         />
@@ -659,7 +657,6 @@ describe("IssuesBoard '+ New project' ghost row", () => {
         <MemoryRouter>
           <IssuesBoard
             baseFilters={{ project_id: "j-eng" }}
-            username="alice"
             filterRootId={null}
           />
         </MemoryRouter>
@@ -984,7 +981,6 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
         <MemoryRouter>
           <IssuesBoard
             baseFilters={{ project_id: "j-a" }}
-            username="alice"
             filterRootId={null}
           />
         </MemoryRouter>

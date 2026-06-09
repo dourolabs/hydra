@@ -405,12 +405,11 @@ export function IssuesListPage() {
 
   const displayCount = totalCount ?? issues.length;
 
-  // Only the table layout reads childStatusMap / sessionsByIssue (progress
-  // column + runtime cell). Board owns its own tree expansion over the
-  // per-column issue union, so skip the tree fetch when it's active.
-  const { childStatusMap, sessionsByIssue } = usePageIssueTrees(
+  // Only the table layout reads neighborhoodMap / sessionsByIssue (progress
+  // column + runtime cell). Board owns its own neighborhood expansion over
+  // the per-column issue union, so skip the fetch when it's active.
+  const { neighborhoodMap, sessionsByIssue } = usePageIssueTrees(
     layout === "table" ? issues : [],
-    currentUser,
   );
 
   // Strip any unrecognised `?selected=…` values left by old links.
@@ -437,11 +436,10 @@ export function IssuesListPage() {
         layout={layout}
         onLayoutChange={setLayout}
         issues={issues}
-        childStatusMap={childStatusMap}
+        neighborhoodMap={neighborhoodMap}
         sessionsByIssue={sessionsByIssue}
         isLoading={isLoading}
         baseFilters={boardBaseFilters}
-        username={currentUser}
         filterRootId={framing.rootId}
         hasNextPage={hasNextPage ?? false}
         isFetchingNextPage={isFetchingNextPage ?? false}

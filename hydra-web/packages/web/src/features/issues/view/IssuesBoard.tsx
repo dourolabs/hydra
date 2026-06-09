@@ -21,7 +21,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Avatar, Icons, TypeChip } from "@hydra/ui";
+import { Avatar, FlowPill, Icons, TypeChip } from "@hydra/ui";
 import type {
   IssueSummaryRecord,
   ListIssuesResponse,
@@ -49,7 +49,7 @@ import {
 import { apiClient } from "../../../api/client";
 import { useIssueCreateModal } from "../../dashboard/useIssueCreateModal";
 import { useToast } from "../../toast/useToast";
-import type { ChildStatus } from "../../dashboard/computeIssueProgress";
+import { computeFlowPillState, type IssueNeighborhood } from "../flowPill";
 import {
   useBoardIssuesByProject,
   type BoardCellQuery,
@@ -63,7 +63,6 @@ import styles from "./IssuesBoard.module.css";
 
 interface IssuesBoardProps {
   baseFilters: IssueFilters;
-  username: string;
   filterRootId: string | null;
   // Projects-tab variant: render the same board chrome (project bars,
   // status columns, ghost rows) but skip per-cell issue fetches and
@@ -71,15 +70,6 @@ interface IssuesBoardProps {
   // placeholders, the project bar's "N issues" pill. The card bodies stay
   // empty by virtue of the fetch being disabled.
   hideIssues?: boolean;
-}
-
-function progressFraction(children: ChildStatus[] | undefined): number {
-  if (!children || children.length === 0) return 0;
-  const total = children.length;
-  const done = children.filter(
-    (c) => c.status === "closed" || c.status === "issue-closed",
-  ).length;
-  return Math.round((done / total) * 100);
 }
 
 // Step used at the ends of the list when there is no opposite neighbor to
@@ -151,7 +141,6 @@ type IssueDropHandler = (
 
 export function IssuesBoard({
   baseFilters,
-  username,
   filterRootId,
   hideIssues = false,
 }: IssuesBoardProps) {
@@ -217,9 +206,8 @@ export function IssuesBoard({
     return out;
   }, [projects, cells]);
 
-  const { childStatusMap } = usePageIssueTrees(
+  const { neighborhoodMap } = usePageIssueTrees(
     hideIssues ? [] : boardIssuesUnion,
-    username,
   );
 
   const projectRecordById = useMemo(() => {
@@ -557,7 +545,7 @@ export function IssuesBoard({
       projectRecord,
       perStatus,
       projectIssueCount,
-      childStatusMap,
+      neighborhoodMap,
       hideIssues,
       collapsed: isCollapsed(project.project_id),
       onToggleCollapsed: onToggleCollapse,
@@ -672,7 +660,7 @@ interface ProjectSectionProps {
   projectRecord: ProjectRecord;
   perStatus: Map<string, BoardCellQuery> | undefined;
   projectIssueCount: number;
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   hideIssues: boolean;
   collapsed: boolean;
   onToggleCollapsed: (projectId: string) => void;
@@ -759,7 +747,7 @@ function ProjectSection({
   projectRecord,
   perStatus,
   projectIssueCount,
-  childStatusMap,
+  neighborhoodMap,
   hideIssues,
   collapsed,
   onToggleCollapsed,
@@ -854,7 +842,7 @@ function ProjectSection({
         projectRecord={projectRecord}
         status={status}
         cell={cell}
-        childStatusMap={childStatusMap}
+        neighborhoodMap={neighborhoodMap}
         hideIssues={hideIssues}
         onCardClick={onCardClick}
         onGearClick={onGearClick}
@@ -991,7 +979,7 @@ interface BoardColumnProps {
   projectRecord: ProjectRecord;
   status: StatusDefinition;
   cell: BoardCellQuery | undefined;
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   hideIssues: boolean;
   onCardClick: (id: string) => void;
   onGearClick: (
@@ -1047,7 +1035,7 @@ function BoardColumn({
   projectRecord,
   status,
   cell,
-  childStatusMap,
+  neighborhoodMap,
   hideIssues,
   onCardClick,
   onGearClick,
@@ -1166,8 +1154,7 @@ function BoardColumn({
         {colIssues.map((rec) => {
           const issue = rec.issue;
           const id = rec.issue_id;
-          const children = childStatusMap.get(id);
-          const pct = progressFraction(children);
+          const pill = computeFlowPillState(neighborhoodMap.get(id));
           const archived = issue.deleted === true;
           const cardClass = archived
             ? `${styles.card} ${styles.cardArchived}`
@@ -1223,10 +1210,14 @@ function BoardColumn({
                 )}
                 <AgoTime iso={rec.timestamp} />
                 <span className={styles.cardFootSpacer} />
-                {children && children.length > 0 && (
-                  <div className={styles.progress} title={`${pct}%`}>
-                    <span style={{ width: `${pct}%` }} />
-                  </div>
+                {pill && (
+                  <FlowPill
+                    phase={pill.phase}
+                    num={pill.num}
+                    den={pill.den}
+                    title={pill.title}
+                    data-testid={`board-card-flowpill-${id}`}
+                  />
                 )}
               </div>
             </div>

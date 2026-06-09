@@ -30,10 +30,9 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
     fetchNextPage,
   } = useChatReferencedArtifacts(conversationId);
 
-  // Hydrate per-card progress data (child statuses + active-session-in-subtree
-  // glow) the same way the issues list does so progress bars render here.
-  // Username is unused by IssueRailRow's progress UI, so leave it empty.
-  const { childStatusMap } = usePageIssueTrees(issues, "");
+  // Hydrate per-card neighborhood data (direct blockers + direct children) so
+  // FlowPills render here the same way they do on the issues list.
+  const { neighborhoodMap } = usePageIssueTrees(issues);
 
   if (isLoading) {
     return (
@@ -65,7 +64,7 @@ export function ChatRelatedTab({ conversationId }: ChatRelatedTabProps) {
                 key={record.issue_id}
                 record={record}
                 sessions={sessionsByIssue.get(record.issue_id)}
-                childStatuses={childStatusMap.get(record.issue_id)}
+                neighborhood={neighborhoodMap.get(record.issue_id)}
               />
             ))}
           </div>

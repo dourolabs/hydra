@@ -166,45 +166,6 @@
   color: var(--fg-3);
 }
 
-.progress {
-  width: 64px;
-  height: 4px;
-  background: var(--bg-2);
-  border-radius: 4px;
-  position: relative;
-  overflow: hidden;
-}
-
-.progressFill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: var(--s-closed);
-  border-radius: 4px;
-  transition: width var(--tx-norm);
-}
-
-.progressActive {
-  overflow: visible;
-}
-
-.progressFillActive {
-  background: var(--s-progress);
-  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
-  animation: progressGlow 1.6s ease-in-out infinite;
-}
-
-@keyframes progressGlow {
-  0%,
-  100% {
-    box-shadow: 0 0 4px 1px color-mix(in srgb, var(--s-progress) 25%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--s-progress) 45%, transparent);
-  }
-}
-
 .sectionRow {
   background: var(--bg-1);
   border-bottom: 1px solid var(--line);

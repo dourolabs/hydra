@@ -2,8 +2,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
-import type { ChildStatus } from "../../features/dashboard/computeIssueProgress";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
+import type { IssueNeighborhood } from "../../features/issues/flowPill";
 
 // --- Mocks ---
 
@@ -95,18 +95,17 @@ vi.mock("../../api/auth", () => ({
 }));
 
 interface TreesState {
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
 }
 const treesState: TreesState = {
-  childStatusMap: new Map(),
+  neighborhoodMap: new Map(),
   sessionsByIssue: new Map(),
 };
 
 vi.mock("../../features/dashboard/usePageIssueTrees", () => ({
   usePageIssueTrees: () => ({
-    isActiveMap: new Map(),
-    childStatusMap: treesState.childStatusMap,
+    neighborhoodMap: treesState.neighborhoodMap,
     sessionsByIssue: treesState.sessionsByIssue,
     isLoading: false,
   }),
@@ -169,6 +168,21 @@ vi.mock("@hydra/ui", () => ({
   ),
   Badge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
   TypeChip: ({ type }: { type: string }) => <span data-testid="type-chip">{type}</span>,
+  FlowPill: ({
+    phase,
+    num,
+    den,
+    "data-testid": testId,
+  }: {
+    phase: string;
+    num: number;
+    den: number;
+    "data-testid"?: string;
+  }) => (
+    <span data-testid={testId ?? "flowpill"} data-phase={phase}>
+      {num}/{den}
+    </span>
+  ),
   Icons: new Proxy(
     {},
     {
@@ -201,6 +215,19 @@ function renderIssuesList(initialEntry: string) {
   );
 }
 
+function makeStatus(
+  overrides: { key?: string; unblocks_parents?: boolean; unblocks_dependents?: boolean } = {},
+) {
+  return {
+    key: overrides.key ?? "open",
+    label: "Open",
+    color: "#3498db",
+    unblocks_parents: overrides.unblocks_parents ?? false,
+    unblocks_dependents: overrides.unblocks_dependents ?? false,
+    cascades_to_children: false,
+  };
+}
+
 function makeIssue(
   id: string,
   overrides: Partial<IssueSummaryRecord["issue"]> = {},
@@ -215,7 +242,7 @@ function makeIssue(
       description: "",
       creator: "alice",
       progress: "",
-      status: "open",
+      status: makeStatus(),
       assignee: null,
       session_settings: null,
       dependencies: [],
@@ -253,7 +280,7 @@ beforeEach(() => {
   paginatedState.totalCount = undefined;
   paginatedState.paginatedFilters = undefined;
   paginatedState.countFilters = undefined;
-  treesState.childStatusMap = new Map();
+  treesState.neighborhoodMap = new Map();
   treesState.sessionsByIssue = new Map();
   relationsState.issueIds = null;
   relationsState.isLoading = false;
@@ -453,148 +480,107 @@ describe("IssuesListPage IssuesTable rendering", () => {
     expect(cell.textContent).toBe("42s");
   });
 
-  it("applies the active glow class to the fill span when any child has hasActiveTask", () => {
-    const issue = makeIssue("i-parent", { title: "parent row" });
+  it("renders FlowPill in 'blocked' phase when any blocker is active", () => {
+    const issue = makeIssue("i-blocked", { title: "blocked row" });
     paginatedState.issues = [issue];
-    treesState.childStatusMap = new Map([
+    treesState.neighborhoodMap = new Map([
       [
         issue.issue_id,
-        [
-          {
-            id: "i-child-1",
-            status: "in-progress",
-            hasActiveTask: true,
-            assignedToUser: false,
-          },
-          {
-            id: "i-child-2",
-            status: "closed",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-        ],
+        {
+          blockers: [
+            { id: "i-b1", status: makeStatus({ unblocks_dependents: false }) },
+            { id: "i-b2", status: makeStatus({ unblocks_dependents: true }) },
+          ],
+          children: [],
+        },
       ],
     ]);
 
-    const { container } = renderIssuesList("/");
+    const { getByTestId } = renderIssuesList("/");
 
-    const progress = container.querySelector(".progress");
-    expect(progress).not.toBeNull();
-    // Container keeps progressActive so it can switch overflow to visible
-    // and let the fill's outer shadow escape.
-    expect(progress!.className).toContain("progressActive");
-
-    const fill = progress!.querySelector(".progressFill");
-    expect(fill).not.toBeNull();
-    // The glow visual treatment now lives on the fill, not the container.
-    expect(fill!.className).toContain("progressFillActive");
-    // Projected fill = (closed + in-progress) / total = 2 / 2 = 100%.
-    expect((fill as HTMLElement).style.width).toBe("100%");
+    const pill = getByTestId(`issues-row-flowpill-${issue.issue_id}`);
+    expect(pill.getAttribute("data-phase")).toBe("blocked");
+    expect(pill.textContent).toBe("1/2");
   });
 
-  it("sets the fill width to (closed + in-progress) / total", () => {
-    const issue50 = makeIssue("i-half", { title: "half row" });
-    const issue50b = makeIssue("i-half2", { title: "half row b" });
-    paginatedState.issues = [issue50, issue50b];
-    treesState.childStatusMap = new Map([
+  it("renders FlowPill in 'progress' phase counting completed children", () => {
+    const issue = makeIssue("i-progress", { title: "progress row" });
+    paginatedState.issues = [issue];
+    treesState.neighborhoodMap = new Map([
       [
-        issue50.issue_id,
-        [
-          {
-            id: "c1",
-            status: "in-progress",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-          {
-            id: "c2",
-            status: "open",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-        ],
-      ],
-      [
-        issue50b.issue_id,
-        [
-          {
-            id: "c3",
-            status: "closed",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-          {
-            id: "c4",
-            status: "open",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-        ],
+        issue.issue_id,
+        {
+          blockers: [],
+          children: [
+            { id: "c1", status: makeStatus({ unblocks_parents: true }) },
+            { id: "c2", status: makeStatus({ unblocks_parents: false }) },
+          ],
+        },
       ],
     ]);
 
-    const { container } = renderIssuesList("/");
+    const { getByTestId } = renderIssuesList("/");
 
-    const fills = container.querySelectorAll(".progressFill");
-    expect(fills.length).toBe(2);
-    // [in-progress, open] → 1/2 = 50%
-    expect((fills[0] as HTMLElement).style.width).toBe("50%");
-    // [closed, open] → 1/2 = 50%
-    expect((fills[1] as HTMLElement).style.width).toBe("50%");
-    // No active child → fill should not carry the active class.
-    expect(fills[0]!.className).not.toContain("progressFillActive");
-    expect(fills[1]!.className).not.toContain("progressFillActive");
+    const pill = getByTestId(`issues-row-flowpill-${issue.issue_id}`);
+    expect(pill.getAttribute("data-phase")).toBe("progress");
+    expect(pill.textContent).toBe("1/2");
   });
 
-  it("differentiates idle and active fills via the progressFillActive class", () => {
-    const idleIssue = makeIssue("i-idle", { title: "idle row" });
-    const activeIssue = makeIssue("i-active", { title: "active row" });
-    paginatedState.issues = [idleIssue, activeIssue];
-    treesState.childStatusMap = new Map([
+  it("renders FlowPill in 'done' phase when every child unblocks the parent", () => {
+    const issue = makeIssue("i-done", { title: "done row" });
+    paginatedState.issues = [issue];
+    treesState.neighborhoodMap = new Map([
       [
-        idleIssue.issue_id,
-        [
-          {
-            id: "i-idle-c1",
-            status: "closed",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-          {
-            id: "i-idle-c2",
-            status: "open",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-        ],
-      ],
-      [
-        activeIssue.issue_id,
-        [
-          {
-            id: "i-active-c1",
-            status: "in-progress",
-            hasActiveTask: true,
-            assignedToUser: false,
-          },
-          {
-            id: "i-active-c2",
-            status: "open",
-            hasActiveTask: false,
-            assignedToUser: false,
-          },
-        ],
+        issue.issue_id,
+        {
+          blockers: [],
+          children: [
+            { id: "c1", status: makeStatus({ unblocks_parents: true }) },
+            { id: "c2", status: makeStatus({ unblocks_parents: true }) },
+          ],
+        },
       ],
     ]);
 
-    const { container } = renderIssuesList("/");
+    const { getByTestId } = renderIssuesList("/");
 
-    const fills = container.querySelectorAll(".progressFill");
-    expect(fills.length).toBe(2);
-    expect(fills[0]!.className).toContain("progressFill");
-    expect(fills[0]!.className).not.toContain("progressFillActive");
-    expect(fills[1]!.className).toContain("progressFill");
-    expect(fills[1]!.className).toContain("progressFillActive");
+    const pill = getByTestId(`issues-row-flowpill-${issue.issue_id}`);
+    expect(pill.getAttribute("data-phase")).toBe("done");
+    expect(pill.textContent).toBe("2/2");
+  });
+
+  it("renders no FlowPill when the issue has no children and no blockers", () => {
+    const issue = makeIssue("i-empty", { title: "empty row" });
+    paginatedState.issues = [issue];
+    treesState.neighborhoodMap = new Map();
+
+    const { queryByTestId } = renderIssuesList("/");
+
+    expect(queryByTestId(`issues-row-flowpill-${issue.issue_id}`)).toBeNull();
+  });
+
+  it("prefers blocker phase over child progress when both are present", () => {
+    const issue = makeIssue("i-both", { title: "both row" });
+    paginatedState.issues = [issue];
+    treesState.neighborhoodMap = new Map([
+      [
+        issue.issue_id,
+        {
+          blockers: [
+            { id: "i-b1", status: makeStatus({ unblocks_dependents: false }) },
+          ],
+          children: [
+            { id: "c1", status: makeStatus({ unblocks_parents: true }) },
+          ],
+        },
+      ],
+    ]);
+
+    const { getByTestId } = renderIssuesList("/");
+
+    const pill = getByTestId(`issues-row-flowpill-${issue.issue_id}`);
+    expect(pill.getAttribute("data-phase")).toBe("blocked");
+    expect(pill.textContent).toBe("1/1");
   });
 });
 

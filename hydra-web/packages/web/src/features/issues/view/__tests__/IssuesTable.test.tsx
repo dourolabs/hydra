@@ -8,7 +8,7 @@ import type {
   SessionSummaryRecord,
   StatusDefinition,
 } from "@hydra/api";
-import type { ChildStatus } from "../../../dashboard/computeIssueProgress";
+import type { IssueNeighborhood } from "../../flowPill";
 import { makeStatusDef } from "../../../../test-utils/statusDef";
 
 // --- Hook mocks ---
@@ -33,6 +33,21 @@ vi.mock("@hydra/ui", () => ({
   Avatar: ({ name }: { name: string }) => <span data-testid="avatar">{name}</span>,
   TypeChip: ({ type }: { type: string }) => <span data-testid={`type-${type}`}>{type}</span>,
   StatusDot: () => <span data-testid="status-dot" />,
+  FlowPill: ({
+    phase,
+    num,
+    den,
+    "data-testid": testId,
+  }: {
+    phase: string;
+    num: number;
+    den: number;
+    "data-testid"?: string;
+  }) => (
+    <span data-testid={testId ?? "flowpill"} data-phase={phase}>
+      {num}/{den}
+    </span>
+  ),
   Icons: {
     IconDoc: () => <span />,
     IconRepo: () => <span />,
@@ -150,7 +165,7 @@ function makeIssue(
 
 function renderTable(props: {
   issues: IssueSummaryRecord[];
-  childStatusMap?: Map<string, ChildStatus[]>;
+  neighborhoodMap?: Map<string, IssueNeighborhood>;
   sessionsByIssue?: Map<string, SessionSummaryRecord[]>;
   filterRootId?: string | null;
 }) {
@@ -158,7 +173,7 @@ function renderTable(props: {
     <MemoryRouter>
       <IssuesTable
         issues={props.issues}
-        childStatusMap={props.childStatusMap ?? new Map()}
+        neighborhoodMap={props.neighborhoodMap ?? new Map()}
         sessionsByIssue={props.sessionsByIssue ?? new Map()}
         filterRootId={props.filterRootId ?? null}
       />

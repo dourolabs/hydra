@@ -397,25 +397,6 @@
   flex: 1;
 }
 
-.progress {
-  width: 48px;
-  height: 4px;
-  background: var(--bg-1);
-  border-radius: 4px;
-  position: relative;
-  overflow: hidden;
-}
-
-.progress > span {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: var(--acc);
-  border-radius: 4px;
-  transition: width var(--tx-norm);
-}
-
 .colEmpty {
   padding: 16px 8px;
   color: var(--fg-3);
