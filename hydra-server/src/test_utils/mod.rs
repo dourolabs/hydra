@@ -1,9 +1,9 @@
 use crate::{
     app::{AppState, Repository, ServiceState, default_policy_config},
     config::{
-        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, GithubAppSection,
-        HydraSection, JobEngineConfig, JobSection, SchedulerSection, StorageConfig,
-        WorkerSchedulerConfig,
+        AppConfig, AuthConfig, AutoArchiveSchedulerConfig, BackgroundSection, BuildCacheSection,
+        GithubAppSection, HydraSection, JobEngineConfig, JobSection, SchedulerSection,
+        StorageConfig, WorkerSchedulerConfig,
     },
     domain::{
         actors::{Actor, ActorRef},
@@ -107,8 +107,15 @@ fn test_scheduler_section() -> SchedulerSection {
         initial_backoff_secs: 86_400,
         max_backoff_secs: 86_400,
     };
+    let inert_auto_archive = AutoArchiveSchedulerConfig {
+        interval_secs: 86_400,
+        initial_backoff_secs: 86_400,
+        max_backoff_secs: 86_400,
+        batch_size: 0,
+    };
     SchedulerSection {
         github_poller: inert,
+        auto_archive: inert_auto_archive,
         ..SchedulerSection::default()
     }
 }

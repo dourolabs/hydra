@@ -17,7 +17,7 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::{Project, ProjectKey};
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
@@ -1510,6 +1510,19 @@ impl ReadOnlyStore for StoreWithEvents {
 
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
         self.inner.count_issues(query).await
+    }
+
+    async fn list_stale_issues_for_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+        threshold_seconds: i64,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError> {
+        self.inner
+            .list_stale_issues_for_status(project_id, status_key, threshold_seconds, now, limit)
+            .await
     }
 
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {

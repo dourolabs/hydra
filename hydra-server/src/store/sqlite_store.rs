@@ -2998,6 +2998,44 @@ impl ReadOnlyStore for SqliteStore {
         Ok(count as u64)
     }
 
+    async fn list_stale_issues_for_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+        threshold_seconds: i64,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let cutoff = (now - chrono::Duration::seconds(threshold_seconds)).to_rfc3339();
+        let sql = format!(
+            "SELECT i.id FROM {TABLE_ISSUES_V2} i \
+             INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE i.is_latest = 1 AND i.deleted = 0 \
+               AND i.project_id = ?1 AND s.key = ?2 AND i.updated_at < ?3 \
+             LIMIT ?4"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(project_id.as_ref())
+            .bind(status_key.as_str())
+            .bind(&cutoff)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<IssueId>().map_err(|err| {
+                    StoreError::Internal(format!(
+                        "invalid issue id stored in {TABLE_ISSUES_V2}: {err}"
+                    ))
+                })
+            })
+            .collect()
+    }
+
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         let sql = format!(
@@ -7530,6 +7568,115 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, id_a);
         assert_eq!(results[1].0, id_b);
+    }
+
+    #[tokio::test]
+    async fn list_stale_issues_for_status_finds_old_rows_only() {
+        let store = create_test_store().await;
+        let project_id = crate::domain::projects::default_project_id();
+
+        // Add three issues spaced ~50ms apart so they have distinct
+        // updated_at values (SQLite stores ms-precision timestamps).
+        let (oldest, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (mid, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (newest, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let oldest_at = store.get_issue(&oldest, false).await.unwrap().timestamp;
+        let mid_at = store.get_issue(&mid, false).await.unwrap().timestamp;
+        let newest_at = store.get_issue(&newest, false).await.unwrap().timestamp;
+        assert!(mid_at > oldest_at);
+        assert!(newest_at > mid_at);
+
+        // Place the cutoff exactly on `mid_at`: oldest is strictly
+        // older than the cutoff (qualifies), mid is at the cutoff
+        // (does not qualify under strict `<`), newest is later
+        // (does not qualify).
+        let now = mid_at + chrono::Duration::seconds(1);
+        let threshold = 1i64;
+        let key = status("open");
+        let mut ids = store
+            .list_stale_issues_for_status(&project_id, &key, threshold, now, 10)
+            .await
+            .unwrap();
+        ids.sort();
+        assert_eq!(ids, vec![oldest.clone()]);
+
+        // Soft-deleted rows must be filtered out.
+        store
+            .delete_issue(&oldest, &ActorRef::test())
+            .await
+            .unwrap();
+        let ids = store
+            .list_stale_issues_for_status(&project_id, &key, threshold, now, 10)
+            .await
+            .unwrap();
+        assert!(ids.is_empty(), "deleted rows must not surface");
+
+        // limit = 0 short-circuits.
+        let ids = store
+            .list_stale_issues_for_status(&project_id, &key, threshold, now, 0)
+            .await
+            .unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_stale_issues_for_status_respects_limit() {
+        let store = create_test_store().await;
+        let project_id = crate::domain::projects::default_project_id();
+        for _ in 0..3 {
+            store
+                .add_issue(sample_issue(vec![]), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let now = chrono::Utc::now() + chrono::Duration::days(1);
+        let ids = store
+            .list_stale_issues_for_status(&project_id, &status("open"), 1, now, 2)
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 2, "limit must cap the result set");
+    }
+
+    #[tokio::test]
+    async fn list_stale_issues_for_status_filters_other_status() {
+        let store = create_test_store().await;
+        let project_id = crate::domain::projects::default_project_id();
+        let (_open_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut closed_issue = sample_issue(vec![]);
+        closed_issue.status = status("closed");
+        store
+            .add_issue(closed_issue, &ActorRef::test())
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let now = chrono::Utc::now() + chrono::Duration::days(1);
+        let open_ids = store
+            .list_stale_issues_for_status(&project_id, &status("open"), 1, now, 10)
+            .await
+            .unwrap();
+        assert_eq!(open_ids.len(), 1);
+        let closed_ids = store
+            .list_stale_issues_for_status(&project_id, &status("closed"), 1, now, 10)
+            .await
+            .unwrap();
+        assert_eq!(closed_ids.len(), 1);
+        assert_ne!(open_ids, closed_ids);
     }
 
     #[tokio::test]

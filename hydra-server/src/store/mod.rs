@@ -402,6 +402,24 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Counts issues matching the search query, ignoring pagination (cursor/limit).
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError>;
 
+    /// Lists non-deleted issue IDs in the given `(project_id,
+    /// status_key)` whose latest version's `updated_at` is older
+    /// than `now - threshold_seconds`, capped to `limit` rows.
+    ///
+    /// The order in which rows are returned is unspecified; callers
+    /// must not rely on it for correctness. `limit == 0` returns an
+    /// empty vec. Used by the [`AutoArchiveWorker`](crate::background::auto_archive::AutoArchiveWorker)
+    /// to find issues that have sat in a status long enough to
+    /// auto-archive.
+    async fn list_stale_issues_for_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+        threshold_seconds: i64,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError>;
+
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
