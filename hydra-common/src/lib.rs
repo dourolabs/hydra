@@ -134,6 +134,17 @@ mod ts_export {
         crate::analytics::PatchInFlightBucket::export_all(&cfg).expect("PatchInFlightBucket");
         crate::analytics::PatchesInFlightOverTimeResponse::export_all(&cfg)
             .expect("PatchesInFlightOverTimeResponse");
+        crate::analytics::IssuesThroughputQuery::export_all(&cfg).expect("IssuesThroughputQuery");
+        crate::analytics::IssuesCycleTimeResponse::export_all(&cfg)
+            .expect("IssuesCycleTimeResponse");
+        crate::analytics::TimeInStatusSegment::export_all(&cfg).expect("TimeInStatusSegment");
+        crate::analytics::IssuesTimeInStatusBreakdownResponse::export_all(&cfg)
+            .expect("IssuesTimeInStatusBreakdownResponse");
+        crate::analytics::PerStatusDistribution::export_all(&cfg).expect("PerStatusDistribution");
+        crate::analytics::IssuesPerStatusDistributionResponse::export_all(&cfg)
+            .expect("IssuesPerStatusDistributionResponse");
+        crate::analytics::IssueOverTimeBucket::export_all(&cfg).expect("IssueOverTimeBucket");
+        crate::analytics::IssuesOverTimeResponse::export_all(&cfg).expect("IssuesOverTimeResponse");
 
         // API v1: documents
         crate::documents::Document::export_all(&cfg).expect("Document");
