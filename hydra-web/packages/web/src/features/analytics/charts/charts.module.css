@@ -1,6 +1,6 @@
 .chartBody {
   width: 100%;
-  height: 200px;
+  height: var(--chart-body-height);
 }
 
 .empty {
@@ -44,7 +44,7 @@
   top: 0;
   left: 0;
   width: 100%;
-  height: 200px;
+  height: var(--chart-body-height);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -88,6 +88,9 @@
 }
 
 .chartContent {
+  /* Source of truth for chart body height — `.chartBody` and `.donutCenter`
+     both read this so the donut center always overlays the donut precisely. */
+  --chart-body-height: 200px;
   width: 100%;
   display: flex;
   flex-direction: column;

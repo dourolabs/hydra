@@ -11,7 +11,7 @@ import {
 import type { PatchesOverTimeQuery, PatchesOverTimeResponse } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
 import { useThroughputPatchesOverTime } from "../useThroughputPatches";
-import { CHART_COLORS } from "./colors";
+import { AXIS_TICK, CHART_COLORS, GRID_STROKE, TOOLTIP_STYLE } from "./colors";
 import { formatBucketLabel } from "../duration";
 import styles from "./charts.module.css";
 
@@ -64,12 +64,10 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
       <div className={styles.chartBody}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#888" }} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#888" }} />
-            <Tooltip
-              contentStyle={{ background: "#0e0e0e", border: "1px solid #2a2a2a" }}
-            />
+            <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+            <XAxis dataKey="label" tick={AXIS_TICK} />
+            <YAxis allowDecimals={false} tick={AXIS_TICK} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} />
             <Area
               type="monotone"
               dataKey="created"

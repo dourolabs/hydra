@@ -6,7 +6,7 @@ import type {
 } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
 import { useThroughputPatchesTerminalMix } from "../useThroughputPatches";
-import { CHART_COLORS } from "./colors";
+import { CHART_COLORS, TOOLTIP_STYLE } from "./colors";
 import styles from "./charts.module.css";
 
 export interface PatchesTerminalMixChartProps {
@@ -72,9 +72,7 @@ function PatchesTerminalMixChartContent({
                   <Cell key={s.name} fill={s.color} />
                 ))}
               </Pie>
-              <Tooltip
-                contentStyle={{ background: "#0e0e0e", border: "1px solid #2a2a2a" }}
-              />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
             </PieChart>
           </ResponsiveContainer>
         </div>
