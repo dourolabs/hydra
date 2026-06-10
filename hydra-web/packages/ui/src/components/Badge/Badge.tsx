@@ -19,11 +19,13 @@ export type BadgeStatus =
   | "conv-active"
   | "conv-idle"
   | "conv-closed"
+  | "archived"
   | "unknown";
 
 export interface BadgeProps {
   status: BadgeStatus;
   className?: string;
+  "data-testid"?: string;
 }
 
 const statusLabels: Record<BadgeStatus, string> = {
@@ -45,6 +47,7 @@ const statusLabels: Record<BadgeStatus, string> = {
   "conv-active": "Active",
   "conv-idle": "Idle",
   "conv-closed": "Closed",
+  archived: "Archived",
   unknown: "Unknown",
 };
 
@@ -68,15 +71,16 @@ const statusTones: Record<BadgeStatus, string> = {
   "conv-active": "conv_active",
   "conv-idle": "conv_idle",
   "conv-closed": "conv_closed",
+  archived: "neutral",
   unknown: "neutral",
 };
 
-export function Badge({ status, className }: BadgeProps) {
+export function Badge({ status, className, "data-testid": testId }: BadgeProps) {
   const tone = statusTones[status];
   const cls = [styles.badge, className].filter(Boolean).join(" ");
 
   return (
-    <span className={cls} data-tone={tone}>
+    <span className={cls} data-tone={tone} data-testid={testId}>
       <span className={styles.dot} />
       <span className={styles.label}>{statusLabels[status]}</span>
     </span>

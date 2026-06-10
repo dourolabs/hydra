@@ -28,6 +28,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 ## Issues
 
 - `@issues:view-detail` — User can view an issue's description, metadata, and progress
+- `@issues:view-detail-archived` — Navigating to a soft-deleted (archived) issue id renders the detail page normally with all the usual content plus an "Archived" badge in the title row. The page's `getIssue` request carries `include_deleted=true` so the server returns the archived row. Non-archived issues do not render the Archived badge.
 - `@issues:update-status` — User can change an issue's status
 - `@issues:create` — User can create a new issue
 - `@issues:navigate-tabs` — User can navigate between Related, Activity, and Details tabs in the issue right panel

@@ -5,7 +5,7 @@ import { apiClient } from "../../api/client";
 export function useIssue(issueId: string) {
   return useQuery({
     queryKey: ["issue", issueId],
-    queryFn: () => apiClient.getIssue(issueId),
+    queryFn: () => apiClient.getIssue(issueId, true),
     enabled: !!issueId,
   });
 }
@@ -25,7 +25,7 @@ export function useIssuesByIds(
   const queries = useQueries({
     queries: issueIds.map((id) => ({
       queryKey: ["issue", id],
-      queryFn: () => apiClient.getIssue(id),
+      queryFn: () => apiClient.getIssue(id, true),
       enabled: !!id,
     })),
   });

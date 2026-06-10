@@ -137,6 +137,7 @@ function makeRecord(overrides: {
   form?: Form | null;
   form_response?: FormResponse | null;
   assignee?: Principal | null;
+  deleted?: boolean;
 }): IssueVersionRecord {
   return {
     issue_id: "i-1",
@@ -157,6 +158,7 @@ function makeRecord(overrides: {
       labels: [],
       form: overrides.form ?? null,
       form_response: overrides.form_response ?? null,
+      deleted: overrides.deleted ?? false,
     },
   } as unknown as IssueVersionRecord;
 }
@@ -243,5 +245,25 @@ describe("IssueDetail assignee rendering", () => {
 
     expect(screen.getByText("Unassigned")).toBeDefined();
     expect(screen.queryByTestId("avatar")).toBeNull();
+  });
+});
+
+describe("IssueDetail archived badge", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("renders an Archived badge when issue.deleted is true", () => {
+    render(<IssueDetail record={makeRecord({ deleted: true })} />, {
+      wrapper: makeWrapper(),
+    });
+
+    expect(screen.getByTestId("badge-archived")).toBeDefined();
+  });
+
+  it("does not render an Archived badge for non-archived issues", () => {
+    render(<IssueDetail record={makeRecord({ deleted: false })} />, {
+      wrapper: makeWrapper(),
+    });
+
+    expect(screen.queryByTestId("badge-archived")).toBeNull();
   });
 });

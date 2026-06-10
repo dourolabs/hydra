@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Button, TypeChip } from "@hydra/ui";
+import { Avatar, Badge, Button, TypeChip } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { IssueVersionRecord } from "@hydra/api";
 import { principalAvatarKind, principalDisplayName } from "../principal/formatPrincipal";
@@ -114,6 +114,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
             <span className={styles.titleId}>{issueId}</span>
             <StatusChip status={issue.status} />
             {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
+            {issue.deleted === true && (
+              <Badge status="archived" data-testid="issue-archived-badge" />
+            )}
             <div className={styles.headActions}>
               {isRunning && <span className={styles.sessionTimer}>{durationText}</span>}
               {liveConversation && (
