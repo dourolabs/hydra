@@ -1,22 +1,42 @@
-//! In-process analytics aggregation over patch version histories.
+//! In-process analytics aggregation over patch and issue version
+//! histories.
 //!
-//! Backed by the existing `list_patches` / `get_patch_versions` store
-//! primitives — no new `Store`-trait methods, no materialized tables.
-//! The aggregation walks each patch's full version history in memory.
-//! Past production scale this will need a push-down rewrite, but it
-//! buys us a complete feature without a parallel store surface to
-//! maintain in lockstep.
+//! Backed by the existing `list_patches` / `get_patch_versions` /
+//! `list_issues` / `get_issue_versions` store primitives — no new
+//! `Store`-trait methods, no materialized tables. The aggregation walks
+//! each entity's full version history in memory. Past production scale
+//! this will need a push-down rewrite, but it buys us a complete feature
+//! without a parallel store surface to maintain in lockstep.
+//!
+//! ## "Terminal" — issues
+//!
+//! A status is **terminal** iff `unblocks_parents = TRUE` on its
+//! [`StatusDefinition`] — same criterion as
+//! `policy/restrictions/issue_lifecycle.rs::is_terminal` (line 153).
+//! `closed`, `dropped`, and `failed` are all terminal under this
+//! definition; clients that want to exclude the cancellation lanes can
+//! pass `status_keys=closed` on the query.
 
+use crate::app::projects::{ResolveStatusError, project_cached};
+use crate::domain::issues::Issue;
 use crate::domain::patches::{Patch, PatchStatus};
 use crate::store::{ReadOnlyStore, StoreError};
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use hydra_common::api::v1::analytics::{
-    BucketGranularity, PatchInFlightBucket, PatchOverTimeBucket, PatchesInFlightOverTimeResponse,
-    PatchesOverTimeResponse, PatchesTerminalMixResponse, PatchesThroughputQuery,
-    PatchesTimeToMergeResponse, TimeToMergeBin,
+    BucketGranularity, IssueOverTimeBucket, IssuesCycleTimeResponse, IssuesOverTimeResponse,
+    IssuesPerStatusDistributionResponse, IssuesThroughputQuery,
+    IssuesTimeInStatusBreakdownResponse, PatchInFlightBucket, PatchOverTimeBucket,
+    PatchesInFlightOverTimeResponse, PatchesOverTimeResponse, PatchesTerminalMixResponse,
+    PatchesThroughputQuery, PatchesTimeToMergeResponse, PerStatusDistribution, TimeInStatusSegment,
+    TimeToMergeBin,
 };
+use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::{PatchId, Versioned};
+use hydra_common::api::v1::projects::{Project, StatusDefinition, StatusKey};
+use hydra_common::principal::Principal;
+use hydra_common::{IssueId, PatchId, ProjectId, Versioned};
+use std::collections::HashMap;
+use std::str::FromStr;
 
 /// One patch and its full ascending-version-order history. Aggregation
 /// inputs are intentionally simple structs so unit tests can pass
@@ -236,10 +256,11 @@ pub fn compute_patches_terminal_mix(
     PatchesTerminalMixResponse::new(merged, closed)
 }
 
-/// Fixed histogram bin edges (in seconds). The final bin has no upper
-/// bound; everything `>= last edge` lands in it. Documented on the
-/// response type.
-const TIME_TO_MERGE_BIN_EDGES: &[u64] = &[
+/// Fixed histogram bin edges (in seconds) shared by the patches
+/// `time_to_merge` and issues `cycle_time` endpoints. The final bin has
+/// no upper bound; everything `>= last edge` lands in it. Documented on
+/// each response type.
+const DURATION_BIN_EDGES: &[u64] = &[
     0, 3_600,     // 1h
     14_400,    // 4h
     86_400,    // 1d
@@ -249,12 +270,12 @@ const TIME_TO_MERGE_BIN_EDGES: &[u64] = &[
     2_592_000, // 30d
 ];
 
-fn empty_histogram() -> Vec<TimeToMergeBin> {
-    let mut bins = Vec::with_capacity(TIME_TO_MERGE_BIN_EDGES.len());
-    for window in TIME_TO_MERGE_BIN_EDGES.windows(2) {
+fn empty_duration_histogram() -> Vec<TimeToMergeBin> {
+    let mut bins = Vec::with_capacity(DURATION_BIN_EDGES.len());
+    for window in DURATION_BIN_EDGES.windows(2) {
         bins.push(TimeToMergeBin::new(window[0], Some(window[1]), 0));
     }
-    let last = *TIME_TO_MERGE_BIN_EDGES
+    let last = *DURATION_BIN_EDGES
         .last()
         .expect("bin edge list is non-empty");
     bins.push(TimeToMergeBin::new(last, None, 0));
@@ -263,12 +284,12 @@ fn empty_histogram() -> Vec<TimeToMergeBin> {
 
 fn bin_index_for(seconds: u64) -> usize {
     // The final open-ended bin owns anything >= last edge.
-    for (i, window) in TIME_TO_MERGE_BIN_EDGES.windows(2).enumerate() {
+    for (i, window) in DURATION_BIN_EDGES.windows(2).enumerate() {
         if seconds < window[1] {
             return i;
         }
     }
-    TIME_TO_MERGE_BIN_EDGES.len() - 1
+    DURATION_BIN_EDGES.len() - 1
 }
 
 fn percentile(sorted: &[u64], p: f64) -> Option<u64> {
@@ -294,7 +315,7 @@ pub fn compute_patches_time_to_merge(
     to: DateTime<Utc>,
 ) -> PatchesTimeToMergeResponse {
     let mut deltas: Vec<u64> = Vec::new();
-    let mut histogram = empty_histogram();
+    let mut histogram = empty_duration_histogram();
     for history in histories {
         let Some(merged_at) = history.merged_at() else {
             continue;
@@ -345,6 +366,373 @@ pub fn compute_patches_in_flight_over_time(
         })
         .collect();
     PatchesInFlightOverTimeResponse::new(buckets)
+}
+
+// ====================== Issue analytics ======================
+
+/// One issue and its full ascending-version-order history. Aggregation
+/// inputs are intentionally simple structs so unit tests can pass
+/// hand-rolled fixtures without touching a Store.
+#[derive(Debug, Clone)]
+pub struct IssueHistory {
+    pub issue_id: IssueId,
+    pub versions: Vec<Versioned<Issue>>,
+}
+
+impl IssueHistory {
+    pub fn new(issue_id: IssueId, versions: Vec<Versioned<Issue>>) -> Self {
+        Self { issue_id, versions }
+    }
+
+    /// Creation timestamp (first version's `timestamp`).
+    fn created_at(&self) -> DateTime<Utc> {
+        self.versions
+            .first()
+            .expect("issue history must contain at least one version")
+            .timestamp
+    }
+
+    fn project_id(&self) -> &ProjectId {
+        &self
+            .versions
+            .first()
+            .expect("issue history must contain at least one version")
+            .item
+            .project_id
+    }
+
+    /// First version whose status maps to a terminal definition (per
+    /// [`Project`]). Returns `(status_key, timestamp)`. `None` if the
+    /// issue never reached a terminal status, or if its status key is
+    /// not declared in the project (treated as still-blocking).
+    fn first_terminal<'a>(
+        &self,
+        project: &'a Project,
+    ) -> Option<(&'a StatusDefinition, DateTime<Utc>)> {
+        for version in &self.versions {
+            let Some(def) = project.find_status(&version.item.status) else {
+                continue;
+            };
+            if def.unblocks_parents {
+                return Some((def, version.timestamp));
+            }
+        }
+        None
+    }
+}
+
+/// Apply the in-process filters that don't map cleanly to
+/// [`SearchIssuesQuery`]: `repo_name` (lives in `session_settings`),
+/// `assignee` (compared as the canonical Principal path string), and
+/// `issue_type`. The store-side filters (`creator`, `project_id`) are
+/// pushed down through [`SearchIssuesQuery`] in
+/// [`fetch_issue_histories`]; this is the leftover sieve.
+fn issue_passes_inprocess_filters(issue: &Issue, query: &IssuesThroughputQuery) -> bool {
+    if let Some(expected_repo) = query.repo_name.as_deref() {
+        let repo_matches = issue
+            .session_settings
+            .repo_name
+            .as_ref()
+            .map(|r| r.to_string() == expected_repo)
+            .unwrap_or(false);
+        if !repo_matches {
+            return false;
+        }
+    }
+    if let Some(expected_type) = query.issue_type {
+        let domain_type: crate::domain::issues::IssueType = expected_type.into();
+        if issue.issue_type != domain_type {
+            return false;
+        }
+    }
+    if let Some(expected_assignee) = query.assignee.as_deref() {
+        let matches = match Principal::from_str(expected_assignee) {
+            Ok(parsed) => issue
+                .assignee
+                .as_ref()
+                .map(|a| hydra_common::principal::principal_eq(a, &parsed))
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+        if !matches {
+            return false;
+        }
+    }
+    true
+}
+
+/// Fetch the issues matching the throughput-query filters and their
+/// full version histories. Deleted issues are excluded by
+/// `list_issues`'s default (we don't pass `include_deleted`).
+/// `creator` and `project_id` are pushed into [`SearchIssuesQuery`];
+/// `repo_name`, `issue_type`, and `assignee` are applied in process
+/// because they don't map onto the store-side filter set today.
+pub async fn fetch_issue_histories(
+    store: &dyn ReadOnlyStore,
+    query: &IssuesThroughputQuery,
+) -> Result<Vec<IssueHistory>, StoreError> {
+    let mut search = SearchIssuesQuery::default();
+    search.project_id = query.project_id.clone();
+    search.creator = query.creator.clone();
+
+    let issues = store.list_issues(&search).await?;
+    let mut histories = Vec::with_capacity(issues.len());
+    for (issue_id, latest) in issues {
+        if !issue_passes_inprocess_filters(&latest.item, query) {
+            continue;
+        }
+        let versions = store.get_issue_versions(&issue_id).await?;
+        if versions.is_empty() {
+            continue;
+        }
+        histories.push(IssueHistory::new(issue_id, versions));
+    }
+    Ok(histories)
+}
+
+/// Resolve the `Project`s referenced by the supplied issue histories,
+/// returning a `(ProjectId, Project)` cache. Failed lookups are skipped
+/// — the calling aggregator treats issues with no resolvable project as
+/// if their status weren't declared (no terminal flip, no time-in-status
+/// contribution). This matches the conservative posture in the
+/// `is_terminal` helper of `policy/restrictions/issue_lifecycle.rs`.
+pub async fn resolve_projects_for_histories(
+    store: &dyn ReadOnlyStore,
+    histories: &[IssueHistory],
+) -> Result<HashMap<ProjectId, Project>, StoreError> {
+    let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+    for history in histories {
+        let pid = history.project_id();
+        if cache.contains_key(pid) {
+            continue;
+        }
+        match project_cached(&mut cache, store, pid).await {
+            Ok(_) => {}
+            Err(ResolveStatusError::ProjectNotFound(_)) => {}
+            Err(ResolveStatusError::Store(err)) => return Err(err),
+            Err(other) => {
+                tracing::warn!(error = %other, project_id = %pid, "analytics: skipping unresolvable project");
+            }
+        }
+    }
+    Ok(cache)
+}
+
+/// Compute `issues/cycle_time`: histogram of `created_at → terminal_at`
+/// for issues that reached a terminal status (per their *own* project's
+/// status definitions) within `[from, to)`.
+///
+/// `status_keys`: when populated, only issues whose terminal status key
+/// is in the set count toward the cohort (include-form filter).
+pub fn compute_issues_cycle_time(
+    histories: &[IssueHistory],
+    projects: &HashMap<ProjectId, Project>,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    status_keys: &[StatusKey],
+) -> IssuesCycleTimeResponse {
+    let mut deltas: Vec<u64> = Vec::new();
+    let mut histogram = empty_duration_histogram();
+    for history in histories {
+        let Some(project) = projects.get(history.project_id()) else {
+            continue;
+        };
+        let Some((status_def, terminal_at)) = history.first_terminal(project) else {
+            continue;
+        };
+        if terminal_at < from || terminal_at >= to {
+            continue;
+        }
+        if !status_keys.is_empty() && !status_keys.contains(&status_def.key) {
+            continue;
+        }
+        let created = history.created_at();
+        let delta = (terminal_at - created).num_seconds().max(0) as u64;
+        deltas.push(delta);
+        let idx = bin_index_for(delta);
+        histogram[idx].count += 1;
+    }
+    deltas.sort_unstable();
+    let count = deltas.len() as u64;
+    let median = percentile(&deltas, 0.5);
+    let p95 = percentile(&deltas, 0.95);
+    IssuesCycleTimeResponse::new(median, p95, count, histogram)
+}
+
+/// Compute `issues/over_time`: per-bucket counts of issues created and
+/// of issues that reached terminal status (each per the issue's own
+/// project's status definitions).
+pub fn compute_issues_over_time(
+    histories: &[IssueHistory],
+    projects: &HashMap<ProjectId, Project>,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    bucket: BucketGranularity,
+) -> IssuesOverTimeResponse {
+    let starts = bucket_starts(from, to, bucket);
+    if starts.is_empty() {
+        return IssuesOverTimeResponse::new(Vec::new());
+    }
+    let step = step(bucket);
+
+    let mut buckets: Vec<IssueOverTimeBucket> = starts
+        .iter()
+        .map(|s| IssueOverTimeBucket::new(*s, 0, 0))
+        .collect();
+
+    let first_start = starts[0];
+    let bucket_len = buckets.len();
+    let bucket_for = |t: DateTime<Utc>| -> Option<usize> {
+        if t < from || t >= to {
+            return None;
+        }
+        let delta = t - first_start;
+        let idx = (delta.num_seconds() / step.num_seconds()) as usize;
+        if idx >= bucket_len { None } else { Some(idx) }
+    };
+
+    for history in histories {
+        let created = history.created_at();
+        if let Some(idx) = bucket_for(created) {
+            buckets[idx].created += 1;
+        }
+        let Some(project) = projects.get(history.project_id()) else {
+            continue;
+        };
+        if let Some((_, terminal_at)) = history.first_terminal(project) {
+            if let Some(idx) = bucket_for(terminal_at) {
+                buckets[idx].reached_terminal += 1;
+            }
+        }
+    }
+
+    IssuesOverTimeResponse::new(buckets)
+}
+
+/// Compute `issues/time_in_status_breakdown` for a single project's
+/// status set: per-status mean time issues in the terminal-window cohort
+/// spent in that status. The final terminal version contributes 0
+/// (no time-in-status since it's the end-state) — matching the spec.
+///
+/// Cohort = issues whose terminal-status flip falls inside `[from, to)`.
+/// `histories` is assumed to already be scoped to `project_id` — the
+/// route handler enforces `project_id` is required for this endpoint.
+pub fn compute_issues_time_in_status_breakdown(
+    histories: &[IssueHistory],
+    project_id: &ProjectId,
+    project: &Project,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> IssuesTimeInStatusBreakdownResponse {
+    let mut total_per_status: HashMap<StatusKey, u64> = HashMap::new();
+    let mut cohort_size: u64 = 0;
+
+    for history in histories {
+        if history.project_id() != project_id {
+            continue;
+        }
+        let Some((_, terminal_at)) = history.first_terminal(project) else {
+            continue;
+        };
+        if terminal_at < from || terminal_at >= to {
+            continue;
+        }
+        cohort_size += 1;
+
+        // Walk versions in pairs; the duration each `(version_N).status`
+        // contributes is `version_{N+1}.timestamp - version_N.timestamp`.
+        // The last version contributes 0 — no successor to bound it.
+        let versions = &history.versions;
+        for window in versions.windows(2) {
+            let curr = &window[0];
+            let next = &window[1];
+            let key = curr.item.status.clone();
+            let delta = (next.timestamp - curr.timestamp).num_seconds().max(0) as u64;
+            *total_per_status.entry(key).or_insert(0) += delta;
+        }
+    }
+
+    let denom = cohort_size.max(1);
+
+    let mut segments: Vec<TimeInStatusSegment> = Vec::with_capacity(project.statuses.len());
+    for status in ordered_statuses(project) {
+        let total = total_per_status.get(&status.key).copied().unwrap_or(0);
+        let mean = if cohort_size == 0 { 0 } else { total / denom };
+        segments.push(TimeInStatusSegment::new(
+            status.key.clone(),
+            status.label.clone(),
+            status.color.clone(),
+            mean,
+        ));
+    }
+
+    IssuesTimeInStatusBreakdownResponse::new(project_id.clone(), segments, cohort_size)
+}
+
+/// Compute `issues/per_status_distribution` for a single project's
+/// status set: per-status percentiles (median, p95) over every
+/// `(issue, status)` dwell-segment that *ended* inside `[from, to)`.
+/// An issue still sitting in a status when the window closes does not
+/// contribute.
+pub fn compute_issues_per_status_distribution(
+    histories: &[IssueHistory],
+    project_id: &ProjectId,
+    project: &Project,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> IssuesPerStatusDistributionResponse {
+    let mut samples_per_status: HashMap<StatusKey, Vec<u64>> = HashMap::new();
+    for history in histories {
+        if history.project_id() != project_id {
+            continue;
+        }
+        let versions = &history.versions;
+        for window in versions.windows(2) {
+            let curr = &window[0];
+            let next = &window[1];
+            // Segment ends at `next.timestamp`.
+            if next.timestamp < from || next.timestamp >= to {
+                continue;
+            }
+            let delta = (next.timestamp - curr.timestamp).num_seconds().max(0) as u64;
+            samples_per_status
+                .entry(curr.item.status.clone())
+                .or_default()
+                .push(delta);
+        }
+    }
+
+    let mut out: Vec<PerStatusDistribution> = Vec::with_capacity(project.statuses.len());
+    for status in ordered_statuses(project) {
+        let mut samples = samples_per_status.remove(&status.key).unwrap_or_default();
+        samples.sort_unstable();
+        let sample_count = samples.len() as u64;
+        let median = percentile(&samples, 0.5);
+        let p95 = percentile(&samples, 0.95);
+        out.push(PerStatusDistribution::new(
+            status.key.clone(),
+            status.label.clone(),
+            status.color.clone(),
+            median,
+            p95,
+            sample_count,
+        ));
+    }
+    IssuesPerStatusDistributionResponse::new(project_id.clone(), out)
+}
+
+/// The project's status list ordered by the `position` field
+/// (smaller-first), matching how the project itself renders the
+/// statuses. Stable on equal positions (rare, but possible when the
+/// project never reordered after seeding).
+fn ordered_statuses(project: &Project) -> Vec<&StatusDefinition> {
+    let mut statuses: Vec<&StatusDefinition> = project.statuses.iter().collect();
+    statuses.sort_by(|a, b| {
+        a.position
+            .partial_cmp(&b.position)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    statuses
 }
 
 #[cfg(test)]
@@ -872,7 +1260,7 @@ mod tests {
     fn bin_index_for_falls_into_open_ended_last_bin_above_threshold() {
         // 31 days > 30d edge → last bin.
         let very_long = 31 * 24 * 3_600;
-        assert_eq!(bin_index_for(very_long), TIME_TO_MERGE_BIN_EDGES.len() - 1);
+        assert_eq!(bin_index_for(very_long), DURATION_BIN_EDGES.len() - 1);
         // 30 minutes → first bin.
         assert_eq!(bin_index_for(30 * 60), 0);
     }
@@ -940,5 +1328,575 @@ mod tests {
             .expect("fetch");
         let ids: Vec<_> = histories.iter().map(|h| h.patch_id.clone()).collect();
         assert_eq!(ids, vec![alice_a_id]);
+    }
+
+    // ----- issue analytics -----
+
+    use crate::domain::issues::{
+        Issue as DomainIssue, IssueType as DomainIssueType, SessionSettings,
+    };
+    use crate::domain::projects::{default_project_id, default_project_seed};
+    use hydra_common::api::v1::projects::StatusKey as ApiStatusKey;
+
+    fn skey(s: &str) -> ApiStatusKey {
+        ApiStatusKey::try_new(s).expect("status key")
+    }
+
+    fn issue_in_default_project(status: &str, creator: &str) -> DomainIssue {
+        DomainIssue::new(
+            DomainIssueType::Task,
+            "title".to_string(),
+            "desc".to_string(),
+            Username::from(creator),
+            String::new(),
+            skey(status),
+            default_project_id(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        )
+    }
+
+    fn issue_versioned(
+        item: DomainIssue,
+        version: u64,
+        timestamp: DateTime<Utc>,
+    ) -> Versioned<DomainIssue> {
+        Versioned {
+            item,
+            version,
+            timestamp,
+            actor: Some(CommonActorRef::test()),
+            creation_time: timestamp,
+        }
+    }
+
+    fn issue_history(versions: Vec<Versioned<DomainIssue>>) -> IssueHistory {
+        IssueHistory::new(IssueId::new(), versions)
+    }
+
+    fn projects_map_default() -> HashMap<ProjectId, Project> {
+        let mut map = HashMap::new();
+        map.insert(default_project_id(), default_project_seed());
+        map
+    }
+
+    // ----- cycle_time -----
+
+    #[test]
+    fn cycle_time_empty_cohort_yields_zero_count() {
+        let resp = compute_issues_cycle_time(
+            &[],
+            &HashMap::new(),
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp.count, 0);
+        assert!(resp.median_seconds.is_none());
+        // Histogram is always emitted with zero-count bins.
+        assert!(!resp.histogram.is_empty());
+        for bin in &resp.histogram {
+            assert_eq!(bin.count, 0);
+        }
+    }
+
+    #[test]
+    fn cycle_time_single_issue_collapses_median_and_p95() {
+        let v1 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        );
+        let v2 = issue_versioned(
+            issue_in_default_project("closed", "alice"),
+            2,
+            dt("2026-05-11T00:00:00Z"),
+        );
+        let histories = vec![issue_history(vec![v1, v2])];
+        let projects = projects_map_default();
+        let resp = compute_issues_cycle_time(
+            &histories,
+            &projects,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp.count, 1);
+        assert_eq!(resp.median_seconds, Some(86_400));
+        assert_eq!(resp.p95_seconds, Some(86_400));
+        let one_day_bin = resp
+            .histogram
+            .iter()
+            .find(|b| b.bin_start_seconds == 86_400)
+            .expect("1d bin");
+        assert_eq!(one_day_bin.count, 1);
+    }
+
+    #[test]
+    fn cycle_time_excludes_issues_still_in_nonterminal_status_at_window_close() {
+        let v1 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        );
+        let v2 = issue_versioned(
+            issue_in_default_project("in-progress", "alice"),
+            2,
+            dt("2026-05-11T00:00:00Z"),
+        );
+        let histories = vec![issue_history(vec![v1, v2])];
+        let projects = projects_map_default();
+        // Window closes before the issue is closed.
+        let resp = compute_issues_cycle_time(
+            &histories,
+            &projects,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp.count, 0);
+    }
+
+    #[test]
+    fn cycle_time_terminal_outside_window_is_excluded() {
+        let v1 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            1,
+            dt("2026-05-01T00:00:00Z"),
+        );
+        let v2 = issue_versioned(
+            issue_in_default_project("closed", "alice"),
+            2,
+            dt("2026-06-01T00:00:00Z"),
+        );
+        let histories = vec![issue_history(vec![v1, v2])];
+        let projects = projects_map_default();
+        let resp = compute_issues_cycle_time(
+            &histories,
+            &projects,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp.count, 0);
+    }
+
+    #[test]
+    fn cycle_time_status_keys_include_filter_drops_unmatched_terminals() {
+        // Issue 1: closed (matches if status_keys=[closed]).
+        let issue1 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "alice"),
+                1,
+                dt("2026-05-10T00:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("closed", "alice"),
+                2,
+                dt("2026-05-11T00:00:00Z"),
+            ),
+        ];
+        // Issue 2: dropped (excluded if status_keys=[closed]).
+        let issue2 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "bob"),
+                1,
+                dt("2026-05-10T00:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("dropped", "bob"),
+                2,
+                dt("2026-05-11T00:00:00Z"),
+            ),
+        ];
+        let histories = vec![issue_history(issue1), issue_history(issue2)];
+        let projects = projects_map_default();
+        let resp = compute_issues_cycle_time(
+            &histories,
+            &projects,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[skey("closed")],
+        );
+        assert_eq!(resp.count, 1);
+        // Without the filter, both count.
+        let resp_no_filter = compute_issues_cycle_time(
+            &histories,
+            &projects,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp_no_filter.count, 2);
+    }
+
+    // ----- over_time -----
+
+    #[test]
+    fn over_time_counts_creation_and_terminal_in_correct_buckets() {
+        let from = dt("2026-05-10T00:00:00Z");
+        let to = dt("2026-05-13T00:00:00Z");
+
+        // Issue 1: created day 0, closed day 2.
+        let i1 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "alice"),
+                1,
+                dt("2026-05-10T08:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("closed", "alice"),
+                2,
+                dt("2026-05-12T09:00:00Z"),
+            ),
+        ];
+        // Issue 2: created day 1, still open.
+        let i2 = vec![issue_versioned(
+            issue_in_default_project("open", "bob"),
+            1,
+            dt("2026-05-11T08:00:00Z"),
+        )];
+
+        let histories = vec![issue_history(i1), issue_history(i2)];
+        let projects = projects_map_default();
+        let resp =
+            compute_issues_over_time(&histories, &projects, from, to, BucketGranularity::Day);
+        assert_eq!(resp.buckets.len(), 3);
+        assert_eq!(resp.buckets[0].bucket_start, dt("2026-05-10T00:00:00Z"));
+        assert_eq!(resp.buckets[0].created, 1);
+        assert_eq!(resp.buckets[0].reached_terminal, 0);
+        assert_eq!(resp.buckets[1].created, 1);
+        assert_eq!(resp.buckets[1].reached_terminal, 0);
+        assert_eq!(resp.buckets[2].created, 0);
+        assert_eq!(resp.buckets[2].reached_terminal, 1);
+    }
+
+    // ----- time_in_status_breakdown -----
+
+    #[test]
+    fn time_in_status_breakdown_walks_versions_pairwise() {
+        // Issue spends 1 day Open, 2 days In-progress, then Closed inside window.
+        let v1 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        );
+        let v2 = issue_versioned(
+            issue_in_default_project("in-progress", "alice"),
+            2,
+            dt("2026-05-11T00:00:00Z"),
+        );
+        let v3 = issue_versioned(
+            issue_in_default_project("closed", "alice"),
+            3,
+            dt("2026-05-13T00:00:00Z"),
+        );
+        let histories = vec![issue_history(vec![v1, v2, v3])];
+        let project = default_project_seed();
+        let resp = compute_issues_time_in_status_breakdown(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-15T00:00:00Z"),
+        );
+        assert_eq!(resp.issue_count, 1);
+        let open_segment = resp
+            .status_segments
+            .iter()
+            .find(|s| s.status_key == skey("open"))
+            .expect("open segment");
+        assert_eq!(open_segment.mean_seconds, 86_400); // 1 day
+        let in_progress_segment = resp
+            .status_segments
+            .iter()
+            .find(|s| s.status_key == skey("in-progress"))
+            .expect("in-progress segment");
+        assert_eq!(in_progress_segment.mean_seconds, 2 * 86_400); // 2 days
+        let closed_segment = resp
+            .status_segments
+            .iter()
+            .find(|s| s.status_key == skey("closed"))
+            .expect("closed segment");
+        assert_eq!(closed_segment.mean_seconds, 0); // terminal contributes 0
+    }
+
+    #[test]
+    fn time_in_status_breakdown_accumulates_revisited_status() {
+        // Issue bounces: open(1d) -> in-progress(2d) -> open(1d) -> in-progress(3d) -> closed.
+        // Total open dwell: 2 days. Total in-progress dwell: 5 days. Closed: 0.
+        let v1 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        );
+        let v2 = issue_versioned(
+            issue_in_default_project("in-progress", "alice"),
+            2,
+            dt("2026-05-11T00:00:00Z"),
+        );
+        let v3 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            3,
+            dt("2026-05-13T00:00:00Z"),
+        );
+        let v4 = issue_versioned(
+            issue_in_default_project("in-progress", "alice"),
+            4,
+            dt("2026-05-14T00:00:00Z"),
+        );
+        let v5 = issue_versioned(
+            issue_in_default_project("closed", "alice"),
+            5,
+            dt("2026-05-17T00:00:00Z"),
+        );
+        let histories = vec![issue_history(vec![v1, v2, v3, v4, v5])];
+        let project = default_project_seed();
+        let resp = compute_issues_time_in_status_breakdown(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-20T00:00:00Z"),
+        );
+        assert_eq!(resp.issue_count, 1);
+        let open_seg = resp
+            .status_segments
+            .iter()
+            .find(|s| s.status_key == skey("open"))
+            .expect("open");
+        assert_eq!(open_seg.mean_seconds, 2 * 86_400);
+        let in_progress_seg = resp
+            .status_segments
+            .iter()
+            .find(|s| s.status_key == skey("in-progress"))
+            .expect("in-progress");
+        assert_eq!(in_progress_seg.mean_seconds, 5 * 86_400);
+    }
+
+    #[test]
+    fn time_in_status_breakdown_excludes_issues_outside_cohort() {
+        // One issue closed in window, one still open.
+        let closed = vec![
+            issue_versioned(
+                issue_in_default_project("open", "alice"),
+                1,
+                dt("2026-05-10T00:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("closed", "alice"),
+                2,
+                dt("2026-05-11T00:00:00Z"),
+            ),
+        ];
+        let still_open = vec![issue_versioned(
+            issue_in_default_project("in-progress", "bob"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        )];
+        let histories = vec![issue_history(closed), issue_history(still_open)];
+        let project = default_project_seed();
+        let resp = compute_issues_time_in_status_breakdown(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+        );
+        assert_eq!(resp.issue_count, 1);
+    }
+
+    // ----- per_status_distribution -----
+
+    #[test]
+    fn per_status_distribution_collects_only_ended_segments() {
+        // Issue 1: open for 1 day then in-progress for 2 days (segment
+        // ends 05-13), then closed at 05-13. Both segments end inside
+        // [05-10, 05-15).
+        let v1 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        );
+        let v2 = issue_versioned(
+            issue_in_default_project("in-progress", "alice"),
+            2,
+            dt("2026-05-11T00:00:00Z"),
+        );
+        let v3 = issue_versioned(
+            issue_in_default_project("closed", "alice"),
+            3,
+            dt("2026-05-13T00:00:00Z"),
+        );
+        // Issue 2: still in-progress (no ending segment) — excluded.
+        let still = vec![issue_versioned(
+            issue_in_default_project("in-progress", "bob"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        )];
+        let histories = vec![issue_history(vec![v1, v2, v3]), issue_history(still)];
+        let project = default_project_seed();
+        let resp = compute_issues_per_status_distribution(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-15T00:00:00Z"),
+        );
+        let open_dist = resp
+            .statuses
+            .iter()
+            .find(|s| s.status_key == skey("open"))
+            .expect("open");
+        assert_eq!(open_dist.sample_count, 1);
+        assert_eq!(open_dist.median_seconds, Some(86_400));
+        let in_progress_dist = resp
+            .statuses
+            .iter()
+            .find(|s| s.status_key == skey("in-progress"))
+            .expect("in-progress");
+        assert_eq!(in_progress_dist.sample_count, 1);
+        assert_eq!(in_progress_dist.median_seconds, Some(2 * 86_400));
+        // Closed is never exited in the cohort, so no samples.
+        let closed_dist = resp
+            .statuses
+            .iter()
+            .find(|s| s.status_key == skey("closed"))
+            .expect("closed");
+        assert_eq!(closed_dist.sample_count, 0);
+        assert!(closed_dist.median_seconds.is_none());
+    }
+
+    // ----- fetch / status-set evolution -----
+
+    #[tokio::test]
+    async fn fetch_issue_histories_excludes_deleted() {
+        use crate::test_utils::test_state_handles;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+        let normal = issue_in_default_project("open", "alice");
+        let (normal_id, _) = store.add_issue(normal, &actor).await.expect("add normal");
+        let to_delete = issue_in_default_project("open", "alice");
+        let (delete_id, _) = store
+            .add_issue(to_delete, &actor)
+            .await
+            .expect("add to_delete");
+        store
+            .delete_issue(&delete_id, &actor)
+            .await
+            .expect("delete");
+
+        let query =
+            IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        let histories = fetch_issue_histories(store.as_ref(), &query)
+            .await
+            .expect("fetch");
+        let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
+        assert_eq!(ids, vec![normal_id]);
+    }
+
+    #[tokio::test]
+    async fn fetch_issue_histories_filters_by_creator_and_repo() {
+        use crate::test_utils::test_state_handles;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let mut alice_a = issue_in_default_project("open", "alice");
+        alice_a.session_settings = SessionSettings::default();
+        alice_a.session_settings.repo_name = Some(repo("dourolabs/hydra"));
+        let (alice_a_id, _) = store.add_issue(alice_a, &actor).await.expect("alice_a");
+
+        let mut bob_a = issue_in_default_project("open", "bob");
+        bob_a.session_settings.repo_name = Some(repo("dourolabs/hydra"));
+        let (_, _) = store.add_issue(bob_a, &actor).await.expect("bob_a");
+
+        let mut alice_b = issue_in_default_project("open", "alice");
+        alice_b.session_settings.repo_name = Some(repo("other/repo"));
+        let (_, _) = store.add_issue(alice_b, &actor).await.expect("alice_b");
+
+        let mut query =
+            IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        query.creator = Some("alice".to_string());
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        let histories = fetch_issue_histories(store.as_ref(), &query)
+            .await
+            .expect("fetch");
+        let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
+        assert_eq!(ids, vec![alice_a_id]);
+    }
+
+    #[test]
+    fn cycle_time_ignores_issue_whose_status_key_is_missing_from_project() {
+        // If a status key on an issue version isn't declared in the
+        // current project (e.g. the user deleted the status mid-history
+        // and the rewrite did not migrate this row), the analytics walk
+        // skips that version's terminal-check. The issue effectively
+        // never reaches a terminal status from the analytics' POV.
+        let v1 = issue_versioned(
+            issue_in_default_project("open", "alice"),
+            1,
+            dt("2026-05-10T00:00:00Z"),
+        );
+        // Forge a version with a status key that's not in the project.
+        let mut bogus = issue_in_default_project("open", "alice");
+        bogus.status = skey("ghost");
+        let v2 = issue_versioned(bogus, 2, dt("2026-05-11T00:00:00Z"));
+        let histories = vec![issue_history(vec![v1, v2])];
+        let projects = projects_map_default();
+        let resp = compute_issues_cycle_time(
+            &histories,
+            &projects,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp.count, 0);
+    }
+
+    #[tokio::test]
+    async fn cycle_time_after_status_rename_keeps_terminal_flip() {
+        // When SWE renames a status mid-history, `get_issue_versions`
+        // returns versions with the *current* key (translate_issue_status
+        // rewrites them via the (project_id, sequence) FK). So the
+        // analytics walk just sees the current key on every version
+        // and the terminal flip still resolves cleanly.
+        use crate::test_utils::test_state_handles;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let initial = issue_in_default_project("open", "alice");
+        let (issue_id, _) = store.add_issue(initial, &actor).await.expect("add");
+        let mut closed = issue_in_default_project("closed", "alice");
+        closed.dependencies = vec![];
+        store
+            .update_issue(&issue_id, closed, &actor)
+            .await
+            .expect("close");
+
+        let query =
+            IssuesThroughputQuery::new(dt("2020-01-01T00:00:00Z"), dt("2030-01-01T00:00:00Z"));
+        let histories = fetch_issue_histories(store.as_ref(), &query)
+            .await
+            .expect("fetch");
+        assert_eq!(histories.len(), 1);
+        let projects = resolve_projects_for_histories(store.as_ref(), &histories)
+            .await
+            .expect("resolve");
+        let resp = compute_issues_cycle_time(
+            &histories,
+            &projects,
+            dt("2020-01-01T00:00:00Z"),
+            dt("2030-01-01T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp.count, 1);
     }
 }
