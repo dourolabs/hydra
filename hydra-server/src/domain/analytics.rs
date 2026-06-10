@@ -424,9 +424,12 @@ impl IssueHistory {
 /// Apply the in-process filters that don't map cleanly to
 /// [`SearchIssuesQuery`]: `repo_name` (lives in `session_settings`),
 /// `assignee` (compared as the canonical Principal path string), and
-/// `issue_type`. The store-side filters (`creator`, `project_id`) are
-/// pushed down through [`SearchIssuesQuery`] in
-/// [`fetch_issue_histories`]; this is the leftover sieve.
+/// `issue_type` / `issue_types`. When the plural set is non-empty it
+/// acts as an *include* set and the singular field is ignored; an empty
+/// plural set falls back to the legacy singular match. The store-side
+/// filters (`creator`, `project_id`) are pushed down through
+/// [`SearchIssuesQuery`] in [`fetch_issue_histories`]; this is the
+/// leftover sieve.
 fn issue_passes_inprocess_filters(issue: &Issue, query: &IssuesThroughputQuery) -> bool {
     if let Some(expected_repo) = query.repo_name.as_deref() {
         let repo_matches = issue
@@ -439,7 +442,15 @@ fn issue_passes_inprocess_filters(issue: &Issue, query: &IssuesThroughputQuery) 
             return false;
         }
     }
-    if let Some(expected_type) = query.issue_type {
+    if !query.issue_types.is_empty() {
+        let any_match = query.issue_types.iter().any(|t| {
+            let domain_type: crate::domain::issues::IssueType = (*t).into();
+            issue.issue_type == domain_type
+        });
+        if !any_match {
+            return false;
+        }
+    } else if let Some(expected_type) = query.issue_type {
         let domain_type: crate::domain::issues::IssueType = expected_type.into();
         if issue.issue_type != domain_type {
             return false;
@@ -1390,8 +1401,16 @@ mod tests {
     }
 
     fn issue_in_default_project(status: &str, creator: &str) -> DomainIssue {
+        issue_in_default_project_typed(status, creator, DomainIssueType::Task)
+    }
+
+    fn issue_in_default_project_typed(
+        status: &str,
+        creator: &str,
+        issue_type: DomainIssueType,
+    ) -> DomainIssue {
         DomainIssue::new(
-            DomainIssueType::Task,
+            issue_type,
             "title".to_string(),
             "desc".to_string(),
             Username::from(creator),
@@ -2025,6 +2044,63 @@ mod tests {
             .expect("fetch");
         let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
         assert_eq!(ids, vec![normal_id]);
+    }
+
+    #[tokio::test]
+    async fn fetch_issue_histories_filters_by_issue_types() {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::api::v1::issues::IssueType as ApiIssueType;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let feature = issue_in_default_project_typed("open", "alice", DomainIssueType::Feature);
+        let (feature_id, _) = store.add_issue(feature, &actor).await.expect("feature");
+        let bug = issue_in_default_project_typed("open", "alice", DomainIssueType::Bug);
+        let (bug_id, _) = store.add_issue(bug, &actor).await.expect("bug");
+        let chore = issue_in_default_project_typed("open", "alice", DomainIssueType::Chore);
+        let (_, _) = store.add_issue(chore, &actor).await.expect("chore");
+
+        let window =
+            || IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+
+        // (a) plural set of 2 types narrows the cohort to those types only.
+        let mut q = window();
+        q.issue_types = vec![ApiIssueType::Feature, ApiIssueType::Bug];
+        let mut ids: Vec<_> = fetch_issue_histories(store.as_ref(), &q)
+            .await
+            .expect("fetch")
+            .into_iter()
+            .map(|h| h.issue_id)
+            .collect();
+        ids.sort();
+        let mut expected = vec![feature_id.clone(), bug_id.clone()];
+        expected.sort();
+        assert_eq!(ids, expected);
+
+        // (b) empty plural + singular set still filters by the singular value.
+        let mut q = window();
+        q.issue_type = Some(ApiIssueType::Feature);
+        let ids: Vec<_> = fetch_issue_histories(store.as_ref(), &q)
+            .await
+            .expect("fetch")
+            .into_iter()
+            .map(|h| h.issue_id)
+            .collect();
+        assert_eq!(ids, vec![feature_id.clone()]);
+
+        // (c) plural with the same type as singular yields the same cohort as
+        //     plural-only (plural wins; singular is ignored when plural is set).
+        let mut q = window();
+        q.issue_type = Some(ApiIssueType::Bug);
+        q.issue_types = vec![ApiIssueType::Feature];
+        let ids: Vec<_> = fetch_issue_histories(store.as_ref(), &q)
+            .await
+            .expect("fetch")
+            .into_iter()
+            .map(|h| h.issue_id)
+            .collect();
+        assert_eq!(ids, vec![feature_id]);
     }
 
     #[tokio::test]

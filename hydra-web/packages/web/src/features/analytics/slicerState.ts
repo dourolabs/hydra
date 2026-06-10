@@ -31,7 +31,7 @@ export interface SlicerState {
   projectId: string | null;
   statusKeys: string[];
   repoName: string | null;
-  issueType: IssueType | null;
+  issueTypes: IssueType[];
   assignee: string | null;
   creator: string | null;
 }
@@ -42,6 +42,7 @@ export const URL_PARAMS = {
   statusKeys: "status_keys",
   repoName: "repo_name",
   issueType: "issue_type",
+  issueTypes: "issue_types",
   assignee: "assignee",
   creator: "creator",
 } as const;
@@ -64,16 +65,27 @@ export function readSlicerState(params: URLSearchParams): SlicerState {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const rawIssueType = params.get(URL_PARAMS.issueType);
-  const issueType: IssueType | null =
-    rawIssueType && isIssueType(rawIssueType) ? rawIssueType : null;
+  const rawIssueTypes = params.get(URL_PARAMS.issueTypes);
+  const pluralIssueTypes = rawIssueTypes
+    ? rawIssueTypes
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s): s is IssueType => isIssueType(s))
+    : [];
+  let issueTypes: IssueType[] = pluralIssueTypes;
+  if (issueTypes.length === 0) {
+    const rawIssueType = params.get(URL_PARAMS.issueType);
+    if (rawIssueType && isIssueType(rawIssueType)) {
+      issueTypes = [rawIssueType];
+    }
+  }
 
   return {
     range,
     projectId: params.get(URL_PARAMS.projectId),
     statusKeys,
     repoName: params.get(URL_PARAMS.repoName),
-    issueType,
+    issueTypes,
     assignee: params.get(URL_PARAMS.assignee),
     creator: params.get(URL_PARAMS.creator),
   };
@@ -108,9 +120,18 @@ export function writeSlicerState(
     else next.delete(URL_PARAMS.repoName);
   }
 
-  if (patch.issueType !== undefined) {
-    if (patch.issueType) next.set(URL_PARAMS.issueType, patch.issueType);
-    else next.delete(URL_PARAMS.issueType);
+  if (patch.issueTypes !== undefined) {
+    const types = patch.issueTypes;
+    if (types.length > 1) {
+      next.set(URL_PARAMS.issueTypes, types.join(","));
+      next.delete(URL_PARAMS.issueType);
+    } else if (types.length === 1) {
+      next.set(URL_PARAMS.issueType, types[0]);
+      next.delete(URL_PARAMS.issueTypes);
+    } else {
+      next.delete(URL_PARAMS.issueType);
+      next.delete(URL_PARAMS.issueTypes);
+    }
   }
 
   if (patch.assignee !== undefined) {

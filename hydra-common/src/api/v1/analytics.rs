@@ -260,6 +260,14 @@ pub struct IssuesThroughputQuery {
     )]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub status_keys: Vec<StatusKey>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub issue_types: Vec<IssueType>,
 }
 
 impl IssuesThroughputQuery {
@@ -274,6 +282,7 @@ impl IssuesThroughputQuery {
             assignee: None,
             creator: None,
             status_keys: Vec::new(),
+            issue_types: Vec::new(),
         }
     }
 }

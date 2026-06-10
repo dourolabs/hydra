@@ -55,18 +55,21 @@ export function AnalyticsThroughputPage() {
       bucket: "day",
       project_id: state.projectId,
       repo_name: state.repoName,
-      issue_type: state.issueType,
+      issue_type: state.issueTypes.length === 1 ? state.issueTypes[0] : null,
       assignee: state.assignee,
       creator: state.creator,
       ...(state.statusKeys.length > 0
         ? { status_keys: state.statusKeys.join(",") }
+        : {}),
+      ...(state.issueTypes.length > 1
+        ? { issue_types: state.issueTypes.join(",") }
         : {}),
     }),
     [
       window,
       state.projectId,
       state.repoName,
-      state.issueType,
+      state.issueTypes,
       state.assignee,
       state.creator,
       state.statusKeys,

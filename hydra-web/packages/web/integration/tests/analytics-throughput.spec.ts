@@ -161,7 +161,7 @@ test.describe("Analytics throughput @analytics:throughput", () => {
     ).toBeVisible();
   });
 
-  test("issue-type slicer is single-select and writes issue_type to the URL", async ({
+  test("issue-type slicer is multi-select and round-trips issue_type / issue_types", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/analytics/throughput");
@@ -178,20 +178,39 @@ test.describe("Analytics throughput @analytics:throughput", () => {
       }
     });
 
-    await page.getByTestId("slicer-issue-type").selectOption("feature");
+    // Selecting exactly one type writes the singular issue_type back-compat shape.
+    // Use click() rather than check() because the checkbox is React-controlled
+    // off the URL, so its `checked` attribute lags one render behind the click.
+    await page.getByTestId("slicer-issue-type-feature").click();
     await expect(page).toHaveURL(/issue_type=feature/);
-    // The legacy multi-select comma-joined param must no longer be written.
     await expect(page).not.toHaveURL(/issue_types=/);
-
     await expect
       .poll(() => requests.some((u) => u.includes("issue_type=feature")), {
         timeout: 5_000,
       })
       .toBe(true);
 
-    // Clearing the selection drops the URL param.
-    await page.getByTestId("slicer-issue-type").selectOption("");
-    await expect(page).not.toHaveURL(/issue_type=/);
+    // Adding a second type flips the URL to the plural issue_types form, and
+    // a refetch fires with the comma-joined plural in the query string.
+    requests.length = 0;
+    await page.getByTestId("slicer-issue-type-bug").click();
+    await expect(page).toHaveURL(/issue_types=(feature%2Cbug|bug%2Cfeature|feature,bug|bug,feature)/);
+    await expect(page).not.toHaveURL(/[?&]issue_type=/);
+    await expect
+      .poll(() => requests.some((u) => /[?&]issue_types=/.test(u)), {
+        timeout: 5_000,
+      })
+      .toBe(true);
+
+    // Unchecking back down to one type flips the URL back to the singular form.
+    await page.getByTestId("slicer-issue-type-feature").click();
+    await expect(page).toHaveURL(/issue_type=bug/);
+    await expect(page).not.toHaveURL(/issue_types=/);
+
+    // Clearing the last selection drops both URL params.
+    await page.getByTestId("slicer-issue-type-bug").click();
+    await expect(page).not.toHaveURL(/[?&]issue_type=/);
+    await expect(page).not.toHaveURL(/[?&]issue_types=/);
   });
 
   test("changing the repo slicer triggers a chart refetch", async ({

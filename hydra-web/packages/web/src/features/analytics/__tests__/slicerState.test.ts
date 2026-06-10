@@ -14,7 +14,7 @@ describe("slicerState.readSlicerState", () => {
       projectId: null,
       statusKeys: [],
       repoName: null,
-      issueType: null,
+      issueTypes: [],
       assignee: null,
       creator: null,
     });
@@ -36,17 +36,29 @@ describe("slicerState.readSlicerState", () => {
       projectId: "j-abc",
       statusKeys: ["open", "in-progress"],
       repoName: "dourolabs/hydra",
-      issueType: "feature",
+      issueTypes: ["feature"],
       assignee: "agents/swe",
       creator: "alice",
     });
   });
 
-  it("drops invalid range and issue_type values", () => {
-    const params = new URLSearchParams({ range: "junk", issue_type: "nope" });
+  it("prefers plural issue_types over singular issue_type when both are set", () => {
+    const params = new URLSearchParams({
+      issue_types: "feature,bug",
+      issue_type: "chore",
+    });
+    const s = readSlicerState(params);
+    expect(s.issueTypes).toEqual(["feature", "bug"]);
+  });
+
+  it("drops invalid range and issue_types values", () => {
+    const params = new URLSearchParams({
+      range: "junk",
+      issue_types: "nope,feature,bogus",
+    });
     const s = readSlicerState(params);
     expect(s.range).toBe(DEFAULT_TIME_RANGE);
-    expect(s.issueType).toBeNull();
+    expect(s.issueTypes).toEqual(["feature"]);
   });
 });
 
@@ -67,13 +79,46 @@ describe("slicerState.writeSlicerState", () => {
     expect(p.get("status_keys")).toBe("open,in-progress");
   });
 
-  it("sets and clears issue_type as a single-select", () => {
-    const set = writeSlicerState(new URLSearchParams(), { issueType: "feature" });
-    expect(set.get("issue_type")).toBe("feature");
-    const clear = writeSlicerState(new URLSearchParams("issue_type=feature"), {
-      issueType: null,
+  it("writes singular issue_type when exactly one issue type is selected", () => {
+    const set = writeSlicerState(new URLSearchParams(), {
+      issueTypes: ["feature"],
     });
+    expect(set.get("issue_type")).toBe("feature");
+    expect(set.has("issue_types")).toBe(false);
+  });
+
+  it("writes plural issue_types when multiple issue types are selected", () => {
+    const set = writeSlicerState(new URLSearchParams(), {
+      issueTypes: ["feature", "bug"],
+    });
+    expect(set.get("issue_types")).toBe("feature,bug");
+    expect(set.has("issue_type")).toBe(false);
+  });
+
+  it("collapsing the selection from many to one swaps issue_types for issue_type", () => {
+    const collapsed = writeSlicerState(
+      new URLSearchParams("issue_types=feature,bug"),
+      { issueTypes: ["feature"] },
+    );
+    expect(collapsed.get("issue_type")).toBe("feature");
+    expect(collapsed.has("issue_types")).toBe(false);
+  });
+
+  it("growing the selection from one to many swaps issue_type for issue_types", () => {
+    const grown = writeSlicerState(new URLSearchParams("issue_type=feature"), {
+      issueTypes: ["feature", "bug"],
+    });
+    expect(grown.get("issue_types")).toBe("feature,bug");
+    expect(grown.has("issue_type")).toBe(false);
+  });
+
+  it("clearing the selection drops both issue_type keys", () => {
+    const clear = writeSlicerState(
+      new URLSearchParams("issue_type=feature&issue_types=feature,bug"),
+      { issueTypes: [] },
+    );
     expect(clear.has("issue_type")).toBe(false);
+    expect(clear.has("issue_types")).toBe(false);
   });
 
   it("always writes the range key when patched", () => {

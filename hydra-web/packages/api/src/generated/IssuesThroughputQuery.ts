@@ -30,4 +30,5 @@ export type IssuesThroughputQuery = {
   assignee: string | null;
   creator: string | null;
   status_keys?: string;
+  issue_types?: string;
 };

@@ -5,10 +5,6 @@ import { useRepositories } from "../../hooks/useRepositories";
 import { ISSUE_TYPE_OPTIONS, type SlicerState } from "./slicerState";
 import styles from "./SlicerPanel.module.css";
 
-function isIssueType(value: string): value is IssueType {
-  return (ISSUE_TYPE_OPTIONS as readonly string[]).includes(value);
-}
-
 export interface SlicerPanelProps {
   state: SlicerState;
   onChange: (patch: Partial<SlicerState>) => void;
@@ -45,10 +41,11 @@ export function SlicerPanel({ state, onChange }: SlicerPanelProps) {
     onChange({ statusKeys: next });
   };
 
-  const handleIssueTypeChange = (value: string) => {
-    onChange({
-      issueType: value && isIssueType(value) ? value : null,
-    });
+  const handleIssueTypeToggle = (type: IssueType, checked: boolean) => {
+    const next = checked
+      ? [...state.issueTypes, type]
+      : state.issueTypes.filter((t) => t !== type);
+    onChange({ issueTypes: next });
   };
 
   return (
@@ -127,24 +124,26 @@ export function SlicerPanel({ state, onChange }: SlicerPanelProps) {
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="slicer-issue-type">
+        <label className={styles.label}>
           Issue type
           <span className={styles.hint}> · issues charts only</span>
         </label>
-        <select
-          id="slicer-issue-type"
-          className={styles.select}
-          value={state.issueType ?? ""}
-          onChange={(e) => handleIssueTypeChange(e.target.value)}
-          data-testid="slicer-issue-type"
-        >
-          <option value="">All issue types</option>
-          {ISSUE_TYPE_OPTIONS.map((t) => (
-            <option key={t} value={t} data-testid={`slicer-issue-type-${t}`}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <div className={styles.checklist} data-testid="slicer-issue-type">
+          {ISSUE_TYPE_OPTIONS.map((t) => {
+            const checked = state.issueTypes.includes(t);
+            return (
+              <label key={t} className={styles.checkRow}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => handleIssueTypeToggle(t, e.target.checked)}
+                  data-testid={`slicer-issue-type-${t}`}
+                />
+                <span>{t}</span>
+              </label>
+            );
+          })}
+        </div>
       </div>
 
       <div className={styles.field}>
