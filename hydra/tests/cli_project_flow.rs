@@ -139,6 +139,123 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
 }
 
 #[tokio::test]
+async fn cli_projects_status_create_with_direct_flags() -> Result<()> {
+    let harness = harness::TestHarness::builder()
+        .with_repo("acme/cli-projects-direct-create")
+        .build()
+        .await?;
+    let user = harness.default_user();
+
+    // Create a project, then add a status using the new direct flags.
+    user.cli(&[
+        "projects",
+        "create",
+        "--key",
+        "engineering",
+        "--name",
+        "Engineering",
+    ])
+    .await?;
+    user.cli(&[
+        "projects",
+        "status",
+        "create",
+        "engineering",
+        "--key",
+        "review",
+        "--label",
+        "In Review",
+        "--color",
+        "#abcdef",
+        "--unblocks-parents",
+        "--position",
+        "3.5",
+        "--auto-archive-after-seconds",
+        "1209600",
+        "--prompt-path",
+        "/projects/engineering/statuses/review.md",
+        "--on-enter-assign-to",
+        "agents/swe",
+        "--on-enter-kill-sessions",
+    ])
+    .await?;
+
+    let fetched = user
+        .client()
+        .get_project(&ProjectRef::Key(
+            ProjectKey::try_new("engineering").unwrap(),
+        ))
+        .await?;
+    let review = fetched
+        .project
+        .statuses
+        .iter()
+        .find(|s| s.key == StatusKey::try_new("review").unwrap())
+        .expect("review status created");
+    assert_eq!(review.label, "In Review");
+    assert_eq!(review.color.as_ref(), "#abcdef");
+    assert!(review.unblocks_parents);
+    assert!(!review.unblocks_dependents);
+    assert_eq!(review.position, 3.5);
+    assert_eq!(review.auto_archive_after_seconds, Some(1_209_600));
+    assert_eq!(
+        review.prompt_path.as_deref(),
+        Some("/projects/engineering/statuses/review.md"),
+    );
+    let on_enter = review.on_enter.as_ref().expect("on_enter set");
+    match on_enter.assign_to.as_ref().expect("assign_to set") {
+        hydra_common::principal::Principal::Agent { name } => {
+            assert_eq!(name.as_str(), "swe");
+        }
+        other => panic!("expected agents/swe, got {other:?}"),
+    }
+    assert!(on_enter.kill_sessions);
+    assert!(!on_enter.clear_assignee);
+
+    // Update only the label via direct flags — other fields must
+    // round-trip unchanged.
+    user.cli(&[
+        "projects",
+        "status",
+        "update",
+        "engineering",
+        "review",
+        "--label",
+        "Reviewed",
+    ])
+    .await?;
+    let after_update = user
+        .client()
+        .get_project(&ProjectRef::Key(
+            ProjectKey::try_new("engineering").unwrap(),
+        ))
+        .await?;
+    let review_after = after_update
+        .project
+        .statuses
+        .iter()
+        .find(|s| s.key == StatusKey::try_new("review").unwrap())
+        .expect("review status still present");
+    assert_eq!(review_after.label, "Reviewed");
+    assert!(review_after.unblocks_parents);
+    assert_eq!(review_after.position, 3.5);
+    assert_eq!(review_after.auto_archive_after_seconds, Some(1_209_600));
+    assert_eq!(review_after.on_enter, review.on_enter);
+
+    // `update` with no flag should be rejected with a clear error.
+    let failure = user
+        .cli_expect_failure(&["projects", "status", "update", "engineering", "review"])
+        .await?;
+    assert!(
+        failure.stderr.contains("no updates specified"),
+        "expected 'no updates specified', got: {}",
+        failure.stderr
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn cli_issues_accepts_custom_status_with_project() -> Result<()> {
     let harness = harness::TestHarness::builder()
         .with_repo("acme/cli-projects-status")
