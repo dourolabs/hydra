@@ -13,6 +13,7 @@ use hydra_common::{
     api::v1::projects::{
         ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
     },
+    api::v1::relations::{CreateRelationRequest, ListRelationsRequest, RemoveRelationRequest},
     api::v1::triggers::{
         Action as TriggerAction, CreateIssueAction, Schedule as TriggerSchedule,
         SearchTriggersQuery, UpsertTriggerRequest,
@@ -26,6 +27,7 @@ use hydra_common::{
         IssueDependencyType, IssueInput, IssueType, SearchIssuesQuery, SubmitFormRequest,
         UpsertIssueRequest,
     },
+    labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
@@ -38,8 +40,8 @@ use hydra_common::{
     test_utils::status::status,
     users::{SearchUsersQuery, Username},
     whoami::ActorIdentity,
-    ConversationId, DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
-    SessionId, TriggerId,
+    ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId,
+    RelativeVersionNumber, RepoName, SessionId, TriggerId,
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -63,8 +65,12 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let project_id = ProjectId::new();
     let conversation_id = ConversationId::new();
     let trigger_id = TriggerId::new();
+    let label_id = LabelId::new();
     let repo_name = RepoName::new("dourolabs", "hydra")?;
     let username: Username = "future-user".into();
+    let label_object_id: HydraId = issue_id.clone().into();
+    let relation_source_id: HydraId = issue_id.clone().into();
+    let relation_target_id: HydraId = patch_id.clone().into();
 
     let status_log_json = forward_status_log_json(now);
     let job_record_body = forward_job_json(&job_id, status_log_json.clone());
@@ -147,6 +153,11 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let issue_id_for_submit_form = issue_id.clone();
     let patch_id_for_merge_check = patch_id.clone();
     let patch_id_for_asset = patch_id.clone();
+    let label_record_body = forward_label_json(&label_id, now);
+    let label_record_for_list = label_record_body.clone();
+    let relation_record_body = forward_relation_json(&relation_source_id, &relation_target_id, now);
+    let relation_record_for_list = relation_record_body.clone();
+    let label_object_path = format!("/v1/labels/{label_id}/objects/{label_object_id}");
     let merge_queue_path = format!(
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
@@ -928,6 +939,73 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    // GET /v1/labels — envelope with extra top-level field; embedded
+    // LabelRecord carries unknown fields that serde should silently drop.
+    let label_record_for_list_clone = label_record_for_list.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path("/v1/labels");
+        then.status(200).json_body(json!({
+            "labels": [label_record_for_list_clone.clone()],
+            "extra": "list-labels"
+        }));
+    });
+
+    // POST /v1/labels — UpsertLabelResponse envelope with extra fields.
+    let label_id_for_create = label_id.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path("/v1/labels");
+        then.status(200).json_body(json!({
+            "label_id": label_id_for_create,
+            "extra": "create-label"
+        }));
+    });
+
+    // PUT /v1/labels/:label_id/objects/:object_id — `()`-return; surface
+    // forward-compat by responding with a body the client never decodes.
+    let label_object_path_for_put = label_object_path.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(label_object_path_for_put.as_str());
+        then.status(200)
+            .json_body(json!({ "extra": "add-label-association" }));
+    });
+
+    // DELETE /v1/labels/:label_id/objects/:object_id — `()`-return.
+    let label_object_path_for_delete = label_object_path.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE)
+            .path(label_object_path_for_delete.as_str());
+        then.status(200)
+            .json_body(json!({ "extra": "remove-label-association" }));
+    });
+
+    // POST /v1/relations — returns `bool` based on HTTP status (201 ⇒ true).
+    // No body is decoded; emit a JSON envelope anyway to confirm the client
+    // tolerates an unexpected payload alongside the status check.
+    server.mock(|when, then| {
+        when.method(POST).path("/v1/relations");
+        then.status(201)
+            .json_body(json!({ "created": true, "extra": "create-relation" }));
+    });
+
+    // DELETE /v1/relations — decodes RemoveRelationResponse { removed: bool };
+    // include extra top-level field so serde must skip it.
+    server.mock(|when, then| {
+        when.method(DELETE).path("/v1/relations");
+        then.status(200)
+            .json_body(json!({ "removed": true, "extra": "remove-relation" }));
+    });
+
+    // GET /v1/relations — envelope with extra top-level field; embedded
+    // RelationResponse carries unknown fields.
+    let relation_record_for_list_clone = relation_record_for_list.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path("/v1/relations");
+        then.status(200).json_body(json!({
+            "relations": [relation_record_for_list_clone.clone()],
+            "extra": "list-relations"
+        }));
+    });
+
     // GET /v1/events — SSE stream. Includes one event with an unknown event
     // type (skipped by the SSE parser without erroring) plus a known
     // `heartbeat` event whose payload carries extra unknown fields.
@@ -1492,6 +1570,52 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let deleted_agent = client.delete_agent(agent_name).await?;
     assert_eq!(deleted_agent.agent.name, agent_name);
 
+    // Labels. Neither `Label` nor `LabelRecord` carries an enum with an
+    // `Unknown` variant, so the forward-compat surface is purely about
+    // serde silently dropping unknown top-level/inner fields.
+    let listed_labels = client.list_labels(&SearchLabelsQuery::default()).await?;
+    assert_eq!(listed_labels.labels.len(), 1);
+    assert_eq!(listed_labels.labels[0].label_id, label_id);
+
+    let upsert_label = UpsertLabelRequest::new(Label::new(
+        "future-label".to_string(),
+        Some("#abcdef".parse().unwrap()),
+    ));
+    let created_label = client.create_label(&upsert_label).await?;
+    assert_eq!(created_label.label_id, label_id);
+
+    client
+        .add_label_association(&label_id, &label_object_id)
+        .await?;
+    client
+        .remove_label_association(&label_id, &label_object_id)
+        .await?;
+
+    // Relations. `create_relation` returns its bool from the HTTP status
+    // (201 = newly created) without decoding the body; `remove_relation`
+    // decodes a `RemoveRelationResponse` envelope.
+    let create_relation_request = CreateRelationRequest {
+        source_id: relation_source_id.clone(),
+        target_id: relation_target_id.clone(),
+        rel_type: "future-rel".to_string(),
+    };
+    let created_relation = client.create_relation(&create_relation_request).await?;
+    assert!(created_relation);
+
+    let remove_relation_request = RemoveRelationRequest {
+        source_id: relation_source_id.clone(),
+        target_id: relation_target_id.clone(),
+        rel_type: "future-rel".to_string(),
+    };
+    let removed_relation = client.remove_relation(&remove_relation_request).await?;
+    assert!(removed_relation);
+
+    let listed_relations = client
+        .list_relations(&ListRelationsRequest::default())
+        .await?;
+    assert_eq!(listed_relations.relations.len(), 1);
+    assert_eq!(listed_relations.relations[0].source_id, relation_source_id);
+
     // Events (SSE). The mock emits one block with an unknown event type
     // (the SSE parser skips it without erroring) and one `heartbeat` block
     // whose payload carries an extra unknown field. Driving the stream to
@@ -1901,6 +2025,29 @@ fn forward_agent_json(agent_name: &str) -> Value {
             "future": "agent-record-field"
         },
         "extra": "agent-response"
+    })
+}
+
+fn forward_label_json(label_id: &LabelId, now: DateTime<Utc>) -> Value {
+    json!({
+        "label_id": label_id,
+        "name": "future-label",
+        "color": "#abcdef",
+        "recurse": true,
+        "hidden": false,
+        "created_at": now,
+        "updated_at": now,
+        "future": "label-field"
+    })
+}
+
+fn forward_relation_json(source_id: &HydraId, target_id: &HydraId, now: DateTime<Utc>) -> Value {
+    json!({
+        "source_id": source_id,
+        "target_id": target_id,
+        "rel_type": "future-rel",
+        "created_at": now,
+        "future": "relation-field"
     })
 }
 
