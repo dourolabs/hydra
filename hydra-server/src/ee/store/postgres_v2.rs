@@ -2690,7 +2690,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "i.updated_at",
+            "i.created_at",
             "i.id",
         )?;
 

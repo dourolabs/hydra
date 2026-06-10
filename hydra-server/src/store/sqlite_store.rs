@@ -2924,7 +2924,7 @@ impl ReadOnlyStore for SqliteStore {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "i.updated_at",
+            "i.created_at",
             "i.id",
         )?;
 
@@ -7563,6 +7563,92 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, id_a);
         assert_eq!(results[1].0, id_b);
+    }
+
+    /// Regression test for the pagination keyset/cursor divergence
+    /// documented in [[d-vxrcyor]] / [[i-zieqqufp]]. The route handler
+    /// encodes `next_cursor` from `versioned.timestamp` (= `row.created_at`),
+    /// so the store-level keyset and `ORDER BY` MUST also be anchored on
+    /// `created_at`. If they're not, a mass `UPDATE` that bumps
+    /// `updated_at` past `created_at` on the page boundary makes the
+    /// row-tuple predicate strand every row whose `updated_at >= cursor_ts`,
+    /// and page 2 returns empty.
+    ///
+    /// `MemoryStore` cannot reproduce this — its `apply_memory_pagination`
+    /// uses a single getter for both sides of the contract, so the
+    /// divergence is structurally impossible there. We exercise the real
+    /// SQLite store, with a raw `UPDATE` to simulate the
+    /// `20260530000000_add_assignee_principal_to_issues` backfill shape
+    /// (every row's `updated_at` tied to a single later timestamp `T`).
+    #[tokio::test]
+    async fn list_issues_pagination_survives_updated_at_past_created_at() {
+        let store = create_test_store().await;
+        let actor = ActorRef::test();
+
+        // Six issues with distinct `created_at` values (SQLite has
+        // ms-precision; sleep 5 ms between inserts to guarantee
+        // strict ordering).
+        let mut ids = Vec::new();
+        for _ in 0..6 {
+            let (id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            ids.push(id);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        // Simulate a post-insertion mass UPDATE (e.g. the
+        // `add_assignee_principal_to_issues` migration backfill) that
+        // bumps every row's `updated_at` to a single value `T` strictly
+        // greater than any of their `created_at`s. Pre-fix this is the
+        // shape that produced the empirical "47-row cluster all tied on
+        // updated_at" pattern in the RCA.
+        sqlx::query(
+            "UPDATE issues_v2 \
+             SET updated_at = strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', '+1 day') \
+             WHERE is_latest = 1",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        // Page 1: limit = 3, store returns up to limit + 1 rows.
+        let mut q1 = SearchIssuesQuery::default();
+        q1.limit = Some(3);
+        let page1 = store.list_issues(&q1).await.unwrap();
+        assert_eq!(page1.len(), 4, "store returns limit+1 to drive next_cursor");
+
+        // The route handler at `routes/issues.rs:300` builds the cursor
+        // from `versioned.timestamp` — which the store populates from
+        // `row.created_at`. Mirror that exactly.
+        let boundary = &page1[2];
+        let cursor = DecodedCursor {
+            timestamp: boundary.1.timestamp,
+            id: boundary.0.to_string(),
+        }
+        .encode();
+
+        // Page 2: pre-fix this returned an empty vec because every row
+        // had `updated_at = T > boundary.created_at`, so the predicate
+        // `(updated_at, id) < (T, boundary.id)` rejected the entire
+        // remainder.
+        let mut q2 = SearchIssuesQuery::default();
+        q2.limit = Some(3);
+        q2.cursor = Some(cursor);
+        let page2 = store.list_issues(&q2).await.unwrap();
+
+        // Union of page 1 (first `limit` rows) + page 2 must equal the
+        // full set with no duplicates and no missing rows.
+        let union: Vec<_> = page1[..3]
+            .iter()
+            .chain(page2.iter())
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(
+            union.len(),
+            6,
+            "page1[..3] + page2 must cover all 6 issues; pre-fix this was 3 (page 2 stranded)"
+        );
+        let unique: HashSet<_> = union.iter().collect();
+        assert_eq!(unique.len(), 6, "no row may appear on both pages");
     }
 
     #[tokio::test]
