@@ -42,7 +42,7 @@
 }
 
 .rowTool {
-  border-left-color: var(--c-amber, #d97706);
+  border-left-color: var(--s-progress);
 }
 
 .rowSystem {

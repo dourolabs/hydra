@@ -64,9 +64,9 @@
 
 .errorBlock {
   font-size: var(--font-size-sm);
-  color: var(--color-status-failed, #e74c3c);
+  color: var(--color-status-failed);
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--color-status-failed, #e74c3c);
+  border: 1px solid var(--color-status-failed);
   border-radius: var(--radius-sm);
   background: var(--color-bg-primary);
 }
