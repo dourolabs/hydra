@@ -15,6 +15,13 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--tx-fast);
+  /* Clip any intrinsic-width child (long status label, hyphenated title
+   * token, etc.) so it can't push the row past its parent's content box.
+   * Title and metaMono already truncate with ellipsis; this guards against
+   * a flex-shrink:0 meta chip surfacing a horizontal scrollbar on narrow
+   * mobile viewports. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .row:hover {
@@ -172,4 +179,16 @@
 .archived:focus-within .restoreButton {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Mobile: drop low-priority meta chrome so the title and dot read cleanly
+ * and the row never has to wrap a fifth+ flex-shrink:0 chip past the
+ * viewport. The status dot already carries the status signal (color), and
+ * the IssuesTable mobile group header carries the project signal — so the
+ * textual statusLabel and the projectChip are the redundant ones to drop. */
+@media (max-width: 768px) {
+  .statusLabel,
+  .projectChip {
+    display: none;
+  }
 }
