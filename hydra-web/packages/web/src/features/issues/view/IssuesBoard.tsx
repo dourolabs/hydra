@@ -29,6 +29,7 @@ import type {
   Project,
   ProjectId,
   ProjectRecord,
+  SessionSummaryRecord,
   StatusDefinition,
   StatusKey,
 } from "@hydra/api";
@@ -57,7 +58,8 @@ import {
   type IssueFilters,
 } from "../usePaginatedIssues";
 import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
-import { AgoTime } from "../../../components/Runtime/Runtime";
+import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
+import { useSessionDuration } from "../../dashboard/useSessionDuration";
 import { useProjectCollapseState } from "./useProjectCollapseState";
 import { RestoreIssueButton } from "../RestoreIssueButton";
 import styles from "./IssuesBoard.module.css";
@@ -207,7 +209,7 @@ export function IssuesBoard({
     return out;
   }, [projects, cells]);
 
-  const { neighborhoodMap } = usePageIssueTrees(
+  const { neighborhoodMap, sessionsByIssue } = usePageIssueTrees(
     hideIssues ? [] : boardIssuesUnion,
   );
 
@@ -550,6 +552,7 @@ export function IssuesBoard({
       perStatus,
       projectIssueCount,
       neighborhoodMap,
+      sessionsByIssue,
       hideIssues,
       collapsed: isCollapsed(project.project_id),
       onToggleCollapsed: onToggleCollapse,
@@ -665,6 +668,7 @@ interface ProjectSectionProps {
   perStatus: Map<string, BoardCellQuery> | undefined;
   projectIssueCount: number;
   neighborhoodMap: Map<string, IssueNeighborhood>;
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   hideIssues: boolean;
   collapsed: boolean;
   onToggleCollapsed: (projectId: string) => void;
@@ -752,6 +756,7 @@ function ProjectSection({
   perStatus,
   projectIssueCount,
   neighborhoodMap,
+  sessionsByIssue,
   hideIssues,
   collapsed,
   onToggleCollapsed,
@@ -863,6 +868,7 @@ function ProjectSection({
         status={status}
         cell={cell}
         neighborhoodMap={neighborhoodMap}
+        sessionsByIssue={sessionsByIssue}
         hideIssues={hideIssues}
         onCardClick={onCardClick}
         onGearClick={onGearClick}
@@ -1002,6 +1008,7 @@ interface BoardColumnProps {
   status: StatusDefinition;
   cell: BoardCellQuery | undefined;
   neighborhoodMap: Map<string, IssueNeighborhood>;
+  sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   hideIssues: boolean;
   onCardClick: (id: string) => void;
   onGearClick: (
@@ -1058,6 +1065,7 @@ function BoardColumn({
   status,
   cell,
   neighborhoodMap,
+  sessionsByIssue,
   hideIssues,
   onCardClick,
   onGearClick,
@@ -1237,6 +1245,7 @@ function BoardColumn({
                     size="md"
                   />
                 )}
+                <CardRuntime sessions={sessionsByIssue.get(id)} />
                 <AgoTime iso={rec.timestamp} />
                 <span className={styles.cardFootSpacer} />
                 {pill && (
@@ -1283,4 +1292,10 @@ function BoardColumn({
       </div>
     </div>
   );
+}
+
+function CardRuntime({ sessions }: { sessions: SessionSummaryRecord[] | undefined }) {
+  const { durationText, status } = useSessionDuration(sessions);
+  if (durationText === "—") return null;
+  return <RunTime value={durationText} status={status} />;
 }
