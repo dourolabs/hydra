@@ -46,6 +46,8 @@ Defined in `hydra-server/Cargo.toml`:
 | `enterprise` | Umbrella that turns on both `postgres` and `kubernetes` |
 | `test-utils` | Pulls in `httpmock` + `openssl` for integration test helpers |
 
+Downstream crates must select `features = ["test-utils"]` from `[dev-dependencies]` only, never `[dependencies]` — `test-utils` pulls in `httpmock` + `openssl`, neither of which should ship in a default (non-test) build.
+
 Default builds compile with none of these on. Guard any new `ee/` code with
 the matching `#[cfg(feature = "…")]` attribute, and re-check
 `cargo check --workspace` (defaults) before submitting — it must keep building
