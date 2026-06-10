@@ -289,6 +289,17 @@ async fn migration_roundtrip() -> Result<()> {
             "add_kill_sessions_to_default_terminal_statuses: verbatim body replay preserves on_enter",
         )?;
 
+    backfill_assignee_null_on_terminal_default_issues_nulls_targeted_rows(&pool)
+        .await
+        .context(
+            "backfill_assignee_null_on_terminal_default_issues: terminal default-project rows have assignees nulled; non-terminal and non-default rows untouched",
+        )?;
+    backfill_assignee_null_on_terminal_default_issues_is_idempotent(&pool)
+        .await
+        .context(
+            "backfill_assignee_null_on_terminal_default_issues: verbatim body replay leaves nulled rows unchanged",
+        )?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -849,6 +860,158 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
     assert!(!pm.try_get::<bool, _>("deleted")?);
     assert!(!pm.try_get::<bool, _>("is_default_conversation_agent")?);
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260621000000_backfill_assignee_null_on_terminal_default_issues. The
+// rollforward migration body has already nulled every preexisting
+// default-project terminal-status assignee by the time this test runs,
+// so the assertions seed fresh rows with non-NULL assignees in each of
+// the three terminal statuses (plus a non-terminal control row and a
+// terminal-status row in a non-default project that must stay
+// untouched), replay the migration body verbatim, and read back.
+// ---------------------------------------------------------------------------
+
+const BACKFILL_ASSIGNEE_BODY_PG: &str = "\
+    UPDATE metis.issues_v2 \
+    SET assignee = NULL, \
+        assignee_principal = NULL \
+    WHERE is_latest = TRUE \
+      AND project_id = 'j-defaul' \
+      AND status_sequence IN ( \
+          SELECT sequence \
+          FROM metis.statuses \
+          WHERE project_id = 'j-defaul' \
+            AND key IN ('closed', 'dropped', 'failed') \
+      ) \
+      AND (assignee IS NOT NULL OR assignee_principal IS NOT NULL)";
+
+async fn backfill_assignee_null_on_terminal_default_issues_nulls_targeted_rows(
+    pool: &PgPool,
+) -> Result<()> {
+    sqlx::raw_sql(
+        "INSERT INTO metis.issues_v2 \
+         (id, version_number, issue_type, description, creator, project_id, status_sequence, assignee, assignee_principal) \
+         VALUES \
+         ('i-bfacl', 1, 'task', 'closed with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM metis.statuses WHERE project_id='j-defaul' AND key='closed'), \
+            'agents/swe', '{\"Agent\":{\"name\":\"swe\"}}'::jsonb), \
+         ('i-bfadrp', 1, 'task', 'dropped with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM metis.statuses WHERE project_id='j-defaul' AND key='dropped'), \
+            'agents/pm', '{\"Agent\":{\"name\":\"pm\"}}'::jsonb), \
+         ('i-bfafld', 1, 'task', 'failed with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM metis.statuses WHERE project_id='j-defaul' AND key='failed'), \
+            'agents/reviewer', '{\"Agent\":{\"name\":\"reviewer\"}}'::jsonb), \
+         ('i-bfaopn', 1, 'task', 'open with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM metis.statuses WHERE project_id='j-defaul' AND key='open'), \
+            'agents/swe', '{\"Agent\":{\"name\":\"swe\"}}'::jsonb), \
+         ('i-bfacus', 1, 'task', 'shipped (terminal) in custom project', 'jayantk', 'j-cutsteady', \
+            (SELECT sequence FROM metis.statuses WHERE project_id='j-cutsteady' AND key='shipped'), \
+            'users/jayantk', '{\"User\":{\"name\":\"jayantk\"}}'::jsonb)",
+    )
+    .execute(pool)
+    .await
+    .context("seed backfill_assignee test rows")?;
+
+    sqlx::raw_sql(BACKFILL_ASSIGNEE_BODY_PG)
+        .execute(pool)
+        .await
+        .context("re-apply backfill_assignee migration body")?;
+
+    for id in ["i-bfacl", "i-bfadrp", "i-bfafld"] {
+        let row = sqlx::query(
+            "SELECT assignee, assignee_principal::text AS principal_text \
+             FROM metis.issues_v2 WHERE id = $1 AND is_latest = TRUE",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read backfill target {id}"))?;
+        let assignee: Option<String> = row.try_get("assignee")?;
+        let principal: Option<String> = row.try_get("principal_text")?;
+        if assignee.is_some() || principal.is_some() {
+            bail!(
+                "{id}: expected assignee and assignee_principal NULL post-backfill; \
+                 got assignee={assignee:?}, assignee_principal={principal:?}"
+            );
+        }
+    }
+
+    let row = sqlx::query(
+        "SELECT assignee FROM metis.issues_v2 WHERE id = 'i-bfaopn' AND is_latest = TRUE",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read non-terminal control row")?;
+    let assignee: Option<String> = row.try_get("assignee")?;
+    if assignee.as_deref() != Some("agents/swe") {
+        bail!("i-bfaopn (open default-project): expected assignee retained; got {assignee:?}");
+    }
+
+    let row = sqlx::query(
+        "SELECT assignee FROM metis.issues_v2 WHERE id = 'i-bfacus' AND is_latest = TRUE",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read custom-project control row")?;
+    let assignee: Option<String> = row.try_get("assignee")?;
+    if assignee.as_deref() != Some("users/jayantk") {
+        bail!("i-bfacus (terminal custom-project): expected assignee retained; got {assignee:?}");
+    }
+
+    Ok(())
+}
+
+async fn backfill_assignee_null_on_terminal_default_issues_is_idempotent(
+    pool: &PgPool,
+) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT id, assignee, assignee_principal::text AS principal_text \
+         FROM metis.issues_v2 WHERE is_latest = TRUE ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot issues_v2 before backfill_assignee idempotency rerun")?;
+
+    sqlx::raw_sql(BACKFILL_ASSIGNEE_BODY_PG)
+        .execute(pool)
+        .await
+        .context("re-apply backfill_assignee migration body for idempotency")?;
+
+    let snapshot_after = sqlx::query(
+        "SELECT id, assignee, assignee_principal::text AS principal_text \
+         FROM metis.issues_v2 WHERE is_latest = TRUE ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot issues_v2 after backfill_assignee idempotency rerun")?;
+
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across backfill_assignee rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_id: String = before.try_get("id")?;
+        let after_id: String = after.try_get("id")?;
+        let before_assignee: Option<String> = before.try_get("assignee")?;
+        let after_assignee: Option<String> = after.try_get("assignee")?;
+        let before_principal: Option<String> = before.try_get("principal_text")?;
+        let after_principal: Option<String> = after.try_get("principal_text")?;
+        if before_id != after_id
+            || before_assignee != after_assignee
+            || before_principal != after_principal
+        {
+            bail!(
+                "issues_v2.{before_id} changed across backfill_assignee rerun: \
+                 ({before_assignee:?}, {before_principal:?}) -> \
+                 ({after_assignee:?}, {after_principal:?})"
+            );
+        }
+    }
     Ok(())
 }
 

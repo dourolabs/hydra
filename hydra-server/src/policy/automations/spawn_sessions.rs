@@ -119,9 +119,11 @@ impl Automation for SpawnSessionsAutomation {
         // Scan all non-deleted issues for spawn readiness on every event.
         // This ensures that when a child issue transitions to a terminal state,
         // the parent issue is also evaluated for readiness.
-        // Don't filter by status; agent_queue::spawn_for_issue uses
-        // is_issue_ready/resolve_status to skip terminal issues, so the
-        // upstream filter would just re-encode legacy enum semantics here.
+        // Don't filter by status; terminal-status default-project issues
+        // carry `assignee = NULL` invariantly (cleared by
+        // `apply_status_on_enter` when the status sets
+        // `on_enter.clear_assignee = true`), so the per-agent queue
+        // skips them naturally.
         let target_issues: Vec<_> = {
             let query = SearchIssuesQuery::new(None, vec![], None, None, None);
             ctx.app_state
@@ -814,8 +816,13 @@ mod tests {
             .update_session(session_id, session.clone(), &ActorRef::test())
             .await?;
 
-        // Close the issue (terminal status)
-        let closed_issue = make_issue_with_status(agent_name, &repo_name, status("closed"));
+        // Close the issue (terminal status) and clear its assignee —
+        // mirrors what `apply_status_on_enter.clear_assignee` does on
+        // transition into a default-project terminal status. Direct
+        // `store.update_issue` bypasses the automation pipeline, so the
+        // test has to apply the invariant by hand.
+        let mut closed_issue = make_issue_with_status(agent_name, &repo_name, status("closed"));
+        closed_issue.assignee = None;
         handles
             .store
             .update_issue(&issue_id, closed_issue, &ActorRef::test())

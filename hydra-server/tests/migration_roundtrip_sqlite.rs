@@ -172,6 +172,9 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_kill_sessions_to_default_terminal_statuses_post_migration_state(&pool).await?;
     add_kill_sessions_to_default_terminal_statuses_is_idempotent(&pool).await?;
 
+    backfill_assignee_null_on_terminal_default_issues_nulls_targeted_rows(&pool).await?;
+    backfill_assignee_null_on_terminal_default_issues_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -851,6 +854,154 @@ async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> 
             "`agents.is_assignment_agent` re-appeared after drop-is-assignment-agent \
              idempotency rerun; the rebuild reapplied"
         );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260621000000_backfill_assignee_null_on_terminal_default_issues.
+// Sister to the postgres test of the same name in `migration_roundtrip.rs`.
+// Seeds fresh rows post-rollforward with non-NULL assignees in each
+// of the three terminal default-project statuses (plus a non-terminal
+// control row and a terminal-status row in a non-default project that
+// must stay untouched), replays the migration body verbatim, and reads
+// back to confirm the targeted rows were nulled and the rest survived.
+// ---------------------------------------------------------------------------
+
+const BACKFILL_ASSIGNEE_BODY_SQLITE: &str = "\
+    UPDATE issues_v2 \
+    SET assignee = NULL, \
+        assignee_principal = NULL \
+    WHERE is_latest = 1 \
+      AND project_id = 'j-defaul' \
+      AND status_sequence IN ( \
+          SELECT sequence \
+          FROM statuses \
+          WHERE project_id = 'j-defaul' \
+            AND key IN ('closed', 'dropped', 'failed') \
+      ) \
+      AND (assignee IS NOT NULL OR assignee_principal IS NOT NULL)";
+
+async fn backfill_assignee_null_on_terminal_default_issues_nulls_targeted_rows(
+    pool: &SqlitePool,
+) -> Result<()> {
+    sqlx::raw_sql(
+        "INSERT INTO issues_v2 \
+         (id, version_number, issue_type, description, creator, project_id, status_sequence, assignee, assignee_principal, is_latest) \
+         VALUES \
+         ('i-bfacl', 1, 'task', 'closed with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM statuses WHERE project_id='j-defaul' AND key='closed'), \
+            'agents/swe', '{\"Agent\":{\"name\":\"swe\"}}', 1), \
+         ('i-bfadrp', 1, 'task', 'dropped with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM statuses WHERE project_id='j-defaul' AND key='dropped'), \
+            'agents/pm', '{\"Agent\":{\"name\":\"pm\"}}', 1), \
+         ('i-bfafld', 1, 'task', 'failed with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM statuses WHERE project_id='j-defaul' AND key='failed'), \
+            'agents/reviewer', '{\"Agent\":{\"name\":\"reviewer\"}}', 1), \
+         ('i-bfaopn', 1, 'task', 'open with assignee', 'jayantk', 'j-defaul', \
+            (SELECT sequence FROM statuses WHERE project_id='j-defaul' AND key='open'), \
+            'agents/swe', '{\"Agent\":{\"name\":\"swe\"}}', 1), \
+         ('i-bfacus', 1, 'task', 'shipped (terminal) in custom project', 'jayantk', 'j-cutsteady', \
+            (SELECT sequence FROM statuses WHERE project_id='j-cutsteady' AND key='shipped'), \
+            'users/jayantk', '{\"User\":{\"name\":\"jayantk\"}}', 1)",
+    )
+    .execute(pool)
+    .await
+    .context("seed backfill_assignee test rows")?;
+
+    sqlx::raw_sql(BACKFILL_ASSIGNEE_BODY_SQLITE)
+        .execute(pool)
+        .await
+        .context("re-apply backfill_assignee migration body")?;
+
+    for id in ["i-bfacl", "i-bfadrp", "i-bfafld"] {
+        let row = sqlx::query(
+            "SELECT assignee, assignee_principal \
+             FROM issues_v2 WHERE id = ?1 AND is_latest = 1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read backfill target {id}"))?;
+        let assignee: Option<String> = row.try_get("assignee")?;
+        let principal: Option<String> = row.try_get("assignee_principal")?;
+        if assignee.is_some() || principal.is_some() {
+            bail!(
+                "{id}: expected assignee and assignee_principal NULL post-backfill; \
+                 got assignee={assignee:?}, assignee_principal={principal:?}"
+            );
+        }
+    }
+
+    let row = sqlx::query("SELECT assignee FROM issues_v2 WHERE id = 'i-bfaopn' AND is_latest = 1")
+        .fetch_one(pool)
+        .await
+        .context("read non-terminal control row")?;
+    let assignee: Option<String> = row.try_get("assignee")?;
+    if assignee.as_deref() != Some("agents/swe") {
+        bail!("i-bfaopn (open default-project): expected assignee retained; got {assignee:?}");
+    }
+
+    let row = sqlx::query("SELECT assignee FROM issues_v2 WHERE id = 'i-bfacus' AND is_latest = 1")
+        .fetch_one(pool)
+        .await
+        .context("read custom-project control row")?;
+    let assignee: Option<String> = row.try_get("assignee")?;
+    if assignee.as_deref() != Some("users/jayantk") {
+        bail!("i-bfacus (terminal custom-project): expected assignee retained; got {assignee:?}");
+    }
+
+    Ok(())
+}
+
+async fn backfill_assignee_null_on_terminal_default_issues_is_idempotent(
+    pool: &SqlitePool,
+) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT id, assignee, assignee_principal \
+         FROM issues_v2 WHERE is_latest = 1 ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot issues_v2 before backfill_assignee idempotency rerun")?;
+
+    sqlx::raw_sql(BACKFILL_ASSIGNEE_BODY_SQLITE)
+        .execute(pool)
+        .await
+        .context("re-apply backfill_assignee migration body for idempotency")?;
+
+    let snapshot_after = sqlx::query(
+        "SELECT id, assignee, assignee_principal \
+         FROM issues_v2 WHERE is_latest = 1 ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot issues_v2 after backfill_assignee idempotency rerun")?;
+
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across backfill_assignee rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_id: String = before.try_get("id")?;
+        let after_id: String = after.try_get("id")?;
+        let before_assignee: Option<String> = before.try_get("assignee")?;
+        let after_assignee: Option<String> = after.try_get("assignee")?;
+        let before_principal: Option<String> = before.try_get("assignee_principal")?;
+        let after_principal: Option<String> = after.try_get("assignee_principal")?;
+        if before_id != after_id
+            || before_assignee != after_assignee
+            || before_principal != after_principal
+        {
+            bail!(
+                "issues_v2.{before_id} changed across backfill_assignee rerun: \
+                 ({before_assignee:?}, {before_principal:?}) -> \
+                 ({after_assignee:?}, {after_principal:?})"
+            );
+        }
     }
     Ok(())
 }
