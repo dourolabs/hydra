@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type {
   TokenUsageCostPerAgentResponse,
+  TokenUsageOverTimeResponse,
   TokenUsageQuery,
   TokenUsageTopIssuesByCostResponse,
 } from "@hydra/api";
@@ -21,6 +22,8 @@ vi.mock("recharts", () => {
     Bar: Noop,
     ScatterChart: Passthrough,
     Scatter: Noop,
+    AreaChart: Passthrough,
+    Area: Noop,
     XAxis: Noop,
     YAxis: Noop,
     CartesianGrid: Noop,
@@ -54,9 +57,14 @@ const hookMocks = vi.hoisted(() => ({
 
 vi.mock("../../useTokenUsage", () => hookMocks);
 
-const { CostPerAgentChart, PerSessionCostScatterChart, TopIssuesByCostList } =
-  await import("../index");
+const {
+  CostOverTimeChart,
+  CostPerAgentChart,
+  PerSessionCostScatterChart,
+  TopIssuesByCostList,
+} = await import("../index");
 const { sessionJitter, agentDisplayName, formatUsd } = await import("../cost");
+const { tokenCostUsd } = await import("../pricing");
 
 const baseQuery: TokenUsageQuery = {
   from: "2026-05-10T00:00:00Z",
@@ -95,14 +103,33 @@ describe("cost helpers", () => {
     expect(agentDisplayName("swe")).toBe("swe");
   });
 
-  it("sessionJitter is deterministic and stays within [-0.4, +0.4]", () => {
+  it("sessionJitter is deterministic and stays within [-0.1, +0.1]", () => {
     for (const id of ["s-a", "s-b", "s-very-long-session-id-0001", "s-z9"]) {
       const a = sessionJitter(id);
       const b = sessionJitter(id);
       expect(a).toBe(b);
-      expect(a).toBeGreaterThanOrEqual(-0.4);
-      expect(a).toBeLessThanOrEqual(0.4);
+      expect(a).toBeGreaterThanOrEqual(-0.1);
+      expect(a).toBeLessThanOrEqual(0.1);
     }
+  });
+});
+
+describe("tokenCostUsd", () => {
+  // Pinned fixture mirroring `pricing.rs::pinned_cost_for_known_mix_matches_opus_4_8_rates`.
+  // If frontend or backend rates drift, this test catches it.
+  it("matches the Opus 4.8 rates from hydra-server pricing.rs", () => {
+    const inputUsd = tokenCostUsd("input_tokens", 1_000_000);
+    const outputUsd = tokenCostUsd("output_tokens", 500_000);
+    const cacheReadUsd = tokenCostUsd("cache_read_input_tokens", 100_000);
+    const cacheWriteUsd = tokenCostUsd("cache_creation_input_tokens", 50_000);
+
+    expect(inputUsd).toBeCloseTo(5.0, 9);
+    expect(outputUsd).toBeCloseTo(12.5, 9);
+    expect(cacheReadUsd).toBeCloseTo(0.05, 9);
+    expect(cacheWriteUsd).toBeCloseTo(0.3125, 9);
+
+    const total = inputUsd + outputUsd + cacheReadUsd + cacheWriteUsd;
+    expect(total).toBeCloseTo(17.8625, 9);
   });
 });
 
@@ -179,6 +206,59 @@ describe("PerSessionCostScatterChart", () => {
     );
     render(<PerSessionCostScatterChart query={baseQuery} />);
     expect(screen.getByTestId("per-session-cost-content")).toBeDefined();
+  });
+});
+
+describe("CostOverTimeChart", () => {
+  it("renders the empty state when buckets is empty", () => {
+    hookMocks.useTokenUsageOverTime.mockReturnValue(
+      mkResult<TokenUsageOverTimeResponse>({
+        data: { buckets: [] },
+      }),
+    );
+    render(
+      <CostOverTimeChart
+        query={{
+          from: baseQuery.from,
+          to: baseQuery.to,
+          bucket: "day",
+          repo_name: null,
+          creator: null,
+        }}
+      />,
+    );
+    expect(screen.getByText("No data in this window")).toBeDefined();
+    expect(screen.queryByTestId("cost-over-time-content")).toBeNull();
+  });
+
+  it("renders the content wrapper when buckets are present", () => {
+    hookMocks.useTokenUsageOverTime.mockReturnValue(
+      mkResult<TokenUsageOverTimeResponse>({
+        data: {
+          buckets: [
+            {
+              bucket_start: "2026-06-09T00:00:00Z",
+              input_tokens: BigInt(1_000_000),
+              output_tokens: BigInt(500_000),
+              cache_read_input_tokens: BigInt(100_000),
+              cache_creation_input_tokens: BigInt(50_000),
+            },
+          ],
+        },
+      }),
+    );
+    render(
+      <CostOverTimeChart
+        query={{
+          from: baseQuery.from,
+          to: baseQuery.to,
+          bucket: "day",
+          repo_name: null,
+          creator: null,
+        }}
+      />,
+    );
+    expect(screen.getByTestId("cost-over-time-content")).toBeDefined();
   });
 });
 

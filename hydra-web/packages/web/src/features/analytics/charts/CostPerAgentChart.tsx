@@ -32,7 +32,7 @@ export function CostPerAgentChart({ query }: CostPerAgentChartProps) {
   const result = useTokenUsageCostPerAgent(query);
   return (
     <ChartCard
-      title="Cost per agent"
+      title="Total spend per agent"
       testId="chart-cost-per-agent"
       isLoading={result.isLoading}
       error={result.error}

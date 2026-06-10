@@ -20,8 +20,8 @@ export function agentDisplayName(name: AgentName | null): string {
 }
 
 /**
- * Deterministic jitter in `[-0.4, +0.4]` from a session id. Used by the
- * per-session scatter so points within an agent column spread out without
+ * Deterministic jitter in `[-0.1, +0.1]` from a session id. Used by the
+ * per-session scatter so points within an agent row spread out without
  * changing across re-renders or Playwright runs.
  */
 export function sessionJitter(sessionId: string): number {
@@ -30,5 +30,5 @@ export function sessionJitter(sessionId: string): number {
     hash = (hash * 31 + sessionId.charCodeAt(i)) | 0;
   }
   const normalized = ((hash % 1000) + 1000) % 1000;
-  return (normalized / 1000) * 0.8 - 0.4;
+  return (normalized / 1000) * 0.2 - 0.1;
 }
