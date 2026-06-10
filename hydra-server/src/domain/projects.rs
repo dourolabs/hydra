@@ -17,8 +17,7 @@
 //! Default status key is `open`. The terminal statuses
 //! (`closed`/`dropped`/`failed`) carry `on_enter.clear_assignee = true`
 //! so their `apply_status_on_enter` automation unsets the issue's
-//! assignee — the new explicit hook that replaces the `unblocks_parents`
-//! proxy in `is_issue_ready` (cutover lands in a follow-up PR).
+//! assignee.
 
 use hydra_common::ProjectId;
 use hydra_common::Rgb;
