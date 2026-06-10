@@ -30,6 +30,7 @@ const TONE_BY_STATUS: Record<BadgeStatus, PreviewCardTone> = {
   "conv-active": "in-progress",
   "conv-idle": "open",
   "conv-closed": "closed",
+  archived: "neutral",
   unknown: "neutral",
 };
 
