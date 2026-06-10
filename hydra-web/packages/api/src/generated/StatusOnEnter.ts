@@ -9,13 +9,17 @@ import type { Principal } from "./Principal";
  * then flow through the existing assignee-driven spawn dispatcher); when
  * `attach_form` is set, `issue.form` is replaced wholesale with that
  * form (an issue holds at most one form at a time); when
- * `clear_assignee` is `true`, `issue.assignee` is unset. `assign_to` and
- * `clear_assignee` are mutually exclusive — set both and
- * [`StatusOnEnter::validate`] rejects the config. `None` (or `false`) on
- * a field leaves the corresponding field untouched.
+ * `clear_assignee` is `true`, `issue.assignee` is unset; when
+ * `kill_sessions` is `true`, any `Created`/`Pending`/`Running` sessions
+ * attached to the issue are killed. `assign_to` and `clear_assignee`
+ * are mutually exclusive — set both and [`StatusOnEnter::validate`]
+ * rejects the config; `kill_sessions` is independent of either.
+ * `None` (or `false`) on a field leaves the corresponding field
+ * untouched.
  */
 export type StatusOnEnter = {
   assign_to?: Principal | null;
   attach_form?: DocumentPath | null;
   clear_assignee?: boolean;
+  kill_sessions?: boolean;
 };

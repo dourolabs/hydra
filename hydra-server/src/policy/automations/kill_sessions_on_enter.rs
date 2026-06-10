@@ -5,26 +5,24 @@ use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::Status;
 
-const AUTOMATION_NAME: &str = "kill_tasks_on_issue_failure";
+const AUTOMATION_NAME: &str = "kill_sessions_on_enter";
 
-/// When an issue's status changes to a terminal status, kill all active
-/// tasks (Created/Pending/Running) for that issue. "Terminal" is data-driven
-/// via `StatusDefinition::unblocks_parents`, which covers the legacy
-/// Dropped/Failed pair plus any per-project status that opts in (and
-/// benignly fires on Closed, where the task has already exited).
+/// When an issue transitions into a status whose
+/// `on_enter.kill_sessions = true`, kill any `Created`/`Pending`/`Running`
+/// sessions attached to the issue.
 ///
 /// This automation should run after `cascade_issue_status` so that cascaded
-/// child/dependent issues also get their tasks killed via their own update events.
-pub struct KillTasksOnFailureAutomation;
+/// child/dependent issues also get their sessions killed via their own update events.
+pub struct KillSessionsOnEnterAutomation;
 
-impl KillTasksOnFailureAutomation {
+impl KillSessionsOnEnterAutomation {
     pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         Ok(Self)
     }
 }
 
 #[async_trait]
-impl Automation for KillTasksOnFailureAutomation {
+impl Automation for KillSessionsOnEnterAutomation {
     fn name(&self) -> &str {
         AUTOMATION_NAME
     }
@@ -59,7 +57,7 @@ impl Automation for KillTasksOnFailureAutomation {
             "automation invoked",
         );
 
-        // Only trigger when the status changed to a terminal status.
+        // Only trigger when the status actually changes.
         if old.status == new.status {
             return Ok(());
         }
@@ -71,51 +69,55 @@ impl Automation for KillTasksOnFailureAutomation {
                     issue_id = %issue_id,
                     status = %new.status,
                     error = %err,
-                    "kill_tasks_on_issue_failure: failed to resolve new status; skipping"
+                    "kill_sessions_on_enter: failed to resolve new status; skipping"
                 );
                 return Ok(());
             }
         };
-        if !resolved.unblocks_parents {
+        if !resolved
+            .on_enter
+            .as_ref()
+            .is_some_and(|oe| oe.kill_sessions)
+        {
             return Ok(());
         }
 
         let store = ctx.store;
-        let task_ids = store.get_sessions_for_issue(issue_id).await.map_err(|e| {
+        let session_ids = store.get_sessions_for_issue(issue_id).await.map_err(|e| {
             AutomationError::Other(anyhow::anyhow!(
-                "failed to get tasks for issue {issue_id}: {e}"
+                "failed to get sessions for issue {issue_id}: {e}"
             ))
         })?;
 
         let mut killed = 0usize;
-        for task_id in task_ids {
-            let task = store.get_session(&task_id, false).await.map_err(|e| {
-                AutomationError::Other(anyhow::anyhow!("failed to fetch task {task_id}: {e}"))
+        for session_id in session_ids {
+            let session = store.get_session(&session_id, false).await.map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!("failed to fetch session {session_id}: {e}"))
             })?;
 
             if matches!(
-                task.item.status,
+                session.item.status,
                 Status::Created | Status::Pending | Status::Running
             ) {
-                match ctx.app_state.job_engine.kill_job(&task_id).await {
+                match ctx.app_state.job_engine.kill_job(&session_id).await {
                     Ok(()) => {
                         killed += 1;
                         tracing::info!(
                             issue_id = %issue_id,
-                            task_id = %task_id,
-                            "killed task for dropped/failed issue"
+                            session_id = %session_id,
+                            "killed session on status entry"
                         );
                     }
                     Err(crate::job_engine::JobEngineError::NotFound(_)) => {
                         tracing::info!(
                             issue_id = %issue_id,
-                            task_id = %task_id,
-                            "task already missing while killing for dropped/failed issue"
+                            session_id = %session_id,
+                            "session already missing while killing on status entry"
                         );
                     }
                     Err(e) => {
                         return Err(AutomationError::Other(anyhow::anyhow!(
-                            "failed to kill task {task_id} for issue {issue_id}: {e}"
+                            "failed to kill session {session_id} for issue {issue_id}: {e}"
                         )));
                     }
                 }
@@ -126,7 +128,7 @@ impl Automation for KillTasksOnFailureAutomation {
             tracing::info!(
                 issue_id = %issue_id,
                 killed,
-                "kill_tasks_on_issue_failure completed"
+                "kill_sessions_on_enter completed"
             );
         }
 
@@ -234,7 +236,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillTasksOnFailureAutomation;
+        let automation = KillSessionsOnEnterAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &handles.state,
@@ -272,7 +274,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillTasksOnFailureAutomation;
+        let automation = KillSessionsOnEnterAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &handles.state,

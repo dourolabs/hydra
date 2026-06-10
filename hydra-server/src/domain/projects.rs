@@ -6,18 +6,20 @@
 //!
 //! Flag table for the seeded statuses:
 //!
-//! | key           | unblocks_parents | unblocks_dependents | cascades_to_children | on_enter            |
-//! |---------------|------------------|---------------------|----------------------|---------------------|
-//! | `open`        | false            | false               | false                | none                |
-//! | `in-progress` | false            | false               | false                | none                |
-//! | `closed`      | true             | true                | false                | clear_assignee=true |
-//! | `dropped`     | true             | false               | true                 | clear_assignee=true |
-//! | `failed`      | true             | false               | true                 | clear_assignee=true |
+//! | key           | unblocks_parents | unblocks_dependents | cascades_to_children | on_enter                                |
+//! |---------------|------------------|---------------------|----------------------|-----------------------------------------|
+//! | `open`        | false            | false               | false                | none                                    |
+//! | `in-progress` | false            | false               | false                | none                                    |
+//! | `closed`      | true             | true                | false                | clear_assignee=true, kill_sessions=true |
+//! | `dropped`     | true             | false               | true                 | clear_assignee=true, kill_sessions=true |
+//! | `failed`      | true             | false               | true                 | clear_assignee=true, kill_sessions=true |
 //!
 //! Default status key is `open`. The terminal statuses
 //! (`closed`/`dropped`/`failed`) carry `on_enter.clear_assignee = true`
 //! so their `apply_status_on_enter` automation unsets the issue's
-//! assignee.
+//! assignee, and `on_enter.kill_sessions = true` so the
+//! `kill_sessions_on_enter` automation tears down any active sessions
+//! attached to the issue.
 
 use hydra_common::ProjectId;
 use hydra_common::Rgb;
@@ -95,7 +97,7 @@ pub fn default_project_seed() -> Project {
             true,
             true,
             false,
-            Some(clear_assignee_on_enter()),
+            Some(terminal_on_enter()),
         ),
         StatusDefinition::new(
             status_key("dropped"),
@@ -104,7 +106,7 @@ pub fn default_project_seed() -> Project {
             true,
             false,
             true,
-            Some(clear_assignee_on_enter()),
+            Some(terminal_on_enter()),
         ),
         StatusDefinition::new(
             status_key("failed"),
@@ -113,7 +115,7 @@ pub fn default_project_seed() -> Project {
             true,
             false,
             true,
-            Some(clear_assignee_on_enter()),
+            Some(terminal_on_enter()),
         ),
     ];
 
@@ -165,14 +167,14 @@ fn rgb(value: &str) -> Rgb {
     value.parse().expect("default project colors are valid hex")
 }
 
-/// Build a `StatusOnEnter` whose only effect is to unset the issue's
-/// assignee. Used to seed the default project's terminal statuses
-/// (`closed`, `dropped`, `failed`) so terminal-state issues stop
-/// carrying an assignee that the spawn dispatcher would otherwise pick
-/// back up.
-fn clear_assignee_on_enter() -> StatusOnEnter {
+/// Build the `StatusOnEnter` shared by the default project's terminal
+/// statuses (`closed`, `dropped`, `failed`): unset the issue's assignee
+/// so the spawn dispatcher does not pick it back up, and kill any
+/// `Created`/`Pending`/`Running` sessions still attached to the issue.
+fn terminal_on_enter() -> StatusOnEnter {
     let mut on_enter = StatusOnEnter::new(None, None);
     on_enter.clear_assignee = true;
+    on_enter.kill_sessions = true;
     on_enter
 }
 
@@ -223,34 +225,75 @@ mod tests {
     /// here is a behavior change for every default project — update with intent.
     #[test]
     fn default_project_seed_flags_match_design_table() {
+        struct Expected {
+            key: &'static str,
+            unblocks_parents: bool,
+            unblocks_dependents: bool,
+            cascades_to_children: bool,
+            // `None` ⇒ `on_enter` must be `None`. `Some((clear, kill))`
+            // ⇒ `on_enter` must be `Some` with the given flag values
+            // and `assign_to`/`attach_form` both `None`.
+            on_enter: Option<(bool, bool)>,
+        }
         let project = default_project_seed();
-        // (key, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter_clear_assignee)
-        // `on_enter_clear_assignee = None` means `on_enter` must be `None`;
-        // `Some(true)` means `on_enter` must be `Some` with `clear_assignee = true`.
-        let cases: &[(&str, bool, bool, bool, Option<bool>)] = &[
-            ("open", false, false, false, None),
-            ("in-progress", false, false, false, None),
-            ("closed", true, true, false, Some(true)),
-            ("dropped", true, false, true, Some(true)),
-            ("failed", true, false, true, Some(true)),
+        let cases: &[Expected] = &[
+            Expected {
+                key: "open",
+                unblocks_parents: false,
+                unblocks_dependents: false,
+                cascades_to_children: false,
+                on_enter: None,
+            },
+            Expected {
+                key: "in-progress",
+                unblocks_parents: false,
+                unblocks_dependents: false,
+                cascades_to_children: false,
+                on_enter: None,
+            },
+            Expected {
+                key: "closed",
+                unblocks_parents: true,
+                unblocks_dependents: true,
+                cascades_to_children: false,
+                on_enter: Some((true, true)),
+            },
+            Expected {
+                key: "dropped",
+                unblocks_parents: true,
+                unblocks_dependents: false,
+                cascades_to_children: true,
+                on_enter: Some((true, true)),
+            },
+            Expected {
+                key: "failed",
+                unblocks_parents: true,
+                unblocks_dependents: false,
+                cascades_to_children: true,
+                on_enter: Some((true, true)),
+            },
         ];
-        for (k, ub_p, ub_d, casc, on_enter_expect) in cases {
-            let key = StatusKey::try_new(*k).unwrap();
+        for case in cases {
+            let k = case.key;
+            let key = StatusKey::try_new(k).unwrap();
             let def = project
                 .find_status(&key)
                 .unwrap_or_else(|| panic!("missing status {k}"));
-            assert_eq!(def.unblocks_parents, *ub_p, "unblocks_parents for {k}");
             assert_eq!(
-                def.unblocks_dependents, *ub_d,
+                def.unblocks_parents, case.unblocks_parents,
+                "unblocks_parents for {k}"
+            );
+            assert_eq!(
+                def.unblocks_dependents, case.unblocks_dependents,
                 "unblocks_dependents for {k}"
             );
             assert_eq!(
-                def.cascades_to_children, *casc,
+                def.cascades_to_children, case.cascades_to_children,
                 "cascades_to_children for {k}"
             );
-            match on_enter_expect {
+            match case.on_enter {
                 None => assert!(def.on_enter.is_none(), "on_enter must be None for {k}"),
-                Some(want_clear) => {
+                Some((want_clear, want_kill)) => {
                     let on_enter = def
                         .on_enter
                         .as_ref()
@@ -264,8 +307,12 @@ mod tests {
                         "on_enter.attach_form must be None for {k}"
                     );
                     assert_eq!(
-                        on_enter.clear_assignee, *want_clear,
+                        on_enter.clear_assignee, want_clear,
                         "on_enter.clear_assignee for {k}"
+                    );
+                    assert_eq!(
+                        on_enter.kill_sessions, want_kill,
+                        "on_enter.kill_sessions for {k}"
                     );
                 }
             }

@@ -169,6 +169,9 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     drop_is_assignment_agent_preserves_rows(&pool).await?;
     drop_is_assignment_agent_migration_is_idempotent(&pool).await?;
 
+    add_kill_sessions_to_default_terminal_statuses_post_migration_state(&pool).await?;
+    add_kill_sessions_to_default_terminal_statuses_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -648,6 +651,115 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &SqlitePool) -> Result
             bail!(
                 "expected `agents.{required}` to remain present post-drop-is-assignment-agent; \
                  the rebuild lost it"
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260620000000_add_kill_sessions_to_default_terminal_statuses. Seeds
+// `on_enter.kill_sessions = true` on the three terminal default-project
+// statuses (`closed`, `dropped`, `failed`) without disturbing
+// `on_enter` on any other row, and preserves the `clear_assignee = true`
+// key seeded by the prior 20260618 migration. Idempotent under rerun.
+// ---------------------------------------------------------------------------
+
+async fn add_kill_sessions_to_default_terminal_statuses_post_migration_state(
+    pool: &SqlitePool,
+) -> Result<()> {
+    for key in ["closed", "dropped", "failed"] {
+        let row = sqlx::query(
+            "SELECT on_enter FROM statuses \
+             WHERE project_id = 'j-defaul' AND key = ?1",
+        )
+        .bind(key)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read on_enter for j-defaul.{key}"))?;
+        let on_enter_text: Option<String> = row.try_get("on_enter")?;
+        let on_enter_text = on_enter_text
+            .ok_or_else(|| anyhow::anyhow!("j-defaul.{key}: expected on_enter NOT NULL"))?;
+        let parsed: serde_json::Value = serde_json::from_str(&on_enter_text)
+            .with_context(|| format!("decode on_enter JSON for j-defaul.{key}"))?;
+        if parsed.get("kill_sessions") != Some(&serde_json::json!(true)) {
+            bail!("j-defaul.{key}: expected on_enter.kill_sessions=true; got {parsed}");
+        }
+        // The prior 20260618 migration also sets clear_assignee=true on
+        // these rows — the kill_sessions migration must preserve it.
+        if parsed.get("clear_assignee") != Some(&serde_json::json!(true)) {
+            bail!(
+                "j-defaul.{key}: expected on_enter.clear_assignee=true to be preserved; got {parsed}"
+            );
+        }
+    }
+
+    for key in ["open", "in-progress"] {
+        let row = sqlx::query(
+            "SELECT on_enter FROM statuses \
+             WHERE project_id = 'j-defaul' AND key = ?1",
+        )
+        .bind(key)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read on_enter for j-defaul.{key}"))?;
+        let on_enter_text: Option<String> = row.try_get("on_enter")?;
+        if on_enter_text.is_some() {
+            bail!("j-defaul.{key}: expected on_enter=NULL post-migration; got {on_enter_text:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn add_kill_sessions_to_default_terminal_statuses_is_idempotent(
+    pool: &SqlitePool,
+) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT key, on_enter FROM statuses WHERE project_id = 'j-defaul' \
+         ORDER BY key",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot j-defaul on_enter before kill_sessions idempotency rerun")?;
+
+    sqlx::raw_sql(
+        "UPDATE statuses \
+         SET on_enter = json_set( \
+             COALESCE(on_enter, '{}'), \
+             '$.kill_sessions', \
+             json('true') \
+         ) \
+         WHERE project_id = 'j-defaul' \
+           AND key IN ('closed', 'dropped', 'failed')",
+    )
+    .execute(pool)
+    .await
+    .context("re-apply kill_sessions seed migration body verbatim")?;
+
+    let snapshot_after = sqlx::query(
+        "SELECT key, on_enter FROM statuses WHERE project_id = 'j-defaul' \
+         ORDER BY key",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot j-defaul on_enter after kill_sessions idempotency rerun")?;
+
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across kill_sessions rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_key: String = before.try_get("key")?;
+        let after_key: String = after.try_get("key")?;
+        let before_on_enter: Option<String> = before.try_get("on_enter")?;
+        let after_on_enter: Option<String> = after.try_get("on_enter")?;
+        if before_key != after_key || before_on_enter != after_on_enter {
+            bail!(
+                "j-defaul.{before_key} changed across kill_sessions rerun: \
+                 {before_on_enter:?} -> {after_on_enter:?}"
             );
         }
     }
@@ -2446,8 +2558,10 @@ async fn create_statuses_migration_backfills_default_seed(pool: &SqlitePool) -> 
         }
         // The HEAD-state of `on_enter` reflects the
         // 20260618000000_add_clear_assignee_to_default_terminal_statuses
-        // seed migration: terminal rows carry `{ clear_assignee: true }`;
-        // non-terminal rows stay NULL. Compare against the expected
+        // and 20260620000000_add_kill_sessions_to_default_terminal_statuses
+        // seed migrations: terminal rows carry
+        // `{ clear_assignee: true, kill_sessions: true }`; non-terminal
+        // rows stay NULL. Compare against the expected
         // `default_project_seed()` shape rather than asserting NULL
         // outright.
         let expected_on_enter_json = expected
