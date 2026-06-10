@@ -8,8 +8,8 @@
 
 use crate::app::AppState;
 use crate::domain::analytics::{
-    PatchAnalyticsFilters, compute_patches_in_flight_over_time, compute_patches_over_time,
-    compute_patches_terminal_mix, compute_patches_time_to_merge, fetch_patch_histories,
+    compute_patches_in_flight_over_time, compute_patches_over_time, compute_patches_terminal_mix,
+    compute_patches_time_to_merge, fetch_patch_histories,
 };
 use crate::store::StoreError;
 use anyhow::anyhow;
@@ -26,22 +26,14 @@ use hydra_common::api::v1::{
 };
 use tracing::{error, info};
 
-/// Coerce a parsed query into the analytics-layer filter struct and
-/// validate the time window. `[from, to)` is required to be a strict
-/// forward range; `from >= to` yields 400.
-fn validate_query(
-    query: &PatchesThroughputQuery,
-) -> Result<(BucketGranularity, PatchAnalyticsFilters), ApiError> {
+/// Validate the time window and resolve the bucket default.
+/// `[from, to)` is required to be a strict forward range; `from >= to`
+/// yields 400.
+fn validate_query(query: &PatchesThroughputQuery) -> Result<BucketGranularity, ApiError> {
     if query.from >= query.to {
         return Err(ApiError::bad_request("'from' must be strictly before 'to'"));
     }
-    let bucket = query.bucket.unwrap_or_default();
-    let filters = PatchAnalyticsFilters {
-        repo_name: query.repo_name.clone().filter(|s| !s.trim().is_empty()),
-        creator: query.creator.clone().filter(|s| !s.trim().is_empty()),
-        status: query.status.clone(),
-    };
-    Ok((bucket, filters))
+    Ok(query.bucket.unwrap_or_default())
 }
 
 fn map_store_error(err: StoreError) -> ApiError {
@@ -60,8 +52,8 @@ pub async fn patches_over_time(
         bucket = ?query.bucket,
         "analytics.patches_over_time invoked"
     );
-    let (bucket, filters) = validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &filters)
+    let bucket = validate_query(&query)?;
+    let histories = fetch_patch_histories(state.store(), &query)
         .await
         .map_err(map_store_error)?;
     let resp = compute_patches_over_time(&histories, query.from, query.to, bucket);
@@ -78,8 +70,8 @@ pub async fn patches_terminal_mix(
         to = %query.to,
         "analytics.patches_terminal_mix invoked"
     );
-    let (_, filters) = validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &filters)
+    validate_query(&query)?;
+    let histories = fetch_patch_histories(state.store(), &query)
         .await
         .map_err(map_store_error)?;
     let resp = compute_patches_terminal_mix(&histories, query.from, query.to);
@@ -96,8 +88,8 @@ pub async fn patches_time_to_merge(
         to = %query.to,
         "analytics.patches_time_to_merge invoked"
     );
-    let (_, filters) = validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &filters)
+    validate_query(&query)?;
+    let histories = fetch_patch_histories(state.store(), &query)
         .await
         .map_err(map_store_error)?;
     let resp = compute_patches_time_to_merge(&histories, query.from, query.to);
@@ -115,8 +107,8 @@ pub async fn patches_in_flight_over_time(
         bucket = ?query.bucket,
         "analytics.patches_in_flight_over_time invoked"
     );
-    let (bucket, filters) = validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &filters)
+    let bucket = validate_query(&query)?;
+    let histories = fetch_patch_histories(state.store(), &query)
         .await
         .map_err(map_store_error)?;
     let resp = compute_patches_in_flight_over_time(&histories, query.from, query.to, bucket);

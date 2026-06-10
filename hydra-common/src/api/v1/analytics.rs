@@ -21,15 +21,6 @@ pub enum BucketGranularity {
     Week,
 }
 
-impl BucketGranularity {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            BucketGranularity::Day => "day",
-            BucketGranularity::Week => "week",
-        }
-    }
-}
-
 /// Common query parameters for `/v1/analytics/throughput/patches/...`.
 ///
 /// `from`/`to` are required; the rest are optional filters. `bucket`

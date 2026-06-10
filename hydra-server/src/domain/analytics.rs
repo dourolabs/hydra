@@ -12,10 +12,10 @@ use crate::store::{ReadOnlyStore, StoreError};
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use hydra_common::api::v1::analytics::{
     BucketGranularity, PatchInFlightBucket, PatchOverTimeBucket, PatchesInFlightOverTimeResponse,
-    PatchesOverTimeResponse, PatchesTerminalMixResponse, PatchesTimeToMergeResponse,
-    TimeToMergeBin,
+    PatchesOverTimeResponse, PatchesTerminalMixResponse, PatchesThroughputQuery,
+    PatchesTimeToMergeResponse, TimeToMergeBin,
 };
-use hydra_common::api::v1::patches::{PatchStatus as ApiPatchStatus, SearchPatchesQuery};
+use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::{PatchId, Versioned};
 
 /// One patch and its full ascending-version-order history. Aggregation
@@ -30,15 +30,6 @@ pub struct PatchHistory {
 impl PatchHistory {
     pub fn new(patch_id: PatchId, versions: Vec<Versioned<Patch>>) -> Self {
         Self { patch_id, versions }
-    }
-
-    /// Latest stored version. Histories from the store are always
-    /// non-empty (add_patch always creates v1), so the unwrap is the
-    /// invariant — callers that build histories by hand must keep it.
-    fn latest(&self) -> &Versioned<Patch> {
-        self.versions
-            .last()
-            .expect("patch history must contain at least one version")
     }
 
     /// Creation timestamp (first version's `timestamp`).
@@ -81,35 +72,24 @@ impl PatchHistory {
     }
 }
 
-/// Filters applied to the candidate patch set BEFORE history is walked.
-///
-/// These mirror the `/v1/patches` query semantics so callers get
-/// consistent results between the patch list and the analytics charts.
-/// `repo_name` and `creator` map to the matching `SearchPatchesQuery`
-/// filters; `status` filters by the latest version's status.
-#[derive(Debug, Default, Clone)]
-pub struct PatchAnalyticsFilters {
-    pub repo_name: Option<String>,
-    pub creator: Option<String>,
-    pub status: Vec<ApiPatchStatus>,
-}
-
-/// Fetch the patches matching `filters` and their full version
-/// histories. Deleted patches and `is_automatic_backup` patches are
-/// excluded — both checks run against the latest stored version.
+/// Fetch the patches matching the throughput-query filters and their
+/// full version histories. Deleted patches and `is_automatic_backup`
+/// patches are excluded — both checks run against the latest stored
+/// version. The `from`/`to`/`bucket` fields on `query` are not used
+/// here; the pure aggregators apply the time window.
 pub async fn fetch_patch_histories(
     store: &dyn ReadOnlyStore,
-    filters: &PatchAnalyticsFilters,
+    query: &PatchesThroughputQuery,
 ) -> Result<Vec<PatchHistory>, StoreError> {
-    let mut query = SearchPatchesQuery::default();
-    query.repo_name = filters.repo_name.clone();
-    query.creator = filters.creator.clone();
-    query.status = filters.status.clone();
     // `list_patches` already filters out `deleted=true` at latest by
     // default. `is_automatic_backup` isn't a list-level filter, so we
     // drop those in the loop below.
+    let mut search = SearchPatchesQuery::default();
+    search.repo_name = query.repo_name.clone();
+    search.creator = query.creator.clone();
+    search.status = query.status.clone();
 
-    let patches = store.list_patches(&query).await?;
+    let patches = store.list_patches(&search).await?;
     let mut histories = Vec::with_capacity(patches.len());
     for (patch_id, latest) in patches {
         if latest.item.is_automatic_backup {
@@ -367,27 +347,6 @@ pub fn compute_patches_in_flight_over_time(
     PatchesInFlightOverTimeResponse::new(buckets)
 }
 
-/// Drop histories whose latest version's status doesn't match the
-/// caller's status filter. Applied at the analytics layer because the
-/// store's status filter matches latest-status too, but route handlers
-/// call this on hand-built history lists in tests where the store
-/// filter wasn't engaged.
-pub fn apply_status_filter(
-    histories: Vec<PatchHistory>,
-    statuses: &[ApiPatchStatus],
-) -> Vec<PatchHistory> {
-    if statuses.is_empty() {
-        return histories;
-    }
-    histories
-        .into_iter()
-        .filter(|h| {
-            let latest_status: ApiPatchStatus = h.latest().item.status.into();
-            statuses.contains(&latest_status)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,10 +402,8 @@ mod tests {
         }
     }
 
-    fn history(id: &str, versions: Vec<Versioned<Patch>>) -> PatchHistory {
-        let patch_id = PatchId::new();
-        let _ = id;
-        PatchHistory::new(patch_id, versions)
+    fn history(versions: Vec<Versioned<Patch>>) -> PatchHistory {
+        PatchHistory::new(PatchId::new(), versions)
     }
 
     // ----- bucket helpers -----
@@ -553,7 +510,7 @@ mod tests {
             ),
         ];
 
-        let histories = vec![history("p1", p1), history("p2", p2), history("p3", p3)];
+        let histories = vec![history(p1), history(p2), history(p3)];
         let resp = compute_patches_over_time(&histories, from, to, BucketGranularity::Day);
 
         assert_eq!(resp.buckets.len(), 3);
@@ -586,7 +543,7 @@ mod tests {
                 dt("2026-06-01T08:00:00Z"),
             ),
         ];
-        let histories = vec![history("p", p)];
+        let histories = vec![history(p)];
         let resp = compute_patches_over_time(&histories, from, to, BucketGranularity::Day);
         assert_eq!(resp.buckets.len(), 2);
         for bucket in &resp.buckets {
@@ -642,7 +599,7 @@ mod tests {
             ),
         ];
 
-        let histories = vec![history("p1", p1), history("p2", p2), history("p3", p3)];
+        let histories = vec![history(p1), history(p2), history(p3)];
         let resp = compute_patches_terminal_mix(&histories, from, to);
         assert_eq!(resp.merged, 1);
         assert_eq!(resp.closed, 1);
@@ -658,7 +615,7 @@ mod tests {
             1,
             dt("2026-05-11T00:00:00Z"),
         )];
-        let resp = compute_patches_terminal_mix(&[history("p", p)], from, to);
+        let resp = compute_patches_terminal_mix(&[history(p)], from, to);
         assert_eq!(resp.merged, 0);
         assert_eq!(resp.closed, 0);
     }
@@ -697,7 +654,7 @@ mod tests {
                 dt("2026-05-10T03:00:00Z"),
             ),
         ];
-        let resp = compute_patches_time_to_merge(&[history("p", p)], from, to);
+        let resp = compute_patches_time_to_merge(&[history(p)], from, to);
         assert_eq!(resp.count, 1);
         assert_eq!(resp.median_seconds, Some(10_800));
         assert_eq!(resp.p95_seconds, Some(10_800));
@@ -731,7 +688,7 @@ mod tests {
         };
         let p1 = mk("2026-05-10T00:00:00Z", "2026-05-10T01:00:00Z");
         let p2 = mk("2026-05-10T00:00:00Z", "2026-05-10T01:00:00Z");
-        let resp = compute_patches_time_to_merge(&[history("p1", p1), history("p2", p2)], from, to);
+        let resp = compute_patches_time_to_merge(&[history(p1), history(p2)], from, to);
         assert_eq!(resp.count, 2);
         assert_eq!(resp.median_seconds, Some(3_600));
         assert_eq!(resp.p95_seconds, Some(3_600));
@@ -754,7 +711,7 @@ mod tests {
                 dt("2026-06-01T00:00:00Z"),
             ),
         ];
-        let resp = compute_patches_time_to_merge(&[history("p", p)], from, to);
+        let resp = compute_patches_time_to_merge(&[history(p)], from, to);
         assert_eq!(resp.count, 0);
     }
 
@@ -799,7 +756,7 @@ mod tests {
             dt("2026-05-09T00:00:00Z"),
         )];
 
-        let histories = vec![history("p1", p1), history("p2", p2), history("p3", p3)];
+        let histories = vec![history(p1), history(p2), history(p3)];
         let resp =
             compute_patches_in_flight_over_time(&histories, from, to, BucketGranularity::Day);
         assert_eq!(resp.buckets.len(), 3);
@@ -812,36 +769,6 @@ mod tests {
         // Day 2 (2026-05-12): p1 now merged (yesterday). p2 not yet
         // (08:00 > midnight). p3 still in flight. = 1.
         assert_eq!(resp.buckets[2].in_flight, 1);
-    }
-
-    // ----- filters -----
-
-    #[test]
-    fn apply_status_filter_keeps_matching_latest_status_only() {
-        let repo_a = repo("dourolabs/hydra");
-        let open = history(
-            "open",
-            vec![versioned(
-                patch_with_status(PatchStatus::Open, "alice", repo_a.clone(), false),
-                1,
-                dt("2026-05-10T00:00:00Z"),
-            )],
-        );
-        let merged = history(
-            "merged",
-            vec![versioned(
-                patch_with_status(PatchStatus::Merged, "alice", repo_a, false),
-                1,
-                dt("2026-05-10T00:00:00Z"),
-            )],
-        );
-        let kept = apply_status_filter(vec![open.clone(), merged.clone()], &[ApiPatchStatus::Open]);
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].latest().item.status, PatchStatus::Open);
-
-        // Empty filter is a no-op.
-        let all = apply_status_filter(vec![open, merged], &[]);
-        assert_eq!(all.len(), 2);
     }
 
     /// End-to-end fixture: the five-patch scenario the issue spec
@@ -902,10 +829,10 @@ mod tests {
             ),
         ];
         let histories = vec![
-            history("p_in_window", p_in_window),
-            history("p_open_in_window", p_open_in_window),
-            history("p_pre_window_merged", p_pre_window_merged),
-            history("p_closed_in_window", p_closed_in_window),
+            history(p_in_window),
+            history(p_open_in_window),
+            history(p_pre_window_merged),
+            history(p_closed_in_window),
         ];
 
         // over_time: 3 created in window, 2 merged in window.
@@ -978,7 +905,9 @@ mod tests {
             .await
             .expect("delete");
 
-        let histories = fetch_patch_histories(store.as_ref(), &PatchAnalyticsFilters::default())
+        let query =
+            PatchesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        let histories = fetch_patch_histories(store.as_ref(), &query)
             .await
             .expect("fetch");
         let ids: Vec<_> = histories.iter().map(|h| h.patch_id.clone()).collect();
@@ -1002,12 +931,11 @@ mod tests {
         let alice_b = patch_with_status(PatchStatus::Open, "alice", repo_b, false);
         let (_alice_b_id, _) = store.add_patch(alice_b, &actor).await.expect("alice_b");
 
-        let filters = PatchAnalyticsFilters {
-            repo_name: Some("dourolabs/hydra".to_string()),
-            creator: Some("alice".to_string()),
-            status: Vec::new(),
-        };
-        let histories = fetch_patch_histories(store.as_ref(), &filters)
+        let mut query =
+            PatchesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        query.repo_name = Some("dourolabs/hydra".to_string());
+        query.creator = Some("alice".to_string());
+        let histories = fetch_patch_histories(store.as_ref(), &query)
             .await
             .expect("fetch");
         let ids: Vec<_> = histories.iter().map(|h| h.patch_id.clone()).collect();
