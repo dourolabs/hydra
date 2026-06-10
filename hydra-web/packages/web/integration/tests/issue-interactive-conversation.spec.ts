@@ -76,11 +76,12 @@ test.describe("Project editor interactive flag @projects:interactive-status", ()
   test("editor exposes an Interactive checkbox alongside existing status flags @projects:interactive-status", async ({
     authenticatedPage: page,
   }) => {
-    // The simplified new-project modal no longer exposes the full status
-    // editor; the Interactive flag lives in the per-project Settings modal.
-    await page.goto("/projects");
-    await page.getByTestId("board-project-settings-engineering-v2").click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    // The board's per-project Settings modal is the simplified `ProjectForm`
+    // (name + prompt body only). The full status editor — with the
+    // Interactive checkbox alongside the other status flags — lives on the
+    // project detail page.
+    await page.goto("/projects/engineering-v2");
+    await expect(page.getByTestId("project-editor")).toBeVisible();
 
     const interactive = page.getByTestId("status-editor-interactive-0");
     await expect(interactive).toBeVisible();
