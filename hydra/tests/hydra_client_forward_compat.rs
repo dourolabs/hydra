@@ -28,7 +28,7 @@ use hydra_common::{
         UpsertIssueRequest,
     },
     labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
-    login::LoginRequest,
+    login::{DevicePollStatus, LoginRequest},
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
     repositories::{
@@ -162,6 +162,10 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
     );
+    let device_session_id = "device-future-id";
+    let proxy_port: u16 = 7777;
+    let proxy_targets_path = format!("/v1/sessions/{job_id}/proxy-targets");
+    let proxy_target_delete_path = format!("{proxy_targets_path}/{proxy_port}");
     let conversation_path = format!("/v1/conversations/{conversation_id}");
     let conversation_messages_path = format!("{conversation_path}/messages");
     let conversation_close_path = format!("{conversation_path}/close");
@@ -1006,6 +1010,57 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    // POST /v1/login/device/start (unauth) — device flow init.
+    let device_start_body = forward_device_start_json(device_session_id);
+    server.mock(move |when, then| {
+        when.method(POST).path("/v1/login/device/start");
+        then.status(200).json_body(device_start_body.clone());
+    });
+
+    // POST /v1/login/device/poll (unauth) — device flow poll. The status
+    // carries an unknown `DevicePollStatus` variant so the embedded enum
+    // exercises forward-compat.
+    let device_session_id_for_poll = device_session_id.to_string();
+    server.mock(move |when, then| {
+        when.method(POST)
+            .path("/v1/login/device/poll")
+            .json_body(json!({ "device_session_id": device_session_id_for_poll.clone() }));
+        then.status(200).json_body(forward_device_poll_json());
+    });
+
+    // GET /v1/sessions/:session_id/proxy-targets — list.
+    let proxy_list_path = proxy_targets_path.clone();
+    let proxy_list_body = forward_proxy_target_list_json(proxy_port);
+    server.mock(move |when, then| {
+        when.method(GET).path(proxy_list_path.as_str());
+        then.status(200).json_body(proxy_list_body.clone());
+    });
+
+    // POST /v1/sessions/:session_id/proxy-targets — upsert. Returns an
+    // unexpected body to assert the client ignores it (response type is
+    // `()`).
+    let proxy_upsert_path = proxy_targets_path.clone();
+    let proxy_port_for_upsert = proxy_port;
+    server.mock(move |when, then| {
+        when.method(POST)
+            .path(proxy_upsert_path.as_str())
+            .json_body(json!({
+                "port": proxy_port_for_upsert,
+                "ready_path": "/healthz"
+            }));
+        then.status(200)
+            .json_body(json!({ "extra": "upsert-proxy-target" }));
+    });
+
+    // DELETE /v1/sessions/:session_id/proxy-targets/:port — empty/unknown
+    // body must be tolerated since the client discards it.
+    let proxy_delete_path = proxy_target_delete_path.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(proxy_delete_path.as_str());
+        then.status(200)
+            .json_body(json!({ "extra": "delete-proxy-target" }));
+    });
+
     // GET /v1/events — SSE stream. Includes one event with an unknown event
     // type (skipped by the SSE parser without erroring) plus a known
     // `heartbeat` event whose payload carries extra unknown fields.
@@ -1032,9 +1087,25 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let (login_token, _login_client) = unauth_client.login(&login_request).await?;
     assert_eq!(login_token, "login-token");
 
+    // `login_with_http_client` shares the same `/v1/login` endpoint and
+    // response shape — the existing mock above services this call too.
+    let (login_token_with_http, _login_client_with_http) = unauth_client
+        .login_with_http_client(HttpClient::new(), &login_request)
+        .await?;
+    assert_eq!(login_token_with_http, "login-token");
+
+    // Device-code flow (unauth). The poll mock returns an unknown
+    // `DevicePollStatus` variant; older clients must decode it as
+    // `DevicePollStatus::Unknown` rather than erroring.
+    let device_start = unauth_client.device_start().await?;
+    assert_eq!(device_start.device_session_id, device_session_id);
+    let device_poll = unauth_client.device_poll(device_session_id).await?;
+    assert!(matches!(device_poll.status, DevicePollStatus::Unknown));
+
     // Job endpoints
     use hydra_common::api::v1::sessions::{
         AgentSpec as ApiAgentSpec, MountSpec as ApiMountSpec, SessionMode as ApiSessionMode,
+        UpsertProxyTargetRequest,
     };
     let create_session_request = CreateSessionRequest {
         mode: ApiSessionMode::Headless,
@@ -1105,6 +1176,23 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         panic!("expected Bundle item first, got {bundle_item:?}");
     };
     assert!(matches!(bundle, Bundle::Unknown));
+
+    // Proxy targets (session-scoped).
+    let proxy_targets = client.list_proxy_targets(&job_id).await?;
+    assert_eq!(proxy_targets.targets.len(), 1);
+    assert_eq!(proxy_targets.targets[0].port, proxy_port);
+
+    client
+        .upsert_proxy_target(
+            &job_id,
+            &UpsertProxyTargetRequest {
+                port: proxy_port,
+                ready_path: Some("/healthz".to_string()),
+            },
+        )
+        .await?;
+
+    client.delete_proxy_target(&job_id, proxy_port).await?;
 
     // Issues
     let input = IssueInput::new(
@@ -2093,5 +2181,41 @@ fn forward_trigger_json(
         "actor": null,
         "creation_time": now,
         "extra": "trigger-version-record"
+    })
+}
+
+fn forward_device_start_json(device_session_id: &str) -> Value {
+    json!({
+        "device_session_id": device_session_id,
+        "user_code": "FUTURE-CODE",
+        "verification_uri": "https://example.com/device",
+        "expires_in": 600,
+        "interval": 5,
+        "extra": "device-start"
+    })
+}
+
+fn forward_device_poll_json() -> Value {
+    json!({
+        // Unknown `DevicePollStatus` variant — older clients must decode
+        // this as `DevicePollStatus::Unknown`, not error.
+        "status": "future-status",
+        "login_token": null,
+        "user": null,
+        "error": null,
+        "extra": "device-poll"
+    })
+}
+
+fn forward_proxy_target_list_json(port: u16) -> Value {
+    json!({
+        "targets": [
+            {
+                "port": port,
+                "ready_path": "/healthz",
+                "future": "field"
+            }
+        ],
+        "extra": "list-proxy-targets"
     })
 }
