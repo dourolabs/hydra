@@ -82,15 +82,22 @@ export function createAnalyticsRoutes(): Hono {
     const params = new URL(c.req.url).searchParams;
     const common = readCommon(params);
     if ("error" in common) return c.json(common, 400);
+    // Mirrors the prod bin scheme from
+    // hydra-server/src/domain/analytics.rs: [0,1h), [1h,4h), [4h,1d), [1d,3d),
+    // [3d,7d), [7d,14d), [14d,30d), [30d, +inf). Last bin has bin_end_seconds=null.
     const resp: PatchesTimeToMergeResponse = {
       median_seconds: 18000,
-      p95_seconds: 86400,
-      count: 7,
+      p95_seconds: 86400 * 3,
+      count: 8,
       histogram: [
         { bin_start_seconds: 0, bin_end_seconds: 3600, count: 1 },
-        { bin_start_seconds: 3600, bin_end_seconds: 14400, count: 3 },
+        { bin_start_seconds: 3600, bin_end_seconds: 14400, count: 2 },
         { bin_start_seconds: 14400, bin_end_seconds: 86400, count: 2 },
-        { bin_start_seconds: 86400, bin_end_seconds: 604800, count: 1 },
+        { bin_start_seconds: 86400, bin_end_seconds: 86400 * 3, count: 1 },
+        { bin_start_seconds: 86400 * 3, bin_end_seconds: 86400 * 7, count: 1 },
+        { bin_start_seconds: 86400 * 7, bin_end_seconds: 86400 * 14, count: 0 },
+        { bin_start_seconds: 86400 * 14, bin_end_seconds: 86400 * 30, count: 0 },
+        { bin_start_seconds: 86400 * 30, bin_end_seconds: null, count: 1 },
       ],
     };
     return c.json(resp);
