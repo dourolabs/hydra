@@ -487,7 +487,6 @@ struct AgentRow {
     mcp_config_path: Option<String>,
     max_tries: i32,
     max_simultaneous: i32,
-    is_assignment_agent: bool,
     #[sqlx(default)]
     is_default_conversation_agent: bool,
     secrets: String,
@@ -519,7 +518,6 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         mcp_config_path: row.mcp_config_path,
         max_tries: row.max_tries,
         max_simultaneous: row.max_simultaneous,
-        is_assignment_agent: row.is_assignment_agent,
         is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
         deleted: row.deleted,
@@ -3879,7 +3877,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, deleted, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = ?1"
         );
@@ -3899,7 +3897,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, deleted, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE deleted = 0 ORDER BY name"
         );
@@ -5459,16 +5457,15 @@ impl Store for SqliteStore {
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
-                         is_assignment_agent = ?5, is_default_conversation_agent = ?6, secrets = ?7, \
-                         deleted = 0, created_at = ?8, updated_at = ?9 \
-                     WHERE name = ?10"
+                         is_default_conversation_agent = ?5, secrets = ?6, \
+                         deleted = 0, created_at = ?7, updated_at = ?8 \
+                     WHERE name = ?9"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
-                    .bind(agent.is_assignment_agent)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(&now)
@@ -5486,9 +5483,9 @@ impl Store for SqliteStore {
                 })?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
-                     (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, is_assignment_agent, \
+                     (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
                       is_default_conversation_agent, secrets, deleted, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
@@ -5496,7 +5493,6 @@ impl Store for SqliteStore {
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
-                    .bind(agent.is_assignment_agent)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(agent.deleted)
@@ -5519,16 +5515,15 @@ impl Store for SqliteStore {
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
-                 is_assignment_agent = ?5, is_default_conversation_agent = ?6, secrets = ?7, \
-                 updated_at = ?8 \
-             WHERE name = ?9"
+                 is_default_conversation_agent = ?5, secrets = ?6, \
+                 updated_at = ?7 \
+             WHERE name = ?8"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
             .bind(agent.mcp_config_path.as_deref())
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
-            .bind(agent.is_assignment_agent)
             .bind(agent.is_default_conversation_agent)
             .bind(&secrets_json)
             .bind(Utc::now().to_rfc3339())
@@ -9032,7 +9027,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         )
     }
@@ -9050,7 +9044,6 @@ mod tests {
         assert_eq!(fetched.name, "swe");
         assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
         assert_eq!(fetched.max_tries, 3);
-        assert!(!fetched.is_assignment_agent);
         assert!(!fetched.is_default_conversation_agent);
     }
 
@@ -9128,59 +9121,24 @@ mod tests {
         assert!(matches!(err, StoreError::AgentNotFound(_)));
     }
 
-    // Role-flag uniqueness (`is_assignment_agent`,
-    // `is_default_conversation_agent`) is workflow state and is enforced by
-    // the `agent_role_uniqueness` `Restriction` in `AppState`, not at the
-    // store layer. This test exists to keep that boundary explicit: a direct
-    // store insert of a second role-flagged agent must succeed.
+    // Role-flag uniqueness (`is_default_conversation_agent`) is workflow
+    // state and is enforced by the `agent_role_uniqueness` `Restriction` in
+    // `AppState`, not at the store layer. This test exists to keep that
+    // boundary explicit: a direct store insert of a second role-flagged
+    // agent must succeed.
     #[tokio::test]
     async fn store_does_not_enforce_role_uniqueness() {
         let store = create_test_store().await;
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        pm.is_default_conversation_agent = true;
-        store.add_agent(pm).await.unwrap();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
 
-        let mut pm2 = sample_agent("pm2");
-        pm2.is_assignment_agent = true;
-        pm2.is_default_conversation_agent = true;
+        let mut chat2 = sample_agent("chat2");
+        chat2.is_default_conversation_agent = true;
         store
-            .add_agent(pm2)
+            .add_agent(chat2)
             .await
             .expect("store layer should not enforce role-flag uniqueness");
-    }
-
-    #[tokio::test]
-    async fn assignment_agent_can_update_itself() {
-        let store = create_test_store().await;
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        store.add_agent(pm).await.unwrap();
-
-        let mut pm_updated = sample_agent("pm");
-        pm_updated.is_assignment_agent = true;
-        pm_updated.max_tries = 10;
-        store.update_agent(pm_updated).await.unwrap();
-
-        let fetched = store.get_agent("pm").await.unwrap();
-        assert_eq!(fetched.max_tries, 10);
-        assert!(fetched.is_assignment_agent);
-    }
-
-    #[tokio::test]
-    async fn deleted_assignment_agent_allows_new_one() {
-        let store = create_test_store().await;
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        store.add_agent(pm).await.unwrap();
-        store.delete_agent("pm").await.unwrap();
-
-        let mut pm2 = sample_agent("pm2");
-        pm2.is_assignment_agent = true;
-        store.add_agent(pm2).await.unwrap();
-
-        let fetched = store.get_agent("pm2").await.unwrap();
-        assert!(fetched.is_assignment_agent);
     }
 
     #[tokio::test]
@@ -9264,7 +9222,6 @@ mod tests {
             Some("/agents/swe/mcp-config.json".to_string()),
             3,
             i32::MAX,
-            false,
             false,
             vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()],
         );
@@ -12492,7 +12449,6 @@ mod tests {
                 prompt_path TEXT NOT NULL, \
                 max_tries INTEGER NOT NULL DEFAULT 3, \
                 max_simultaneous INTEGER NOT NULL DEFAULT 2147483647, \
-                is_assignment_agent INTEGER NOT NULL DEFAULT 0, \
                 deleted INTEGER NOT NULL DEFAULT 0, \
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')))",
@@ -12743,7 +12699,6 @@ mod tests {
                 prompt_path TEXT NOT NULL, \
                 max_tries INTEGER NOT NULL DEFAULT 3, \
                 max_simultaneous INTEGER NOT NULL DEFAULT 2147483647, \
-                is_assignment_agent INTEGER NOT NULL DEFAULT 0, \
                 deleted INTEGER NOT NULL DEFAULT 0, \
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')))",

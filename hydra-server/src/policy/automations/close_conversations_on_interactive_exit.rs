@@ -182,7 +182,6 @@ mod tests {
             1,
             1,
             false,
-            false,
             vec![],
         );
         state.store.add_agent(agent).await.unwrap();

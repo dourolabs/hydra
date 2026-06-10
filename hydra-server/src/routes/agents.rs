@@ -205,7 +205,6 @@ fn normalize_and_build_agent(
         mcp_config_path,
         payload.max_tries,
         payload.max_simultaneous,
-        payload.is_assignment_agent,
         payload.is_default_conversation_agent,
         payload.secrets,
     );
@@ -230,7 +229,6 @@ fn agent_to_record(agent: Agent, prompt: String, mcp_config: Option<String>) -> 
         mcp_config,
         agent.max_tries,
         agent.max_simultaneous,
-        agent.is_assignment_agent,
         agent.is_default_conversation_agent,
         agent.secrets,
     )

@@ -1116,9 +1116,8 @@ pub trait Store: ReadOnlyStore {
     ///
     /// Returns `StoreError::AgentAlreadyExists` if a non-deleted agent with
     /// the same name already exists. Role-flag uniqueness
-    /// (`is_assignment_agent`, `is_default_conversation_agent`) is workflow
-    /// state and is enforced by the `agent_role_uniqueness` `Restriction` in
-    /// `AppState`, not here.
+    /// (`is_default_conversation_agent`) is workflow state and is enforced by
+    /// the `agent_role_uniqueness` `Restriction` in `AppState`, not here.
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError>;
 
     /// Updates an existing agent.

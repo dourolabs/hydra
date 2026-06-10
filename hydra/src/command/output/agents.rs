@@ -50,11 +50,6 @@ fn write_agent_details<W: Write>(agent: &AgentRecord, writer: &mut W) -> Result<
     writeln!(writer, "  max_simultaneous: {}", agent.max_simultaneous)?;
     writeln!(
         writer,
-        "  is_assignment_agent: {}",
-        agent.is_assignment_agent
-    )?;
-    writeln!(
-        writer,
         "  is_default_conversation_agent: {}",
         agent.is_default_conversation_agent
     )?;

@@ -392,21 +392,21 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
         &HydraClientTimeouts::default(),
     )?;
 
-    // Tuple slots: (name, prompt, is_assignment_agent, is_default_conversation_agent).
-    // `pm` is the assignment agent; `chat` is the default conversation agent
-    // (used by the Chat page and `hydra chat` when no --agent is specified).
-    let agents: &[(&str, &str, bool, bool)] = &[
-        ("swe", SWE_PROMPT, false, false),
-        ("pm", PM_PROMPT, true, false),
-        ("reviewer", REVIEWER_PROMPT, false, false),
-        ("chat", CHAT_PROMPT, false, true),
+    // Tuple slots: (name, prompt, is_default_conversation_agent).
+    // `chat` is the default conversation agent (used by the Chat page and
+    // `hydra chat` when no --agent is specified).
+    let agents: &[(&str, &str, bool)] = &[
+        ("swe", SWE_PROMPT, false),
+        ("pm", PM_PROMPT, false),
+        ("reviewer", REVIEWER_PROMPT, false),
+        ("chat", CHAT_PROMPT, true),
     ];
 
     // Server commands run before the tokio runtime is created (due to fork),
     // so we create a small runtime to drive the async HydraClient calls.
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
-    for &(name, prompt, is_assignment_agent, is_default_conversation_agent) in agents {
+    for &(name, prompt, is_default_conversation_agent) in agents {
         let secrets = vec![];
         let request = UpsertAgentRequest::new(
             name,
@@ -415,7 +415,6 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
             i32::MAX,
             None,
             None,
-            is_assignment_agent,
             is_default_conversation_agent,
             secrets,
         );

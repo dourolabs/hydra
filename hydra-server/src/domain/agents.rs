@@ -11,7 +11,6 @@ pub struct Agent {
     pub mcp_config_path: Option<String>,
     pub max_tries: i32,
     pub max_simultaneous: i32,
-    pub is_assignment_agent: bool,
     pub is_default_conversation_agent: bool,
     pub secrets: Vec<String>,
     pub deleted: bool,
@@ -27,7 +26,6 @@ impl Agent {
         mcp_config_path: Option<String>,
         max_tries: i32,
         max_simultaneous: i32,
-        is_assignment_agent: bool,
         is_default_conversation_agent: bool,
         secrets: Vec<String>,
     ) -> Self {
@@ -38,7 +36,6 @@ impl Agent {
             mcp_config_path,
             max_tries,
             max_simultaneous,
-            is_assignment_agent,
             is_default_conversation_agent,
             secrets,
             deleted: false,

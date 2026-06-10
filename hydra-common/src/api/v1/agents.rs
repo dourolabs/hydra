@@ -122,8 +122,6 @@ pub struct AgentRecord {
     #[serde(default = "default_max_simultaneous")]
     pub max_simultaneous: i32,
     #[serde(default)]
-    pub is_assignment_agent: bool,
-    #[serde(default)]
     pub is_default_conversation_agent: bool,
     #[serde(default)]
     pub secrets: Vec<String>,
@@ -139,7 +137,6 @@ impl AgentRecord {
         mcp_config: Option<String>,
         max_tries: i32,
         max_simultaneous: i32,
-        is_assignment_agent: bool,
         is_default_conversation_agent: bool,
         secrets: Vec<String>,
     ) -> Self {
@@ -151,7 +148,6 @@ impl AgentRecord {
             mcp_config,
             max_tries,
             max_simultaneous,
-            is_assignment_agent,
             is_default_conversation_agent,
             secrets,
         }
@@ -176,8 +172,6 @@ pub struct UpsertAgentRequest {
     #[serde(default = "default_max_simultaneous")]
     pub max_simultaneous: i32,
     #[serde(default)]
-    pub is_assignment_agent: bool,
-    #[serde(default)]
     pub is_default_conversation_agent: bool,
     #[serde(default)]
     pub secrets: Vec<String>,
@@ -192,7 +186,6 @@ impl UpsertAgentRequest {
         max_simultaneous: i32,
         mcp_config_path: Option<String>,
         mcp_config: Option<String>,
-        is_assignment_agent: bool,
         is_default_conversation_agent: bool,
         secrets: Vec<String>,
     ) -> Self {
@@ -204,7 +197,6 @@ impl UpsertAgentRequest {
             mcp_config,
             max_tries,
             max_simultaneous,
-            is_assignment_agent,
             is_default_conversation_agent,
             secrets,
         }
@@ -221,7 +213,6 @@ impl From<UpsertAgentRequest> for AgentRecord {
             mcp_config: request.mcp_config,
             max_tries: request.max_tries,
             max_simultaneous: request.max_simultaneous,
-            is_assignment_agent: request.is_assignment_agent,
             is_default_conversation_agent: request.is_default_conversation_agent,
             secrets: request.secrets,
         }
@@ -238,7 +229,6 @@ impl From<AgentRecord> for UpsertAgentRequest {
             mcp_config: record.mcp_config,
             max_tries: record.max_tries,
             max_simultaneous: record.max_simultaneous,
-            is_assignment_agent: record.is_assignment_agent,
             is_default_conversation_agent: record.is_default_conversation_agent,
             secrets: record.secrets,
         }
@@ -301,7 +291,6 @@ mod tests {
             None,
             3,
             5,
-            false,
             true,
             vec!["OPENAI_API_KEY".to_string()],
         );
@@ -322,7 +311,6 @@ mod tests {
             "mcp_config": null,
             "max_tries": 3,
             "max_simultaneous": 5,
-            "is_assignment_agent": false,
             "secrets": []
         }"#;
         let parsed: AgentRecord = serde_json::from_str(json).unwrap();
@@ -382,8 +370,7 @@ mod tests {
             "name": "swe",
             "prompt": "draft",
             "max_tries": 3,
-            "max_simultaneous": 5,
-            "is_assignment_agent": false
+            "max_simultaneous": 5
         }"#;
         let parsed: UpsertAgentRequest = serde_json::from_str(json).unwrap();
         assert!(!parsed.is_default_conversation_agent);

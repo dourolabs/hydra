@@ -386,7 +386,6 @@ pub struct TestHarnessBuilder {
     users: Vec<String>,
     enable_github: bool,
     agent_configs: Vec<(String, String)>,
-    assignment_agent: Option<String>,
 }
 
 impl TestHarnessBuilder {
@@ -396,7 +395,6 @@ impl TestHarnessBuilder {
             users: Vec::new(),
             enable_github: false,
             agent_configs: Vec::new(),
-            assignment_agent: None,
         }
     }
 
@@ -439,16 +437,6 @@ impl TestHarnessBuilder {
         self
     }
 
-    /// Set which agent queue acts as the assignment agent.
-    ///
-    /// The assignment agent automatically picks up unassigned issues (those
-    /// with no `assignee` field). Other agents only pick up issues assigned
-    /// to them by name.
-    pub fn with_assignment_agent(mut self, name: &str) -> Self {
-        self.assignment_agent = Some(name.to_string());
-        self
-    }
-
     /// Build the harness, creating all infrastructure.
     pub async fn build(self) -> Result<TestHarness> {
         let tempdir = TempDir::new().context("failed to create tempdir for TestHarness")?;
@@ -460,18 +448,12 @@ impl TestHarnessBuilder {
         // Pre-populate agent queues from builder config by adding to DB store.
         use hydra_server::domain::{agents::Agent, documents::Document};
         for (name, prompt) in &self.agent_configs {
-            let is_assignment = self
-                .assignment_agent
-                .as_ref()
-                .map(|a| a == name)
-                .unwrap_or(false);
             let agent = Agent::new(
                 name.clone(),
                 format!("/agents/{name}/prompt.md"),
                 None,
                 3,
                 10,
-                is_assignment,
                 false,
                 Vec::new(),
             );

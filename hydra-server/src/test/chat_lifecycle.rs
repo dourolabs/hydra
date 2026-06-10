@@ -1864,7 +1864,6 @@ async fn register_agent_with_prompt_body(
         1,
         1,
         false,
-        false,
         vec![],
     );
     store.add_agent(agent).await?;

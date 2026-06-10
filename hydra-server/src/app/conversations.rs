@@ -651,7 +651,6 @@ mod tests {
             None,
             1,
             1,
-            false,
             is_default,
             secrets,
         );
@@ -686,7 +685,6 @@ mod tests {
             Some(mcp_path.clone()),
             1,
             1,
-            false,
             false,
             secrets,
         );

@@ -18,7 +18,6 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   const [prompt, setPrompt] = useState("");
   const [maxTries, setMaxTries] = useState("3");
   const [maxSimultaneous, setMaxSimultaneous] = useState("1");
-  const [isAssignmentAgent, setIsAssignmentAgent] = useState(false);
   const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(false);
   const [mcpConfigPath, setMcpConfigPath] = useState("");
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
@@ -28,7 +27,6 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     setPrompt("");
     setMaxTries("3");
     setMaxSimultaneous("1");
-    setIsAssignmentAgent(false);
     setIsDefaultConversationAgent(false);
     setMcpConfigPath("");
     setSelectedSecrets([]);
@@ -44,10 +42,6 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     },
   });
 
-  const existingAssignmentAgent = agents.find((a) => a.is_assignment_agent);
-  const assignmentConflict =
-    isAssignmentAgent && existingAssignmentAgent != null;
-
   const existingDefaultConversationAgent = agents.find(
     (a) => a.is_default_conversation_agent,
   );
@@ -57,7 +51,6 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   const isValid =
     name.trim().length > 0 &&
     prompt.trim().length > 0 &&
-    !assignmentConflict &&
     !defaultConversationConflict;
 
   const handleSubmit = useCallback(() => {
@@ -71,11 +64,10 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
-      is_assignment_agent: isAssignmentAgent,
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
     });
-  }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneous, isAssignmentAgent, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
+  }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneous, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Agent">
@@ -115,20 +107,6 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           onChange={(e) => setMaxSimultaneous(e.target.value)}
           type="number"
         />
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={isAssignmentAgent}
-            onChange={(e) => setIsAssignmentAgent(e.target.checked)}
-          />
-          Assignment Agent
-        </label>
-        {assignmentConflict && (
-          <p className={styles.fieldError}>
-            &quot;{existingAssignmentAgent.name}&quot; is already the assignment
-            agent. Only one agent can be the assignment agent at a time.
-          </p>
-        )}
         <label className={styles.checkboxLabel}>
           <input
             type="checkbox"

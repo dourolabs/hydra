@@ -7619,7 +7619,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         )
     }
@@ -7635,7 +7634,6 @@ mod tests {
         assert_eq!(fetched.name, "swe");
         assert_eq!(fetched.prompt_path, "/agents/swe/prompt.md");
         assert_eq!(fetched.max_tries, 3);
-        assert!(!fetched.is_assignment_agent);
         assert!(!fetched.is_default_conversation_agent);
     }
 
@@ -7713,59 +7711,24 @@ mod tests {
         assert!(matches!(err, StoreError::AgentNotFound(_)));
     }
 
-    // Role-flag uniqueness (`is_assignment_agent`,
-    // `is_default_conversation_agent`) is workflow state and is enforced by
-    // the `agent_role_uniqueness` `Restriction` in `AppState`, not at the
-    // store layer. This test exists to keep that boundary explicit: a direct
-    // store insert of a second role-flagged agent must succeed.
+    // Role-flag uniqueness (`is_default_conversation_agent`) is workflow
+    // state and is enforced by the `agent_role_uniqueness` `Restriction` in
+    // `AppState`, not at the store layer. This test exists to keep that
+    // boundary explicit: a direct store insert of a second role-flagged
+    // agent must succeed.
     #[tokio::test]
     async fn store_does_not_enforce_role_uniqueness() {
         let store = MemoryStore::new();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        pm.is_default_conversation_agent = true;
-        store.add_agent(pm).await.unwrap();
+        let mut chat = sample_agent("chat");
+        chat.is_default_conversation_agent = true;
+        store.add_agent(chat).await.unwrap();
 
-        let mut pm2 = sample_agent("pm2");
-        pm2.is_assignment_agent = true;
-        pm2.is_default_conversation_agent = true;
+        let mut chat2 = sample_agent("chat2");
+        chat2.is_default_conversation_agent = true;
         store
-            .add_agent(pm2)
+            .add_agent(chat2)
             .await
             .expect("store layer should not enforce role-flag uniqueness");
-    }
-
-    #[tokio::test]
-    async fn assignment_agent_can_update_itself() {
-        let store = MemoryStore::new();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        store.add_agent(pm).await.unwrap();
-
-        let mut pm_updated = sample_agent("pm");
-        pm_updated.is_assignment_agent = true;
-        pm_updated.max_tries = 10;
-        store.update_agent(pm_updated).await.unwrap();
-
-        let fetched = store.get_agent("pm").await.unwrap();
-        assert_eq!(fetched.max_tries, 10);
-        assert!(fetched.is_assignment_agent);
-    }
-
-    #[tokio::test]
-    async fn deleted_assignment_agent_allows_new_one() {
-        let store = MemoryStore::new();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        store.add_agent(pm).await.unwrap();
-        store.delete_agent("pm").await.unwrap();
-
-        let mut pm2 = sample_agent("pm2");
-        pm2.is_assignment_agent = true;
-        store.add_agent(pm2).await.unwrap();
-
-        let fetched = store.get_agent("pm2").await.unwrap();
-        assert!(fetched.is_assignment_agent);
     }
 
     #[tokio::test]
@@ -7799,26 +7762,6 @@ mod tests {
 
         let fetched = store.get_agent("chat2").await.unwrap();
         assert!(fetched.is_default_conversation_agent);
-    }
-
-    #[tokio::test]
-    async fn assignment_and_default_conversation_flags_independent() {
-        let store = MemoryStore::new();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        store.add_agent(pm).await.unwrap();
-
-        // Adding a separate agent with only is_default_conversation_agent should succeed.
-        let mut chat = sample_agent("chat");
-        chat.is_default_conversation_agent = true;
-        store.add_agent(chat).await.unwrap();
-
-        let pm = store.get_agent("pm").await.unwrap();
-        assert!(pm.is_assignment_agent);
-        assert!(!pm.is_default_conversation_agent);
-        let chat = store.get_agent("chat").await.unwrap();
-        assert!(!chat.is_assignment_agent);
-        assert!(chat.is_default_conversation_agent);
     }
 
     #[tokio::test]

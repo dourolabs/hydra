@@ -1641,7 +1641,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         5,
         None,
         None,
-        true,
         false,
         vec!["FUTURE_KEY".to_string()],
     );
@@ -2107,7 +2106,6 @@ fn forward_agent_json(agent_name: &str) -> Value {
             "mcp_config": null,
             "max_tries": 3,
             "max_simultaneous": 5,
-            "is_assignment_agent": true,
             "is_default_conversation_agent": false,
             "secrets": ["FUTURE_KEY"],
             "future": "agent-record-field"

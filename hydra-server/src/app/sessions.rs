@@ -1801,7 +1801,6 @@ mod tests {
             1,
             1,
             false,
-            false,
             vec![],
         );
         state.store.add_agent(agent).await.unwrap();
@@ -1870,7 +1869,6 @@ mod tests {
             None,
             1,
             1,
-            false,
             false,
             vec![],
         );
@@ -1941,7 +1939,6 @@ mod tests {
             None,
             1,
             1,
-            false,
             false,
             vec![],
         );
@@ -2092,7 +2089,6 @@ mod tests {
             None,
             1,
             1,
-            false,
             false,
             vec![],
         );
