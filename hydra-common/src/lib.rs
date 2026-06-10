@@ -145,6 +145,20 @@ mod ts_export {
             .expect("IssuesPerStatusDistributionResponse");
         crate::analytics::IssueOverTimeBucket::export_all(&cfg).expect("IssueOverTimeBucket");
         crate::analytics::IssuesOverTimeResponse::export_all(&cfg).expect("IssuesOverTimeResponse");
+        crate::analytics::TokenUsageOverTimeQuery::export_all(&cfg)
+            .expect("TokenUsageOverTimeQuery");
+        crate::analytics::TokenUsageQuery::export_all(&cfg).expect("TokenUsageQuery");
+        crate::analytics::TokenUsageOverTimeBucket::export_all(&cfg)
+            .expect("TokenUsageOverTimeBucket");
+        crate::analytics::TokenUsageOverTimeResponse::export_all(&cfg)
+            .expect("TokenUsageOverTimeResponse");
+        crate::analytics::AgentSessionCost::export_all(&cfg).expect("AgentSessionCost");
+        crate::analytics::AgentCost::export_all(&cfg).expect("AgentCost");
+        crate::analytics::TokenUsageCostPerAgentResponse::export_all(&cfg)
+            .expect("TokenUsageCostPerAgentResponse");
+        crate::analytics::IssueCost::export_all(&cfg).expect("IssueCost");
+        crate::analytics::TokenUsageTopIssuesByCostResponse::export_all(&cfg)
+            .expect("TokenUsageTopIssuesByCostResponse");
 
         // API v1: documents
         crate::documents::Document::export_all(&cfg).expect("Document");

@@ -7,10 +7,12 @@
 //! plus error mapping.
 
 use crate::analytics::{
-    compute_issues_cycle_time, compute_issues_over_time, compute_issues_per_status_distribution,
-    compute_issues_time_in_status_breakdown, compute_patches_in_flight_over_time,
-    compute_patches_over_time, compute_patches_terminal_mix, compute_patches_time_to_merge,
-    fetch_issue_histories, fetch_patch_histories, resolve_projects_for_histories,
+    compute_cost_per_agent, compute_issues_cycle_time, compute_issues_over_time,
+    compute_issues_per_status_distribution, compute_issues_time_in_status_breakdown,
+    compute_patches_in_flight_over_time, compute_patches_over_time, compute_patches_terminal_mix,
+    compute_patches_time_to_merge, compute_token_usage_over_time, compute_top_issues_by_cost,
+    fetch_issue_histories, fetch_patch_histories, fetch_sessions_with_usage,
+    rank_top_issues_by_cost, resolve_projects_for_histories,
 };
 use crate::app::AppState;
 use crate::app::projects::{ResolveStatusError, project_cached};
@@ -20,7 +22,6 @@ use axum::{
     Json,
     extract::{Query, State},
 };
-use hydra_common::ProjectId;
 use hydra_common::api::v1::{
     ApiError,
     analytics::{
@@ -28,12 +29,14 @@ use hydra_common::api::v1::{
         IssuesPerStatusDistributionResponse, IssuesThroughputQuery,
         IssuesTimeInStatusBreakdownResponse, PatchesInFlightOverTimeResponse,
         PatchesOverTimeResponse, PatchesTerminalMixResponse, PatchesThroughputQuery,
-        PatchesTimeToMergeResponse,
+        PatchesTimeToMergeResponse, TokenUsageCostPerAgentResponse, TokenUsageOverTimeQuery,
+        TokenUsageOverTimeResponse, TokenUsageQuery, TokenUsageTopIssuesByCostResponse,
     },
     projects::Project,
 };
+use hydra_common::{IssueId, ProjectId};
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Validate the time window and resolve the bucket default.
 /// `[from, to)` is required to be a strict forward range; `from >= to`
@@ -273,6 +276,110 @@ pub async fn issues_per_status_distribution(
     Ok(Json(resp))
 }
 
+/// Validate the time window for the token-usage time-series query.
+fn validate_token_usage_over_time_query(
+    query: &TokenUsageOverTimeQuery,
+) -> Result<BucketGranularity, ApiError> {
+    if query.from >= query.to {
+        return Err(ApiError::bad_request("'from' must be strictly before 'to'"));
+    }
+    Ok(query.bucket.unwrap_or_default())
+}
+
+/// Validate the time window for the non-time-series token-usage queries.
+fn validate_token_usage_query(query: &TokenUsageQuery) -> Result<(), ApiError> {
+    if query.from >= query.to {
+        return Err(ApiError::bad_request("'from' must be strictly before 'to'"));
+    }
+    Ok(())
+}
+
+/// `GET /v1/analytics/token_usage/over_time`
+pub async fn token_usage_over_time(
+    State(state): State<AppState>,
+    Query(query): Query<TokenUsageOverTimeQuery>,
+) -> Result<Json<TokenUsageOverTimeResponse>, ApiError> {
+    info!(
+        from = %query.from,
+        to = %query.to,
+        bucket = ?query.bucket,
+        "analytics.token_usage_over_time invoked"
+    );
+    let bucket = validate_token_usage_over_time_query(&query)?;
+    let sessions = fetch_sessions_with_usage(
+        state.store(),
+        query.from,
+        query.to,
+        query.repo_name.as_deref(),
+        query.creator.as_deref(),
+    )
+    .await
+    .map_err(map_store_error)?;
+    let resp = compute_token_usage_over_time(&sessions, query.from, query.to, bucket);
+    Ok(Json(resp))
+}
+
+/// `GET /v1/analytics/token_usage/cost_per_agent`
+pub async fn token_usage_cost_per_agent(
+    State(state): State<AppState>,
+    Query(query): Query<TokenUsageQuery>,
+) -> Result<Json<TokenUsageCostPerAgentResponse>, ApiError> {
+    info!(
+        from = %query.from,
+        to = %query.to,
+        "analytics.token_usage_cost_per_agent invoked"
+    );
+    validate_token_usage_query(&query)?;
+    let sessions = fetch_sessions_with_usage(
+        state.store(),
+        query.from,
+        query.to,
+        query.repo_name.as_deref(),
+        query.creator.as_deref(),
+    )
+    .await
+    .map_err(map_store_error)?;
+    let resp = compute_cost_per_agent(&sessions);
+    Ok(Json(resp))
+}
+
+/// `GET /v1/analytics/token_usage/top_issues_by_cost`
+pub async fn token_usage_top_issues_by_cost(
+    State(state): State<AppState>,
+    Query(query): Query<TokenUsageQuery>,
+) -> Result<Json<TokenUsageTopIssuesByCostResponse>, ApiError> {
+    info!(
+        from = %query.from,
+        to = %query.to,
+        "analytics.token_usage_top_issues_by_cost invoked"
+    );
+    validate_token_usage_query(&query)?;
+    let sessions = fetch_sessions_with_usage(
+        state.store(),
+        query.from,
+        query.to,
+        query.repo_name.as_deref(),
+        query.creator.as_deref(),
+    )
+    .await
+    .map_err(map_store_error)?;
+    let ranked = rank_top_issues_by_cost(&sessions);
+    let mut titles: HashMap<IssueId, String> = HashMap::with_capacity(ranked.len());
+    for (issue_id, _, _) in &ranked {
+        match state.store().get_issue(issue_id, false).await {
+            Ok(versioned) => {
+                titles.insert(issue_id.clone(), versioned.item.title);
+            }
+            Err(StoreError::IssueNotFound(_)) => {
+                warn!(issue_id = %issue_id, "top_issues_by_cost: spawning issue not found; dropping");
+            }
+            Err(err) => return Err(map_store_error(err)),
+        }
+    }
+    let resp = compute_top_issues_by_cost(ranked, &titles);
+    Ok(Json(resp))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,6 +531,88 @@ mod tests {
         let err = issues_time_in_status_breakdown(State(handles.state), Query(q))
             .await
             .expect_err("unknown project_id must 400");
+        assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    fn smoke_token_usage_over_time_query() -> TokenUsageOverTimeQuery {
+        TokenUsageOverTimeQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"))
+    }
+
+    fn smoke_token_usage_query() -> TokenUsageQuery {
+        TokenUsageQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"))
+    }
+
+    #[tokio::test]
+    async fn token_usage_over_time_with_empty_store_is_dense_zero_series() {
+        let handles = test_state_handles();
+        let resp = token_usage_over_time(
+            State(handles.state),
+            Query(smoke_token_usage_over_time_query()),
+        )
+        .await
+        .expect("ok")
+        .0;
+        assert_eq!(resp.buckets.len(), 3);
+        for b in &resp.buckets {
+            assert_eq!(b.input_tokens, 0);
+            assert_eq!(b.output_tokens, 0);
+            assert_eq!(b.cache_read_input_tokens, 0);
+            assert_eq!(b.cache_creation_input_tokens, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn token_usage_over_time_inverted_window_returns_400() {
+        let handles = test_state_handles();
+        let mut q = smoke_token_usage_over_time_query();
+        q.to = q.from;
+        let err = token_usage_over_time(State(handles.state), Query(q))
+            .await
+            .expect_err("inverted window must 400");
+        assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn token_usage_cost_per_agent_with_empty_store_returns_no_agents() {
+        let handles = test_state_handles();
+        let resp =
+            token_usage_cost_per_agent(State(handles.state), Query(smoke_token_usage_query()))
+                .await
+                .expect("ok")
+                .0;
+        assert!(resp.agents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn token_usage_cost_per_agent_inverted_window_returns_400() {
+        let handles = test_state_handles();
+        let mut q = smoke_token_usage_query();
+        q.to = q.from;
+        let err = token_usage_cost_per_agent(State(handles.state), Query(q))
+            .await
+            .expect_err("inverted window must 400");
+        assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn token_usage_top_issues_by_cost_with_empty_store_returns_no_issues() {
+        let handles = test_state_handles();
+        let resp =
+            token_usage_top_issues_by_cost(State(handles.state), Query(smoke_token_usage_query()))
+                .await
+                .expect("ok")
+                .0;
+        assert!(resp.issues.is_empty());
+    }
+
+    #[tokio::test]
+    async fn token_usage_top_issues_by_cost_inverted_window_returns_400() {
+        let handles = test_state_handles();
+        let mut q = smoke_token_usage_query();
+        q.to = q.from;
+        let err = token_usage_top_issues_by_cost(State(handles.state), Query(q))
+            .await
+            .expect_err("inverted window must 400");
         assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
