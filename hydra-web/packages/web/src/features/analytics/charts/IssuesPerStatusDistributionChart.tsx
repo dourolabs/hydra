@@ -1,5 +1,5 @@
 import type {
-  IssuesPerStatusDistributionQuery,
+  IssuesThroughputQuery,
   IssuesPerStatusDistributionResponse,
 } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
@@ -8,7 +8,7 @@ import { formatDurationSeconds } from "../duration";
 import styles from "./charts.module.css";
 
 export interface IssuesPerStatusDistributionChartProps {
-  query: IssuesPerStatusDistributionQuery;
+  query: IssuesThroughputQuery;
   /** When false the card renders a "select a project" placeholder. */
   hasProject: boolean;
 }
@@ -70,7 +70,7 @@ function IssuesPerStatusDistributionContent({
               <span className={styles.statusCardStatLabel}>Median</span>
               <span className={styles.statusCardStatValue}>
                 {s.median_seconds != null
-                  ? formatDurationSeconds(s.median_seconds)
+                  ? formatDurationSeconds(Number(s.median_seconds))
                   : "—"}
               </span>
             </div>
@@ -78,14 +78,14 @@ function IssuesPerStatusDistributionContent({
               <span className={styles.statusCardStatLabel}>p95</span>
               <span className={styles.statusCardStatValue}>
                 {s.p95_seconds != null
-                  ? formatDurationSeconds(s.p95_seconds)
+                  ? formatDurationSeconds(Number(s.p95_seconds))
                   : "—"}
               </span>
             </div>
             <div className={styles.statusCardStat}>
               <span className={styles.statusCardStatLabel}>Samples</span>
               <span className={styles.statusCardStatValue}>
-                {s.sample_count}
+                {Number(s.sample_count)}
               </span>
             </div>
           </li>

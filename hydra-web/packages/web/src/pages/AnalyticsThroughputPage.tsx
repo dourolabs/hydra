@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
+import type { IssuesThroughputQuery, PatchesThroughputQuery } from "@hydra/api";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { SlicerPanel } from "../features/analytics/SlicerPanel";
 import { TimeRangePicker } from "../features/analytics/TimeRangePicker";
@@ -36,43 +37,40 @@ export function AnalyticsThroughputPage() {
 
   const window = useMemo(() => timeWindow(state.range), [state.range]);
 
-  const baseQuery = useMemo(
+  const patchesQuery = useMemo<PatchesThroughputQuery>(
     () => ({
       from: window.from,
       to: window.to,
-      ...(state.repoName ? { repo_name: state.repoName } : {}),
-      ...(state.creator ? { creator: state.creator } : {}),
+      bucket: "day",
+      repo_name: state.repoName,
+      creator: state.creator,
     }),
     [window, state.repoName, state.creator],
   );
 
-  const baseIssuesQuery = useMemo(
+  const issuesQuery = useMemo<IssuesThroughputQuery>(
     () => ({
-      ...baseQuery,
-      ...(state.projectId ? { project_id: state.projectId } : {}),
-      ...(state.issueTypes.length > 0 ? { issue_types: state.issueTypes.join(",") } : {}),
-      ...(state.assignee ? { assignee: state.assignee } : {}),
-      ...(state.statusKeys.length > 0 ? { status_keys: state.statusKeys.join(",") } : {}),
+      from: window.from,
+      to: window.to,
+      bucket: "day",
+      project_id: state.projectId,
+      repo_name: state.repoName,
+      issue_type: state.issueType,
+      assignee: state.assignee,
+      creator: state.creator,
+      ...(state.statusKeys.length > 0
+        ? { status_keys: state.statusKeys.join(",") }
+        : {}),
     }),
-    [baseQuery, state.projectId, state.issueTypes, state.assignee, state.statusKeys],
-  );
-
-  const patchesOverTimeQuery = useMemo(
-    () => ({ ...baseQuery, bucket: "day" as const }),
-    [baseQuery],
-  );
-  const patchesInFlightQuery = useMemo(
-    () => ({ ...baseQuery, bucket: "day" as const }),
-    [baseQuery],
-  );
-
-  const issuesOverTimeQuery = useMemo(
-    () => ({ ...baseIssuesQuery, bucket: "day" as const }),
-    [baseIssuesQuery],
-  );
-  const issuesProjectScopedQuery = useMemo(
-    () => ({ ...baseIssuesQuery, project_id: state.projectId ?? "" }),
-    [baseIssuesQuery, state.projectId],
+    [
+      window,
+      state.projectId,
+      state.repoName,
+      state.issueType,
+      state.assignee,
+      state.creator,
+      state.statusKeys,
+    ],
   );
 
   const hasProject = !!state.projectId;
@@ -99,10 +97,10 @@ export function AnalyticsThroughputPage() {
           >
             <h2 className={styles.sectionTitle}>Patches</h2>
             <div className={styles.grid}>
-              <PatchesOverTimeChart query={patchesOverTimeQuery} />
-              <PatchesTerminalMixChart query={baseQuery} />
-              <PatchesTimeToMergeChart query={baseQuery} />
-              <PatchesInFlightChart query={patchesInFlightQuery} />
+              <PatchesOverTimeChart query={patchesQuery} />
+              <PatchesTerminalMixChart query={patchesQuery} />
+              <PatchesTimeToMergeChart query={patchesQuery} />
+              <PatchesInFlightChart query={patchesQuery} />
             </div>
           </section>
 
@@ -113,14 +111,14 @@ export function AnalyticsThroughputPage() {
           >
             <h2 className={styles.sectionTitle}>Issues</h2>
             <div className={styles.grid}>
-              <IssuesOverTimeChart query={issuesOverTimeQuery} />
-              <IssuesCycleTimeChart query={baseIssuesQuery} />
+              <IssuesOverTimeChart query={issuesQuery} />
+              <IssuesCycleTimeChart query={issuesQuery} />
               <IssuesTimeInStatusBreakdownChart
-                query={issuesProjectScopedQuery}
+                query={issuesQuery}
                 hasProject={hasProject}
               />
               <IssuesPerStatusDistributionChart
-                query={issuesProjectScopedQuery}
+                query={issuesQuery}
                 hasProject={hasProject}
               />
             </div>

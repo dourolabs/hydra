@@ -41,19 +41,33 @@ vi.mock("../../api/client", () => ({
       }),
     getPatchesThroughputOverTime: vi.fn(() => Promise.resolve({ buckets: [] })),
     getPatchesThroughputTerminalMix: vi.fn(() =>
-      Promise.resolve({ merged: 0, closed: 0 }),
+      Promise.resolve({ merged: BigInt(0), closed: BigInt(0) }),
     ),
     getPatchesThroughputTimeToMerge: vi.fn(() =>
-      Promise.resolve({ median_seconds: 0, p95_seconds: 0, count: 0, histogram: [] }),
+      Promise.resolve({
+        median_seconds: BigInt(0),
+        p95_seconds: BigInt(0),
+        count: BigInt(0),
+        histogram: [],
+      }),
     ),
     getPatchesThroughputInFlightOverTime: vi.fn(() =>
       Promise.resolve({ buckets: [] }),
     ),
     getIssuesThroughputCycleTime: vi.fn(() =>
-      Promise.resolve({ median_seconds: 0, p95_seconds: 0, count: 0, histogram: [] }),
+      Promise.resolve({
+        median_seconds: BigInt(0),
+        p95_seconds: BigInt(0),
+        count: BigInt(0),
+        histogram: [],
+      }),
     ),
     getIssuesThroughputTimeInStatusBreakdown: vi.fn(() =>
-      Promise.resolve({ project_id: "j-defaul", status_segments: [], issue_count: 0 }),
+      Promise.resolve({
+        project_id: "j-defaul",
+        status_segments: [],
+        issue_count: BigInt(0),
+      }),
     ),
     getIssuesThroughputPerStatusDistribution: vi.fn(() =>
       Promise.resolve({ project_id: "j-defaul", statuses: [] }),
@@ -141,7 +155,7 @@ describe("AnalyticsThroughputPage", () => {
     expect(screen.getByTestId("slicer-panel")).toBeDefined();
     expect(screen.getByTestId("slicer-project")).toBeDefined();
     expect(screen.getByTestId("slicer-repo")).toBeDefined();
-    expect(screen.getByTestId("slicer-issue-type-feature")).toBeDefined();
+    expect(screen.getByTestId("slicer-issue-type")).toBeDefined();
   });
 
   it("reads existing range from the URL", () => {

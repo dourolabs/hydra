@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import type {
-  IssuesCycleTimeQuery,
+  IssuesThroughputQuery,
   IssuesCycleTimeResponse,
 } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
@@ -19,7 +19,7 @@ import { formatBinRange, formatDurationSeconds } from "../duration";
 import styles from "./charts.module.css";
 
 export interface IssuesCycleTimeChartProps {
-  query: IssuesCycleTimeQuery;
+  query: IssuesThroughputQuery;
 }
 
 /**
@@ -49,13 +49,16 @@ function IssuesCycleTimeChartContent({
   const bins = useMemo(
     () =>
       (data?.histogram ?? []).map((b) => ({
-        label: formatBinRange(b.bin_start_seconds, b.bin_end_seconds),
-        count: b.count,
+        label: formatBinRange(
+          Number(b.bin_start_seconds),
+          b.bin_end_seconds == null ? null : Number(b.bin_end_seconds),
+        ),
+        count: Number(b.count),
       })),
     [data],
   );
 
-  const count = data?.count ?? 0;
+  const count = Number(data?.count ?? 0);
   if (count === 0 || bins.length === 0) {
     return <div className={styles.empty}>No data in this window</div>;
   }
@@ -70,7 +73,7 @@ function IssuesCycleTimeChartContent({
           <span className={styles.calloutLabel}>Median:</span>
           <span className={styles.calloutValue}>
             {data?.median_seconds != null
-              ? formatDurationSeconds(data.median_seconds)
+              ? formatDurationSeconds(Number(data.median_seconds))
               : "—"}
           </span>
         </div>
@@ -78,7 +81,7 @@ function IssuesCycleTimeChartContent({
           <span className={styles.calloutLabel}>p95:</span>
           <span className={styles.calloutValue}>
             {data?.p95_seconds != null
-              ? formatDurationSeconds(data.p95_seconds)
+              ? formatDurationSeconds(Number(data.p95_seconds))
               : "—"}
           </span>
         </div>

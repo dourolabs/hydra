@@ -14,7 +14,7 @@ describe("slicerState.readSlicerState", () => {
       projectId: null,
       statusKeys: [],
       repoName: null,
-      issueTypes: [],
+      issueType: null,
       assignee: null,
       creator: null,
     });
@@ -26,7 +26,7 @@ describe("slicerState.readSlicerState", () => {
       project_id: "j-abc",
       status_keys: "open,in-progress",
       repo_name: "dourolabs/hydra",
-      issue_type: "feature,bug",
+      issue_type: "feature",
       assignee: "agents/swe",
       creator: "alice",
     });
@@ -36,17 +36,17 @@ describe("slicerState.readSlicerState", () => {
       projectId: "j-abc",
       statusKeys: ["open", "in-progress"],
       repoName: "dourolabs/hydra",
-      issueTypes: ["feature", "bug"],
+      issueType: "feature",
       assignee: "agents/swe",
       creator: "alice",
     });
   });
 
   it("drops invalid range and issue_type values", () => {
-    const params = new URLSearchParams({ range: "junk", issue_type: "feature,nope,bug" });
+    const params = new URLSearchParams({ range: "junk", issue_type: "nope" });
     const s = readSlicerState(params);
     expect(s.range).toBe(DEFAULT_TIME_RANGE);
-    expect(s.issueTypes).toEqual(["feature", "bug"]);
+    expect(s.issueType).toBeNull();
   });
 });
 
@@ -63,10 +63,17 @@ describe("slicerState.writeSlicerState", () => {
   it("joins list values with commas and drops empty lists", () => {
     const p = writeSlicerState(new URLSearchParams("status_keys=stale"), {
       statusKeys: ["open", "in-progress"],
-      issueTypes: [],
     });
     expect(p.get("status_keys")).toBe("open,in-progress");
-    expect(p.has("issue_type")).toBe(false);
+  });
+
+  it("sets and clears issue_type as a single-select", () => {
+    const set = writeSlicerState(new URLSearchParams(), { issueType: "feature" });
+    expect(set.get("issue_type")).toBe("feature");
+    const clear = writeSlicerState(new URLSearchParams("issue_type=feature"), {
+      issueType: null,
+    });
+    expect(clear.has("issue_type")).toBe(false);
   });
 
   it("always writes the range key when patched", () => {

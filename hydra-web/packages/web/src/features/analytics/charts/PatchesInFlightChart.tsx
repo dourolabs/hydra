@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import type {
-  PatchesInFlightOverTimeQuery,
+  PatchesThroughputQuery,
   PatchesInFlightOverTimeResponse,
 } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
@@ -19,7 +19,7 @@ import { formatBucketLabel } from "../duration";
 import styles from "./charts.module.css";
 
 export interface PatchesInFlightChartProps {
-  query: PatchesInFlightOverTimeQuery;
+  query: PatchesThroughputQuery;
 }
 
 /** Line chart of `open + changes-requested` patch count at each bucket boundary. */
@@ -46,7 +46,7 @@ function PatchesInFlightChartContent({
     () =>
       (data?.buckets ?? []).map((b) => ({
         label: formatBucketLabel(b.bucket_start),
-        in_flight: b.in_flight,
+        in_flight: Number(b.in_flight),
       })),
     [data],
   );

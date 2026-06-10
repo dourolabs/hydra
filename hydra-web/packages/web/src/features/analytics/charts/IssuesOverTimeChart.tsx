@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { IssuesOverTimeQuery, IssuesOverTimeResponse } from "@hydra/api";
+import type { IssuesThroughputQuery, IssuesOverTimeResponse } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
 import { useThroughputIssuesOverTime } from "../useThroughputIssues";
 import { AXIS_TICK, CHART_COLORS, GRID_STROKE, TOOLTIP_STYLE } from "./colors";
@@ -16,7 +16,7 @@ import { formatBucketLabel } from "../duration";
 import styles from "./charts.module.css";
 
 export interface IssuesOverTimeChartProps {
-  query: IssuesOverTimeQuery;
+  query: IssuesThroughputQuery;
 }
 
 /**
@@ -48,8 +48,8 @@ function IssuesOverTimeChartContent({
       (data?.buckets ?? []).map((b) => ({
         bucket_start: b.bucket_start,
         label: formatBucketLabel(b.bucket_start),
-        created: b.created,
-        reached_terminal: b.reached_terminal,
+        created: Number(b.created),
+        reached_terminal: Number(b.reached_terminal),
       })),
     [data],
   );

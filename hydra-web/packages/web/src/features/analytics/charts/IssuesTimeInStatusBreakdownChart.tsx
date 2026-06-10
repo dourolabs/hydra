@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import type {
-  IssuesTimeInStatusBreakdownQuery,
+  IssuesThroughputQuery,
   IssuesTimeInStatusBreakdownResponse,
-  StatusTimeSegment,
+  TimeInStatusSegment,
 } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
 import { useThroughputIssuesTimeInStatusBreakdown } from "../useThroughputIssues";
@@ -10,7 +10,7 @@ import { formatDurationSeconds } from "../duration";
 import styles from "./charts.module.css";
 
 export interface IssuesTimeInStatusBreakdownChartProps {
-  query: IssuesTimeInStatusBreakdownQuery;
+  query: IssuesThroughputQuery;
   /** When false the card renders a "select a project" placeholder. */
   hasProject: boolean;
 }
@@ -54,10 +54,10 @@ function IssuesTimeInStatusBreakdownContent({
     () => data?.status_segments ?? [],
     [data?.status_segments],
   );
-  const issueCount = data?.issue_count ?? 0;
+  const issueCount = Number(data?.issue_count ?? 0);
 
   const total = useMemo(
-    () => segments.reduce((acc, s) => acc + s.mean_seconds, 0),
+    () => segments.reduce((acc, s) => acc + Number(s.mean_seconds), 0),
     [segments],
   );
 
@@ -97,7 +97,7 @@ function IssuesTimeInStatusBreakdownContent({
             key={s.status_key}
             className={styles.legendItem}
             tabIndex={0}
-            title={`${s.label}: mean ${formatDurationSeconds(s.mean_seconds)}`}
+            title={`${s.label}: mean ${formatDurationSeconds(Number(s.mean_seconds))}`}
             data-testid={`issues-time-in-status-legend-${s.status_key}`}
           >
             <span
@@ -106,7 +106,7 @@ function IssuesTimeInStatusBreakdownContent({
             />
             <span>{s.label}</span>
             <span className={styles.legendValue}>
-              {formatDurationSeconds(s.mean_seconds)}
+              {formatDurationSeconds(Number(s.mean_seconds))}
             </span>
           </li>
         ))}
@@ -119,16 +119,17 @@ function StackedBarSegment({
   segment,
   total,
 }: {
-  segment: StatusTimeSegment;
+  segment: TimeInStatusSegment;
   total: number;
 }) {
-  const pct = total > 0 ? (segment.mean_seconds / total) * 100 : 0;
+  const meanSeconds = Number(segment.mean_seconds);
+  const pct = total > 0 ? (meanSeconds / total) * 100 : 0;
   if (pct === 0) return null;
   return (
     <span
       className={styles.stackedBarSegment}
       style={{ width: `${pct}%`, background: segment.color }}
-      title={`${segment.label}: ${formatDurationSeconds(segment.mean_seconds)}`}
+      title={`${segment.label}: ${formatDurationSeconds(meanSeconds)}`}
       data-testid={`issues-time-in-status-segment-${segment.status_key}`}
     />
   );
