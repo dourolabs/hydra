@@ -58,12 +58,8 @@ export function AnalyticsThroughputPage() {
       issue_type: state.issueTypes.length === 1 ? state.issueTypes[0] : null,
       assignee: state.assignee,
       creator: state.creator,
-      ...(state.issueTypes.length > 1
-        ? { issue_types: state.issueTypes.join(",") }
-        : {}),
-      ...(state.statusKeys.length > 0
-        ? { status_keys: state.statusKeys.join(",") }
-        : {}),
+      ...(state.issueTypes.length > 1 ? { issue_types: state.issueTypes.join(",") } : {}),
+      ...(state.statusKeys.length > 0 ? { status_keys: state.statusKeys.join(",") } : {}),
     }),
     [
       window,
@@ -81,14 +77,8 @@ export function AnalyticsThroughputPage() {
   return (
     <div className={styles.page} data-testid="analytics-throughput-page">
       <header className={styles.head}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>ANALYTICS</span>
-          <h1 className={styles.title}>Throughput</h1>
-        </div>
-        <TimeRangePicker
-          value={state.range}
-          onChange={(range) => onSlicerChange({ range })}
-        />
+        <h1 className={styles.title}>Throughput</h1>
+        <TimeRangePicker value={state.range} onChange={(range) => onSlicerChange({ range })} />
       </header>
 
       <div className={styles.body}>
@@ -116,14 +106,8 @@ export function AnalyticsThroughputPage() {
             <div className={styles.grid}>
               <IssuesOverTimeChart query={issuesQuery} />
               <IssuesCycleTimeChart query={issuesQuery} />
-              <IssuesTimeInStatusBreakdownChart
-                query={issuesQuery}
-                hasProject={hasProject}
-              />
-              <IssuesPerStatusDistributionChart
-                query={issuesQuery}
-                hasProject={hasProject}
-              />
+              <IssuesTimeInStatusBreakdownChart query={issuesQuery} hasProject={hasProject} />
+              <IssuesPerStatusDistributionChart query={issuesQuery} hasProject={hasProject} />
             </div>
           </section>
         </div>

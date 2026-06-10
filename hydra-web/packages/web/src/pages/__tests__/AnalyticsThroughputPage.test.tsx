@@ -51,9 +51,7 @@ vi.mock("../../api/client", () => ({
         histogram: [],
       }),
     ),
-    getPatchesThroughputInFlightOverTime: vi.fn(() =>
-      Promise.resolve({ buckets: [] }),
-    ),
+    getPatchesThroughputInFlightOverTime: vi.fn(() => Promise.resolve({ buckets: [] })),
     getIssuesThroughputCycleTime: vi.fn(() =>
       Promise.resolve({
         median_seconds: BigInt(0),
@@ -95,6 +93,53 @@ vi.mock("../../features/analytics/ChartCard.module.css", () => ({
 vi.mock("@hydra/ui", () => ({
   Spinner: () => <span data-testid="spinner" />,
   Icons: new Proxy({}, { get: () => () => <span /> }),
+  Panel: ({ children, header }: { children: React.ReactNode; header?: React.ReactNode }) => (
+    <div data-testid="panel">
+      {header !== undefined && <div data-testid="panel-header">{header}</div>}
+      {children}
+    </div>
+  ),
+  Select: ({
+    label,
+    options,
+    placeholder,
+    id,
+    ...props
+  }: {
+    label?: string;
+    placeholder?: string;
+    id?: string;
+    options: { value: string; label: string }[];
+    [key: string]: unknown;
+  }) => {
+    const selectId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
+    return (
+      <div>
+        {label && <label htmlFor={selectId}>{label}</label>}
+        <select id={selectId} {...(props as Record<string, unknown>)}>
+          {placeholder && (
+            <option value="" disabled>
+              {placeholder}
+            </option>
+          )}
+          {options.map((opt: { value: string; label: string }) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  },
+  Input: ({ label, id, ...props }: { label?: string; id?: string; [key: string]: unknown }) => {
+    const inputId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
+    return (
+      <div>
+        {label && <label htmlFor={inputId}>{label}</label>}
+        <input id={inputId} {...(props as Record<string, unknown>)} />
+      </div>
+    );
+  },
 }));
 
 function makeQueryClient(): QueryClient {

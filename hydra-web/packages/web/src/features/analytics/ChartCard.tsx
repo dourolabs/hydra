@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Spinner } from "@hydra/ui";
+import { Panel, Spinner } from "@hydra/ui";
 import styles from "./ChartCard.module.css";
 
 export interface ChartCardProps {
@@ -37,25 +37,27 @@ export function ChartCard({
       role="region"
       aria-label={ariaLabel ?? title}
     >
-      <header className={styles.head}>{title}</header>
-      <div className={styles.body}>
+      <Panel header={title}>
         {disabled && (
-          <div className={styles.disabled} data-testid="chart-card-disabled">
+          <div
+            className={`${styles.placeholder} ${styles.disabled}`}
+            data-testid="chart-card-disabled"
+          >
             {disabledHint ?? "Filter required"}
           </div>
         )}
         {!disabled && isLoading && (
-          <div className={styles.loading} data-testid="chart-card-loading">
+          <div className={styles.placeholder} data-testid="chart-card-loading">
             <Spinner />
           </div>
         )}
         {!disabled && !isLoading && Boolean(error) && (
-          <div className={styles.error} data-testid="chart-card-error">
+          <div className={`${styles.placeholder} ${styles.error}`} data-testid="chart-card-error">
             {extractErrorMessage(error)}
           </div>
         )}
         {!disabled && !isLoading && !error && children}
-      </div>
+      </Panel>
     </section>
   );
 }
