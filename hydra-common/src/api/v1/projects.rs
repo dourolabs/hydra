@@ -140,12 +140,16 @@ define_key_newtype!(
 /// `attach_form` is set, `issue.form` is replaced wholesale with that
 /// form (an issue holds at most one form at a time); when
 /// `clear_assignee` is `true`, `issue.assignee` is unset; when
-/// `kill_sessions` is `true`, any `Created`/`Pending`/`Running` sessions
-/// attached to the issue are killed. `assign_to` and `clear_assignee`
-/// are mutually exclusive — set both and [`StatusOnEnter::validate`]
-/// rejects the config; `kill_sessions` is independent of either.
-/// `None` (or `false`) on a field leaves the corresponding field
-/// untouched.
+/// `teardown_work` is `true`, this status is marked as a "teardown" status
+/// — entering it kills any `Created`/`Pending`/`Running` sessions attached
+/// to the issue AND closes any non-`Closed` conversations spawned from
+/// the issue. The teardown effects also fire unconditionally on issue
+/// deletion (regardless of this flag), but the flag is the canonical
+/// "this is a teardown status" marker that gates the status-entry path.
+/// `assign_to` and `clear_assignee` are mutually exclusive — set both
+/// and [`StatusOnEnter::validate`] rejects the config; `teardown_work`
+/// is independent of either. `None` (or `false`) on a field leaves the
+/// corresponding field untouched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -157,8 +161,12 @@ pub struct StatusOnEnter {
     pub attach_form: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clear_assignee: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub kill_sessions: bool,
+    #[serde(
+        default,
+        alias = "kill_sessions",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub teardown_work: bool,
 }
 
 impl StatusOnEnter {
@@ -167,7 +175,7 @@ impl StatusOnEnter {
             assign_to,
             attach_form,
             clear_assignee: false,
-            kill_sessions: false,
+            teardown_work: false,
         }
     }
 
@@ -718,61 +726,71 @@ mod tests {
     }
 
     #[test]
-    fn status_on_enter_validate_accepts_kill_sessions_alone() {
+    fn status_on_enter_validate_accepts_teardown_work_alone() {
         let mut on_enter = StatusOnEnter::new(None, None);
-        on_enter.kill_sessions = true;
+        on_enter.teardown_work = true;
         assert!(on_enter.validate().is_ok());
     }
 
     #[test]
-    fn status_on_enter_validate_accepts_kill_sessions_with_assign_to() {
+    fn status_on_enter_validate_accepts_teardown_work_with_assign_to() {
         let agent = crate::api::v1::agents::AgentName::try_new("reviewer").unwrap();
         let mut on_enter = StatusOnEnter::new(Some(Principal::Agent { name: agent }), None);
-        on_enter.kill_sessions = true;
+        on_enter.teardown_work = true;
         assert!(on_enter.validate().is_ok());
     }
 
     #[test]
-    fn status_on_enter_validate_accepts_kill_sessions_with_clear_assignee() {
+    fn status_on_enter_validate_accepts_teardown_work_with_clear_assignee() {
         let mut on_enter = StatusOnEnter::new(None, None);
         on_enter.clear_assignee = true;
-        on_enter.kill_sessions = true;
+        on_enter.teardown_work = true;
         assert!(on_enter.validate().is_ok());
     }
 
     #[test]
-    fn status_on_enter_validate_accepts_kill_sessions_with_attach_form() {
+    fn status_on_enter_validate_accepts_teardown_work_with_attach_form() {
         let form: DocumentPath = "/projects/default/forms/triage".parse().unwrap();
         let mut on_enter = StatusOnEnter::new(None, Some(form));
-        on_enter.kill_sessions = true;
+        on_enter.teardown_work = true;
         assert!(on_enter.validate().is_ok());
     }
 
     #[test]
-    fn status_on_enter_omits_kill_sessions_when_false() {
+    fn status_on_enter_omits_teardown_work_when_false() {
         let on_enter = StatusOnEnter::new(None, None);
         let json = serde_json::to_string(&on_enter).unwrap();
         assert!(
-            !json.contains("kill_sessions"),
-            "kill_sessions should be skipped when false; got {json}"
+            !json.contains("teardown_work"),
+            "teardown_work should be skipped when false; got {json}"
         );
     }
 
     #[test]
-    fn status_on_enter_round_trips_kill_sessions_true() {
+    fn status_on_enter_round_trips_teardown_work_true() {
         let mut on_enter = StatusOnEnter::new(None, None);
-        on_enter.kill_sessions = true;
+        on_enter.teardown_work = true;
         let json = serde_json::to_string(&on_enter).unwrap();
-        assert!(json.contains("\"kill_sessions\":true"));
+        assert!(json.contains("\"teardown_work\":true"));
         let parsed: StatusOnEnter = serde_json::from_str(&json).unwrap();
-        assert!(parsed.kill_sessions);
+        assert!(parsed.teardown_work);
     }
 
     #[test]
-    fn status_on_enter_defaults_kill_sessions_when_field_absent() {
+    fn status_on_enter_defaults_teardown_work_when_field_absent() {
         let legacy = serde_json::json!({});
         let parsed: StatusOnEnter = serde_json::from_value(legacy).unwrap();
-        assert!(!parsed.kill_sessions);
+        assert!(!parsed.teardown_work);
+    }
+
+    #[test]
+    fn status_on_enter_deserializes_legacy_kill_sessions_alias() {
+        let legacy = serde_json::json!({ "kill_sessions": true });
+        let parsed: StatusOnEnter = serde_json::from_value(legacy).unwrap();
+        assert!(
+            parsed.teardown_work,
+            "the `kill_sessions` serde alias should map to `teardown_work`"
+        );
     }
 
     #[test]

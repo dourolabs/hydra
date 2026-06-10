@@ -9,13 +9,13 @@ use crate::store::Status;
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::{ConversationId, IssueId};
 
-const AUTOMATION_NAME: &str = "kill_sessions_on_enter";
+const AUTOMATION_NAME: &str = "teardown_issue_work";
 
 /// Tears down agent work attached to an issue when the issue either enters
-/// a "kill_sessions" status or is deleted (soft-delete / archive).
+/// a "teardown_work" status or is deleted (soft-delete / archive).
 ///
 /// Trigger:
-/// - `IssueUpdated` where the new status's `on_enter.kill_sessions = true`
+/// - `IssueUpdated` where the new status's `on_enter.teardown_work = true`
 ///   (the canonical "issue went terminal" path on the default project).
 /// - `IssueDeleted` — always. Deleting an issue is itself the signal that
 ///   any attached work should stop, regardless of the status it was in.
@@ -29,9 +29,9 @@ const AUTOMATION_NAME: &str = "kill_sessions_on_enter";
 /// This automation should run after `cascade_issue_status` so that
 /// cascaded child/dependent issues also get their sessions killed via
 /// their own update events.
-pub struct KillSessionsOnEnterAutomation;
+pub struct TeardownIssueWorkAutomation;
 
-impl KillSessionsOnEnterAutomation {
+impl TeardownIssueWorkAutomation {
     pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         Ok(Self)
     }
@@ -144,7 +144,7 @@ impl KillSessionsOnEnterAutomation {
 }
 
 #[async_trait]
-impl Automation for KillSessionsOnEnterAutomation {
+impl Automation for TeardownIssueWorkAutomation {
     fn name(&self) -> &str {
         AUTOMATION_NAME
     }
@@ -191,7 +191,7 @@ impl Automation for KillSessionsOnEnterAutomation {
                 if !resolved
                     .on_enter
                     .as_ref()
-                    .is_some_and(|oe| oe.kill_sessions)
+                    .is_some_and(|oe| oe.teardown_work)
                 {
                     return Ok(());
                 }
@@ -333,7 +333,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillSessionsOnEnterAutomation;
+        let automation = TeardownIssueWorkAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &handles.state,
@@ -371,7 +371,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillSessionsOnEnterAutomation;
+        let automation = TeardownIssueWorkAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &handles.state,
@@ -382,7 +382,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closes_linked_conversation_on_kill_sessions_status_entry() {
+    async fn closes_linked_conversation_on_teardown_work_status_entry() {
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe").await;
 
@@ -396,7 +396,7 @@ mod tests {
         let conversation_id =
             seed_linked_conversation(&state, &issue_id, ConversationStatus::Active).await;
 
-        // Flip to `dropped`, which is `kill_sessions=true` in the default
+        // Flip to `dropped`, which is `teardown_work=true` in the default
         // project.
         let mut updated = issue.clone();
         updated.status = status("dropped");
@@ -414,7 +414,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillSessionsOnEnterAutomation;
+        let automation = TeardownIssueWorkAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &state,
@@ -461,7 +461,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillSessionsOnEnterAutomation;
+        let automation = TeardownIssueWorkAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &state,
@@ -569,7 +569,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillSessionsOnEnterAutomation;
+        let automation = TeardownIssueWorkAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &state,

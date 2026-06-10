@@ -6,4 +6,4 @@ unblocks_dependents: true
 cascades_to_children: false
 on_enter:
   clear_assignee: true
-  kill_sessions: true
+  teardown_work: true

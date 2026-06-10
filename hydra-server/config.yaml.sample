@@ -188,10 +188,10 @@ background:
 #     - "require_creator"              # Require a creator on new issues
 #
 #   ## Automations — react to persisted events with side effects.
-#   ## Order matters: cascade should run before kill_sessions_on_enter.
+#   ## Order matters: cascade should run before teardown_issue_work.
 #   automations:
 #     - "cascade_issue_status"         # Drop children/dependents when an issue enters a terminal state
-#     - "kill_sessions_on_enter"       # Kill running sessions + close spawned conversations when an issue enters a status with on_enter.kill_sessions=true or is deleted
+#     - "teardown_issue_work"          # Kill running sessions + close spawned conversations when an issue enters a status with on_enter.teardown_work=true or is deleted
 #     - "github_pr_sync"               # Sync GitHub PR state with patch status
 #     - "spawn_sessions"               # Spawn agent sessions when issues are created/assigned
 #     - "start_created_sessions"       # Start sessions that have been created

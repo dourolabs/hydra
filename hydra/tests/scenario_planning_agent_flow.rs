@@ -353,7 +353,7 @@ async fn user_rejects_plan_triggers_replanning() -> Result<()> {
     let child1_dropped = user.get_issue(&child1_id).await?;
     child1_dropped.assert_status(status("dropped"));
 
-    // Reconcile task status: the kill_sessions_on_enter automation
+    // Reconcile task status: the teardown_issue_work automation
     // killed the SWE job in the engine, but the task record still shows
     // Running. step_monitor_jobs reconciles the store with the engine.
     harness.step_monitor_jobs().await?;

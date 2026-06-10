@@ -169,15 +169,15 @@ pub fn build_default_registry() -> PolicyRegistry {
         Ok(Box::new(AgentRoleUniquenessRestriction::new()))
     });
 
-    // Automations (order matters: cascade must run before kill_sessions_on_enter)
+    // Automations (order matters: cascade must run before teardown_issue_work)
     registry.register_automation("apply_status_on_enter", |params| {
         Ok(Box::new(ApplyStatusOnEnterAutomation::new(params)?))
     });
     registry.register_automation("cascade_issue_status", |params| {
         Ok(Box::new(CascadeIssueStatusAutomation::new(params)?))
     });
-    registry.register_automation("kill_sessions_on_enter", |params| {
-        Ok(Box::new(KillSessionsOnEnterAutomation::new(params)?))
+    registry.register_automation("teardown_issue_work", |params| {
+        Ok(Box::new(TeardownIssueWorkAutomation::new(params)?))
     });
     registry.register_automation("github_pr_sync", |params| {
         Ok(Box::new(
