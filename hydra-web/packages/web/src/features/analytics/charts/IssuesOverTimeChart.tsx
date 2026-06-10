@@ -8,49 +8,48 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { PatchesOverTimeQuery, PatchesOverTimeResponse } from "@hydra/api";
+import type { IssuesOverTimeQuery, IssuesOverTimeResponse } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
-import { useThroughputPatchesOverTime } from "../useThroughputPatches";
+import { useThroughputIssuesOverTime } from "../useThroughputIssues";
 import { CHART_COLORS } from "./colors";
 import { formatBucketLabel } from "../duration";
 import styles from "./charts.module.css";
 
-export interface PatchesOverTimeChartProps {
-  query: PatchesOverTimeQuery;
+export interface IssuesOverTimeChartProps {
+  query: IssuesOverTimeQuery;
 }
 
 /**
- * Stacked area: patches created vs merged per bucket. Stacked area picked
- * over grouped bars because the headline question is "are we shipping at
- * the rate we're taking work on" — the combined area conveys that lens
- * better than discrete bars at small card widths.
+ * Stacked area: issues created vs reached-terminal per bucket. Mirrors
+ * the patches `over_time` chart variant so the two sections of the page
+ * read with the same visual idiom.
  */
-export function PatchesOverTimeChart({ query }: PatchesOverTimeChartProps) {
-  const result = useThroughputPatchesOverTime(query);
+export function IssuesOverTimeChart({ query }: IssuesOverTimeChartProps) {
+  const result = useThroughputIssuesOverTime(query);
   return (
     <ChartCard
-      title="Patches over time"
-      testId="chart-patches-over-time"
+      title="Issues over time"
+      testId="chart-issues-over-time"
       isLoading={result.isLoading}
       error={result.error}
     >
-      <PatchesOverTimeChartContent data={result.data} />
+      <IssuesOverTimeChartContent data={result.data} />
     </ChartCard>
   );
 }
 
-interface ContentProps {
-  data: PatchesOverTimeResponse | undefined;
-}
-
-function PatchesOverTimeChartContent({ data }: ContentProps) {
+function IssuesOverTimeChartContent({
+  data,
+}: {
+  data: IssuesOverTimeResponse | undefined;
+}) {
   const points = useMemo(
     () =>
       (data?.buckets ?? []).map((b) => ({
         bucket_start: b.bucket_start,
         label: formatBucketLabel(b.bucket_start),
         created: b.created,
-        merged: b.merged,
+        reached_terminal: b.reached_terminal,
       })),
     [data],
   );
@@ -60,7 +59,7 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
   }
 
   return (
-    <div className={styles.chartContent} data-testid="patches-over-time-content">
+    <div className={styles.chartContent} data-testid="issues-over-time-content">
       <div className={styles.chartBody}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
@@ -81,12 +80,12 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
             />
             <Area
               type="monotone"
-              dataKey="merged"
+              dataKey="reached_terminal"
               stackId="1"
               stroke={CHART_COLORS.merged}
               fill={CHART_COLORS.merged}
               fillOpacity={0.7}
-              name="Merged"
+              name="Reached terminal"
             />
           </AreaChart>
         </ResponsiveContainer>
@@ -104,7 +103,7 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
             className={styles.legendSwatch}
             style={{ background: CHART_COLORS.merged }}
           />
-          Merged
+          Reached terminal
         </li>
       </ul>
     </div>

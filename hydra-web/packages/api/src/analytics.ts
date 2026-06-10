@@ -140,8 +140,10 @@ export interface StatusDistribution {
   status_key: string;
   label: string;
   color: string;
-  median_seconds: number;
-  p95_seconds: number;
+  /** `null` when `sample_count` is zero. */
+  median_seconds: number | null;
+  /** `null` when `sample_count` is zero. */
+  p95_seconds: number | null;
   sample_count: number;
 }
 
