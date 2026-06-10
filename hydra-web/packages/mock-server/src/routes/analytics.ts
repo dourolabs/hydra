@@ -8,7 +8,9 @@ import type {
   IssuesTimeInStatusBreakdownResponse,
   IssuesPerStatusDistributionResponse,
   IssuesOverTimeResponse,
+  TokenUsageCostPerAgentResponse,
   TokenUsageOverTimeResponse,
+  TokenUsageTopIssuesByCostResponse,
 } from "@hydra/api";
 
 /**
@@ -235,6 +237,92 @@ export function createAnalyticsRoutes(): Hono {
         cache_read_input_tokens: BigInt(2000 + i * 500),
         cache_creation_input_tokens: BigInt(150 + i * 50),
       })),
+    };
+    return c.json(resp);
+  });
+
+  app.get("/v1/analytics/token_usage/cost_per_agent", (c) => {
+    const params = new URL(c.req.url).searchParams;
+    const common = readCommon(params);
+    if ("error" in common) return c.json(common, 400);
+    const resp: TokenUsageCostPerAgentResponse = {
+      agents: [
+        {
+          agent_name: "swe",
+          total_cost_usd: 184.32,
+          sessions: [
+            { session_id: "s-swe00001", cost_usd: 72.15 },
+            { session_id: "s-swe00002", cost_usd: 64.4 },
+            { session_id: "s-swe00003", cost_usd: 47.77 },
+          ],
+        },
+        {
+          agent_name: "pm",
+          total_cost_usd: 92.61,
+          sessions: [
+            { session_id: "s-pm00001", cost_usd: 51.2 },
+            { session_id: "s-pm00002", cost_usd: 41.41 },
+          ],
+        },
+        {
+          agent_name: "reviewer",
+          total_cost_usd: 47.05,
+          sessions: [
+            { session_id: "s-rev00001", cost_usd: 18.6 },
+            { session_id: "s-rev00002", cost_usd: 17.0 },
+            { session_id: "s-rev00003", cost_usd: 11.45 },
+          ],
+        },
+        {
+          agent_name: null,
+          total_cost_usd: 12.4,
+          sessions: [
+            { session_id: "s-adhoc001", cost_usd: 7.6 },
+            { session_id: "s-adhoc002", cost_usd: 4.8 },
+          ],
+        },
+      ],
+    };
+    return c.json(resp);
+  });
+
+  app.get("/v1/analytics/token_usage/top_issues_by_cost", (c) => {
+    const params = new URL(c.req.url).searchParams;
+    const common = readCommon(params);
+    if ("error" in common) return c.json(common, 400);
+    const resp: TokenUsageTopIssuesByCostResponse = {
+      issues: [
+        {
+          issue_id: "i-abcd1234",
+          title: "Token Usage dashboard",
+          cost_usd: 84.21,
+          session_count: BigInt(6),
+        },
+        {
+          issue_id: "i-efgh5678",
+          title: "Per-project issue statuses migration",
+          cost_usd: 63.5,
+          session_count: BigInt(4),
+        },
+        {
+          issue_id: "i-ijkl9012",
+          title: "Sessions list: filter by repository",
+          cost_usd: 41.0,
+          session_count: BigInt(3),
+        },
+        {
+          issue_id: "i-mnop3456",
+          title: "Patch detail: render review thread inline",
+          cost_usd: 27.75,
+          session_count: BigInt(2),
+        },
+        {
+          issue_id: "i-qrst7890",
+          title: "Background worker: graceful shutdown on SIGTERM",
+          cost_usd: 14.4,
+          session_count: BigInt(1),
+        },
+      ],
     };
     return c.json(resp);
   });

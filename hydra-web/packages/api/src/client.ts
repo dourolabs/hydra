@@ -93,6 +93,9 @@ import type { IssuesPerStatusDistributionResponse } from "./generated/IssuesPerS
 import type { IssuesOverTimeResponse } from "./generated/IssuesOverTimeResponse";
 import type { TokenUsageOverTimeQuery } from "./generated/TokenUsageOverTimeQuery";
 import type { TokenUsageOverTimeResponse } from "./generated/TokenUsageOverTimeResponse";
+import type { TokenUsageQuery } from "./generated/TokenUsageQuery";
+import type { TokenUsageCostPerAgentResponse } from "./generated/TokenUsageCostPerAgentResponse";
+import type { TokenUsageTopIssuesByCostResponse } from "./generated/TokenUsageTopIssuesByCostResponse";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -894,6 +897,26 @@ export class HydraApiClient {
   getTokenUsageOverTime(query: TokenUsageOverTimeQuery): Promise<TokenUsageOverTimeResponse> {
     return this.get(
       "/v1/analytics/token_usage/over_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/token_usage/cost_per_agent */
+  getTokenUsageCostPerAgent(
+    query: TokenUsageQuery,
+  ): Promise<TokenUsageCostPerAgentResponse> {
+    return this.get(
+      "/v1/analytics/token_usage/cost_per_agent",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/token_usage/top_issues_by_cost */
+  getTokenUsageTopIssuesByCost(
+    query: TokenUsageQuery,
+  ): Promise<TokenUsageTopIssuesByCostResponse> {
+    return this.get(
+      "/v1/analytics/token_usage/top_issues_by_cost",
       query as unknown as Record<string, unknown>,
     );
   }

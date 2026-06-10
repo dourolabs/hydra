@@ -1,22 +1,23 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { TokenUsageOverTimeQuery } from "@hydra/api";
+import type { TokenUsageOverTimeQuery, TokenUsageQuery } from "@hydra/api";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { TimeRangePicker } from "../features/analytics/TimeRangePicker";
 import {
   DEFAULT_TIME_RANGE,
-  TIME_RANGE_OPTIONS,
+  isTimeRange,
   timeWindow,
   type TimeRange,
 } from "../features/analytics/slicerState";
-import { TokensOverTimeChart } from "../features/analytics/charts";
+import {
+  CostPerAgentChart,
+  PerSessionCostScatterChart,
+  TokensOverTimeChart,
+  TopIssuesByCostList,
+} from "../features/analytics/charts";
 import styles from "./AnalyticsTokenUsagePage.module.css";
 
 const RANGE_PARAM = "range";
-
-function isTimeRange(value: string): value is TimeRange {
-  return (TIME_RANGE_OPTIONS as readonly string[]).includes(value);
-}
 
 export function AnalyticsTokenUsagePage() {
   useBreadcrumbs([{ label: "Analytics", to: "/analytics" }], "Token Usage");
@@ -51,6 +52,16 @@ export function AnalyticsTokenUsagePage() {
     [window],
   );
 
+  const costQuery = useMemo<TokenUsageQuery>(
+    () => ({
+      from: window.from,
+      to: window.to,
+      repo_name: null,
+      creator: null,
+    }),
+    [window],
+  );
+
   return (
     <div className={styles.page} data-testid="analytics-token-usage-page">
       <header className={styles.head}>
@@ -67,6 +78,25 @@ export function AnalyticsTokenUsagePage() {
           <div className={styles.grid}>
             <TokensOverTimeChart query={overTimeQuery} />
           </div>
+        </section>
+
+        <section
+          data-testid="analytics-cost-section"
+          className={styles.section}
+          aria-label="Token usage cost breakdown"
+        >
+          <div className={styles.grid}>
+            <CostPerAgentChart query={costQuery} />
+            <PerSessionCostScatterChart query={costQuery} />
+          </div>
+        </section>
+
+        <section
+          data-testid="analytics-top-issues-section"
+          className={styles.section}
+          aria-label="Top 10 most expensive issues"
+        >
+          <TopIssuesByCostList query={costQuery} />
         </section>
       </div>
     </div>
