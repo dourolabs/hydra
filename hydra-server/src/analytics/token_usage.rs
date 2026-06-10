@@ -188,10 +188,13 @@ pub fn compute_token_usage_over_time(
 
 /// Compute the `token_usage/cost_per_agent` response: per agent, the
 /// blended-dollar total cost across the window plus the per-session
-/// breakdown. Sorted by `total_cost_usd` descending; the per-session
-/// list inside each agent is sorted by `cost_usd` descending too. Ad-hoc
-/// sessions (`agent_config.agent_name == None`) are aggregated under a
-/// single `None` bucket.
+/// breakdown. Sorted by `total_cost_usd` descending with `agent_name`
+/// ascending (and `None` last) as a tie-break so output is deterministic
+/// across runs. The per-session list inside each agent is sorted by
+/// `cost_usd` descending; that sort is stable over an input-ordered Vec,
+/// so it's already deterministic. Ad-hoc sessions
+/// (`agent_config.agent_name == None`) are aggregated under a single
+/// `None` bucket.
 pub fn compute_cost_per_agent(sessions: &[SessionWithUsage]) -> TokenUsageCostPerAgentResponse {
     let mut by_agent: HashMap<Option<AgentName>, Vec<AgentSessionCost>> = HashMap::new();
     for entry in sessions {
@@ -219,6 +222,12 @@ pub fn compute_cost_per_agent(sessions: &[SessionWithUsage]) -> TokenUsageCostPe
         b.total_cost_usd
             .partial_cmp(&a.total_cost_usd)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| match (&a.agent_name, &b.agent_name) {
+                (Some(x), Some(y)) => x.cmp(y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
     });
 
     TokenUsageCostPerAgentResponse::new(agents)
@@ -244,7 +253,14 @@ pub fn rank_top_issues_by_cost(sessions: &[SessionWithUsage]) -> Vec<(IssueId, f
         .into_iter()
         .map(|(id, (c, n))| (id, c, n))
         .collect();
-    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    // Secondary key on `issue_id` asc makes the truncate boundary stable
+    // when costs tie — without it, the dropped issue depends on HashMap
+    // iteration order.
+    ranked.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
     ranked.truncate(TOP_ISSUES_LIMIT);
     ranked
 }
@@ -477,6 +493,43 @@ mod tests {
         assert_eq!(resp.agents[2].sessions.len(), 1);
     }
 
+    #[test]
+    fn cost_per_agent_tie_break_uses_agent_name_asc_with_none_last() {
+        // Three agents with identical totals; one is ad-hoc (`None`).
+        // Expect agent_name ascending, with `None` placed last.
+        let sessions = vec![
+            entry(
+                Some("swe"),
+                None,
+                dt("2026-05-10T01:00:00Z"),
+                usage(1_000_000, 0, 0, 0),
+            ),
+            entry(
+                Some("pm"),
+                None,
+                dt("2026-05-10T01:00:00Z"),
+                usage(1_000_000, 0, 0, 0),
+            ),
+            entry(
+                None,
+                None,
+                dt("2026-05-10T01:00:00Z"),
+                usage(1_000_000, 0, 0, 0),
+            ),
+        ];
+        let resp = compute_cost_per_agent(&sessions);
+        assert_eq!(resp.agents.len(), 3);
+        assert_eq!(
+            resp.agents[0].agent_name.as_ref().map(|n| n.as_str()),
+            Some("pm")
+        );
+        assert_eq!(
+            resp.agents[1].agent_name.as_ref().map(|n| n.as_str()),
+            Some("swe")
+        );
+        assert!(resp.agents[2].agent_name.is_none());
+    }
+
     // ----- top_issues_by_cost -----
 
     #[test]
@@ -514,6 +567,40 @@ mod tests {
         for window in resp.issues.windows(2) {
             assert!(window[0].cost_usd >= window[1].cost_usd);
         }
+    }
+
+    #[test]
+    fn top_issues_tie_break_uses_issue_id_asc() {
+        use std::str::FromStr;
+        // Three issues at identical costs; expect issue_id ascending order.
+        let id_c = IssueId::from_str("i-cccccc").expect("valid id");
+        let id_a = IssueId::from_str("i-aaaaaa").expect("valid id");
+        let id_b = IssueId::from_str("i-bbbbbb").expect("valid id");
+        let sessions = vec![
+            entry(
+                Some("swe"),
+                Some(id_c.clone()),
+                dt("2026-05-10T01:00:00Z"),
+                usage(1_000_000, 0, 0, 0),
+            ),
+            entry(
+                Some("swe"),
+                Some(id_a.clone()),
+                dt("2026-05-10T01:00:00Z"),
+                usage(1_000_000, 0, 0, 0),
+            ),
+            entry(
+                Some("swe"),
+                Some(id_b.clone()),
+                dt("2026-05-10T01:00:00Z"),
+                usage(1_000_000, 0, 0, 0),
+            ),
+        ];
+        let ranked = rank_top_issues_by_cost(&sessions);
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].0, id_a);
+        assert_eq!(ranked[1].0, id_b);
+        assert_eq!(ranked[2].0, id_c);
     }
 
     #[test]
