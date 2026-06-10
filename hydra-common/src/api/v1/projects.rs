@@ -138,8 +138,11 @@ define_key_newtype!(
 /// `issue.assignee` is replaced with that [`Principal`] (agent assignees
 /// then flow through the existing assignee-driven spawn dispatcher); when
 /// `attach_form` is set, `issue.form` is replaced wholesale with that
-/// form (an issue holds at most one form at a time). `None` on either
-/// field leaves the corresponding field untouched.
+/// form (an issue holds at most one form at a time); when
+/// `clear_assignee` is `true`, `issue.assignee` is unset. `assign_to` and
+/// `clear_assignee` are mutually exclusive — set both and
+/// [`StatusOnEnter::validate`] rejects the config. `None` (or `false`) on
+/// a field leaves the corresponding field untouched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -149,6 +152,8 @@ pub struct StatusOnEnter {
     pub assign_to: Option<Principal>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach_form: Option<DocumentPath>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear_assignee: bool,
 }
 
 impl StatusOnEnter {
@@ -156,7 +161,18 @@ impl StatusOnEnter {
         Self {
             assign_to,
             attach_form,
+            clear_assignee: false,
         }
+    }
+
+    /// Reject configurations that contradict themselves. Today the only
+    /// rule: `assign_to` (set the assignee to X) and `clear_assignee`
+    /// (unset the assignee) cannot both be set.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.clear_assignee && self.assign_to.is_some() {
+            return Err("on_enter cannot set both assign_to and clear_assignee".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -633,6 +649,66 @@ mod tests {
         let json = serde_json::to_string(&proj).unwrap();
         let parsed: Project = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, proj);
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_neither_field_set() {
+        assert!(StatusOnEnter::new(None, None).validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_assign_to_alone() {
+        let agent = crate::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        let on_enter = StatusOnEnter::new(Some(Principal::Agent { name: agent }), None);
+        assert!(on_enter.validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_clear_assignee_alone() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.clear_assignee = true;
+        assert!(on_enter.validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_validate_rejects_assign_to_with_clear_assignee() {
+        let agent = crate::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        let mut on_enter = StatusOnEnter::new(Some(Principal::Agent { name: agent }), None);
+        on_enter.clear_assignee = true;
+        let err = on_enter.validate().unwrap_err();
+        assert!(
+            err.contains("assign_to") && err.contains("clear_assignee"),
+            "validation error must name both fields; got: {err}"
+        );
+    }
+
+    #[test]
+    fn status_on_enter_omits_clear_assignee_when_false() {
+        let on_enter = StatusOnEnter::new(None, None);
+        let json = serde_json::to_string(&on_enter).unwrap();
+        assert!(
+            !json.contains("clear_assignee"),
+            "clear_assignee should be skipped when false; got {json}"
+        );
+    }
+
+    #[test]
+    fn status_on_enter_round_trips_clear_assignee_true() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.clear_assignee = true;
+        let json = serde_json::to_string(&on_enter).unwrap();
+        assert!(json.contains("\"clear_assignee\":true"));
+        let parsed: StatusOnEnter = serde_json::from_str(&json).unwrap();
+        assert!(parsed.clear_assignee);
+    }
+
+    #[test]
+    fn status_on_enter_defaults_clear_assignee_when_field_absent() {
+        // Legacy payloads (pre-this-PR) have no `clear_assignee`; they
+        // must continue to parse with the field defaulted to `false`.
+        let legacy = serde_json::json!({});
+        let parsed: StatusOnEnter = serde_json::from_value(legacy).unwrap();
+        assert!(!parsed.clear_assignee);
     }
 
     #[test]

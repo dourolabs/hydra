@@ -8,7 +8,14 @@ import type { Principal } from "./Principal";
  * `issue.assignee` is replaced with that [`Principal`] (agent assignees
  * then flow through the existing assignee-driven spawn dispatcher); when
  * `attach_form` is set, `issue.form` is replaced wholesale with that
- * form (an issue holds at most one form at a time). `None` on either
- * field leaves the corresponding field untouched.
+ * form (an issue holds at most one form at a time); when
+ * `clear_assignee` is `true`, `issue.assignee` is unset. `assign_to` and
+ * `clear_assignee` are mutually exclusive — set both and
+ * [`StatusOnEnter::validate`] rejects the config. `None` (or `false`) on
+ * a field leaves the corresponding field untouched.
  */
-export type StatusOnEnter = { assign_to?: Principal | null; attach_form?: DocumentPath | null };
+export type StatusOnEnter = {
+  assign_to?: Principal | null;
+  attach_form?: DocumentPath | null;
+  clear_assignee?: boolean;
+};

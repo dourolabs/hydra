@@ -338,6 +338,73 @@ async fn update_status_rename_route_round_trip() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `StatusOnEnter::validate` rejects an `on_enter` body that sets both
+/// `assign_to` and `clear_assignee`. The route handlers must surface
+/// the rejection as a 400 rather than persisting a contradictory
+/// configuration that the automation can't honour.
+#[tokio::test]
+async fn create_status_with_assign_to_and_clear_assignee_returns_400() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+    let project_id = setup_engineering_project(&client, &base).await?;
+
+    let body = serde_json::json!({
+        "key": "abandoned",
+        "label": "Abandoned",
+        "color": "#cccccc",
+        "unblocks_parents": false,
+        "unblocks_dependents": false,
+        "cascades_to_children": false,
+        "on_enter": {
+            "assign_to": { "User": { "name": "creator" } },
+            "clear_assignee": true,
+        },
+    });
+    let resp = client
+        .post(format!("{base}/v1/projects/{project_id}/statuses"))
+        .json(&body)
+        .send()
+        .await?;
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let text = resp.text().await?;
+    assert!(
+        text.contains("assign_to") && text.contains("clear_assignee"),
+        "400 body must name both fields; got: {text}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_status_with_assign_to_and_clear_assignee_returns_400() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+    let project_id = setup_engineering_project(&client, &base).await?;
+
+    let body = serde_json::json!({
+        "key": "backlog",
+        "label": "Backlog",
+        "color": "#3498db",
+        "unblocks_parents": false,
+        "unblocks_dependents": false,
+        "cascades_to_children": false,
+        "on_enter": {
+            "assign_to": { "User": { "name": "creator" } },
+            "clear_assignee": true,
+        },
+    });
+    let resp = client
+        .put(format!("{base}/v1/projects/{project_id}/statuses/backlog"))
+        .json(&body)
+        .send()
+        .await?;
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn update_status_rename_to_existing_returns_400() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;

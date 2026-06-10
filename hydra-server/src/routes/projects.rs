@@ -248,6 +248,10 @@ pub async fn create_project_status(
         "create_project_status invoked"
     );
 
+    if let Some(on_enter) = status.on_enter.as_ref() {
+        on_enter.validate().map_err(ApiError::bad_request)?;
+    }
+
     let actor_ref = ActorRef::from(&actor);
     let (persisted, version) = state
         .add_status(&project_id, status, &actor_ref)
@@ -288,6 +292,10 @@ pub async fn update_project_status(
         new_key = %status.key,
         "update_project_status invoked"
     );
+
+    if let Some(on_enter) = status.on_enter.as_ref() {
+        on_enter.validate().map_err(ApiError::bad_request)?;
+    }
 
     let actor_ref = ActorRef::from(&actor);
     let (persisted, version) = state
