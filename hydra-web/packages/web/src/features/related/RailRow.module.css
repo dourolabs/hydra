@@ -15,6 +15,13 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--tx-fast);
+  /* Clip any intrinsic-width child (long status label, hyphenated title
+   * token, etc.) so it can't push the row past its parent's content box.
+   * Title and metaMono already truncate with ellipsis; this guards against
+   * a flex-shrink:0 meta chip surfacing a horizontal scrollbar on narrow
+   * mobile viewports. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .row:hover {
@@ -112,41 +119,6 @@
   white-space: nowrap;
 }
 
-.progressBar {
-  position: relative;
-  display: inline-block;
-  width: 80px;
-  height: 4px;
-  background: var(--bg-3);
-  border-radius: 4px;
-  overflow: visible;
-  flex-shrink: 0;
-}
-
-.progressFill {
-  display: block;
-  height: 100%;
-  background: var(--s-closed);
-  border-radius: 4px;
-  transition: width var(--tx-norm);
-}
-
-.progressFillActive {
-  background: var(--s-progress);
-  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
-  animation: progressGlow 1.6s ease-in-out infinite;
-}
-
-@keyframes progressGlow {
-  0%,
-  100% {
-    box-shadow: 0 0 4px 1px color-mix(in srgb, var(--s-progress) 25%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--s-progress) 45%, transparent);
-  }
-}
-
 .tokens {
   display: inline-flex;
   align-items: center;
@@ -167,4 +139,56 @@
 .tokens > span > span {
   margin-right: 2px;
   opacity: 0.85;
+}
+
+.archived {
+  opacity: 0.62;
+}
+
+.archived .title {
+  color: var(--fg-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+}
+
+.archivedTag {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+}
+
+/* Hover/focus-revealed Restore button on archived rail rows. The rail row
+   wrapper is itself a role="button", so we also surface the action on
+   focus-within for tab-traversal users. `pointer-events: none` while
+   hidden so the invisible button can't be tapped on touch devices (no
+   `:hover`), which would otherwise silently fire a restore. */
+.restoreButton {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--tx-fast);
+}
+
+.archived:hover .restoreButton,
+.archived:focus-within .restoreButton {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Mobile: drop low-priority meta chrome so the title and dot read cleanly
+ * and the row never has to wrap a fifth+ flex-shrink:0 chip past the
+ * viewport. The status dot already carries the status signal (color), and
+ * the IssuesTable mobile group header carries the project signal — so the
+ * textual statusLabel and the projectChip are the redundant ones to drop. */
+@media (max-width: 768px) {
+  .statusLabel,
+  .projectChip {
+    display: none;
+  }
 }

@@ -21,8 +21,8 @@ use hydra_common::{
     },
     api::v1::merge_check::{MergeBlockedError, MergeCheckOk, MergeCheckResponse},
     api::v1::projects::{
-        ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
-        RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
+        ListProjectsResponse, ProjectRecord, ProjectRef, ProjectStatusesResponse, StatusDefinition,
+        StatusKey, UpsertProjectRequest, UpsertProjectResponse, UpsertProjectStatusResponse,
     },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
@@ -62,8 +62,8 @@ use hydra_common::{
     },
     users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
-    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId,
-    RelativeVersionNumber, RepoName, SessionId, TriggerId,
+    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
+    RepoName, SessionId, TriggerId,
 };
 use reqwest::{header, Client as HttpClient, RequestBuilder, Response, StatusCode, Url};
 use sse::SseEventStream;
@@ -322,21 +322,32 @@ pub trait HydraClientInterface: Send + Sync {
     async fn list_projects(&self) -> Result<ListProjectsResponse>;
     async fn create_project(&self, request: &UpsertProjectRequest)
         -> Result<UpsertProjectResponse>;
-    async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord>;
+    async fn get_project(&self, project_ref: &ProjectRef) -> Result<ProjectRecord>;
     async fn update_project(
         &self,
-        project_id: &ProjectId,
+        project_ref: &ProjectRef,
         request: &UpsertProjectRequest,
     ) -> Result<UpsertProjectResponse>;
-    async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse>;
-    async fn rename_project_status(
+    async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse>;
+    async fn create_project_status(
         &self,
-        project_id: &ProjectId,
-        request: &RenameStatusRequest,
+        project_ref: &ProjectRef,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse>;
+    async fn update_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse>;
+    async fn delete_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse>;
     async fn get_project_statuses(
         &self,
-        project: &ProjectIdOrDefault,
+        project_ref: &ProjectRef,
     ) -> Result<ProjectStatusesResponse>;
     async fn whoami(&self) -> Result<WhoAmIResponse>;
     async fn list_users(&self, query: &SearchUsersQuery) -> Result<ListUsersResponse>;
@@ -1605,9 +1616,12 @@ impl HydraClient {
             .context("failed to decode create project response")
     }
 
-    /// Call `GET /v1/projects/:project_id` to fetch a single project.
-    pub async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord> {
-        let url = self.endpoint(&format!("/v1/projects/{project_id}"))?;
+    /// Call `GET /v1/projects/:project_ref` to fetch a single project.
+    /// Accepts either a [`ProjectId`](hydra_common::ProjectId) (`j-…`) or
+    /// a [`ProjectKey`](hydra_common::api::v1::projects::ProjectKey)
+    /// (slug) via [`ProjectRef`].
+    pub async fn get_project(&self, project_ref: &ProjectRef) -> Result<ProjectRecord> {
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}"))?;
         let response = self
             .authed(self.http.get(url))
             .send()
@@ -1622,13 +1636,13 @@ impl HydraClient {
             .context("failed to decode project response")
     }
 
-    /// Call `PUT /v1/projects/:project_id` to replace a project (full update).
+    /// Call `PUT /v1/projects/:project_ref` to replace a project (full update).
     pub async fn update_project(
         &self,
-        project_id: &ProjectId,
+        project_ref: &ProjectRef,
         request: &UpsertProjectRequest,
     ) -> Result<UpsertProjectResponse> {
-        let url = self.endpoint(&format!("/v1/projects/{project_id}"))?;
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}"))?;
         let response = self
             .authed(self.http.put(url))
             .json(request)
@@ -1644,9 +1658,9 @@ impl HydraClient {
             .context("failed to decode update project response")
     }
 
-    /// Call `DELETE /v1/projects/:project_id` to soft-delete a project.
-    pub async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
-        let url = self.endpoint(&format!("/v1/projects/{project_id}"))?;
+    /// Call `DELETE /v1/projects/:project_ref` to soft-delete a project.
+    pub async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}"))?;
         let response = self
             .authed(self.http.delete(url))
             .send()
@@ -1661,38 +1675,89 @@ impl HydraClient {
             .context("failed to decode delete project response")
     }
 
-    /// Call `POST /v1/projects/:project_id/statuses/rename` to rename a
-    /// status key in place. Preserves the status's storage identity, so
-    /// existing issues continue to resolve through the same sequence.
-    pub async fn rename_project_status(
+    /// Call `POST /v1/projects/:project_ref/statuses` to add a new
+    /// status to the project. The server allocates the next sequence
+    /// id and returns the persisted status definition + project
+    /// version.
+    pub async fn create_project_status(
         &self,
-        project_id: &ProjectId,
-        request: &RenameStatusRequest,
-    ) -> Result<UpsertProjectResponse> {
-        let url = self.endpoint(&format!("/v1/projects/{project_id}/statuses/rename"))?;
+        project_ref: &ProjectRef,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/statuses"))?;
         let response = self
             .authed(self.http.post(url))
             .json(request)
             .send()
             .await
-            .context("failed to submit rename status request")?
-            .error_for_status_with_body("hydra-server rejected rename status request")
+            .context("failed to submit create status request")?
+            .error_for_status_with_body("hydra-server rejected create status request")
+            .await?;
+
+        response
+            .json::<UpsertProjectStatusResponse>()
+            .await
+            .context("failed to decode create status response")
+    }
+
+    /// Call `PUT /v1/projects/:project_ref/statuses/:status_key` to
+    /// update an existing status. A body whose `key` differs from
+    /// `status_key` renames the status in place — the storage
+    /// `(project_id, sequence)` identity is preserved.
+    pub async fn update_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/statuses/{status_key}"))?;
+        let response = self
+            .authed(self.http.put(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit update status request")?
+            .error_for_status_with_body("hydra-server rejected update status request")
+            .await?;
+
+        response
+            .json::<UpsertProjectStatusResponse>()
+            .await
+            .context("failed to decode update status response")
+    }
+
+    /// Call `DELETE /v1/projects/:project_ref/statuses/:status_key`
+    /// to remove a status. The server-side FK on
+    /// `issues_v2.status_sequence` is the authoritative guard against
+    /// removing a status that still has issues against it.
+    pub async fn delete_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+    ) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/statuses/{status_key}"))?;
+        let response = self
+            .authed(self.http.delete(url))
+            .send()
+            .await
+            .context("failed to submit delete status request")?
+            .error_for_status_with_body("hydra-server rejected delete status request")
             .await?;
 
         response
             .json::<UpsertProjectResponse>()
             .await
-            .context("failed to decode rename status response")
+            .context("failed to decode delete status response")
     }
 
-    /// Call `GET /v1/projects/:project/statuses` to list the project's status
-    /// definitions. Pass [`ProjectIdOrDefault::Default`] to get the
-    /// seeded default project's statuses.
+    /// Call `GET /v1/projects/:project_ref/statuses` to list the
+    /// project's status definitions. Pass the literal `"default"` key to
+    /// get the seeded default project's statuses.
     pub async fn get_project_statuses(
         &self,
-        project: &ProjectIdOrDefault,
+        project_ref: &ProjectRef,
     ) -> Result<ProjectStatusesResponse> {
-        let url = self.endpoint(&format!("/v1/projects/{project}/statuses"))?;
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/statuses"))?;
         let response = self
             .authed(self.http.get(url))
             .send()
@@ -2936,35 +3001,52 @@ impl HydraClientInterface for HydraClient {
         HydraClient::create_project(self, request).await
     }
 
-    async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord> {
-        HydraClient::get_project(self, project_id).await
+    async fn get_project(&self, project_ref: &ProjectRef) -> Result<ProjectRecord> {
+        HydraClient::get_project(self, project_ref).await
     }
 
     async fn update_project(
         &self,
-        project_id: &ProjectId,
+        project_ref: &ProjectRef,
         request: &UpsertProjectRequest,
     ) -> Result<UpsertProjectResponse> {
-        HydraClient::update_project(self, project_id, request).await
+        HydraClient::update_project(self, project_ref, request).await
     }
 
-    async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
-        HydraClient::delete_project(self, project_id).await
+    async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        HydraClient::delete_project(self, project_ref).await
     }
 
-    async fn rename_project_status(
+    async fn create_project_status(
         &self,
-        project_id: &ProjectId,
-        request: &RenameStatusRequest,
+        project_ref: &ProjectRef,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        HydraClient::create_project_status(self, project_ref, request).await
+    }
+
+    async fn update_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        HydraClient::update_project_status(self, project_ref, status_key, request).await
+    }
+
+    async fn delete_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse> {
-        HydraClient::rename_project_status(self, project_id, request).await
+        HydraClient::delete_project_status(self, project_ref, status_key).await
     }
 
     async fn get_project_statuses(
         &self,
-        project: &ProjectIdOrDefault,
+        project_ref: &ProjectRef,
     ) -> Result<ProjectStatusesResponse> {
-        HydraClient::get_project_statuses(self, project).await
+        HydraClient::get_project_statuses(self, project_ref).await
     }
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {

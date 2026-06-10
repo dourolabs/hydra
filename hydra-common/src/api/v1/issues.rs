@@ -48,80 +48,6 @@ fn deserialize_option_principal_path<'de, D: Deserializer<'de>>(
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
-#[serde(rename_all = "kebab-case")]
-#[non_exhaustive]
-pub enum IssueStatus {
-    #[default]
-    Open,
-    InProgress,
-    Closed,
-    Dropped,
-    Failed,
-    #[serde(other)]
-    Unknown,
-}
-
-impl IssueStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            IssueStatus::Open => "open",
-            IssueStatus::InProgress => "in-progress",
-            IssueStatus::Closed => "closed",
-            IssueStatus::Dropped => "dropped",
-            IssueStatus::Failed => "failed",
-            IssueStatus::Unknown => "unknown",
-        }
-    }
-
-    pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
-        )
-    }
-
-    pub fn is_active(&self) -> bool {
-        matches!(self, IssueStatus::Open | IssueStatus::InProgress)
-    }
-}
-
-impl fmt::Display for IssueStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for IssueStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "open" => Ok(IssueStatus::Open),
-            "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
-            "closed" => Ok(IssueStatus::Closed),
-            "dropped" => Ok(IssueStatus::Dropped),
-            // Backward-compat: old "rejected" wire values deserialize to Dropped; remove once the 2026-05-08 migration has soaked.
-            "rejected" => Ok(IssueStatus::Dropped),
-            "failed" => Ok(IssueStatus::Failed),
-            other => Err(format!("unsupported issue status '{other}'")),
-        }
-    }
-}
-
-impl From<IssueStatus> for StatusKey {
-    /// Legacy adapter: returns the wire string of the enum variant as a
-    /// [`StatusKey`]. Always succeeds (the five legacy strings are
-    /// well-formed keys by construction). `Unknown` falls back to
-    /// `unknown` which is also a valid key.
-    fn from(value: IssueStatus) -> Self {
-        StatusKey::try_new(value.as_str()).expect("IssueStatus wire string is a valid StatusKey")
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -636,8 +562,8 @@ pub struct SearchIssuesQuery {
     pub issue_type: Option<IssueType>,
     /// Comma-separated list of [`StatusKey`] strings to filter on.
     ///
-    /// `StatusKey` is a transparent string newtype, so the five legacy
-    /// `IssueStatus` strings (`open`, `in-progress`, `closed`, `dropped`,
+    /// `StatusKey` is a transparent string newtype, so the legacy
+    /// default-project keys (`open`, `in-progress`, `closed`, `dropped`,
     /// `failed`) and per-project keys (e.g. `inbox`, `triage`) share the
     /// same wire shape.
     #[serde(
@@ -715,7 +641,8 @@ impl SearchIssuesQuery {
 /// Excludes `session_settings` and the full `description` body.
 /// The `description` field is truncated to the first line (max 200 chars).
 /// The `progress` field is truncated to the first 200 characters.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `status: StatusDefinition` carries `position: f64`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -775,7 +702,8 @@ impl From<&Issue> for IssueSummary {
 }
 
 /// Summary-level version record for issue list responses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `issue: IssueSummary` carries `status.position: f64`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -827,7 +755,8 @@ impl From<&IssueVersionRecord> for IssueSummaryRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// No `Eq` derive: `issues` carry `status.position: f64`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
@@ -1039,9 +968,9 @@ mod tests {
 
     #[test]
     fn search_issues_query_serializes_status_key_byte_identical_to_legacy() {
-        // Wire-contract check (option A): the on-the-wire string for the
-        // five legacy enum values must be unchanged after the
-        // `Vec<IssueStatus>` -> `Vec<StatusKey>` retype.
+        // Wire-contract check: these five status keys must serialize to
+        // their exact string form so existing clients and stored queries
+        // keep parsing.
         let query = SearchIssuesQuery {
             status: vec![
                 status_key("open"),

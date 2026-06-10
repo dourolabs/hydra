@@ -6,10 +6,17 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { StatusKey } from "@hydra/api";
+
+export interface IssueCreateModalInitial {
+  projectId?: string;
+  status?: StatusKey;
+}
 
 interface IssueCreateModalContextValue {
   isOpen: boolean;
-  open: () => void;
+  initial: IssueCreateModalInitial | null;
+  open: (initial?: IssueCreateModalInitial) => void;
   close: () => void;
 }
 
@@ -19,11 +26,15 @@ const IssueCreateModalContext = createContext<IssueCreateModalContextValue | nul
 
 export function IssueCreateModalProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
-  const open = useCallback(() => setIsOpen(true), []);
+  const [initial, setInitial] = useState<IssueCreateModalInitial | null>(null);
+  const open = useCallback((next?: IssueCreateModalInitial) => {
+    setInitial(next ?? null);
+    setIsOpen(true);
+  }, []);
   const close = useCallback(() => setIsOpen(false), []);
   const value = useMemo(
-    () => ({ isOpen, open, close }),
-    [isOpen, open, close],
+    () => ({ isOpen, initial, open, close }),
+    [isOpen, initial, open, close],
   );
   return (
     <IssueCreateModalContext.Provider value={value}>

@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import { ErrorBoundary } from "@hydra/ui";
 import { AppLayout } from "./layout/AppLayout";
 
@@ -203,6 +203,21 @@ export const router = createBrowserRouter([
             element: (
               <ErrorBoundary>
                 <m.ProjectsListPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
+        path: "analytics",
+        element: <Navigate to="/analytics/throughput" replace />,
+      },
+      {
+        path: "analytics/throughput",
+        lazy: () =>
+          import("./pages/AnalyticsThroughputPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.AnalyticsThroughputPage />
               </ErrorBoundary>
             ),
           })),

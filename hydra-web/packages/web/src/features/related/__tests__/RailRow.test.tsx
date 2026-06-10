@@ -40,6 +40,7 @@ function makeStatus(over?: Partial<StatusDefinition>): StatusDefinition {
     key: "open",
     label: "Open",
     color: "#3498db",
+    position: 0,
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,

@@ -33,8 +33,8 @@ use hydra_common::{
     },
     api::v1::merge_check::MergeCheckResponse,
     api::v1::projects::{
-        ListProjectsResponse, ProjectIdOrDefault, ProjectRecord, ProjectStatusesResponse,
-        RenameStatusRequest, UpsertProjectRequest, UpsertProjectResponse,
+        ListProjectsResponse, ProjectRecord, ProjectRef, ProjectStatusesResponse, StatusDefinition,
+        StatusKey, UpsertProjectRequest, UpsertProjectResponse, UpsertProjectStatusResponse,
     },
     api::v1::relations::{
         CreateRelationRequest, ListRelationsRequest, ListRelationsResponse, RemoveRelationRequest,
@@ -70,8 +70,8 @@ use hydra_common::{
     },
     users::{ListUsersResponse, SearchUsersQuery, UserSummary},
     whoami::WhoAmIResponse,
-    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, ProjectId,
-    RelativeVersionNumber, RepoName, SessionId, TriggerId,
+    ActorId, ConversationId, DocumentId, HydraId, IssueId, LabelId, PatchId, RelativeVersionNumber,
+    RepoName, SessionId, TriggerId,
 };
 use reqwest::Url;
 
@@ -338,35 +338,56 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.create_project(request).await
     }
 
-    async fn get_project(&self, project_id: &ProjectId) -> Result<ProjectRecord> {
-        self.inner.get_project(project_id).await
+    async fn get_project(&self, project_ref: &ProjectRef) -> Result<ProjectRecord> {
+        self.inner.get_project(project_ref).await
     }
 
     async fn update_project(
         &self,
-        project_id: &ProjectId,
+        project_ref: &ProjectRef,
         request: &UpsertProjectRequest,
     ) -> Result<UpsertProjectResponse> {
-        self.inner.update_project(project_id, request).await
+        self.inner.update_project(project_ref, request).await
     }
 
-    async fn delete_project(&self, project_id: &ProjectId) -> Result<UpsertProjectResponse> {
-        self.inner.delete_project(project_id).await
+    async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        self.inner.delete_project(project_ref).await
     }
 
-    async fn rename_project_status(
+    async fn create_project_status(
         &self,
-        project_id: &ProjectId,
-        request: &RenameStatusRequest,
+        project_ref: &ProjectRef,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        self.inner.create_project_status(project_ref, request).await
+    }
+
+    async fn update_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+        request: &StatusDefinition,
+    ) -> Result<UpsertProjectStatusResponse> {
+        self.inner
+            .update_project_status(project_ref, status_key, request)
+            .await
+    }
+
+    async fn delete_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse> {
-        self.inner.rename_project_status(project_id, request).await
+        self.inner
+            .delete_project_status(project_ref, status_key)
+            .await
     }
 
     async fn get_project_statuses(
         &self,
-        project: &ProjectIdOrDefault,
+        project_ref: &ProjectRef,
     ) -> Result<ProjectStatusesResponse> {
-        self.inner.get_project_statuses(project).await
+        self.inner.get_project_statuses(project_ref).await
     }
 
     async fn whoami(&self) -> Result<WhoAmIResponse> {

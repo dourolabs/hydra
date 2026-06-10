@@ -4,7 +4,7 @@
 
 ## What lives here
 
-`hydra-common/src/api/v1/` holds request/response structs, query parameter types, and the public enums (e.g. `IssueStatus`, `Status`, `PatchKind`) — everything that crosses the HTTP boundary. The `#[non_exhaustive]` attribute and `#[serde(other)]` `Unknown` fallback (see `IssueStatus`) are part of the contract: they let new variants ship without breaking older clients.
+`hydra-common/src/api/v1/` holds request/response structs, query parameter types, and the public enums (e.g. `IssueType`, `Status`, `PatchKind`) — everything that crosses the HTTP boundary. The `#[non_exhaustive]` attribute and `#[serde(other)]` `Unknown` fallback (see `IssueType`) are part of the contract: they let new variants ship without breaking older clients.
 
 ## Evolution rule: additive only
 
@@ -32,12 +32,12 @@ pub struct UpsertIssueRequest {
 }
 ```
 
-Allowed: new fields (use `Option<T>` or `#[serde(default)]`), new enum variants on `#[non_exhaustive]` enums, new request/response types. Not allowed: renames, removals, type changes, tightening required fields, changing wire tag literals (the `kebab-case` discriminator strings on `IssueStatus` and friends are part of the contract). (See also [`docs/rust/idioms.md`](../rust/idioms.md) — the `Option<T>` sentinel rule explicitly excludes existing wire types for this reason.)
+Allowed: new fields (use `Option<T>` or `#[serde(default)]`), new enum variants on `#[non_exhaustive]` enums, new request/response types. Not allowed: renames, removals, type changes, tightening required fields, changing wire tag literals (the `kebab-case` discriminator strings on `IssueType` and friends are part of the contract). (See also [`docs/rust/idioms.md`](../rust/idioms.md) — the `Option<T>` sentinel rule explicitly excludes existing wire types for this reason.)
 
 ## When you change an API type, do all of this
 
 1. Update the Rust type in `hydra-common/src/api/v1/<entity>.rs`.
-2. Update the corresponding `domain::<entity>` type in `hydra-server/src/domain/<entity>.rs` and its `From` conversion impls in both directions. The store and policy engine work in `domain`, so the conversion must be exhaustive — if the new variant is added without updating the `From` impl, the `unreachable!` in the `From<api::…>` arm (e.g. [`hydra-server/src/domain/issues.rs:308,334,357`](../../hydra-server/src/domain/issues.rs)) will panic at runtime the first time the route handler converts an incoming request.
+2. Update the corresponding `domain::<entity>` type in `hydra-server/src/domain/<entity>.rs` and its `From` conversion impls in both directions. The store and policy engine work in `domain`, so the conversion must be exhaustive — if the new variant is added without updating the `From` impl, the `unreachable!` in the `From<api::…>` arm (e.g. [`hydra-server/src/domain/issues.rs`](../../hydra-server/src/domain/issues.rs), the `IssueType` and `IssueDependencyType` impls) will panic at runtime the first time the route handler converts an incoming request.
 3. Regenerate the TypeScript bindings:
 
    ```
@@ -79,8 +79,8 @@ See [`docs/rust/style.md`](../rust/style.md) ("Identifiers") for the in-language
 
 ## Conventions worth knowing
 
-- **New** wire enums should use `#[serde(rename_all = "kebab-case")]` (e.g. `IssueStatus` with `"in-progress"`). **Existing** wire formats are grandfathered — never change a live wire tag literal, since that breaks every existing client. Many older multi-word enums ship with `snake_case` for that reason (e.g. `task_status::TaskError`, `SessionMode`, `SessionEvent`, `MountItem`, `Bundle`, `relay::*`, and most of `merge_check::*` — `BlockedAtLayer` is `kebab-case`); leave their casing alone.
-- `#[non_exhaustive]` on a wire enum with a `Unknown` `#[serde(other)]` variant lets older clients accept new variants gracefully — add new variants this way for *unit-variant* enums (`IssueStatus`, `Status`, `PatchKind`). Tagged unions whose variants carry payload need a slightly different shape; see [the dedicated section](#non_exhaustive-on-tagged-union-enums) below.
+- **New** wire enums should use `#[serde(rename_all = "kebab-case")]` (e.g. `IssueType` with `"merge-request"`). **Existing** wire formats are grandfathered — never change a live wire tag literal, since that breaks every existing client. Many older multi-word enums ship with `snake_case` for that reason (e.g. `task_status::TaskError`, `SessionMode`, `SessionEvent`, `MountItem`, `Bundle`, `relay::*`, and most of `merge_check::*` — `BlockedAtLayer` is `kebab-case`); leave their casing alone.
+- `#[non_exhaustive]` on a wire enum with a `Unknown` `#[serde(other)]` variant lets older clients accept new variants gracefully — add new variants this way for *unit-variant* enums (`IssueType`, `Status`, `PatchKind`). Tagged unions whose variants carry payload need a slightly different shape; see [the dedicated section](#non_exhaustive-on-tagged-union-enums) below.
 - All IDs use the `HydraId`-backed newtypes (`IssueId`, `SessionId`, …). Routes accept and emit those types; the store generates them — see [`domain-store-routes.md`](./domain-store-routes.md).
 - Query-param structs implement `Serialize`/`Deserialize` and rely on `serde_urlencoded`; helper functions for principal-path encoding (e.g. on `SearchIssuesQuery`) keep query strings stable across URL escaping. Don't bypass them.
 

@@ -440,9 +440,10 @@ mod tests {
     use hydra_common::api::v1::conversations::{
         Conversation as ApiConversation, ConversationStatus,
     };
-    use hydra_common::api::v1::issues::{Issue, IssueStatus, IssueType, SessionSettings};
+    use hydra_common::api::v1::issues::{Issue, IssueType, SessionSettings};
+    use hydra_common::api::v1::projects::StatusKey;
     use hydra_common::issues::IssueVersionRecord;
-    use hydra_common::test_utils::status::make_status_def;
+    use hydra_common::test_utils::status::{make_status_def, status};
     use hydra_common::users::Username;
     use hydra_common::versioning::Versioned;
     use hydra_common::{ConversationId, IssueId, ProjectId, SessionId};
@@ -452,14 +453,14 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 5, 19, 12, 0, 0).unwrap() + chrono::Duration::seconds(secs)
     }
 
-    fn sample_issue(status: IssueStatus, title: &str) -> Issue {
+    fn sample_issue(status: StatusKey, title: &str) -> Issue {
         Issue::new(
             IssueType::Task,
             title.to_string(),
             String::new(),
             Username::from("creator"),
             String::new(),
-            make_status_def(status.into()),
+            make_status_def(status),
             ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),
@@ -508,35 +509,35 @@ mod tests {
                 &id,
                 1,
                 ts(-100),
-                sample_issue(IssueStatus::Open, "t1"),
+                sample_issue(status("open"), "t1"),
                 Some(actor.clone()),
             ),
             issue_version_record(
                 &id,
                 2,
                 ts(10),
-                sample_issue(IssueStatus::InProgress, "t2"),
+                sample_issue(status("in-progress"), "t2"),
                 Some(actor.clone()),
             ),
             issue_version_record(
                 &id,
                 3,
                 ts(20),
-                sample_issue(IssueStatus::InProgress, "t3"),
+                sample_issue(status("in-progress"), "t3"),
                 Some(actor.clone()),
             ),
             issue_version_record(
                 &id,
                 4,
                 ts(30),
-                sample_issue(IssueStatus::Closed, "t3"),
+                sample_issue(status("closed"), "t3"),
                 Some(actor.clone()),
             ),
             issue_version_record(
                 &id,
                 5,
                 ts(1000),
-                sample_issue(IssueStatus::Closed, "t3"),
+                sample_issue(status("closed"), "t3"),
                 Some(actor.clone()),
             ),
         ]);
@@ -564,12 +565,12 @@ mod tests {
     fn events_in_window_emits_created_when_earliest_in_window_is_first_version() {
         let id: IssueId = "i-bbbbbb".parse().unwrap();
         let history = VersionedNode::Issue(vec![
-            issue_version_record(&id, 1, ts(10), sample_issue(IssueStatus::Open, "t1"), None),
+            issue_version_record(&id, 1, ts(10), sample_issue(status("open"), "t1"), None),
             issue_version_record(
                 &id,
                 2,
                 ts(20),
-                sample_issue(IssueStatus::InProgress, "t1"),
+                sample_issue(status("in-progress"), "t1"),
                 None,
             ),
         ]);
@@ -602,20 +603,8 @@ mod tests {
     fn events_in_window_skips_versions_outside_range() {
         let id: IssueId = "i-cccccc".parse().unwrap();
         let history = VersionedNode::Issue(vec![
-            issue_version_record(
-                &id,
-                1,
-                ts(-100),
-                sample_issue(IssueStatus::Open, "t1"),
-                None,
-            ),
-            issue_version_record(
-                &id,
-                2,
-                ts(1000),
-                sample_issue(IssueStatus::Closed, "t1"),
-                None,
-            ),
+            issue_version_record(&id, 1, ts(-100), sample_issue(status("open"), "t1"), None),
+            issue_version_record(&id, 2, ts(1000), sample_issue(status("closed"), "t1"), None),
         ]);
         let hydra_id: HydraId = id.clone().into();
         let events = events_in_window(
@@ -633,12 +622,12 @@ mod tests {
     fn events_in_window_excludes_boundary_since_includes_until() {
         let id: IssueId = "i-dddddd".parse().unwrap();
         let history = VersionedNode::Issue(vec![
-            issue_version_record(&id, 1, ts(0), sample_issue(IssueStatus::Open, "t"), None),
+            issue_version_record(&id, 1, ts(0), sample_issue(status("open"), "t"), None),
             issue_version_record(
                 &id,
                 2,
                 ts(100),
-                sample_issue(IssueStatus::InProgress, "t"),
+                sample_issue(status("in-progress"), "t"),
                 None,
             ),
         ]);
@@ -664,9 +653,9 @@ mod tests {
     fn events_in_window_honors_verbosity() {
         // Description-only change is invisible at L1 but visible at L3.
         let id: IssueId = "i-eeeeee".parse().unwrap();
-        let mut v1 = sample_issue(IssueStatus::Open, "same-title");
+        let mut v1 = sample_issue(status("open"), "same-title");
         v1.description = "before".to_string();
-        let mut v2 = sample_issue(IssueStatus::Open, "same-title");
+        let mut v2 = sample_issue(status("open"), "same-title");
         v2.description = "after".to_string();
         let history = VersionedNode::Issue(vec![
             issue_version_record(&id, 1, ts(-100), v1, None),

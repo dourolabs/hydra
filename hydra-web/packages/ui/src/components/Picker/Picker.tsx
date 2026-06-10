@@ -21,12 +21,22 @@ export interface PickerProps {
   wide?: boolean;
   /** Items rendered inside the popover. Use PickerRow for selectable rows. */
   children: ReactNode;
+  /** Forwarded to the picker's root element for targeting from tests. */
+  "data-testid"?: string;
 }
 
 const POP_MAX_HEIGHT = 280;
 const POP_GAP = 4;
 
-export function Picker({ label, value, open, onToggle, wide, children }: PickerProps) {
+export function Picker({
+  label,
+  value,
+  open,
+  onToggle,
+  wide,
+  children,
+  "data-testid": testId,
+}: PickerProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
   const [popStyle, setPopStyle] = useState<CSSProperties | null>(null);
@@ -79,7 +89,7 @@ export function Picker({ label, value, open, onToggle, wide, children }: PickerP
   }, [open]);
 
   return (
-    <div className={styles.picker} ref={wrapRef}>
+    <div className={styles.picker} ref={wrapRef} data-testid={testId}>
       <div className={styles.pickerLabel}>{label}</div>
       <button
         type="button"

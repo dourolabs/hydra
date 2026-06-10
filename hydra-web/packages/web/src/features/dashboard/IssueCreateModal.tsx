@@ -6,6 +6,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import type { IssueCreateModalInitial } from "./useIssueCreateModal";
 import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
 import { DEFAULT_PROJECT_ID } from "@hydra/api";
 import type { IssueType, LabelRecord, Principal, StatusKey } from "@hydra/api";
@@ -66,9 +67,19 @@ interface IssueCreateModalProps {
   open: boolean;
   onClose: () => void;
   assignees: AssigneeGroups;
+  // When the modal is opened from a scoped context (e.g. the IssuesBoard's
+  // per-column "+ Add issue" button), the caller seeds the project and/or
+  // status fields. These are applied on every open-transition so that opening
+  // the modal scoped to a different column overrides any prior selection.
+  initial?: IssueCreateModalInitial | null;
 }
 
-export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalProps) {
+export function IssueCreateModal({
+  open,
+  onClose,
+  assignees,
+  initial,
+}: IssueCreateModalProps) {
   const { user } = useAuth();
   const { data: repos } = useRepositories();
   const { data: labels } = useLabels();
@@ -132,6 +143,19 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
     const t = window.setTimeout(() => titleInputRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
   }, [open]);
+
+  // When the modal opens with seeded `initial.projectId` / `initial.status`
+  // (the IssuesBoard "+ Add issue" path), apply them over the persisted
+  // draft. We deliberately don't touch title/description here — opening
+  // scoped to a column shouldn't blow away in-progress text.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!justOpened || !initial) return;
+    if (initial.projectId !== undefined) setProjectId(initial.projectId);
+    if (initial.status !== undefined) setStatus(initial.status);
+  }, [open, initial, setProjectId, setStatus]);
 
   // Esc closes the modal globally.
   useEffect(() => {
@@ -462,90 +486,88 @@ export function IssueCreateModal({ open, onClose, assignees }: IssueCreateModalP
               )}
             </Picker>
 
-            <div data-testid="issue-create-project-picker">
-              <Picker
-                label="Project"
-                open={picker === "project"}
-                onToggle={() => setPicker(picker === "project" ? null : "project")}
-                wide
-                value={
-                  selectedProject ? (
-                    <span className={styles.pillContent}>
-                      <code className={styles.pillCode}>
-                        {selectedProject.project.key}
-                      </code>
-                    </span>
-                  ) : (
-                    <span className={styles.pillEmpty}>Default</span>
-                  )
-                }
+            <Picker
+              data-testid="issue-create-project-picker"
+              label="Project"
+              open={picker === "project"}
+              onToggle={() => setPicker(picker === "project" ? null : "project")}
+              wide
+              value={
+                selectedProject ? (
+                  <span className={styles.pillContent}>
+                    <code className={styles.pillCode}>
+                      {selectedProject.project.key}
+                    </code>
+                  </span>
+                ) : (
+                  <span className={styles.pillEmpty}>Default</span>
+                )
+              }
+            >
+              <PickerRow
+                active={!projectId}
+                onClick={() => {
+                  setProjectId("");
+                  // Reset the explicit status pick so the picker falls back
+                  // to LEGACY_DEFAULT_STATUS_KEY on the next render.
+                  setStatus("");
+                  setPicker(null);
+                }}
               >
+                <span className={styles.pillEmpty}>Default</span>
+                <span className={styles.popSpacer} />
+              </PickerRow>
+              {projectEntries.map((p) => (
                 <PickerRow
-                  active={!projectId}
+                  key={p.project_id}
+                  active={projectId === p.project_id}
                   onClick={() => {
-                    setProjectId("");
-                    // Reset the explicit status pick so the picker falls back
-                    // to LEGACY_DEFAULT_STATUS_KEY on the next render.
+                    setProjectId(p.project_id);
+                    // Reset to "" so the next render re-derives the picker's
+                    // default from the new project's status list.
                     setStatus("");
                     setPicker(null);
                   }}
                 >
-                  <span className={styles.pillEmpty}>Default</span>
+                  <code className={styles.popCode}>{p.project.key}</code>
+                  <span className={styles.popSub}>{p.project.name}</span>
                   <span className={styles.popSpacer} />
                 </PickerRow>
-                {projectEntries.map((p) => (
+              ))}
+            </Picker>
+
+            <Picker
+              data-testid="issue-create-status-picker"
+              label="Status"
+              open={picker === "status"}
+              onToggle={() => setPicker(picker === "status" ? null : "status")}
+              wide
+              value={
+                selectedStatusDef ? (
+                  <StatusChip status={selectedStatusDef} />
+                ) : (
+                  <span>{effectiveStatusKey}</span>
+                )
+              }
+            >
+              {statusEntries.length === 0 ? (
+                <div className={styles.popEmpty}>No statuses</div>
+              ) : (
+                statusEntries.map((s) => (
                   <PickerRow
-                    key={p.project_id}
-                    active={projectId === p.project_id}
+                    key={s.key}
+                    active={effectiveStatusKey === s.key}
                     onClick={() => {
-                      setProjectId(p.project_id);
-                      // Reset to "" so the next render re-derives the picker's
-                      // default from the new project's status list.
-                      setStatus("");
+                      setStatus(s.key);
                       setPicker(null);
                     }}
                   >
-                    <code className={styles.popCode}>{p.project.key}</code>
-                    <span className={styles.popSub}>{p.project.name}</span>
+                    <StatusChip status={s} />
                     <span className={styles.popSpacer} />
                   </PickerRow>
-                ))}
-              </Picker>
-            </div>
-
-            <div data-testid="issue-create-status-picker">
-              <Picker
-                label="Status"
-                open={picker === "status"}
-                onToggle={() => setPicker(picker === "status" ? null : "status")}
-                wide
-                value={
-                  selectedStatusDef ? (
-                    <StatusChip status={selectedStatusDef} />
-                  ) : (
-                    <span>{effectiveStatusKey}</span>
-                  )
-                }
-              >
-                {statusEntries.length === 0 ? (
-                  <div className={styles.popEmpty}>No statuses</div>
-                ) : (
-                  statusEntries.map((s) => (
-                    <PickerRow
-                      key={s.key}
-                      active={effectiveStatusKey === s.key}
-                      onClick={() => {
-                        setStatus(s.key);
-                        setPicker(null);
-                      }}
-                    >
-                      <StatusChip status={s} />
-                      <span className={styles.popSpacer} />
-                    </PickerRow>
-                  ))
-                )}
-              </Picker>
-            </div>
+                ))
+              )}
+            </Picker>
 
             <Picker
               label="Repository"

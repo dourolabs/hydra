@@ -39,6 +39,11 @@ interface ProjectEditorProps {
   creator: string;
 }
 
+interface StatusRow {
+  status: StatusDefinition;
+  originalKey: string | null;
+}
+
 export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProps) {
   const navigate = useNavigate();
   const { addToast } = useToast();
@@ -50,9 +55,19 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
   const [key, setKey] = useState(initial?.key ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [promptPath, setPromptPath] = useState(initial?.prompt_path ?? "");
-  const [statuses, setStatuses] = useState<StatusDefinition[]>(
-    initial?.statuses ?? defaultNewStatuses(),
+  // Each row pairs the editor's current `StatusDefinition` with the
+  // key it was loaded under. `originalKey === null` marks a row that
+  // didn't exist on the server at mount (new project, or `+ Add
+  // status`); existing rows preserve their load-time key so a Key
+  // edit becomes a rename PUT instead of a delete-old + create-new
+  // pair (which would 400 against the `ON DELETE RESTRICT` FK on
+  // `issues_v2.status_sequence`).
+  const [rows, setRows] = useState<StatusRow[]>(() =>
+    initial?.statuses
+      ? initial.statuses.map((s) => ({ status: s, originalKey: s.key }))
+      : defaultNewStatuses().map((s) => ({ status: s, originalKey: null })),
   );
+  const statuses = useMemo(() => rows.map((r) => r.status), [rows]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [projectPromptExpanded, setProjectPromptExpanded] = useState(false);
   // Per-status expanded set keyed by index so each row's textarea stays
@@ -69,19 +84,60 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     [key, name, statuses, promptPath],
   );
 
+  interface SubmitPayload {
+    request: UpsertProjectRequest;
+    project: Project;
+    nextStatuses: StatusDefinition[];
+    initialStatuses: StatusDefinition[];
+    // Parallel to `nextStatuses`: the key each row was loaded under
+    // (or `null` for rows added during this edit). Drives the per-row
+    // create/update/delete decision so a Key edit on an existing row
+    // becomes one rename PUT instead of a delete + create pair.
+    originalKeys: (string | null)[];
+  }
+
   const mutation = useMutation({
-    mutationFn: async (req: UpsertProjectRequest) => {
-      if (isEdit && projectId) {
-        return apiClient.updateProject(projectId, req);
+    mutationFn: async (payload: SubmitPayload) => {
+      const upsertResp =
+        isEdit && projectId
+          ? await apiClient.updateProject(projectId, payload.request)
+          : await apiClient.createProject(payload.request);
+      // Status-level changes go through per-status endpoints, keyed
+      // off each row's `originalKey`. New rows (`originalKey === null`)
+      // POST; existing rows PUT against their original key — a body
+      // whose `key` differs from the path segment is treated as an
+      // in-place rename by the backend, preserving the
+      // `(project_id, sequence)` storage identity.
+      //
+      // Known limitation: a swap-rename (A→B + B→A in one save) will
+      // 400 on the first PUT due to a transient key collision. We
+      // surface the backend error via the existing toast and do not
+      // try to special-case it.
+      const ref = upsertResp.project_id;
+      const survivingOriginalKeys = new Set<string>();
+      for (let i = 0; i < payload.nextStatuses.length; i++) {
+        const status = payload.nextStatuses[i];
+        const originalKey = payload.originalKeys[i];
+        if (originalKey === null) {
+          await apiClient.createProjectStatus(ref, status);
+        } else {
+          await apiClient.updateProjectStatus(ref, originalKey, status);
+          survivingOriginalKeys.add(originalKey);
+        }
       }
-      return apiClient.createProject(req);
+      for (const initial of payload.initialStatuses) {
+        if (!survivingOriginalKeys.has(initial.key)) {
+          await apiClient.deleteProjectStatus(ref, initial.key);
+        }
+      }
+      return upsertResp;
     },
-    onMutate: async (req) => {
+    onMutate: async (payload) => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
       const previous = queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
       if (previous) {
         const next: ListProjectsResponse = {
-          projects: applyOptimisticUpsert(previous.projects, projectId ?? null, req.project),
+          projects: applyOptimisticUpsert(previous.projects, projectId ?? null, payload.project),
         };
         queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, next);
       }
@@ -134,44 +190,63 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       return;
     }
     const trimmedPromptPath = promptPath.trim();
+    const promptPathOrNull = trimmedPromptPath ? trimmedPromptPath : null;
+    const priority = initial?.priority ?? 0;
+    const nextStatuses = rows.map((r) => normalizeStatusForSubmit(r.status));
+    const originalKeys = rows.map((r) => r.originalKey);
     const project: Project = {
       key: key.trim(),
       name: name.trim(),
-      statuses: statuses.map(normalizeStatusForSubmit),
+      statuses: nextStatuses,
       creator,
       deleted: false,
-      prompt_path: trimmedPromptPath ? trimmedPromptPath : null,
+      prompt_path: promptPathOrNull,
       // Preserve the existing project's priority on edit; new projects
       // get `0` (sort-to-top).
-      priority: initial?.priority ?? 0,
+      priority,
     };
-    mutation.mutate({ project });
+    const request: UpsertProjectRequest = {
+      key: key.trim(),
+      name: name.trim(),
+      prompt_path: promptPathOrNull,
+      priority,
+    };
+    mutation.mutate({
+      request,
+      project,
+      nextStatuses,
+      initialStatuses: initial?.statuses ?? [],
+      originalKeys,
+    });
   }, [
     formError,
     key,
     name,
     promptPath,
-    statuses,
+    rows,
     creator,
+    initial,
     mutation,
     addToast,
   ]);
 
   const updateStatus = useCallback(
     (index: number, patch: Partial<StatusDefinition>) => {
-      setStatuses((prev) =>
-        prev.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+      setRows((prev) =>
+        prev.map((r, i) =>
+          i === index ? { ...r, status: { ...r.status, ...patch } } : r,
+        ),
       );
     },
     [],
   );
 
   const removeStatus = useCallback((index: number) => {
-    setStatuses((prev) => prev.filter((_, i) => i !== index));
+    setRows((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const moveStatus = useCallback((index: number, delta: number) => {
-    setStatuses((prev) => {
+    setRows((prev) => {
       const target = index + delta;
       if (target < 0 || target >= prev.length) return prev;
       const next = [...prev];
@@ -183,7 +258,10 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
   }, []);
 
   const addStatus = useCallback(() => {
-    setStatuses((prev) => [...prev, blankStatus(prev.length)]);
+    setRows((prev) => [
+      ...prev,
+      { status: blankStatus(prev.length), originalKey: null },
+    ]);
   }, []);
 
   return (
@@ -613,6 +691,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       cascades_to_children: false,
       on_enter: null,
       prompt_path: null,
+      position: 100,
     },
     {
       key: "in-progress",
@@ -623,6 +702,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       cascades_to_children: false,
       on_enter: null,
       prompt_path: null,
+      position: 200,
     },
     {
       key: "closed",
@@ -633,6 +713,7 @@ function defaultNewStatuses(): StatusDefinition[] {
       cascades_to_children: false,
       on_enter: null,
       prompt_path: null,
+      position: 300,
     },
   ];
 }

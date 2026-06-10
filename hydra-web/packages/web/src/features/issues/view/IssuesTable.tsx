@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Avatar, TypeChip } from "@hydra/ui";
+import { Avatar, FlowPill, TypeChip } from "@hydra/ui";
 import type {
   IssueSummaryRecord,
   SessionSummaryRecord,
@@ -14,10 +14,11 @@ import { ProjectChip } from "../../projects/ProjectChip";
 import { useProjects } from "../../projects/useProjects";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
-import type { ChildStatus } from "../../dashboard/computeIssueProgress";
 import { useSessionDuration } from "../../dashboard/useSessionDuration";
 import { IssueRailRow } from "../../related/RailRow";
 import { computeBlockedStatus } from "../blockedStatus";
+import { computeFlowPillState, type IssueNeighborhood } from "../flowPill";
+import { RestoreIssueButton } from "../RestoreIssueButton";
 import { buildSections, type ProjectSection } from "./projectSections";
 import styles from "./IssuesTable.module.css";
 
@@ -26,18 +27,9 @@ const TABLE_COLUMN_COUNT = 7;
 
 interface IssuesTableProps {
   issues: IssueSummaryRecord[];
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   filterRootId: string | null;
-}
-
-function progressFraction(children: ChildStatus[] | undefined): number {
-  if (!children || children.length === 0) return 0;
-  const total = children.length;
-  const projected = children.filter(
-    (c) => c.status === "closed" || c.status === "issue-closed" || c.status === "in-progress",
-  ).length;
-  return Math.round((projected / total) * 100);
 }
 
 function RuntimeCell({ sessions }: { sessions: SessionSummaryRecord[] | undefined }) {
@@ -48,7 +40,7 @@ function RuntimeCell({ sessions }: { sessions: SessionSummaryRecord[] | undefine
 
 export function IssuesTable({
   issues,
-  childStatusMap,
+  neighborhoodMap,
   sessionsByIssue,
   filterRootId,
 }: IssuesTableProps) {
@@ -91,7 +83,7 @@ export function IssuesTable({
               key={rec.issue_id}
               record={rec}
               sessions={sessionsByIssue.get(rec.issue_id)}
-              childStatuses={childStatusMap.get(rec.issue_id)}
+              neighborhood={neighborhoodMap.get(rec.issue_id)}
               linkSearch={linkSearch}
             />
           ))}
@@ -119,7 +111,7 @@ export function IssuesTable({
                     key={rec.issue_id}
                     record={rec}
                     sessions={sessionsByIssue.get(rec.issue_id)}
-                    childStatuses={childStatusMap.get(rec.issue_id)}
+                    neighborhood={neighborhoodMap.get(rec.issue_id)}
                     linkSearch={linkSearch}
                   />
                 ))}
@@ -141,7 +133,7 @@ export function IssuesTable({
                 key={rec.issue_id}
                 rec={rec}
                 blocked={computeBlockedStatus(rec, issueMap).blocked}
-                childStatusMap={childStatusMap}
+                neighborhoodMap={neighborhoodMap}
                 sessionsByIssue={sessionsByIssue}
                 onClick={handleRowClick}
               />
@@ -166,7 +158,7 @@ export function IssuesTable({
                 collapsed={isCollapsed}
                 onToggle={() => toggle(section.groupKey)}
                 issueMap={issueMap}
-                childStatusMap={childStatusMap}
+                neighborhoodMap={neighborhoodMap}
                 sessionsByIssue={sessionsByIssue}
                 onRowClick={handleRowClick}
               />
@@ -199,7 +191,7 @@ interface SectionRowsProps {
   collapsed: boolean;
   onToggle: () => void;
   issueMap: Map<string, IssueSummaryRecord>;
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   onRowClick: (id: string) => void;
 }
@@ -209,7 +201,7 @@ function SectionRows({
   collapsed,
   onToggle,
   issueMap,
-  childStatusMap,
+  neighborhoodMap,
   sessionsByIssue,
   onRowClick,
 }: SectionRowsProps) {
@@ -233,7 +225,7 @@ function SectionRows({
             key={rec.issue_id}
             rec={rec}
             blocked={computeBlockedStatus(rec, issueMap).blocked}
-            childStatusMap={childStatusMap}
+            neighborhoodMap={neighborhoodMap}
             sessionsByIssue={sessionsByIssue}
             onClick={onRowClick}
           />
@@ -309,7 +301,7 @@ function StatusPipRow({ section }: { section: ProjectSection }) {
 interface IssueDataRowProps {
   rec: IssueSummaryRecord;
   blocked: boolean;
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   onClick: (id: string) => void;
 }
@@ -317,32 +309,43 @@ interface IssueDataRowProps {
 function IssueDataRow({
   rec,
   blocked,
-  childStatusMap,
+  neighborhoodMap,
   sessionsByIssue,
   onClick,
 }: IssueDataRowProps) {
   const issue = rec.issue;
   const id = rec.issue_id;
-  const children = childStatusMap.get(id);
-  const pct = progressFraction(children);
-  const hasActiveChild = !!children?.some((c) => c.hasActiveTask);
-  const progressClass = hasActiveChild
-    ? `${styles.progress} ${styles.progressActive}`
-    : styles.progress;
-  const fillClass = hasActiveChild
-    ? `${styles.progressFill} ${styles.progressFillActive}`
-    : styles.progressFill;
-  const rowClass = blocked ? `${styles.dataRow} ${styles.blocked}` : styles.dataRow;
+  const pill = computeFlowPillState(neighborhoodMap.get(id));
+  const archived = issue.deleted === true;
+  const rowClasses = [styles.dataRow];
+  if (blocked) rowClasses.push(styles.blocked);
+  if (archived) rowClasses.push(styles.archived);
 
   return (
     <tr
-      className={rowClass}
+      className={rowClasses.join(" ")}
       data-testid={`issues-list-row-${id}`}
+      data-archived={archived ? "true" : undefined}
       onClick={() => onClick(id)}
     >
       <td className={styles.colTitle}>
         <div className={styles.titleCell}>
           <span className={styles.titleText}>{issue.title || "(untitled)"}</span>
+          {archived && (
+            <>
+              <span
+                className={styles.archivedTag}
+                data-testid={`issues-row-archived-${id}`}
+              >
+                ARCHIVED
+              </span>
+              <RestoreIssueButton
+                issueId={id}
+                className={styles.restoreButton}
+                data-testid={`issues-row-restore-${id}`}
+              />
+            </>
+          )}
         </div>
       </td>
       <td className={styles.colStatus}>
@@ -382,10 +385,14 @@ function IssueDataRow({
         )}
       </td>
       <td className={styles.colProgress}>
-        {children && children.length > 0 ? (
-          <div className={progressClass} title={`${pct}%`}>
-            <span className={fillClass} style={{ width: `${pct}%` }} />
-          </div>
+        {pill ? (
+          <FlowPill
+            phase={pill.phase}
+            num={pill.num}
+            den={pill.den}
+            title={pill.title}
+            data-testid={`issues-row-flowpill-${id}`}
+          />
         ) : (
           <span className={styles.dash}>—</span>
         )}

@@ -122,6 +122,49 @@
   color: var(--fg-2);
 }
 
+/* Soft-deleted (archived) issues only appear when the "Include archived" filter
+   is active. The whole row is dimmed and the title leans muted so the chip's
+   "ARCHIVED" tag is what reads as the row's primary signal. */
+.archived {
+  opacity: 0.62;
+}
+
+.archived .titleText {
+  color: var(--fg-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+}
+
+.archivedTag {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--bg-2);
+}
+
+/* Hover-revealed Restore action on archived rows. Matches the DocumentRow
+   pattern (opacity transition) and also reveals on keyboard focus so a
+   tab-traversal user can find it. `pointer-events: none` while hidden so
+   the invisible button can't be tapped on touch devices (no `:hover`),
+   which would otherwise silently fire a restore. */
+.restoreButton {
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--tx-fast);
+}
+
+.archived:hover .restoreButton,
+.archived:focus-within .restoreButton {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .assignee {
   display: inline-flex;
   align-items: center;
@@ -140,45 +183,6 @@
 
 .dash {
   color: var(--fg-3);
-}
-
-.progress {
-  width: 64px;
-  height: 4px;
-  background: var(--bg-2);
-  border-radius: 4px;
-  position: relative;
-  overflow: hidden;
-}
-
-.progressFill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  background: var(--s-closed);
-  border-radius: 4px;
-  transition: width var(--tx-norm);
-}
-
-.progressActive {
-  overflow: visible;
-}
-
-.progressFillActive {
-  background: var(--s-progress);
-  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--s-progress) 35%, transparent);
-  animation: progressGlow 1.6s ease-in-out infinite;
-}
-
-@keyframes progressGlow {
-  0%,
-  100% {
-    box-shadow: 0 0 4px 1px color-mix(in srgb, var(--s-progress) 25%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--s-progress) 45%, transparent);
-  }
 }
 
 .sectionRow {

@@ -2,7 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use harness::IssueSummaryAssertions;
-use hydra_common::issues::IssueStatus;
+use hydra_common::test_utils::status::status;
 use std::str::FromStr;
 
 /// Scenario 10: Document operations through a worker.
@@ -123,11 +123,7 @@ async fn document_operations_through_worker() -> Result<()> {
         .find(|i| i.issue_id == parent_id)
         .expect("parent issue should exist");
 
-    parent.assert_has_child_with_status(
-        &issues.issues,
-        "Review design document",
-        IssueStatus::Open,
-    );
+    parent.assert_has_child_with_status(&issues.issues, "Review design document", status("open"));
 
     Ok(())
 }

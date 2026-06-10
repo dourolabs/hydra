@@ -5,7 +5,6 @@ use crate::{
             render, CommandContext, DeletedIssueOutcome, IssueRecords, IssueSummaryRecords,
             ResolvedOutputFormat, SubmitFormOutcome,
         },
-        projects::ProjectRef,
         utils::resolve_username,
     },
     output_writer::write_stdout,
@@ -15,7 +14,7 @@ use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
-    api::v1::projects::StatusKey,
+    api::v1::projects::{ProjectRef, StatusKey},
     constants::ENV_HYDRA_ISSUE_ID,
     form::Form,
     issues::{
@@ -28,6 +27,21 @@ use hydra_common::{
     HydraId, LabelId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
 };
 use std::str::FromStr;
+
+/// Resolve a [`ProjectRef`] to a concrete [`ProjectId`] for the
+/// `Issue.project_id` JSON field. Routes through the server-side
+/// resolver in `GET /v1/projects/:project_ref` (which accepts either
+/// form), so the CLI never carries its own key-lookup logic.
+async fn resolve_project_ref(
+    client: &dyn HydraClientInterface,
+    project_ref: &ProjectRef,
+) -> Result<ProjectId> {
+    Ok(client
+        .get_project(project_ref)
+        .await
+        .with_context(|| format!("failed to resolve project '{project_ref}'"))?
+        .project_id)
+}
 
 /// clap value parser for `--assignee`. Phase 4b requires the full
 /// canonical path form (`users/<name>`, `agents/<name>`, or
@@ -402,7 +416,7 @@ pub async fn run(
         } => {
             let label_ids = resolve_label_names_to_ids(client, &labels).await?;
             let project_id = match project {
-                Some(reference) => Some(reference.resolve(client).await?),
+                Some(reference) => Some(resolve_project_ref(client, &reference).await?),
                 None => None,
             };
             let issues = fetch_issues(
@@ -446,7 +460,7 @@ pub async fn run(
             let parsed_form = parse_form_flag(form, form_inline)?;
             let creator = resolve_username(client).await?;
             let project_id = match project {
-                Some(reference) => Some(reference.resolve(client).await?),
+                Some(reference) => Some(resolve_project_ref(client, &reference).await?),
                 None => None,
             };
             create_issue(
@@ -510,7 +524,7 @@ pub async fn run(
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             let project_id = match project {
-                Some(reference) => Some(reference.resolve(client).await?),
+                Some(reference) => Some(resolve_project_ref(client, &reference).await?),
                 None => None,
             };
             update_issue(
@@ -1319,11 +1333,12 @@ mod tests {
     use crate::test_utils::ids::{issue_id, patch_id};
     use chrono::Utc;
     use httpmock::prelude::*;
+    use hydra_common::api::v1::projects::StatusKey;
     use hydra_common::issues::{
-        Issue, IssueStatus, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse,
-        SessionSettings, UpsertIssueRequest, UpsertIssueResponse,
+        Issue, IssueSummaryRecord, IssueVersionRecord, ListIssuesResponse, SessionSettings,
+        UpsertIssueRequest, UpsertIssueResponse,
     };
-    use hydra_common::test_utils::status::make_status_def;
+    use hydra_common::test_utils::status::{make_status_def, status};
     use hydra_common::{users::Username, PatchId, ProjectId, RepoName};
     use reqwest::Client as HttpClient;
     use std::str::FromStr;
@@ -1345,7 +1360,7 @@ mod tests {
             String::new(),
             empty_user(),
             String::new(),
-            make_status_def(IssueStatus::Open.into()),
+            make_status_def(status("open")),
             ProjectId::default_project(),
             None,
             None,
@@ -1394,7 +1409,7 @@ mod tests {
         id: &str,
         issue_type: IssueType,
         description: &str,
-        status: IssueStatus,
+        status: StatusKey,
         assignee: Option<&str>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
@@ -1409,7 +1424,7 @@ mod tests {
                 description.into(),
                 empty_user(),
                 String::new(),
-                make_status_def(status.into()),
+                make_status_def(status),
                 ProjectId::default_project(),
                 assignee.map(user_principal),
                 None,
@@ -1441,7 +1456,7 @@ mod tests {
                     "First issue".into(),
                     empty_user(),
                     String::new(),
-                    make_status_def(IssueStatus::Open.into()),
+                    make_status_def(status("open")),
                     ProjectId::default_project(),
                     None,
                     None,
@@ -1460,7 +1475,7 @@ mod tests {
             when.method(GET)
                 .path("/v1/issues")
                 .query_param("issue_type", IssueType::Bug.as_str())
-                .query_param("status", IssueStatus::Open.as_str())
+                .query_param("status", "open")
                 .query_param("q", "bug");
             then.status(200).json_body_obj(&issues_response);
         });
@@ -1469,7 +1484,7 @@ mod tests {
             &client,
             None,
             Some(IssueType::Bug),
-            vec![IssueStatus::Open.into()],
+            vec![status("open")],
             None,
             None,
             Some("bug".into()),
@@ -1511,7 +1526,7 @@ mod tests {
                 "Edge case bug".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::InProgress.into()),
+                make_status_def(status("in-progress")),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -1536,7 +1551,7 @@ mod tests {
             &client,
             Some(issue_id.clone()),
             Some(IssueType::Task),
-            vec![IssueStatus::InProgress.into()],
+            vec![status("in-progress")],
             None,
             None,
             None,
@@ -1567,7 +1582,7 @@ mod tests {
                     "Edge case bug".into(),
                     empty_user(),
                     String::new(),
-                    make_status_def(IssueStatus::Open.into()),
+                    make_status_def(status("open")),
                     ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
@@ -1622,7 +1637,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                make_status_def(IssueStatus::Closed.into()),
+                make_status_def(status("closed")),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 None,
@@ -1651,7 +1666,7 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Closed.into(),
+            status("closed"),
             None,
             Vec::new(),
             patch_ids.clone(),
@@ -1696,7 +1711,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                make_status_def(IssueStatus::Closed.into()),
+                make_status_def(status("closed")),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
                 Some(job_settings.clone()),
@@ -1725,7 +1740,7 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Closed.into(),
+            status("closed"),
             None,
             Vec::new(),
             vec![],
@@ -1773,7 +1788,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -1800,7 +1815,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
@@ -1829,7 +1844,7 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Open.into(),
+            status("open"),
             None,
             Vec::new(),
             vec![],
@@ -1879,7 +1894,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -1912,7 +1927,7 @@ mod tests {
                 "New issue description".into(),
                 Username::from("creator-a"),
                 "Initial notes".into(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(expected_settings.clone()),
@@ -1941,7 +1956,7 @@ mod tests {
             &client,
             IssueType::MergeRequest,
             "Test Title".to_string(),
-            IssueStatus::Open.into(),
+            status("open"),
             None,
             Vec::new(),
             vec![],
@@ -1984,7 +1999,7 @@ mod tests {
                 "Issue with secrets".into(),
                 Username::from("creator-a"),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(job_settings.clone()),
@@ -2013,7 +2028,7 @@ mod tests {
             &client,
             IssueType::Task,
             "Test Title".to_string(),
-            IssueStatus::Open.into(),
+            status("open"),
             None,
             Vec::new(),
             vec![],
@@ -2058,7 +2073,7 @@ mod tests {
                 "Parent issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings.clone()),
@@ -2085,7 +2100,7 @@ mod tests {
                 "Child issue".into(),
                 Username::from("creator-a"),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(inherited_settings),
@@ -2114,7 +2129,7 @@ mod tests {
             &client,
             IssueType::Task,
             "Test Title".to_string(),
-            IssueStatus::Open.into(),
+            status("open"),
             None,
             Vec::new(),
             vec![],
@@ -2151,7 +2166,7 @@ mod tests {
             &client,
             IssueType::Bug,
             "Test Title".to_string(),
-            IssueStatus::Open.into(),
+            status("open"),
             None,
             vec![],
             Vec::new(),
@@ -2227,7 +2242,7 @@ mod tests {
             "i-9",
             IssueType::Task,
             "Initial issue",
-            IssueStatus::Open,
+            status("open"),
             Some("owner-a"),
             vec![IssueDependency::new(
                 IssueDependencyType::ChildOf,
@@ -2242,7 +2257,7 @@ mod tests {
                 "Updated issue description".into(),
                 empty_user(),
                 "New progress".into(),
-                make_status_def(IssueStatus::Closed.into()),
+                make_status_def(status("closed")),
                 ProjectId::default_project(),
                 Some(user_principal("owner-b")),
                 Some(job_settings.clone()),
@@ -2280,7 +2295,7 @@ mod tests {
             target_issue_id,
             Some(IssueType::Bug),
             None,
-            Some(IssueStatus::Closed.into()),
+            Some(status("closed")),
             None,
             Some(user_principal("owner-b")),
             false,
@@ -2334,7 +2349,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                make_status_def(IssueStatus::InProgress.into()),
+                make_status_def(status("in-progress")),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
@@ -2359,7 +2374,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::InProgress.into()),
+                make_status_def(status("in-progress")),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2446,7 +2461,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                make_status_def(IssueStatus::InProgress.into()),
+                make_status_def(status("in-progress")),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 Some(job_settings),
@@ -2471,7 +2486,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 "Started work".into(),
-                make_status_def(IssueStatus::InProgress.into()),
+                make_status_def(status("in-progress")),
                 ProjectId::default_project(),
                 Some(user_principal("owner-a")),
                 None,
@@ -2560,7 +2575,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2584,7 +2599,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(expected_settings),
@@ -2672,7 +2687,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(existing_settings),
@@ -2694,7 +2709,7 @@ mod tests {
                 "Existing issue".into(),
                 empty_user(),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some(SessionSettings::default()),
@@ -2778,7 +2793,7 @@ mod tests {
                     "First issue\nwith context".into(),
                     empty_user(),
                     "Working on repro".into(),
-                    make_status_def(IssueStatus::Open.into()),
+                    make_status_def(status("open")),
                     ProjectId::default_project(),
                     Some(user_principal("owner-a")),
                     None,
@@ -2806,7 +2821,7 @@ mod tests {
                     "Follow-up work".into(),
                     empty_user(),
                     String::new(),
-                    make_status_def(IssueStatus::InProgress.into()),
+                    make_status_def(status("in-progress")),
                     ProjectId::default_project(),
                     None,
                     None,
@@ -3194,7 +3209,7 @@ mod tests {
                     );
                     let project = project.expect("project flag should parse");
                     match project {
-                        crate::command::projects::ProjectRef::Key(key) => {
+                        ProjectRef::Key(key) => {
                             assert_eq!(key.as_str(), "engineering-v2");
                         }
                         other => panic!("expected ProjectRef::Key, got {other:?}"),

@@ -1,0 +1,10 @@
+key: in-review
+label: In review
+color: "#f1c40f"
+unblocks_parents: false
+unblocks_dependents: false
+cascades_to_children: false
+on_enter:
+  assign_to: !Agent { name: reviewer }
+  attach_form: /forms/review.yaml
+prompt_path: /projects/engineering-v2/statuses/in-review.md

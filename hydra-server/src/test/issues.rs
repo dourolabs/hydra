@@ -1,6 +1,6 @@
 use crate::{
     domain::{
-        issues::{Issue, IssueDependency, IssueDependencyType, IssueStatus, IssueType},
+        issues::{Issue, IssueDependency, IssueDependencyType, IssueType},
         users::Username,
     },
     test_utils::{spawn_test_server, test_client},
@@ -14,7 +14,9 @@ use hydra_common::{
             SearchIssuesQuery, SubmitFeedbackRequest, SubmitFormRequest, SubmitFormResponse,
             UpsertIssueRequest, UpsertIssueResponse,
         },
+        projects::StatusKey,
     },
+    test_utils::status::status,
 };
 use reqwest::StatusCode;
 use serde_json::json;
@@ -25,7 +27,7 @@ fn issue(
     description: &str,
     creator: Username,
     progress: String,
-    status: IssueStatus,
+    status: StatusKey,
     assignee: Option<&str>,
     dependencies: Vec<IssueDependency>,
     patches: Vec<PatchId>,
@@ -44,7 +46,7 @@ fn issue(
         description.to_string(),
         creator,
         progress,
-        status.into(),
+        status,
         crate::domain::projects::default_project_id(),
         assignee_principal,
         None,
@@ -82,7 +84,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 "original details".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,
@@ -113,7 +115,7 @@ async fn update_issue_replaces_existing_value() -> anyhow::Result<()> {
                 "updated details".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
-                IssueStatus::InProgress.into(),
+                status("in-progress"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,
@@ -149,7 +151,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,
@@ -180,7 +182,7 @@ async fn issue_versions_endpoints_return_history() -> anyhow::Result<()> {
                 "updated".to_string(),
                 default_user(),
                 "Updated progress".to_string(),
-                IssueStatus::InProgress.into(),
+                status("in-progress"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,
@@ -261,7 +263,7 @@ async fn issue_version_endpoints_return_404s() -> anyhow::Result<()> {
                 "initial".to_string(),
                 default_user(),
                 "Initial progress".to_string(),
-                IssueStatus::Open.into(),
+                status("open"),
                 crate::domain::projects::default_project_id(),
                 None,
                 None,
@@ -307,7 +309,7 @@ async fn create_issue_rejects_missing_creator_with_parent() -> anyhow::Result<()
                 "parent",
                 parent_creator.clone(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -334,7 +336,7 @@ async fn create_issue_rejects_missing_creator_with_parent() -> anyhow::Result<()
                 "child",
                 missing_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 child_dependencies.clone(),
                 Vec::new(),
@@ -362,7 +364,7 @@ async fn create_issue_rejects_missing_creator_without_parent() -> anyhow::Result
                 "missing creator",
                 missing_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -391,7 +393,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 "blocker",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -416,7 +418,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 "blocked",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 blocked_dependencies.clone(),
                 Vec::new(),
@@ -441,7 +443,7 @@ async fn update_issue_rejects_closing_when_blocked() -> anyhow::Result<()> {
                 "blocked",
                 default_user(),
                 String::new(),
-                IssueStatus::Closed,
+                status("closed"),
                 None,
                 blocked_dependencies.clone(),
                 Vec::new(),
@@ -469,7 +471,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 "parent",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -494,7 +496,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 "child",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 child_dependencies.clone(),
                 Vec::new(),
@@ -519,7 +521,7 @@ async fn update_issue_rejects_closing_with_open_children() -> anyhow::Result<()>
                 "parent",
                 default_user(),
                 String::new(),
-                IssueStatus::Closed,
+                status("closed"),
                 None,
                 vec![],
                 Vec::new(),
@@ -544,7 +546,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         "login fails for guests",
         default_user(),
         String::new(),
-        IssueStatus::Open,
+        status("open"),
         None,
         vec![],
         Vec::new(),
@@ -554,7 +556,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         "assigned issue",
         default_user(),
         String::new(),
-        IssueStatus::Open,
+        status("open"),
         Some("owner-1"),
         vec![],
         Vec::new(),
@@ -564,7 +566,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         "retire old endpoint",
         default_user(),
         String::new(),
-        IssueStatus::Closed,
+        status("closed"),
         None,
         vec![],
         Vec::new(),
@@ -604,7 +606,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         let input: hydra_common::api::v1::issues::IssueInput = issue.into();
         let resolved = crate::domain::projects::default_project_seed()
             .find_status(&input.status)
-            .expect("default project covers all legacy IssueStatus values")
+            .expect("default project covers all legacy status keys")
             .clone();
         let api_issue = hydra_common::api::v1::issues::Issue::new(
             input.issue_type,
@@ -661,7 +663,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
             None,
-            vec![hydra_common::api::v1::issues::IssueStatus::Closed.into()],
+            vec![status("closed")],
             None,
             None,
             None,
@@ -695,7 +697,7 @@ async fn delete_issue_basic_operation() -> anyhow::Result<()> {
                 "issue to delete",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -750,7 +752,7 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
                 "deleted issue",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -828,7 +830,7 @@ async fn delete_issue_get_deleted_by_id() -> anyhow::Result<()> {
                 "get deleted issue",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -880,7 +882,7 @@ async fn delete_issue_idempotency() -> anyhow::Result<()> {
                 "idempotency test",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -954,7 +956,7 @@ async fn get_issue_version_negative_offset_returns_correct_version() -> anyhow::
                 "version one",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -980,7 +982,7 @@ async fn get_issue_version_negative_offset_returns_correct_version() -> anyhow::
                 "version two",
                 default_user(),
                 String::new(),
-                IssueStatus::InProgress,
+                status("in-progress"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1005,7 +1007,7 @@ async fn get_issue_version_negative_offset_returns_correct_version() -> anyhow::
                 "version three",
                 default_user(),
                 String::new(),
-                IssueStatus::InProgress,
+                status("in-progress"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1075,7 +1077,7 @@ async fn get_issue_version_zero_returns_400() -> anyhow::Result<()> {
                 "test",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1116,7 +1118,7 @@ async fn get_issue_version_out_of_range_negative_offset_returns_400() -> anyhow:
                 "only version",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1177,7 +1179,7 @@ async fn list_issues_count_true_returns_total_count() -> anyhow::Result<()> {
                     desc,
                     default_user(),
                     String::new(),
-                    IssueStatus::Open,
+                    status("open"),
                     None,
                     vec![],
                     Vec::new(),
@@ -1302,7 +1304,7 @@ async fn create_issue_with_form(
         "issue with form",
         default_user(),
         String::new(),
-        IssueStatus::Open,
+        status("open"),
         None,
         vec![],
         Vec::new(),
@@ -1358,10 +1360,7 @@ async fn submit_form_action_valid_submission() -> anyhow::Result<()> {
         .await?
         .json()
         .await?;
-    assert_eq!(
-        fetched.issue.status.key.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::Closed.as_str()
-    );
+    assert_eq!(fetched.issue.status.key.as_str(), "closed");
     // Form should still be present
     assert!(fetched.issue.form.is_some());
     // FormResponse should be stored
@@ -1437,10 +1436,7 @@ async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::R
         .await?
         .json()
         .await?;
-    assert_eq!(
-        fetched.issue.status.key.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
-    );
+    assert_eq!(fetched.issue.status.key.as_str(), "in-progress");
     assert_eq!(
         fetched.issue.feedback,
         Some("please address X and Y".to_string()),
@@ -1543,10 +1539,7 @@ async fn submit_form_action_record_only_does_not_change_status() -> anyhow::Resu
         .await?
         .json()
         .await?;
-    assert_eq!(
-        fetched.issue.status.key.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::Open.as_str()
-    );
+    assert_eq!(fetched.issue.status.key.as_str(), "open");
 
     Ok(())
 }
@@ -1676,7 +1669,7 @@ async fn submit_form_action_no_form_on_issue() -> anyhow::Result<()> {
                 "no form",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1751,7 +1744,7 @@ async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
                 "test feedback",
                 default_user(),
                 String::new(),
-                IssueStatus::InProgress,
+                status("in-progress"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1782,10 +1775,7 @@ async fn submit_feedback_sets_feedback_field() -> anyhow::Result<()> {
     assert_eq!(resp.issue_id, created.issue_id);
     assert_eq!(resp.issue.feedback, Some("fix this".to_string()));
     // Status should remain InProgress (not terminal)
-    assert_eq!(
-        resp.issue.status.key.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::InProgress.as_str()
-    );
+    assert_eq!(resp.issue.status.key.as_str(), "in-progress");
 
     Ok(())
 }
@@ -1807,7 +1797,7 @@ async fn submit_feedback_leaves_closed_status_unchanged() -> anyhow::Result<()> 
                 "closed issue",
                 default_user(),
                 String::new(),
-                IssueStatus::Closed,
+                status("closed"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1837,7 +1827,7 @@ async fn submit_feedback_leaves_closed_status_unchanged() -> anyhow::Result<()> 
     assert_eq!(resp.issue.feedback, Some("please reopen".to_string()));
     assert_eq!(
         resp.issue.status.key.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::Closed.as_str(),
+        "closed",
         "closed issues stay closed when feedback is submitted"
     );
 
@@ -1858,7 +1848,7 @@ async fn submit_feedback_leaves_failed_status_unchanged() -> anyhow::Result<()> 
                 "failed issue",
                 default_user(),
                 String::new(),
-                IssueStatus::Failed,
+                status("failed"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1888,7 +1878,7 @@ async fn submit_feedback_leaves_failed_status_unchanged() -> anyhow::Result<()> 
     assert_eq!(resp.issue.feedback, Some("try again".to_string()));
     assert_eq!(
         resp.issue.status.key.as_str(),
-        hydra_common::api::v1::issues::IssueStatus::Failed.as_str(),
+        "failed",
         "failed issues stay failed when feedback is submitted"
     );
 
@@ -1928,7 +1918,7 @@ async fn submit_feedback_deleted_issue_returns_404() -> anyhow::Result<()> {
                 "to be deleted",
                 default_user(),
                 String::new(),
-                IssueStatus::Open,
+                status("open"),
                 None,
                 vec![],
                 Vec::new(),
@@ -1997,7 +1987,7 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
                 description: "test".to_string(),
                 creator: Username::from("test-creator"),
                 progress: String::new(),
-                status: IssueStatus::InProgress.into(),
+                status: status("in-progress"),
                 project_id: crate::domain::projects::default_project_id(),
                 assignee: None,
                 session_settings: Default::default(),

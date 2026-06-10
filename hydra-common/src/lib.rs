@@ -28,9 +28,9 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, conversations, documents, events, form, issues, labels, login, logs, merge_check,
-    merge_queues, patches, projects, relay, repositories, secrets, session_status, sessions,
-    task_status, triggers, users, version, whoami,
+    agents, analytics, conversations, documents, events, form, issues, labels, login, logs,
+    merge_check, merge_queues, patches, projects, relay, repositories, secrets, session_status,
+    sessions, task_status, triggers, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -120,6 +120,32 @@ mod ts_export {
         crate::agents::DeleteAgentResponse::export_all(&cfg).expect("DeleteAgentResponse");
         crate::agents::ListAgentsResponse::export_all(&cfg).expect("ListAgentsResponse");
 
+        // API v1: analytics
+        crate::analytics::BucketGranularity::export_all(&cfg).expect("BucketGranularity");
+        crate::analytics::PatchesThroughputQuery::export_all(&cfg).expect("PatchesThroughputQuery");
+        crate::analytics::PatchOverTimeBucket::export_all(&cfg).expect("PatchOverTimeBucket");
+        crate::analytics::PatchesOverTimeResponse::export_all(&cfg)
+            .expect("PatchesOverTimeResponse");
+        crate::analytics::PatchesTerminalMixResponse::export_all(&cfg)
+            .expect("PatchesTerminalMixResponse");
+        crate::analytics::TimeToMergeBin::export_all(&cfg).expect("TimeToMergeBin");
+        crate::analytics::PatchesTimeToMergeResponse::export_all(&cfg)
+            .expect("PatchesTimeToMergeResponse");
+        crate::analytics::PatchInFlightBucket::export_all(&cfg).expect("PatchInFlightBucket");
+        crate::analytics::PatchesInFlightOverTimeResponse::export_all(&cfg)
+            .expect("PatchesInFlightOverTimeResponse");
+        crate::analytics::IssuesThroughputQuery::export_all(&cfg).expect("IssuesThroughputQuery");
+        crate::analytics::IssuesCycleTimeResponse::export_all(&cfg)
+            .expect("IssuesCycleTimeResponse");
+        crate::analytics::TimeInStatusSegment::export_all(&cfg).expect("TimeInStatusSegment");
+        crate::analytics::IssuesTimeInStatusBreakdownResponse::export_all(&cfg)
+            .expect("IssuesTimeInStatusBreakdownResponse");
+        crate::analytics::PerStatusDistribution::export_all(&cfg).expect("PerStatusDistribution");
+        crate::analytics::IssuesPerStatusDistributionResponse::export_all(&cfg)
+            .expect("IssuesPerStatusDistributionResponse");
+        crate::analytics::IssueOverTimeBucket::export_all(&cfg).expect("IssueOverTimeBucket");
+        crate::analytics::IssuesOverTimeResponse::export_all(&cfg).expect("IssuesOverTimeResponse");
+
         // API v1: documents
         crate::documents::Document::export_all(&cfg).expect("Document");
         crate::documents::DocumentVersionRecord::export_all(&cfg).expect("DocumentVersionRecord");
@@ -157,6 +183,8 @@ mod ts_export {
         crate::projects::ListProjectsResponse::export_all(&cfg).expect("ListProjectsResponse");
         crate::projects::ProjectStatusesResponse::export_all(&cfg)
             .expect("ProjectStatusesResponse");
+        crate::projects::UpsertProjectStatusResponse::export_all(&cfg)
+            .expect("UpsertProjectStatusResponse");
 
         // API v1: labels
         crate::labels::Label::export_all(&cfg).expect("Label");
@@ -168,7 +196,6 @@ mod ts_export {
         crate::labels::ListLabelsResponse::export_all(&cfg).expect("ListLabelsResponse");
 
         // API v1: issues
-        crate::issues::IssueStatus::export_all(&cfg).expect("IssueStatus");
         crate::issues::IssueType::export_all(&cfg).expect("IssueType");
         crate::issues::IssueDependencyType::export_all(&cfg).expect("IssueDependencyType");
         crate::issues::IssueDependency::export_all(&cfg).expect("IssueDependency");

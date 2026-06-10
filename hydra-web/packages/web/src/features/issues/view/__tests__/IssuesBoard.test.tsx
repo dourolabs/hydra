@@ -12,9 +12,14 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  Issue,
+  IssueSummary,
+  IssueSummaryRecord,
+  ListIssuesResponse,
   ListProjectsResponse,
   ProjectRecord,
   StatusDefinition,
+  UpsertIssueRequest,
 } from "@hydra/api";
 import type { BoardCellQuery } from "../../usePaginatedIssues";
 
@@ -33,8 +38,7 @@ vi.mock("../../usePaginatedIssues", () => ({
 
 vi.mock("../../../dashboard/usePageIssueTrees", () => ({
   usePageIssueTrees: () => ({
-    isActiveMap: new Map(),
-    childStatusMap: new Map(),
+    neighborhoodMap: new Map(),
     sessionsByIssue: new Map(),
     isLoading: false,
   }),
@@ -64,11 +68,17 @@ vi.mock("@dnd-kit/core", () => ({
     }
     return <>{children}</>;
   },
+  DragOverlay: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   PointerSensor: function PointerSensor() {},
   KeyboardSensor: function KeyboardSensor() {},
   useSensor: () => ({}),
   useSensors: () => [],
   closestCenter: () => [],
+  MeasuringStrategy: {
+    Always: "always",
+    BeforeDragging: "before-dragging",
+    WhileDragging: "while-dragging",
+  },
 }));
 
 vi.mock("@dnd-kit/sortable", () => ({
@@ -103,18 +113,58 @@ vi.mock("@dnd-kit/sortable", () => ({
 }));
 
 const mockUpdateProject = vi.fn();
+const mockUpdateIssue = vi.fn();
+const mockGetIssue = vi.fn();
+const mockUpdateProjectStatus = vi.fn(
+  async (
+    projectId: string,
+    _statusKey: string,
+    status: StatusDefinition,
+  ): Promise<{
+    project_id: string;
+    version: number;
+    status: StatusDefinition;
+  }> => ({
+    project_id: projectId,
+    version: 1,
+    status,
+  }),
+);
 vi.mock("../../../../api/client", () => ({
   apiClient: {
     updateProject: (
       projectId: string,
-      request: { project: { statuses: StatusDefinition[] } },
+      request: {
+        key: string;
+        name: string;
+        prompt_path: string | null;
+        priority: number;
+      },
     ) => mockUpdateProject(projectId, request),
+    updateIssue: (issueId: string, request: UpsertIssueRequest) =>
+      mockUpdateIssue(issueId, request),
+    getIssue: (issueId: string) => mockGetIssue(issueId),
+    updateProjectStatus: (
+      projectId: string,
+      statusKey: string,
+      status: StatusDefinition,
+    ) => mockUpdateProjectStatus(projectId, statusKey, status),
   },
 }));
 
 const mockAddToast = vi.fn();
 vi.mock("../../../toast/useToast", () => ({
   useToast: () => ({ addToast: mockAddToast }),
+}));
+
+const mockOpenIssueCreate = vi.fn();
+vi.mock("../../../dashboard/useIssueCreateModal", () => ({
+  useIssueCreateModal: () => ({
+    isOpen: false,
+    initial: null,
+    open: mockOpenIssueCreate,
+    close: vi.fn(),
+  }),
 }));
 
 // --- @hydra/ui stubs ---
@@ -145,6 +195,8 @@ vi.mock("@hydra/ui", () => ({
     ) : null,
   Icons: {
     IconSettings: () => <span data-testid="icon-settings" />,
+    IconSpark: () => <span data-testid="icon-spark" />,
+    IconChevronDown: () => <span data-testid="icon-chevron-down" />,
   },
 }));
 
@@ -247,6 +299,7 @@ function makeStatus(
 ): StatusDefinition {
   return {
     color: "#3498db",
+    position: 0,
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,
@@ -308,7 +361,6 @@ function renderBoard(
       <MemoryRouter>
         <IssuesBoard
           baseFilters={{}}
-          username="alice"
           filterRootId={null}
           hideIssues={opts.hideIssues}
         />
@@ -329,8 +381,24 @@ beforeEach(() => {
   dragEndHandlers = [];
   sortableItemsList = [];
   mockUpdateProject.mockReset();
+  mockUpdateProjectStatus.mockClear();
+  mockUpdateProjectStatus.mockImplementation(
+    async (
+      projectId: string,
+      _statusKey: string,
+      status: StatusDefinition,
+    ) => ({
+      project_id: projectId,
+      version: 1,
+      status,
+    }),
+  );
   mockUpdateProject.mockResolvedValue({ project_id: "j-eng", version: 2 });
+  mockUpdateIssue.mockReset();
+  mockUpdateIssue.mockResolvedValue({ issue_id: "i-x", version: 2 });
+  mockGetIssue.mockReset();
   mockAddToast.mockReset();
+  mockOpenIssueCreate.mockReset();
 });
 
 afterEach(() => {
@@ -381,7 +449,7 @@ describe("IssuesBoard column sub-row", () => {
     expect(mode.textContent).toBe("auto");
   });
 
-  it("renders 'interactive' badge when status.interactive === true", () => {
+  it("renders 'interactive' badge with the Spark icon and the interactive modifier class when status.interactive === true", () => {
     const status = makeStatus({
       key: "triage",
       label: "Triage",
@@ -393,6 +461,23 @@ describe("IssuesBoard column sub-row", () => {
 
     const mode = screen.getByTestId("board-col-mode-proj-triage");
     expect(mode.textContent).toBe("interactive");
+    expect(within(mode).getByTestId("icon-spark")).toBeTruthy();
+    expect(mode.className).toContain("modeBadgeInteractive");
+    expect(mode.getAttribute("title")).toBe(
+      "Interactive — human in the loop",
+    );
+  });
+
+  it("renders 'auto' badge without the interactive modifier or Spark icon", () => {
+    const status = makeStatus({ key: "open", label: "Open" });
+    projectsData = [makeProject("j-proj", "proj", [status])];
+
+    renderBoard();
+
+    const mode = screen.getByTestId("board-col-mode-proj-open");
+    expect(mode.className).not.toContain("modeBadgeInteractive");
+    expect(within(mode).queryByTestId("icon-spark")).toBeNull();
+    expect(mode.getAttribute("title")).toBe("Autonomous agent work");
   });
 
 });
@@ -526,6 +611,65 @@ describe("IssuesBoard '+ Add status' ghost column", () => {
   });
 });
 
+describe("IssuesBoard '+ Add issue' per-column button", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+    ];
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell()],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+  });
+
+  it("renders an '+ Add issue' button inside each status column", () => {
+    renderBoard();
+
+    expect(
+      screen.getByTestId("board-col-add-issue-engineering-open"),
+    ).toBeDefined();
+    expect(
+      screen.getByTestId("board-col-add-issue-engineering-in-progress"),
+    ).toBeDefined();
+  });
+
+  it("opens the new-issue modal with the column's project and status prepopulated", () => {
+    renderBoard();
+
+    fireEvent.click(
+      screen.getByTestId("board-col-add-issue-engineering-in-progress"),
+    );
+
+    expect(mockOpenIssueCreate).toHaveBeenCalledTimes(1);
+    expect(mockOpenIssueCreate).toHaveBeenCalledWith({
+      projectId: "j-eng",
+      status: "in-progress",
+    });
+  });
+
+  it("never renders a 'No issues' placeholder, even with empty cells", () => {
+    renderBoard();
+
+    expect(screen.queryByText("No issues")).toBeNull();
+  });
+
+  it("is not rendered in hideIssues mode (Projects tab)", () => {
+    renderBoard(undefined, { hideIssues: true });
+
+    expect(
+      screen.queryByTestId("board-col-add-issue-engineering-open"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("board-col-add-issue-engineering-in-progress"),
+    ).toBeNull();
+  });
+});
+
 describe("IssuesBoard '+ New project' ghost row", () => {
   beforeEach(() => {
     projectsData = [
@@ -547,7 +691,6 @@ describe("IssuesBoard '+ New project' ghost row", () => {
         <MemoryRouter>
           <IssuesBoard
             baseFilters={{ project_id: "j-eng" }}
-            username="alice"
             filterRootId={null}
           />
         </MemoryRouter>
@@ -587,7 +730,7 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     expect(head.getAttribute("data-sortable-handle")).toBe("true");
   });
 
-  it("on drop reorders statuses and calls apiClient.updateProject with the new order", async () => {
+  it("on drop reorders statuses and calls updateProjectStatus with new positions", async () => {
     renderBoard();
     expect(lastDragEndHandler).not.toBeNull();
 
@@ -598,17 +741,16 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
       });
     });
 
-    await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
-    const [projectId, body] = mockUpdateProject.mock.calls[0];
-    expect(projectId).toBe("j-eng");
-    const keys = (body.project.statuses as StatusDefinition[]).map((s) => s.key);
-    expect(keys).toEqual(["in-progress", "open"]);
-    // Per-status fields must be preserved during reorder.
-    const moved = (body.project.statuses as StatusDefinition[]).find(
-      (s) => s.key === "in-progress",
-    );
-    expect(moved?.label).toBe("In progress");
-    expect(moved?.color).toBe("#f1c40f");
+    await waitFor(() => expect(mockUpdateProjectStatus).toHaveBeenCalledTimes(2));
+    const calls = mockUpdateProjectStatus.mock.calls.map((c) => ({
+      projectId: c[0] as string,
+      statusKey: c[1] as string,
+      position: (c[2] as StatusDefinition).position,
+    }));
+    expect(calls).toEqual([
+      { projectId: "j-eng", statusKey: "in-progress", position: 0 },
+      { projectId: "j-eng", statusKey: "open", position: 100 },
+    ]);
   });
 
   it("is a no-op when the drop target equals the dragged item", () => {
@@ -619,7 +761,7 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
         over: { id: "open" },
       });
     });
-    expect(mockUpdateProject).not.toHaveBeenCalled();
+    expect(mockUpdateProjectStatus).not.toHaveBeenCalled();
   });
 
   it("optimistically reorders the projects cache and rolls back on save error", async () => {
@@ -632,7 +774,7 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     // Hold the mutation in-flight so we can observe the optimistic write
     // before the failure resolves it back to the previous snapshot.
     let rejectUpdate: ((err: Error) => void) | null = null;
-    mockUpdateProject.mockReturnValueOnce(
+    mockUpdateProjectStatus.mockReturnValueOnce(
       new Promise<never>((_, reject) => {
         rejectUpdate = reject;
       }),
@@ -667,12 +809,12 @@ describe("IssuesBoard column drag-and-drop reordering", () => {
     expect(mockAddToast).toHaveBeenCalledWith("boom", "error");
   });
 
-  it("does not call updateProject when there are no projects", () => {
+  it("does not call updateProjectStatus when there are no projects", () => {
     projectsData = [];
     renderBoard();
     // No project sections means no DndContext was mounted.
     expect(lastDragEndHandler).toBeNull();
-    expect(mockUpdateProject).not.toHaveBeenCalled();
+    expect(mockUpdateProjectStatus).not.toHaveBeenCalled();
   });
 });
 
@@ -696,10 +838,12 @@ describe("IssuesBoard hideIssues (Projects tab)", () => {
     expect(screen.getByTestId("board-new-project")).toBeDefined();
   });
 
-  it("suppresses the per-column 'No issues' placeholder", () => {
+  it("suppresses the per-column 'Loading…' placeholder", () => {
     renderBoard(undefined, { hideIssues: true });
 
-    expect(screen.queryByText("No issues")).toBeNull();
+    // The "No issues" placeholder was removed unconditionally — see the
+    // "'+ Add issue' per-column button" describe block. Here we only assert
+    // that hideIssues continues to suppress the transient loading state.
     expect(screen.queryByText("Loading…")).toBeNull();
   });
 
@@ -728,6 +872,93 @@ describe("IssuesBoard hideIssues (Projects tab)", () => {
     expect(
       within(cols[1]).getByTestId("board-col-head-engineering-in-progress"),
     ).toBeDefined();
+  });
+});
+
+describe("IssuesBoard project collapse chevron", () => {
+  beforeEach(() => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+      makeProject("j-design", "design", DEFAULT_STATUSES, "Design"),
+    ];
+    window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("renders a collapse chevron on every project bar, expanded by default", () => {
+    renderBoard();
+
+    const engChevron = screen.getByTestId("board-project-collapse-engineering");
+    const designChevron = screen.getByTestId("board-project-collapse-design");
+    expect(engChevron.getAttribute("aria-expanded")).toBe("true");
+    expect(designChevron.getAttribute("aria-expanded")).toBe("true");
+    // Body wrappers exist in the expanded state.
+    expect(screen.getByTestId("board-project-body-engineering")).toBeDefined();
+    expect(screen.getByTestId("board-project-body-design")).toBeDefined();
+  });
+
+  it("clicking the chevron collapses only that project's body", () => {
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+
+    const engChevron = screen.getByTestId("board-project-collapse-engineering");
+    expect(engChevron.getAttribute("aria-expanded")).toBe("false");
+    expect(engChevron.className).toContain("projectCollapseToggleCollapsed");
+
+    const engBody = screen.getByTestId("board-project-body-engineering");
+    expect(engBody.className).toContain("projectGroupBodyCollapsed");
+    expect(engBody.getAttribute("aria-hidden")).toBe("true");
+
+    // The other project stays expanded.
+    const designBody = screen.getByTestId("board-project-body-design");
+    expect(designBody.className).not.toContain("projectGroupBodyCollapsed");
+    expect(designBody.getAttribute("aria-hidden")).toBe("false");
+  });
+
+  it("clicking the chevron a second time re-expands the project", () => {
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+
+    const engChevron = screen.getByTestId("board-project-collapse-engineering");
+    expect(engChevron.getAttribute("aria-expanded")).toBe("true");
+    const engBody = screen.getByTestId("board-project-body-engineering");
+    expect(engBody.className).not.toContain("projectGroupBodyCollapsed");
+  });
+
+  it("persists the collapsed project ids in localStorage", () => {
+    renderBoard();
+    fireEvent.click(screen.getByTestId("board-project-collapse-engineering"));
+
+    const raw = window.localStorage.getItem("hydra:board-project-collapsed");
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!)).toEqual(["j-eng"]);
+  });
+
+  it("rehydrates the collapsed set from localStorage on mount", () => {
+    window.localStorage.setItem(
+      "hydra:board-project-collapsed",
+      JSON.stringify(["j-design"]),
+    );
+    renderBoard();
+
+    expect(
+      screen
+        .getByTestId("board-project-collapse-design")
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+    expect(
+      screen.getByTestId("board-project-body-design").className,
+    ).toContain("projectGroupBodyCollapsed");
+    // engineering stays expanded.
+    expect(
+      screen
+        .getByTestId("board-project-collapse-engineering")
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 });
 
@@ -783,7 +1014,6 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
         <MemoryRouter>
           <IssuesBoard
             baseFilters={{ project_id: "j-a" }}
-            username="alice"
             filterRootId={null}
           />
         </MemoryRouter>
@@ -828,9 +1058,9 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
     const [projectId, body] = mockUpdateProject.mock.calls[0];
     expect(projectId).toBe("j-c");
-    expect(body.project.priority).toBe(1500);
+    expect(body.priority).toBe(1500);
     // Other project fields should be preserved.
-    expect(body.project.key).toBe("gamma");
+    expect(body.key).toBe("gamma");
   });
 
   it("on drop at the top sets priority below the first neighbor's", async () => {
@@ -846,7 +1076,7 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
     const [, body] = mockUpdateProject.mock.calls[0];
     // alpha's priority is 1000; gamma at top = 1000 - 1024 = -24.
-    expect(body.project.priority).toBe(-24);
+    expect(body.priority).toBe(-24);
   });
 
   it("on drop at the bottom sets priority above the last neighbor's", async () => {
@@ -862,7 +1092,7 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
     await waitFor(() => expect(mockUpdateProject).toHaveBeenCalledTimes(1));
     const [, body] = mockUpdateProject.mock.calls[0];
     // gamma's priority is 3000; alpha at bottom = 3000 + 1024 = 4024.
-    expect(body.project.priority).toBe(4024);
+    expect(body.priority).toBe(4024);
   });
 
   it("is a no-op when the drop target equals the dragged project", () => {
@@ -919,5 +1149,405 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
       expect(ids).toEqual(["j-a", "j-b", "j-c"]);
     });
     expect(mockAddToast).toHaveBeenCalledWith("nope", "error");
+  });
+});
+
+describe("IssuesBoard issue-card drag-and-drop", () => {
+  function makeSummaryRecord(
+    issueId: string,
+    title: string,
+    projectId: string,
+    statusKey: string,
+  ): IssueSummaryRecord {
+    const status: StatusDefinition = makeStatus({
+      key: statusKey,
+      label: statusKey,
+    });
+    const summary: IssueSummary = {
+      type: "task",
+      title,
+      description: "",
+      creator: "alice",
+      status,
+      project_id: projectId,
+      progress: "",
+      dependencies: [],
+      patches: [],
+    };
+    return {
+      issue_id: issueId,
+      version: BigInt(1),
+      timestamp: "2026-06-09T00:00:00Z",
+      issue: summary,
+      creation_time: "2026-06-09T00:00:00Z",
+    };
+  }
+
+  function makeFullIssue(
+    projectId: string,
+    statusKey: string,
+    extra?: Partial<Issue>,
+  ): Issue {
+    return {
+      type: "task",
+      title: "Card title",
+      description: "Full description, possibly long",
+      creator: "alice",
+      progress: "Some progress",
+      status: makeStatus({ key: statusKey, label: statusKey }),
+      project_id: projectId,
+      dependencies: [],
+      patches: [],
+      ...extra,
+    };
+  }
+
+  // jsdom does not implement DataTransfer; we wire a minimal stand-in that
+  // supports the setData/getData/types subset the production code uses.
+  function makeDataTransfer() {
+    const store: Record<string, string> = {};
+    return {
+      effectAllowed: "all" as DataTransfer["effectAllowed"],
+      dropEffect: "none" as DataTransfer["dropEffect"],
+      types: [] as string[],
+      setData(format: string, value: string) {
+        store[format] = value;
+        if (!this.types.includes(format)) this.types.push(format);
+      },
+      getData(format: string) {
+        return store[format] ?? "";
+      },
+    };
+  }
+
+  const ENG_PROJECT = makeProject("j-eng", "engineering", ENG_STATUSES, "Eng");
+  const PRO_PROJECT = makeProject("j-pro", "product", ENG_STATUSES, "Product");
+
+  beforeEach(() => {
+    projectsData = [ENG_PROJECT];
+    cellsByProject = new Map();
+  });
+
+  it("renders draggable issue cards in each column", () => {
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+    renderBoard();
+
+    const card = screen.getByTestId("board-card-i-aaa");
+    expect(card.getAttribute("draggable")).toBe("true");
+  });
+
+  it("on drop to a different column, calls updateIssue with the new status", async () => {
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+    mockGetIssue.mockResolvedValueOnce({
+      issue_id: "i-aaa",
+      version: BigInt(1),
+      timestamp: "t",
+      issue: makeFullIssue("j-eng", "open"),
+      creation_time: "t",
+    });
+
+    renderBoard();
+    const card = screen.getByTestId("board-card-i-aaa");
+    const target = screen.getByTestId("board-col-engineering-in-progress");
+
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(card, { dataTransfer: dt });
+    fireEvent.dragOver(target, { dataTransfer: dt });
+    fireEvent.drop(target, { dataTransfer: dt });
+
+    await waitFor(() => expect(mockUpdateIssue).toHaveBeenCalledTimes(1));
+    const [issueId, request] = mockUpdateIssue.mock.calls[0];
+    expect(issueId).toBe("i-aaa");
+    // The mutation fetches the full Issue (so we don't clobber the
+    // description with the summary's truncation) then updates with new
+    // status + project_id.
+    expect(mockGetIssue).toHaveBeenCalledWith("i-aaa");
+    expect(request.issue.status).toBe("in-progress");
+    expect(request.issue.project_id).toBe("j-eng");
+    // The fetched description (not the truncated summary) is preserved.
+    expect(request.issue.description).toBe("Full description, possibly long");
+    expect(request.session_id).toBeNull();
+  });
+
+  it("on drop to a different project's column, sets both project_id and status", async () => {
+    projectsData = [ENG_PROJECT, PRO_PROJECT];
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+      [
+        "j-pro",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell()],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+    mockGetIssue.mockResolvedValueOnce({
+      issue_id: "i-aaa",
+      version: BigInt(1),
+      timestamp: "t",
+      issue: makeFullIssue("j-eng", "open"),
+      creation_time: "t",
+    });
+
+    renderBoard();
+    const card = screen.getByTestId("board-card-i-aaa");
+    const target = screen.getByTestId("board-col-product-in-progress");
+
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(card, { dataTransfer: dt });
+    fireEvent.dragOver(target, { dataTransfer: dt });
+    fireEvent.drop(target, { dataTransfer: dt });
+
+    await waitFor(() => expect(mockUpdateIssue).toHaveBeenCalledTimes(1));
+    const [issueId, request] = mockUpdateIssue.mock.calls[0];
+    expect(issueId).toBe("i-aaa");
+    expect(request.issue.project_id).toBe("j-pro");
+    expect(request.issue.status).toBe("in-progress");
+  });
+
+  it("is a no-op when the card is dropped on its source column", () => {
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+
+    renderBoard();
+    const card = screen.getByTestId("board-card-i-aaa");
+    const source = screen.getByTestId("board-col-engineering-open");
+
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(card, { dataTransfer: dt });
+    fireEvent.dragOver(source, { dataTransfer: dt });
+    fireEvent.drop(source, { dataTransfer: dt });
+
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
+    expect(mockGetIssue).not.toHaveBeenCalled();
+  });
+
+  it("optimistically moves the card between cached cells and rolls back on error", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+
+    // Pre-seed the paginatedIssues cache with the source and target cells.
+    // The hook's queryKey shape is
+    //   ["paginatedIssues", filtersForKey, "depth", depth]
+    // where filtersForKey = { ...baseFilters, project_id, status }. The
+    // board is rendered with empty baseFilters so the only filter fields
+    // are project_id and status.
+    const sourceKey = [
+      "paginatedIssues",
+      { project_id: "j-eng", status: "open" },
+      "depth",
+      1,
+    ] as const;
+    const targetKey = [
+      "paginatedIssues",
+      { project_id: "j-eng", status: "in-progress" },
+      "depth",
+      1,
+    ] as const;
+    const sourcePages: ListIssuesResponse[] = [
+      { issues: [rec], next_cursor: null },
+    ];
+    const targetPages: ListIssuesResponse[] = [{ issues: [], next_cursor: null }];
+    client.setQueryData(sourceKey, sourcePages);
+    client.setQueryData(targetKey, targetPages);
+
+    mockGetIssue.mockResolvedValueOnce({
+      issue_id: "i-aaa",
+      version: BigInt(1),
+      timestamp: "t",
+      issue: makeFullIssue("j-eng", "open"),
+      creation_time: "t",
+    });
+    let rejectUpdate: ((err: Error) => void) | null = null;
+    mockUpdateIssue.mockReturnValueOnce(
+      new Promise<never>((_, reject) => {
+        rejectUpdate = reject;
+      }),
+    );
+
+    renderBoard(client);
+    const card = screen.getByTestId("board-card-i-aaa");
+    const target = screen.getByTestId("board-col-engineering-in-progress");
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(card, { dataTransfer: dt });
+    fireEvent.dragOver(target, { dataTransfer: dt });
+    fireEvent.drop(target, { dataTransfer: dt });
+
+    // Optimistic write: the issue is removed from the source cell and added
+    // to the target cell while the mutation is still pending.
+    await waitFor(() => {
+      const src = client.getQueryData<ListIssuesResponse[]>(sourceKey);
+      const tgt = client.getQueryData<ListIssuesResponse[]>(targetKey);
+      expect(src?.[0].issues.map((r) => r.issue_id)).toEqual([]);
+      expect(tgt?.[0].issues.map((r) => r.issue_id)).toEqual(["i-aaa"]);
+      expect(tgt?.[0].issues[0].issue.status.key).toBe("in-progress");
+    });
+
+    act(() => {
+      rejectUpdate!(new Error("boom"));
+    });
+
+    // Rollback restores the original cache snapshots.
+    await waitFor(() => {
+      const src = client.getQueryData<ListIssuesResponse[]>(sourceKey);
+      const tgt = client.getQueryData<ListIssuesResponse[]>(targetKey);
+      expect(src?.[0].issues.map((r) => r.issue_id)).toEqual(["i-aaa"]);
+      expect(tgt?.[0].issues).toEqual([]);
+    });
+    expect(mockAddToast).toHaveBeenCalledWith("boom", "error");
+  });
+
+  // Regression: the table-view `usePaginatedIssues` hook is a
+  // `useInfiniteQuery` whose `data` is `{ pages, pageParams }`, sharing the
+  // `["paginatedIssues", …]` prefix with the board cells. The optimistic
+  // cache walk must skip those entries — iterating their data as an array
+  // throws `data is not iterable` and the mutation never fires.
+  it("ignores cached infinite-query entries that share the paginatedIssues prefix", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+
+    // Seed the table-view (2-element key) entry FIRST so it precedes the
+    // board-cell entries in the cache iteration order — this is the order
+    // the source-record search loop would naturally encounter when a user
+    // visits the issues page (table is the default layout) and then
+    // switches to board.
+    const tableKey = ["paginatedIssues", {}] as const;
+    client.setQueryData(tableKey, {
+      pages: [{ issues: [rec], next_cursor: null }],
+      pageParams: [undefined],
+    });
+
+    // Board-cell (4-element key with "depth") entries.
+    const sourceKey = [
+      "paginatedIssues",
+      { project_id: "j-eng", status: "open" },
+      "depth",
+      1,
+    ] as const;
+    const targetKey = [
+      "paginatedIssues",
+      { project_id: "j-eng", status: "in-progress" },
+      "depth",
+      1,
+    ] as const;
+    client.setQueryData<ListIssuesResponse[]>(sourceKey, [
+      { issues: [rec], next_cursor: null },
+    ]);
+    client.setQueryData<ListIssuesResponse[]>(targetKey, [
+      { issues: [], next_cursor: null },
+    ]);
+
+    mockGetIssue.mockResolvedValueOnce({
+      issue_id: "i-aaa",
+      version: BigInt(1),
+      timestamp: "t",
+      issue: makeFullIssue("j-eng", "open"),
+      creation_time: "t",
+    });
+
+    renderBoard(client);
+    const card = screen.getByTestId("board-card-i-aaa");
+    const target = screen.getByTestId("board-col-engineering-in-progress");
+    const dt = makeDataTransfer();
+    fireEvent.dragStart(card, { dataTransfer: dt });
+    fireEvent.dragOver(target, { dataTransfer: dt });
+    fireEvent.drop(target, { dataTransfer: dt });
+
+    // Mutation fires and the board cells are optimistically updated.
+    await waitFor(() => expect(mockUpdateIssue).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const src = client.getQueryData<ListIssuesResponse[]>(sourceKey);
+      const tgt = client.getQueryData<ListIssuesResponse[]>(targetKey);
+      expect(src?.[0].issues.map((r) => r.issue_id)).toEqual([]);
+      expect(tgt?.[0].issues.map((r) => r.issue_id)).toEqual(["i-aaa"]);
+    });
+    // No error toast — the infinite-query entry was skipped, not crashed on.
+    expect(mockAddToast).not.toHaveBeenCalled();
+    // The infinite-query entry itself was left untouched by the optimistic
+    // surgery (invalidation in onSettled is what refreshes it).
+    const tableSnapshot = client.getQueryData<{
+      pages: ListIssuesResponse[];
+      pageParams: unknown[];
+    }>(tableKey);
+    expect(tableSnapshot?.pages[0].issues.map((r) => r.issue_id)).toEqual([
+      "i-aaa",
+    ]);
+  });
+
+  it("ignores drops that didn't originate from an issue card", () => {
+    const rec = makeSummaryRecord("i-aaa", "first", "j-eng", "open");
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [rec] })],
+          ["in-progress", emptyCell()],
+        ]),
+      ],
+    ]);
+
+    renderBoard();
+    const target = screen.getByTestId("board-col-engineering-in-progress");
+    const dt = makeDataTransfer();
+    // No prior dragStart on a card → dataTransfer has no issue-card payload.
+    fireEvent.dragOver(target, { dataTransfer: dt });
+    fireEvent.drop(target, { dataTransfer: dt });
+
+    expect(mockUpdateIssue).not.toHaveBeenCalled();
   });
 });

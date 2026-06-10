@@ -181,10 +181,15 @@ function formatEyebrow(prefix: string, count: number): string {
 // in-flight FilterBar add (user picked a definition from the menu but hasn't
 // chosen values yet) and are deliberately invisible to the URL — including
 // them here would force a sync cycle that drops the just-added chip before
-// the user can pick a value.
+// the user can pick a value. Presence-only flags (e.g. `includeArchived`)
+// carry no values but the chip's mere presence on the bar is the truth
+// value, so they're emitted here as a bare `${id}:` so external URL changes
+// that toggle them off are still detected.
+const PRESENCE_FILTER_IDS = new Set(["includeArchived"]);
+
 function filtersCanonicalRepr(filters: Filter[]): string {
   return filters
-    .filter((f) => f.values.length > 0)
+    .filter((f) => f.values.length > 0 || PRESENCE_FILTER_IDS.has(f.id))
     .map((f) => `${f.id}:${f.op}:${[...f.values].sort().join(",")}`)
     .sort()
     .join("|");
@@ -400,12 +405,11 @@ export function IssuesListPage() {
 
   const displayCount = totalCount ?? issues.length;
 
-  // Only the table layout reads childStatusMap / sessionsByIssue (progress
-  // column + runtime cell). Board owns its own tree expansion over the
-  // per-column issue union, so skip the tree fetch when it's active.
-  const { childStatusMap, sessionsByIssue } = usePageIssueTrees(
+  // Only the table layout reads neighborhoodMap / sessionsByIssue (progress
+  // column + runtime cell). Board owns its own neighborhood expansion over
+  // the per-column issue union, so skip the fetch when it's active.
+  const { neighborhoodMap, sessionsByIssue } = usePageIssueTrees(
     layout === "table" ? issues : [],
-    currentUser,
   );
 
   // Strip any unrecognised `?selected=…` values left by old links.
@@ -432,11 +436,10 @@ export function IssuesListPage() {
         layout={layout}
         onLayoutChange={setLayout}
         issues={issues}
-        childStatusMap={childStatusMap}
+        neighborhoodMap={neighborhoodMap}
         sessionsByIssue={sessionsByIssue}
         isLoading={isLoading}
         baseFilters={boardBaseFilters}
-        username={currentUser}
         filterRootId={framing.rootId}
         hasNextPage={hasNextPage ?? false}
         isFetchingNextPage={isFetchingNextPage ?? false}

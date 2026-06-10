@@ -51,7 +51,11 @@ export function filtersToIssuesQuery({
   const out: IssueFilters = {};
   for (const filter of filters) {
     if (filter.op !== "in") continue;
-    if (filter.values.length === 0) continue;
+    // Presence-only filters (e.g. `includeArchived`) carry no values; their
+    // mere presence on the bar is the truth value. Every other filter is
+    // skipped while empty so an in-flight chip (user picked from menu but
+    // hasn't chosen a value yet) doesn't narrow the result set.
+    if (filter.values.length === 0 && filter.id !== "includeArchived") continue;
     switch (filter.id) {
       case "status":
         out.status = filter.values[0];
@@ -74,6 +78,12 @@ export function filtersToIssuesQuery({
         if (filter.values[0].startsWith("j-")) {
           out.project_id = filter.values[0];
         }
+        break;
+      case "includeArchived":
+        // Presence-only flag — the chip's mere presence on the bar means
+        // "include archived issues". Maps to `?include_deleted=true` on the
+        // issues list endpoint.
+        out.include_deleted = true;
         break;
       // Relation filters are resolved upstream into `extraIds`; no direct
       // mapping here.

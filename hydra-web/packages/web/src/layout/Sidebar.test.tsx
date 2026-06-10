@@ -256,6 +256,44 @@ describe("Sidebar", () => {
     expect(link.getAttribute("href")).toBe("/?status=in-progress");
   });
 
+  it("links the Archive view to the include-archived presence flag", () => {
+    renderSidebar();
+    const link = screen.getByTestId("sidebar-issues-archive") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/?includeArchived=1");
+  });
+
+  it("places the Archive view as the last item in the Views section", () => {
+    renderSidebar();
+    const viewIds = [
+      "sidebar-issues-your-issues",
+      "sidebar-issues-assigned",
+      "sidebar-issues-in-progress",
+      "sidebar-issues-archive",
+    ];
+    const nodes = viewIds.map((id) => screen.getByTestId(id));
+    // Each subsequent node must come after the previous one in document order.
+    for (let i = 1; i < nodes.length; i++) {
+      const relation = nodes[i - 1]!.compareDocumentPosition(nodes[i]!);
+      expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("marks the Archive view active at /?includeArchived=1", () => {
+    renderSidebar({ initialEntry: "/?includeArchived=1" });
+    const archiveLink = screen.getByTestId("sidebar-issues-archive") as HTMLAnchorElement;
+    expect(archiveLink.className).toContain("itemActive");
+    // The all-issues landing must NOT also light up — `includeArchived=1`
+    // counts as a present filter, so `isNoFilters` should be false.
+    const allLink = screen.getByTestId("sidebar-issues-all") as HTMLAnchorElement;
+    expect(allLink.className).not.toContain("itemActive");
+  });
+
+  it("does not mark the Archive view active when other filters are combined with it", () => {
+    renderSidebar({ initialEntry: "/?includeArchived=1&status=in-progress" });
+    const archiveLink = screen.getByTestId("sidebar-issues-archive") as HTMLAnchorElement;
+    expect(archiveLink.className).not.toContain("itemActive");
+  });
+
   it("opens search when search button clicked", () => {
     const onOpenSearch = vi.fn();
     renderSidebar({ onOpenSearch });

@@ -2,7 +2,7 @@ mod harness;
 
 use anyhow::Result;
 use harness::{concurrent, test_all_orderings, IssueSummaryAssertions, Step};
-use hydra_common::issues::IssueStatus;
+use hydra_common::test_utils::status::status;
 
 /// `test_all_orderings` with 2 steps runs exactly 2 permutations (AB, BA).
 #[tokio::test]
@@ -222,8 +222,8 @@ async fn concurrent_child_creation_all_orderings() -> Result<()> {
                     .expect("parent issue should exist");
 
                 // Both children should exist regardless of ordering.
-                parent.assert_has_child_with_status(&issues.issues, "child A", IssueStatus::Open);
-                parent.assert_has_child_with_status(&issues.issues, "child B", IssueStatus::Open);
+                parent.assert_has_child_with_status(&issues.issues, "child A", status("open"));
+                parent.assert_has_child_with_status(&issues.issues, "child B", status("open"));
 
                 Ok(())
             })

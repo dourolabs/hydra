@@ -7,13 +7,10 @@ use httpmock::prelude::*;
 use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
     api::v1::projects::{
-        Project, ProjectIdOrDefault, ProjectKey, StatusDefinition, StatusKey, UpsertProjectRequest,
+        ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
     },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
-    issues::{
-        IssueDependencyType, IssueInput, IssueStatus, IssueType, SearchIssuesQuery,
-        UpsertIssueRequest,
-    },
+    issues::{IssueDependencyType, IssueInput, IssueType, SearchIssuesQuery, UpsertIssueRequest},
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
@@ -23,6 +20,7 @@ use hydra_common::{
     session_status::SessionStatusUpdate,
     sessions::{Bundle, CreateSessionRequest, SearchSessionsQuery},
     task_status::Status,
+    test_utils::status::status,
     users::Username,
     whoami::ActorIdentity,
     DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName, SessionId,
@@ -452,6 +450,60 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    // POST /v1/projects/:project_ref/statuses
+    let project_status_create_path = project_statuses_path.clone();
+    let project_id_for_status_post = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path(project_status_create_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_status_post,
+            "version": 3,
+            "status": {
+                "key": "open",
+                "label": "Open",
+                "color": "#abcdef",
+                "unblocks_parents": false,
+                "unblocks_dependents": false,
+                "cascades_to_children": false,
+                "future": "field"
+            },
+            "extra": "create-status"
+        }));
+    });
+
+    // PUT /v1/projects/:project_ref/statuses/:status_key
+    let project_status_update_path = format!("{project_statuses_path}/open");
+    let project_id_for_status_put = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(project_status_update_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_status_put,
+            "version": 4,
+            "status": {
+                "key": "open",
+                "label": "Renamed",
+                "color": "#abcdef",
+                "unblocks_parents": false,
+                "unblocks_dependents": false,
+                "cascades_to_children": false,
+            },
+            "extra": "update-status"
+        }));
+    });
+
+    // DELETE /v1/projects/:project_ref/statuses/:status_key
+    let project_status_delete_path = format!("{project_statuses_path}/open");
+    let project_id_for_status_delete = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE)
+            .path(project_status_delete_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_status_delete,
+            "version": 5,
+            "extra": "delete-status"
+        }));
+    });
+
     server.mock(|when, then| {
         when.method(GET).path("/v1/github/app/client-id");
         then.status(200)
@@ -546,7 +598,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "desc".to_string(),
         Username::from("creator"),
         "progress".to_string(),
-        IssueStatus::Open.into(),
+        status("open"),
         ProjectId::default_project(),
         Some(hydra_common::principal::Principal::User {
             name: hydra_common::api::v1::users::Username::try_new("assignee").unwrap(),
@@ -619,42 +671,62 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     assert_eq!(patches.patches.len(), 1);
 
     // Projects
-    let project = Project::new(
+    let upsert_project = UpsertProjectRequest::new(
         ProjectKey::try_new("future-project").unwrap(),
         "Future Project".to_string(),
-        vec![StatusDefinition::new(
-            StatusKey::try_new("open").unwrap(),
-            "Open".to_string(),
-            "#abcdef".parse().unwrap(),
-            false,
-            false,
-            false,
-            None,
-        )],
-        Username::from("test-creator"),
-        false,
-        0.0,
     );
-    let upsert_project = UpsertProjectRequest::new(project);
 
     let created_project = client.create_project(&upsert_project).await?;
     assert_eq!(created_project.project_id, project_id);
 
-    let updated_project = client.update_project(&project_id, &upsert_project).await?;
+    let project_ref = ProjectRef::Id(project_id.clone());
+
+    // Add a status via the per-status route so the read-back below
+    // sees one entry.
+    let status = StatusDefinition::new(
+        StatusKey::try_new("open").unwrap(),
+        "Open".to_string(),
+        "#abcdef".parse().unwrap(),
+        false,
+        false,
+        false,
+        None,
+    );
+    client.create_project_status(&project_ref, &status).await?;
+
+    let updated_project = client.update_project(&project_ref, &upsert_project).await?;
     assert_eq!(updated_project.project_id, project_id);
 
-    let fetched_project = client.get_project(&project_id).await?;
+    let fetched_project = client.get_project(&project_ref).await?;
     assert_eq!(fetched_project.project_id, project_id);
 
     let listed_projects = client.list_projects().await?;
     assert_eq!(listed_projects.projects.len(), 1);
 
-    let statuses = client
-        .get_project_statuses(&ProjectIdOrDefault::Id(project_id.clone()))
-        .await?;
+    let statuses = client.get_project_statuses(&project_ref).await?;
     assert_eq!(statuses.statuses.len(), 1);
 
-    let deleted_project = client.delete_project(&project_id).await?;
+    let updated_status = StatusDefinition::new(
+        StatusKey::try_new("open").unwrap(),
+        "Renamed".to_string(),
+        "#abcdef".parse().unwrap(),
+        false,
+        false,
+        false,
+        None,
+    );
+    client
+        .update_project_status(
+            &project_ref,
+            &StatusKey::try_new("open").unwrap(),
+            &updated_status,
+        )
+        .await?;
+    client
+        .delete_project_status(&project_ref, &StatusKey::try_new("open").unwrap())
+        .await?;
+
+    let deleted_project = client.delete_project(&project_ref).await?;
     assert_eq!(deleted_project.project_id, project_id);
 
     // Documents

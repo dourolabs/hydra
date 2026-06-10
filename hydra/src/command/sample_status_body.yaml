@@ -1,0 +1,56 @@
+# Single-status body file consumed by:
+#
+#     hydra projects status create <PROJECT_REF> --body-file <this-file>
+#     hydra projects status update <PROJECT_REF> <STATUS_KEY> --body-file <this-file>
+#
+# Edit the fields to taste, then add the status to a project. On
+# `update`, a `key` different from the path's `<STATUS_KEY>` renames
+# the status in place — issues against the old key continue to
+# resolve through the same storage row.
+
+# Status slug; lowercase letters, digits, `-`, ≤64 chars; cannot match
+# the `[a-z]-…` shape reserved for HydraIds.
+key: in-development
+
+# Human-readable label shown in the UI.
+label: In development
+
+# CSS-style `#RRGGBB` hex color for the status chip.
+color: "#3498db"
+
+# Dependency-graph semantics:
+unblocks_parents: false       # When true, a child entering this status no longer counts as "blocking" its parent's readiness.
+unblocks_dependents: false    # When true, downstream issues that depend on this one become eligible to start once this status is reached.
+cascades_to_children: false   # When true, applying this status to a parent re-applies it to children (e.g. closing a parent closes its children).
+
+# Sort key for ordering within the project. Smaller values appear
+# earlier. Default 0.0. The IssuesBoard drag-to-reorder UI persists
+# explicit values via the update route.
+position: 100.0
+
+# When true, ready issues that land in this status spawn a Conversation
+# (live chat) instead of a headless session.
+interactive: false
+
+# Integer seconds an issue may sit in this status before being
+# auto-archived by the periodic worker. Omit (or set to `null`) to
+# leave the feature off for the status. Example: `1209600` is 14 days.
+# auto_archive_after_seconds: 1209600
+
+# Doc-store path for the per-status prompt slice concatenated into
+# spawned-session system prompts. Omit on terminal statuses.
+prompt_path: /projects/sample/statuses/in-development.md
+
+# Automation that fires when an issue transitions into this status.
+on_enter:
+  # assign_to: sets the assignee on the issue when it enters this
+  # status (agent assignees trigger session spawn via the existing
+  # assignee-driven dispatcher). Tagged form:
+  #   !User { name: alice }
+  #   !Agent { name: swe }
+  #   !External { system: github, username: jayantk }
+  assign_to: !Agent { name: swe }
+  # attach_form: replaces `issue.form` with the form at this doc-store
+  # path on transition into this status. An issue holds at most one
+  # form at a time, so this wholesale-replaces any prior form.
+  # attach_form: /forms/review.yaml

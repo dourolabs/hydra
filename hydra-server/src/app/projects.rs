@@ -63,14 +63,34 @@ impl AppState {
         self.store.delete_project(id, actor).await
     }
 
-    pub async fn rename_status(
+    pub async fn add_status(
         &self,
         id: &ProjectId,
-        from: &StatusKey,
-        to: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        self.store.add_status(id, status, actor).await
+    }
+
+    pub async fn update_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        self.store
+            .update_status(id, status_key, status, actor)
+            .await
+    }
+
+    pub async fn delete_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.store.rename_status(id, from, to, actor).await
+        self.store.delete_status(id, status_key, actor).await
     }
 
     /// Resolve an issue's `(project_id, status)` pair to a
@@ -143,13 +163,13 @@ pub async fn project_cached<'a>(
 #[cfg(test)]
 mod tests {
     use crate::app::test_helpers::issue_with_status;
-    use crate::domain::issues::IssueStatus;
     use crate::test_utils::test_state;
+    use hydra_common::test_utils::status::status;
 
     #[tokio::test]
     async fn resolve_status_open_returns_open_definition() {
         let state = test_state();
-        let issue = issue_with_status("test", IssueStatus::Open, vec![]);
+        let issue = issue_with_status("test", status("open"), vec![]);
         let def = state.resolve_status(&issue).await.unwrap();
         assert_eq!(def.key.as_str(), "open");
         assert!(!def.unblocks_parents);
@@ -161,7 +181,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_status_in_progress_returns_in_progress_definition() {
         let state = test_state();
-        let issue = issue_with_status("test", IssueStatus::InProgress, vec![]);
+        let issue = issue_with_status("test", status("in-progress"), vec![]);
         let def = state.resolve_status(&issue).await.unwrap();
         assert_eq!(def.key.as_str(), "in-progress");
         assert!(!def.unblocks_parents);
@@ -170,7 +190,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_status_closed_unblocks_parents_and_dependents() {
         let state = test_state();
-        let issue = issue_with_status("test", IssueStatus::Closed, vec![]);
+        let issue = issue_with_status("test", status("closed"), vec![]);
         let def = state.resolve_status(&issue).await.unwrap();
         assert_eq!(def.key.as_str(), "closed");
         assert!(def.unblocks_parents);
@@ -181,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_status_dropped_cascades_but_does_not_unblock_dependents() {
         let state = test_state();
-        let issue = issue_with_status("test", IssueStatus::Dropped, vec![]);
+        let issue = issue_with_status("test", status("dropped"), vec![]);
         let def = state.resolve_status(&issue).await.unwrap();
         assert_eq!(def.key.as_str(), "dropped");
         assert!(def.unblocks_parents);
@@ -192,7 +212,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_status_failed_cascades_but_does_not_unblock_dependents() {
         let state = test_state();
-        let issue = issue_with_status("test", IssueStatus::Failed, vec![]);
+        let issue = issue_with_status("test", status("failed"), vec![]);
         let def = state.resolve_status(&issue).await.unwrap();
         assert_eq!(def.key.as_str(), "failed");
         assert!(def.unblocks_parents);

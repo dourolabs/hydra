@@ -1,6 +1,6 @@
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { Icons } from "@hydra/ui";
-import type { ChildStatus } from "../../dashboard/computeIssueProgress";
+import type { IssueNeighborhood } from "../flowPill";
 import type { IssueFilters } from "../usePaginatedIssues";
 import { FilterBar, type Filter, type FilterDefinitions } from "../../filters";
 import { IssuesTable } from "./IssuesTable";
@@ -12,9 +12,9 @@ export type IssuesLayout = "table" | "board";
 interface IssuesViewProps {
   layout: IssuesLayout;
   onLayoutChange: (layout: IssuesLayout) => void;
-  // Table-only data (board owns its own fetches via baseFilters/username).
+  // Table-only data (board owns its own fetches via baseFilters).
   issues: IssueSummaryRecord[];
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   isLoading: boolean;
   hasNextPage: boolean;
@@ -23,7 +23,6 @@ interface IssuesViewProps {
   // Board layout still needs these to feed its per-column queries; table
   // layout drives them via the FilterBar / search input.
   baseFilters: IssueFilters;
-  username: string;
   filterRootId: string | null;
   eyebrow: string;
   title: string;
@@ -45,14 +44,13 @@ export function IssuesView({
   layout,
   onLayoutChange,
   issues,
-  childStatusMap,
+  neighborhoodMap,
   sessionsByIssue,
   isLoading,
   hasNextPage,
   isFetchingNextPage,
   onLoadMore,
   baseFilters,
-  username,
   filterRootId,
   eyebrow,
   title,
@@ -141,7 +139,7 @@ export function IssuesView({
             {issues.length > 0 && (
               <IssuesTable
                 issues={issues}
-                childStatusMap={childStatusMap}
+                neighborhoodMap={neighborhoodMap}
                 sessionsByIssue={sessionsByIssue}
                 filterRootId={filterRootId}
               />
@@ -165,7 +163,6 @@ export function IssuesView({
         {layout === "board" && (
           <IssuesBoard
             baseFilters={baseFilters}
-            username={username}
             filterRootId={filterRootId}
           />
         )}

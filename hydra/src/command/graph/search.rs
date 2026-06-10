@@ -190,10 +190,10 @@ fn render_pretty(
 mod tests {
     use super::*;
     use chrono::{DateTime, TimeZone, Utc};
-    use hydra_common::api::v1::issues::{Issue, IssueStatus, IssueType, SessionSettings};
+    use hydra_common::api::v1::issues::{Issue, IssueType, SessionSettings};
     use hydra_common::api::v1::patches::{Patch, PatchStatus, PatchVersionRecord};
     use hydra_common::issues::IssueVersionRecord;
-    use hydra_common::test_utils::status::make_status_def;
+    use hydra_common::test_utils::status::{make_status_def, status};
     use hydra_common::users::Username;
     use hydra_common::{IssueId, PatchId, ProjectId};
 
@@ -209,7 +209,7 @@ mod tests {
             "long-form description body".to_string(),
             Username::from("creator"),
             String::new(),
-            make_status_def(IssueStatus::Open.into()),
+            make_status_def(status("open")),
             ProjectId::default_project(),
             None,
             Some(SessionSettings::default()),

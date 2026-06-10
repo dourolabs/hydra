@@ -152,6 +152,16 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     reserve_hydra_id_shape_domain_roundtrip(&pool).await?;
     reserve_hydra_id_shape_migration_is_idempotent(&pool).await?;
 
+    add_statuses_position_schema_invariants(&pool).await?;
+    add_statuses_position_backfills_to_sequence(&pool).await?;
+    add_statuses_position_domain_roundtrip(&pool).await?;
+    add_statuses_position_migration_is_idempotent(&pool).await?;
+
+    add_statuses_auto_archive_after_seconds_schema_invariants(&pool).await?;
+    add_statuses_auto_archive_after_seconds_defaults_to_null(&pool).await?;
+    add_statuses_auto_archive_after_seconds_domain_roundtrip(&pool).await?;
+    add_statuses_auto_archive_after_seconds_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -289,6 +299,215 @@ async fn cutover_to_statuses_table_fk_rejects_status_delete_with_active_issue(
             bail!("expected FK to reject DELETE of statuses row while an issue still references it")
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 20260616000000_add_statuses_position. Adds `position REAL NOT NULL
+// DEFAULT 0` to `statuses` and backfills `position = sequence` so the
+// post-cutover display order matches today's `sequence ASC` order.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_position_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "statuses", "position").await? {
+        bail!("expected `statuses.position` column to exist post-rollforward");
+    }
+    if column_is_nullable(pool, "statuses", "position").await? {
+        bail!("expected `statuses.position` to be NOT NULL");
+    }
+    Ok(())
+}
+
+async fn add_statuses_position_backfills_to_sequence(pool: &SqlitePool) -> Result<()> {
+    // `j-migsmoke` is inserted by `assert_recent_migration_store_smoke`
+    // post-rollforward (i.e. after this migration runs), so its
+    // position falls through to the column default 0 rather than the
+    // backfill value. Exclude it from the backfill assertion.
+    let rows = sqlx::query(
+        "SELECT project_id, sequence, position FROM statuses WHERE project_id != 'j-migsmoke'",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read statuses for position backfill check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let position: f64 = row.try_get("position")?;
+        if (position - sequence as f64).abs() > f64::EPSILON {
+            bail!(
+                "statuses({project_id}, sequence={sequence}): expected position={sequence}.0; got {position}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_position_domain_roundtrip(pool: &SqlitePool) -> Result<()> {
+    // Read j-defaul back through the production `get_project` path —
+    // verifies that the new `position` column is included in the
+    // `StatusRow` SELECT projection and round-trips into the
+    // `StatusDefinition` value. The default-project seed is sequence-
+    // ordered, so position should equal index+1 (sequence is 1-based).
+    let store = SqliteStore::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("SqliteStore::get_project(j-defaul) post-position-migration")?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for (idx, status) in fetched.item.statuses.iter().enumerate() {
+        let expected = (idx + 1) as f64;
+        if (status.position - expected).abs() > f64::EPSILON {
+            bail!(
+                "j-defaul.statuses[{idx}] ({key:?}): expected position={expected}; got {got}",
+                key = status.key,
+                got = status.position,
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_position_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    // Re-run the migration plan and confirm the backfill state is
+    // preserved (the migration body is gated by sqlx's tracking table,
+    // so the second pass is a no-op — this assertion catches any
+    // regression that drops the gating and re-applies the
+    // `UPDATE statuses SET position = sequence` body, which would
+    // clobber positions set by callers after the initial backfill).
+    let snapshot_before = sqlx::query(
+        "SELECT project_id, sequence, position FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses before idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm position-migration idempotency")?;
+    let snapshot_after = sqlx::query(
+        "SELECT project_id, sequence, position FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses after idempotency rerun")?;
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across position-migration rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_pos: f64 = before.try_get("position")?;
+        let after_pos: f64 = after.try_get("position")?;
+        if (before_pos - after_pos).abs() > f64::EPSILON {
+            bail!("position changed across rerun: {before_pos} -> {after_pos}");
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260617000000_add_statuses_auto_archive_after_seconds. Adds
+// `auto_archive_after_seconds INTEGER NULL` to `statuses` — the
+// per-status plumbing for the periodic auto-archive worker. `NULL`
+// (the column default) leaves the feature off for the row.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_auto_archive_after_seconds_schema_invariants(
+    pool: &SqlitePool,
+) -> Result<()> {
+    if !column_exists(pool, "statuses", "auto_archive_after_seconds").await? {
+        bail!("expected `statuses.auto_archive_after_seconds` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "statuses", "auto_archive_after_seconds").await? {
+        bail!("expected `statuses.auto_archive_after_seconds` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_defaults_to_null(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT project_id, sequence, auto_archive_after_seconds FROM statuses")
+        .fetch_all(pool)
+        .await
+        .context("read statuses for auto_archive_after_seconds default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert default against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: Option<i64> = row.try_get("auto_archive_after_seconds")?;
+        if value.is_some() {
+            bail!(
+                "statuses({project_id}, sequence={sequence}): expected NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_domain_roundtrip(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("SqliteStore::get_project(j-defaul) post-auto-archive migration")?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for (idx, status) in fetched.item.statuses.iter().enumerate() {
+        if status.auto_archive_after_seconds.is_some() {
+            bail!(
+                "j-defaul.statuses[{idx}] ({key:?}): expected auto_archive_after_seconds=None; got {got:?}",
+                key = status.key,
+                got = status.auto_archive_after_seconds,
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_migration_is_idempotent(
+    pool: &SqlitePool,
+) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT project_id, sequence, auto_archive_after_seconds FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses before auto-archive idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm auto-archive idempotency")?;
+    let snapshot_after = sqlx::query(
+        "SELECT project_id, sequence, auto_archive_after_seconds FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses after auto-archive idempotency rerun")?;
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across auto-archive idempotency rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_val: Option<i64> = before.try_get("auto_archive_after_seconds")?;
+        let after_val: Option<i64> = after.try_get("auto_archive_after_seconds")?;
+        if before_val != after_val {
+            bail!(
+                "auto_archive_after_seconds changed across rerun: {before_val:?} -> {after_val:?}"
+            );
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

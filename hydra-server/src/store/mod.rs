@@ -16,7 +16,7 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::{Project, ProjectKey, StatusKey};
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::principal::Principal;
@@ -402,6 +402,24 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Counts issues matching the search query, ignoring pagination (cursor/limit).
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError>;
 
+    /// Lists non-deleted issue IDs in the given `(project_id,
+    /// status_key)` whose latest version's `updated_at` is older
+    /// than `now - threshold_seconds`, capped to `limit` rows.
+    ///
+    /// The order in which rows are returned is unspecified; callers
+    /// must not rely on it for correctness. `limit == 0` returns an
+    /// empty vec. Used by the [`AutoArchiveWorker`](crate::background::auto_archive::AutoArchiveWorker)
+    /// to find issues that have sat in a status long enough to
+    /// auto-archive.
+    async fn list_stale_issues_for_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+        threshold_seconds: i64,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError>;
+
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 
@@ -783,6 +801,20 @@ pub trait ReadOnlyStore: Send + Sync {
         id: &ProjectId,
         include_deleted: bool,
     ) -> Result<Versioned<Project>, StoreError>;
+
+    /// Lookup a project by its [`ProjectKey`] via the partial unique
+    /// `projects_key_unique_active_idx` index. Returns `Ok(None)` when
+    /// no active row matches the key — distinct from a deeper store
+    /// error so the route layer can map "miss" to a 404 cleanly.
+    ///
+    /// `include_deleted`: when `false`, soft-deleted projects are
+    /// filtered out (the partial index already excludes them, but the
+    /// memory store mirrors this branch explicitly).
+    async fn get_project_by_key(
+        &self,
+        key: &ProjectKey,
+        include_deleted: bool,
+    ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError>;
 
     /// Lists all projects.
     ///
@@ -1215,21 +1247,54 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Renames a status key in place on a project. The status's
-    /// `(project_id, sequence)` identity is preserved, so any issues
-    /// referencing the old key continue to resolve through the same
-    /// sequence and read back as `to`.
+    /// Add a new status to a project. Allocates the next `sequence`
+    /// from the per-project high-water mark (`next_status_sequence`)
+    /// and bumps it. Returns the persisted status definition (echoed
+    /// to the caller for the route-layer response) and the project's
+    /// new version number.
     ///
-    /// Returns the new project version number, or
-    /// `StoreError::ProjectNotFound` if the project does not exist, or
-    /// `StoreError::InvalidIssueStatus` if `from` is not declared on
-    /// the project or `to` already exists. If `from == to`, returns
-    /// the current latest version without writing a new row.
-    async fn rename_status(
+    /// Returns `StoreError::ProjectNotFound` if the project does not
+    /// exist, or `StoreError::InvalidIssueStatus` if a status with
+    /// `status.key` already exists on the project.
+    async fn add_status(
         &self,
         id: &ProjectId,
-        from: &StatusKey,
-        to: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError>;
+
+    /// Update an existing status on a project. The row is identified
+    /// by `(project_id, current_key=status_key)`; when `status.key !=
+    /// status_key`, that's a rename — the row's `(project_id,
+    /// sequence)` storage identity is preserved so issues continue to
+    /// resolve through the same sequence.
+    ///
+    /// Returns the persisted status definition (echoed to the caller
+    /// for the route-layer response) and the project's new version
+    /// number. Returns `StoreError::ProjectNotFound` when the project
+    /// does not exist, or `StoreError::InvalidIssueStatus` when
+    /// `status_key` is not declared on the project or when renaming
+    /// into a key that's already taken by another status on the same
+    /// project.
+    async fn update_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        status: StatusDefinition,
+        actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError>;
+
+    /// Delete a status from a project. The DB FK on
+    /// `issues_v2.status_sequence` rejects the delete if any issue
+    /// still references the row — surfaced as
+    /// `StoreError::InvalidIssueStatus`.
+    ///
+    /// Returns the project's new version number, or
+    /// `StoreError::ProjectNotFound` when the project does not exist.
+    async fn delete_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 

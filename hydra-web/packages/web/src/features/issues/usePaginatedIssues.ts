@@ -24,6 +24,11 @@ export interface IssueFilters {
   q?: string | null;
   ids?: string | null;
   project_id?: string | null;
+  /**
+   * When true, the backend includes soft-deleted (archived) issues in the
+   * result set. Maps to `?include_deleted=true` on the issues list endpoint.
+   */
+  include_deleted?: boolean | null;
 }
 
 function buildQuery(
@@ -43,6 +48,7 @@ function buildQuery(
   if (filters.q) query.q = filters.q;
   if (filters.ids) query.ids = filters.ids;
   if (filters.project_id) query.project_id = filters.project_id;
+  if (filters.include_deleted) query.include_deleted = true;
   if (cursor) query.cursor = cursor;
   return query;
 }
@@ -248,6 +254,7 @@ export function useIssueCount(filters: IssueFilters, enabled = true) {
       if (filters.q) query.q = filters.q;
       if (filters.ids) query.ids = filters.ids;
       if (filters.project_id) query.project_id = filters.project_id;
+      if (filters.include_deleted) query.include_deleted = true;
       const resp = await apiClient.listIssues(query);
       return Number(resp.total_count ?? 0);
     },

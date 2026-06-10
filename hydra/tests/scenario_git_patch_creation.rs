@@ -3,6 +3,7 @@ mod harness;
 use anyhow::Result;
 use harness::{test_job_settings, PatchAssertions, TestHarness};
 use hydra_common::task_status::Status;
+use hydra_common::test_utils::status::status;
 use std::str::FromStr;
 
 /// Scenario 11: Worker Git Operations and Patch Creation
@@ -26,7 +27,7 @@ async fn worker_git_operations_and_patch_creation() -> Result<()> {
         .create_issue_with_settings(
             "Add greeting module",
             hydra_common::issues::IssueType::Task,
-            hydra_common::issues::IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings(&repo)),
         )

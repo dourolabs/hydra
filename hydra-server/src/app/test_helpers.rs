@@ -1,7 +1,7 @@
 use crate::{
     app::{AppState, ServiceState},
     domain::{
-        issues::{Issue, IssueDependency, IssueStatus, IssueType},
+        issues::{Issue, IssueDependency, IssueType},
         sessions::{AgentConfig, Session, SessionMode},
         task_status::Status,
         users::Username,
@@ -11,6 +11,7 @@ use crate::{
     test_utils::{MockJobEngine, test_app_config},
 };
 use hydra_common::IssueId;
+use hydra_common::api::v1::projects::StatusKey;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -93,7 +94,7 @@ pub fn github_pull_request_response(
 
 pub fn issue_with_status(
     description: &str,
-    status: IssueStatus,
+    status: StatusKey,
     dependencies: Vec<IssueDependency>,
 ) -> Issue {
     Issue::new(
@@ -102,7 +103,7 @@ pub fn issue_with_status(
         description.to_string(),
         Username::from("creator"),
         String::new(),
-        status.into(),
+        status,
         crate::domain::projects::default_project_id(),
         None,
         None,

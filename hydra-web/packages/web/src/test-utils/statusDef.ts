@@ -12,6 +12,7 @@ export function makeStatusDef(key: string): StatusDefinition {
     key,
     label: "",
     color: "#888888",
+    position: 0,
     unblocks_parents: false,
     unblocks_dependents: false,
     cascades_to_children: false,

@@ -395,6 +395,7 @@ mod tests {
     use chrono::Utc;
     use hydra_common::SessionId;
     use hydra_common::api::v1::sessions::SearchSessionsQuery;
+    use hydra_common::test_utils::status::status;
     use std::sync::Arc;
 
     async fn register_default_conversation_agent(state: &AppState) {
@@ -1313,11 +1314,10 @@ mod tests {
     #[tokio::test]
     async fn spawn_with_spawned_from_some_inherits_issue_link_greet_and_env_var() {
         use crate::app::test_helpers::issue_with_status;
-        use crate::domain::issues::IssueStatus;
         let state = state_with_default_model("default-model");
         register_agent(&state, "swe", "prompt", false).await;
 
-        let issue = issue_with_status("backed conversation", IssueStatus::Open, vec![]);
+        let issue = issue_with_status("backed conversation", status("open"), vec![]);
         let (issue_id, _) = state
             .store
             .add_issue_with_actor(issue, ActorRef::test())
@@ -1424,7 +1424,6 @@ mod tests {
     #[tokio::test]
     async fn spawn_with_spawned_from_some_resolves_four_tier_system_prompt() {
         use crate::app::test_helpers::issue_with_status;
-        use crate::domain::issues::IssueStatus;
         use hydra_common::api::v1::projects::{
             Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
         };
@@ -1451,7 +1450,7 @@ mod tests {
         let mut project = ApiProject::new(
             ProjectKey::try_new("engineering-v2").unwrap(),
             "Engineering v2".to_string(),
-            vec![backlog_status],
+            Vec::new(),
             hydra_common::api::v1::users::Username::from("alice"),
             false,
             0.0,
@@ -1460,6 +1459,11 @@ mod tests {
         let (project_id, _) = state
             .store
             .add_project(project, &ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .store
+            .add_status(&project_id, backlog_status, &ActorRef::test())
             .await
             .unwrap();
 
@@ -1480,7 +1484,7 @@ mod tests {
                 .unwrap();
         }
 
-        let mut issue = issue_with_status("v2 backlog issue", IssueStatus::Open, vec![]);
+        let mut issue = issue_with_status("v2 backlog issue", status("open"), vec![]);
         issue.project_id = project_id;
         issue.status = StatusKey::try_new("backlog").unwrap();
         let (issue_id, _) = state

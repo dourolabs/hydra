@@ -34,6 +34,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@issues:filter-related-chat-narrows` — Issues list FilterBar can add a Related chat chip and pick a seeded conversation; the listIssues request goes out with `ids=` containing only `i-`-prefixed ids (no `d-`/`p-` leakage from chat→artifact `refers-to` edges) and the rendered rows are exactly the issues the seed says that conversation refers to. URL persists `?relatedChat=<id>` and reload rehydrates the chip + narrowed list.
 - `@issues:filter-related-chat-no-flash` — Changing a rehydrated Related chat chip's selection (adding a second value) keeps the previous narrowed rows rendered until the new resolution lands: with the swap's `/v1/relations` call held by a test intercept, the rows container never empties to zero and neither the "Loading issues…" skeleton nor the empty state appears. Releasing the held call swaps in the new union of rows.
 - `@issues:interactive-conversation` — When an issue has a spawned conversation (`Conversation.spawned_from == issueId`), the issue header surfaces a deep-link to `/chat/<conversation_id>`: labeled "Open Conversation" for `active`, "Resume Conversation" for `idle`, and absent for `closed`. The Related tab's Conversations subsection lists every linked conversation (live + historical) via `listConversations({ spawned_from })`. The target conversation's header in turn renders an "originated from [[issue_id]]" link back to the issue.
+- `@issues:board-drag-reorder` — On the `/issues` Board layout, dragging a project bar with real-DOM mouse events fires exactly one `PUT /v1/projects/<id>` with the new numeric `priority` and the new order survives reload (the mock server returns projects sorted `priority ASC`, matching the real backend). Dragging a status column head fires sequential `PUT /v1/projects/<ref>/statuses/<key>` calls — one per status — each carrying the recomputed `position` (multiples of 100), and the new column order survives reload (statuses are sorted `position ASC` server-side).
 
 ## Labels
 
@@ -78,6 +79,10 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 ## Repositories
 
 - `@repos:edit-merge-policy` — User can view, edit, clear, and round-trip a repository's `merge_policy` via the Repository edit modal's JSON textarea, with inline error on invalid JSON
+
+## Triggers
+
+- `@triggers:create-form` — The create-trigger modal's Status picker is disabled until a Project is picked; picking a project enables the Status picker and lists that project's statuses; changing the project clears the previously-selected status and re-derives the list; Add Trigger stays disabled until both fields are set; submitting POSTs a `CreateIssueAction` whose `project_id` + `status` reflect the user's picks.
 
 ## Error Handling
 

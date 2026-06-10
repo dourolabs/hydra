@@ -36,6 +36,14 @@
   background: var(--bg-3);
 }
 
+.bodyStatic {
+  cursor: default;
+}
+
+.bodyStatic:hover {
+  background: transparent;
+}
+
 .icon {
   color: var(--fg-2);
   display: inline-flex;

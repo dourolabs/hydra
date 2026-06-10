@@ -27,4 +27,17 @@ export type StatusDefinition = {
    * conversation instead of a headless session.
    */
   interactive?: boolean;
+  /**
+   * When `Some(N)`, issues that have sat in this status for at least
+   * `N` seconds get auto-archived by a periodic worker. `None` (the
+   * default) leaves the feature off for the status.
+   */
+  auto_archive_after_seconds?: bigint | null;
+  /**
+   * Sort key for status ordering within a project. Smaller values
+   * appear earlier. Default 0.0; drag-and-drop UI sets explicit
+   * values to reorder. Mirrors the existing [`Project::priority`]
+   * pattern.
+   */
+  position: number;
 };

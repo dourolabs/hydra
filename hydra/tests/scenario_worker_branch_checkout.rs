@@ -3,6 +3,7 @@ mod harness;
 use anyhow::Result;
 use harness::{test_job_settings, TestHarness};
 use hydra_common::task_status::Status;
+use hydra_common::test_utils::status::status;
 use std::str::FromStr;
 
 /// Scenario: Worker switches to a non-default branch using `git checkout`.
@@ -34,7 +35,7 @@ async fn worker_checks_out_non_default_branch() -> Result<()> {
         .create_issue_with_settings(
             "Test branch checkout",
             hydra_common::issues::IssueType::Task,
-            hydra_common::issues::IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings(&repo)),
         )

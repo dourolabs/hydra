@@ -1512,9 +1512,9 @@ mod tests {
     use anyhow::{anyhow, Context};
     use git2::Repository;
     use httpmock::{prelude::*, Mock};
-    use hydra_common::test_utils::status::make_status_def;
+    use hydra_common::test_utils::status::{make_status_def, status};
     use hydra_common::{
-        issues::{Issue, IssueStatus, IssueType, IssueVersionRecord, SessionSettings},
+        issues::{Issue, IssueType, IssueVersionRecord, SessionSettings},
         patches::{
             CommitRange, CreatePatchAssetResponse, GitOid, ListPatchesResponse, Patch,
             PatchVersionRecord, Review, UpsertPatchResponse,
@@ -1712,7 +1712,7 @@ mod tests {
                 "test issue".to_string(),
                 Username::from("test-creator"),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 None,
@@ -2844,7 +2844,7 @@ mod tests {
                 "test".to_string(),
                 Username::from("creator"),
                 String::new(),
-                make_status_def(IssueStatus::Open.into()),
+                make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
                 Some({

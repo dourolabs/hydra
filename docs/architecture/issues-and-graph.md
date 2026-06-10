@@ -4,17 +4,23 @@ Issues are the unit of work. The system decides what can be worked on from a com
 
 ## Status
 
-`IssueStatus` (defined in [`hydra-common/src/api/v1/issues.rs`](../../hydra-common/src/api/v1/issues.rs)):
+Status is data-driven per project. Each project declares an ordered list of `StatusDefinition` rows ([`hydra-common/src/api/v1/projects.rs`](../../hydra-common/src/api/v1/projects.rs)); each issue carries a `StatusKey` that resolves against its project's list at response time. The relevant behavior flags on `StatusDefinition` are:
 
-| Status        | Meaning                                                                |
-|---------------|------------------------------------------------------------------------|
-| `Open`        | Not started.                                                           |
-| `InProgress`  | Picked up by an agent or human; may still spawn follow-up work.        |
-| `Closed`      | Successfully finished. Terminal.                                       |
-| `Dropped`     | Explicitly abandoned. Terminal; cascades to children.                  |
-| `Failed`      | Could not be completed. Terminal; **does not** cascade to children.    |
+- `unblocks_parents` — when true, a `child-of` parent stops counting this issue as still-open.
+- `unblocks_dependents` — when true, a `blocked-on` dependent stops being blocked by this issue.
+- `cascades_to_children` — when true, transitioning into this status drops every non-terminal child.
 
-`IssueStatus::is_terminal()` covers `Closed | Dropped | Failed`.
+The seeded default project (`j-defaul`, defined in [`20260607000000_seed_default_project.sql`](../../hydra-server/migrations/20260607000000_seed_default_project.sql) and mirrored in [`hydra-server/src/domain/projects.rs`](../../hydra-server/src/domain/projects.rs)) ships these five statuses, which match the historical hardcoded enum and keep legacy issues working without per-row migration:
+
+| key           | unblocks_parents | unblocks_dependents | cascades_to_children |
+|---------------|------------------|---------------------|----------------------|
+| `open`        | false            | false               | false                |
+| `in-progress` | false            | false               | false                |
+| `closed`      | true             | true                | false                |
+| `dropped`     | true             | false               | true                 |
+| `failed`      | true             | false               | true                 |
+
+Anywhere code needs to ask "is this status terminal?" the answer is `unblocks_parents`; "can a dependent of this issue move forward?" is `unblocks_dependents`. Per-project statuses opt in to either flag independently.
 
 ## Graph edges
 
@@ -29,9 +35,9 @@ Edges live in the relationship table and are addressed at the storage layer via 
 
 `Ready` is not stored; it is derived on demand by [`AppState::is_issue_ready`](../../hydra-server/src/app/issues.rs). The rules:
 
-- `Closed | Dropped | Failed` → **never ready**. Terminal states stay terminal.
-- `Open` → ready when every `blocked-on` target is `Closed`. A blocker that is `Dropped` or `Failed` still blocks — only `Closed` releases the dependent.
-- `InProgress` → ready when no issue in the full child subtree is ready. A parent with no children is trivially ready; a parent whose descendants are all stuck (terminal or blocked) becomes ready again so a new agent can re-plan.
+- `unblocks_parents=true` (the legacy terminal lane: `closed | dropped | failed`) → **never ready**. Terminal states stay terminal.
+- Otherwise, ready when every `blocked-on` target has `unblocks_dependents=true` (legacy: only `closed` releases the dependent — `dropped` and `failed` still block).
+- A parent with children is ready when no issue in the full child subtree is ready. A parent with no children is trivially ready; a parent whose descendants are all stuck (terminal or blocked) becomes ready again so a new agent can re-plan.
 
 The subtree walk uses a `visited` set for cycle protection; a cycle resolves to "not ready" rather than infinite recursion.
 
@@ -39,16 +45,16 @@ The subtree walk uses a `visited` set for cycle protection; a cycle resolves to 
 
 When an issue transitions to a terminal failure status, two automations fire (see [`automations-vs-background-workers.md`](./automations-vs-background-workers.md)):
 
-- [`cascade_issue_status`](../../hydra-server/src/policy/automations/cascade_issue_status.rs) — on transition into `Dropped` or `Failed` (configurable via `trigger_statuses`), walks descendants via BFS and sets every non-terminal child to `Dropped`.
-- [`kill_tasks_on_issue_failure`](../../hydra-server/src/policy/automations/kill_tasks_on_failure.rs) — on the same transitions, kills any `Created`/`Pending`/`Running` sessions attached to the issue.
+- [`cascade_issue_status`](../../hydra-server/src/policy/automations/cascade_issue_status.rs) — on transition into a status whose definition sets `cascades_to_children=true` (default project: `dropped` and `failed`; configurable via `trigger_statuses`), walks descendants via BFS and sets every non-terminal child to `dropped`.
+- [`kill_tasks_on_issue_failure`](../../hydra-server/src/policy/automations/kill_tasks_on_failure.rs) — on any transition into an `unblocks_parents=true` status, kills any `Created`/`Pending`/`Running` sessions attached to the issue.
 
-Note the asymmetry: `Failed` cascades down `child-of` but **not** down `blocked-on`. A `blocked-on` dependent of a `Failed` issue stays `Open`, but is not `Ready` (only a `Closed` blocker clears the edge). This is what enables parent re-planning — see below.
+Note the asymmetry between the two terminal flags: a `failed` issue cascades down `child-of` (because `cascades_to_children=true`) but **not** down `blocked-on` (because `unblocks_dependents=false`). A `blocked-on` dependent of a `failed` issue stays open but is not ready — only a status with `unblocks_dependents=true` (legacy: `closed`) clears the edge. This is what enables parent re-planning — see below.
 
 ## Parent re-planning
 
-If every direct or indirect child of an `InProgress` parent is stuck, the parent itself becomes `Ready` and the next spawn cycle gives it an agent. That agent can inspect the failures and create replacement children to recover.
+If every direct or indirect child of an `in-progress` parent is stuck, the parent itself becomes ready and the next spawn cycle gives it an agent. That agent can inspect the failures and create replacement children to recover.
 
-Example: A is `InProgress` with children B and C, where C is `blocked-on` B. B fails. C is still `Open` but blocked by a non-`Closed` issue, so C is not ready. No child of A is ready, so A becomes ready. An agent for A diagnoses B's failure and creates a replacement.
+Example: A is `in-progress` with children B and C, where C is `blocked-on` B. B fails. C is still `open` but blocked by a status whose `unblocks_dependents` is false, so C is not ready. No child of A is ready, so A becomes ready. An agent for A diagnoses B's failure and creates a replacement.
 
 ## Parent ↔ child spawn mutex
 
@@ -60,6 +66,6 @@ To avoid two agents racing on the same goal:
 These two halves are enforced in different places inside [`AgentQueue::spawn_for_issue`](../../hydra-server/src/policy/automations/agent_queue.rs):
 
 - The **child-side** check is direct: `parent_has_running_task` walks the issue's `ChildOf` dependencies and short-circuits if any parent has a `Pending` or `Running` session.
-- The **parent-side** guarantee is indirect, via the readiness rules above: an `InProgress` parent is only `Ready` when no child subtree issue is ready, and a child with a live session is itself `Open` and ready (or already `InProgress`), so the parent stays not-ready until the child settles.
+- The **parent-side** guarantee is indirect, via the readiness rules above: an `in-progress` parent is only ready when no child subtree issue is ready, and a child with a live session is itself `open` and ready (or already `in-progress`), so the parent stays not-ready until the child settles.
 
 `existing_issue_ids` (carried in `AgentTaskState`) is a separate guard against the same issue being spawned twice — not part of the parent/child mutex. Capacity, assignment, and per-issue retry budget checks live alongside these in the same function.

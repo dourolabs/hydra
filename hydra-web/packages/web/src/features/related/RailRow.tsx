@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { Avatar, Icons, StatusDot, TypeChip } from "@hydra/ui";
+import { Avatar, FlowPill, Icons, StatusDot, TypeChip } from "@hydra/ui";
 import type { BadgeStatus } from "@hydra/ui";
 import type {
   ConversationSummary,
@@ -22,10 +22,14 @@ import { principalAvatarKind, principalDisplayName } from "../principal/formatPr
 import type { SessionDisplay } from "../sessions/sessionDisplay";
 import { AgoTime, RunTime } from "../../components/Runtime/Runtime";
 import { useSessionDuration, useSingleSessionDuration } from "../dashboard/useSessionDuration";
-import type { ChildStatus } from "../dashboard/computeIssueProgress";
+import {
+  computeFlowPillState,
+  type IssueNeighborhood,
+} from "../issues/flowPill";
 import { PatchRepoLink } from "../patches/PatchRepoLink";
 import { ProjectChip } from "../projects/ProjectChip";
 import { useProjects } from "../projects/useProjects";
+import { RestoreIssueButton } from "../issues/RestoreIssueButton";
 import styles from "./RailRow.module.css";
 
 function resolveProjectKey(
@@ -42,30 +46,22 @@ function resolveProjectKey(
 interface IssueRailRowProps {
   record: IssueSummaryRecord;
   sessions?: SessionSummaryRecord[];
-  /** Child issue statuses for computing the progress bar fraction. Mirrors the
-   * desktop IssuesTable wiring; when omitted (e.g. Related-tab contexts that
-   * don't have a tree fetch), the progress bar is suppressed. */
-  childStatuses?: ChildStatus[];
+  /** Local neighborhood (direct blockers + direct children) for computing the
+   * FlowPill state. When omitted (e.g. Related-tab contexts that don't have a
+   * neighborhood fetch), the pill is suppressed. */
+  neighborhood?: IssueNeighborhood;
   /** Optional query string (including leading "?") appended to the link target. */
   linkSearch?: string;
-}
-
-function progressFraction(children: ChildStatus[] | undefined): number | null {
-  if (!children || children.length === 0) return null;
-  const total = children.length;
-  const projected = children.filter(
-    (c) => c.status === "closed" || c.status === "issue-closed" || c.status === "in-progress",
-  ).length;
-  return Math.round((projected / total) * 100);
 }
 
 function isActive(s: SessionSummaryRecord): boolean {
   return s.session.status === "running" || s.session.status === "pending";
 }
 
-export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: IssueRailRowProps) {
+export function IssueRailRow({ record, sessions, neighborhood, linkSearch }: IssueRailRowProps) {
   const navigate = useNavigate();
   const issue = record.issue;
+  const archived = issue.deleted === true;
   const resolved = issue.status;
   const hasActive = sessions?.some(isActive) ?? false;
   // Resolved status drives the dot color directly. Active sessions
@@ -73,8 +69,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
   // (a closed issue with a running session reads as still in flight).
   const dotColor = hasActive ? undefined : resolved.color;
   const dotTone: BadgeStatus = hasActive ? "in-progress" : "open";
-  const pct = progressFraction(childStatuses);
-  const hasActiveChild = !!childStatuses?.some((c) => c.hasActiveTask);
+  const pill = computeFlowPillState(neighborhood);
   const { durationText, status: runtimeStatus } = useSessionDuration(sessions);
   const assigneeName = issue.assignee ? principalDisplayName(issue.assignee) : null;
   const { data: projects } = useProjects();
@@ -83,7 +78,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
 
   return (
     <div
-      className={styles.row}
+      className={archived ? `${styles.row} ${styles.archived}` : styles.row}
       onClick={() => navigate(to)}
       role="button"
       tabIndex={0}
@@ -94,6 +89,7 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
         }
       }}
       data-testid={`related-rail-row-issue-${record.issue_id}`}
+      data-archived={archived ? "true" : undefined}
     >
       {dotColor ? (
         <span
@@ -117,6 +113,21 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
           {resolved.label && (
             <span className={styles.statusLabel}>{resolved.label}</span>
           )}
+          {archived && (
+            <span
+              className={styles.archivedTag}
+              data-testid={`related-rail-row-archived-${record.issue_id}`}
+            >
+              ARCHIVED
+            </span>
+          )}
+          {archived && (
+            <RestoreIssueButton
+              issueId={record.issue_id}
+              className={styles.restoreButton}
+              data-testid={`related-rail-row-restore-${record.issue_id}`}
+            />
+          )}
           {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
           {issue.assignee && assigneeName && (
             <Avatar
@@ -126,13 +137,14 @@ export function IssueRailRow({ record, sessions, childStatuses, linkSearch }: Is
               title={`Assignee · ${assigneeName}`}
             />
           )}
-          {pct !== null && (
-            <span className={styles.progressBar} aria-hidden="true">
-              <span
-                className={`${styles.progressFill}${hasActiveChild ? ` ${styles.progressFillActive}` : ""}`}
-                style={{ width: `${pct}%` }}
-              />
-            </span>
+          {pill && (
+            <FlowPill
+              phase={pill.phase}
+              num={pill.num}
+              den={pill.den}
+              title={pill.title}
+              data-testid={`rail-row-flowpill-${record.issue_id}`}
+            />
           )}
           {durationText !== "—" && <RunTime value={durationText} status={runtimeStatus} />}
           <AgoTime iso={record.timestamp} />

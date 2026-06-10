@@ -3,9 +3,7 @@ mod harness;
 use anyhow::Result;
 use harness::{test_job_settings, TestHarness};
 use hydra_common::{
-    issues::{IssueStatus, IssueType},
-    task_status::Status,
-    users::Username,
+    issues::IssueType, task_status::Status, test_utils::status::status, users::Username,
 };
 use std::str::FromStr;
 
@@ -54,7 +52,7 @@ async fn patch_creator_resolves_to_issue_creator_for_agent_patch() -> Result<()>
         .create_issue_with_settings(
             "Fix authentication bug",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(test_job_settings(&repo)),
         )

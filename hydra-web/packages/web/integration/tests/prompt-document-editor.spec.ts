@@ -1,21 +1,21 @@
 import { test, expect } from "../fixtures/auth";
 
-// ProjectEditor (in the project Settings modal) uses the inline
-// PromptDocumentEditor for both the project's own prompt and each per-status
-// prompt. Collapsed = just the path Input. Expanding the toggle reveals a
-// textarea backed by the docs API. The simplified new-project modal no
-// longer uses this editor, so the test opens the Settings modal of a
-// seeded project instead.
+// `ProjectEditor` (rendered on the project detail page `/projects/<key>`)
+// uses the inline `PromptDocumentEditor` for both the project's own prompt
+// and each per-status prompt. Collapsed = just the path Input. Expanding
+// the toggle reveals a textarea backed by the docs API.
+//
+// The simplified board-level Settings modal (`ProjectForm`) no longer uses
+// `PromptDocumentEditor`, so this spec drives the detail page where the
+// full editor still lives.
 test.describe("ProjectEditor prompt-document-editor @projects:prompt-editor", () => {
-  test("project settings modal exposes the inline prompt editor", async ({
+  test("project detail page exposes the inline prompt editor", async ({
     authenticatedPage: page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/projects");
-    await page.getByTestId("board-project-settings-engineering-v2").click();
+    await page.goto("/projects/engineering-v2");
 
-    const modal = page.getByRole("dialog");
-    await expect(modal).toBeVisible();
+    await expect(page.getByTestId("project-editor")).toBeVisible();
 
     // 1) Collapsed state — only the path Input is rendered.
     const projectPath = page.getByTestId("project-editor-prompt-path");

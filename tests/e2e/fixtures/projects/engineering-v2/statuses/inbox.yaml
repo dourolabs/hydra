@@ -1,0 +1,6 @@
+key: inbox
+label: Inbox
+color: "#607d8b"
+unblocks_parents: false
+unblocks_dependents: false
+cascades_to_children: false

@@ -276,6 +276,38 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             post(routes::patches::merge_check),
         )
         .route(
+            "/v1/analytics/throughput/patches/over_time",
+            get(routes::analytics::patches_over_time),
+        )
+        .route(
+            "/v1/analytics/throughput/patches/terminal_mix",
+            get(routes::analytics::patches_terminal_mix),
+        )
+        .route(
+            "/v1/analytics/throughput/patches/time_to_merge",
+            get(routes::analytics::patches_time_to_merge),
+        )
+        .route(
+            "/v1/analytics/throughput/patches/in_flight_over_time",
+            get(routes::analytics::patches_in_flight_over_time),
+        )
+        .route(
+            "/v1/analytics/throughput/issues/cycle_time",
+            get(routes::analytics::issues_cycle_time),
+        )
+        .route(
+            "/v1/analytics/throughput/issues/over_time",
+            get(routes::analytics::issues_over_time),
+        )
+        .route(
+            "/v1/analytics/throughput/issues/time_in_status_breakdown",
+            get(routes::analytics::issues_time_in_status_breakdown),
+        )
+        .route(
+            "/v1/analytics/throughput/issues/per_status_distribution",
+            get(routes::analytics::issues_per_status_distribution),
+        )
+        .route(
             "/v1/documents",
             get(routes::documents::list_documents).post(routes::documents::create_document),
         )
@@ -323,18 +355,20 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::projects::list_projects).post(routes::projects::create_project),
         )
         .route(
-            "/v1/projects/:project_id",
+            "/v1/projects/:project_ref",
             get(routes::projects::get_project)
                 .put(routes::projects::update_project)
                 .delete(routes::projects::delete_project),
         )
         .route(
-            "/v1/projects/:project_id/statuses",
-            get(routes::projects::get_project_statuses),
+            "/v1/projects/:project_ref/statuses",
+            get(routes::projects::get_project_statuses)
+                .post(routes::projects::create_project_status),
         )
         .route(
-            "/v1/projects/:project_id/statuses/rename",
-            post(routes::projects::rename_project_status),
+            "/v1/projects/:project_ref/statuses/:status_key",
+            put(routes::projects::update_project_status)
+                .delete(routes::projects::delete_project_status),
         )
         .route(
             "/v1/repositories",

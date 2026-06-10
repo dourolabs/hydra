@@ -11,8 +11,9 @@ mod harness;
 use anyhow::Result;
 use harness::test_job_settings_full;
 use hydra_common::{
-    issues::{IssueDependency, IssueDependencyType, IssueStatus, IssueType},
+    issues::{IssueDependency, IssueDependencyType, IssueType},
     sessions::SearchSessionsQuery,
+    test_utils::status::status,
     RepoName,
 };
 use hydra_server::job_engine::JobStatus;
@@ -38,7 +39,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .create_issue_with_settings(
             "Parent issue",
             IssueType::Task,
-            IssueStatus::Open,
+            status("open"),
             None,
             Some(job_settings.clone()),
         )
@@ -50,7 +51,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .create_issue_full(
             IssueType::Task,
             "Child A",
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(job_settings.clone()),
             vec![IssueDependency::new(
@@ -66,7 +67,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .create_issue_full(
             IssueType::Task,
             "Child B",
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(job_settings.clone()),
             vec![IssueDependency::new(
@@ -82,7 +83,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .create_issue_full(
             IssueType::Task,
             "Grandchild D",
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(job_settings.clone()),
             vec![IssueDependency::new(
@@ -98,7 +99,7 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         .create_issue_full(
             IssueType::Task,
             "Child C (blocked on B)",
-            IssueStatus::Open,
+            status("open"),
             Some("swe"),
             Some(job_settings.clone()),
             vec![
@@ -130,42 +131,42 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
     let task_b = child_b_sessions[0].clone();
 
     // ── Step 5: User drops the parent issue ───────────────────────
-    user.update_issue_status(&parent_id, IssueStatus::Dropped)
+    user.update_issue_status(&parent_id, status("dropped"))
         .await?;
 
     // ── Step 6: Verify cascade — all children and grandchild are Dropped ──
     let parent = user.get_issue(&parent_id).await?;
     assert_eq!(
         parent.issue.status.key,
-        IssueStatus::Dropped.into(),
+        status("dropped"),
         "parent should be Dropped"
     );
 
     let child_a = user.get_issue(&child_a_id).await?;
     assert_eq!(
         child_a.issue.status.key,
-        IssueStatus::Dropped.into(),
+        status("dropped"),
         "child A should be Dropped (child of dropped parent)"
     );
 
     let child_b = user.get_issue(&child_b_id).await?;
     assert_eq!(
         child_b.issue.status.key,
-        IssueStatus::Dropped.into(),
+        status("dropped"),
         "child B should be Dropped"
     );
 
     let child_c = user.get_issue(&child_c_id).await?;
     assert_eq!(
         child_c.issue.status.key,
-        IssueStatus::Dropped.into(),
+        status("dropped"),
         "child C should be Dropped (child of dropped parent)"
     );
 
     let grandchild_d = user.get_issue(&grandchild_d_id).await?;
     assert_eq!(
         grandchild_d.issue.status.key,
-        IssueStatus::Dropped.into(),
+        status("dropped"),
         "grandchild D should be Dropped (recursive cascade)"
     );
 

@@ -21,7 +21,7 @@ use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
-use hydra_common::api::v1::projects::{Project, StatusKey};
+use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
 use hydra_common::api::v1::users::SearchUsersQuery;
 use hydra_common::triggers::Trigger;
@@ -78,6 +78,17 @@ impl ReadOnlyStore for FailingStore {
     }
 
     async fn count_issues(&self, _query: &SearchIssuesQuery) -> Result<u64, StoreError> {
+        fail()
+    }
+
+    async fn list_stale_issues_for_status(
+        &self,
+        _project_id: &ProjectId,
+        _status_key: &StatusKey,
+        _threshold_seconds: i64,
+        _now: DateTime<Utc>,
+        _limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError> {
         fail()
     }
 
@@ -301,6 +312,14 @@ impl ReadOnlyStore for FailingStore {
         _id: &ProjectId,
         _include_deleted: bool,
     ) -> Result<Versioned<Project>, StoreError> {
+        fail()
+    }
+
+    async fn get_project_by_key(
+        &self,
+        _key: &ProjectKey,
+        _include_deleted: bool,
+    ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
         fail()
     }
 
@@ -754,11 +773,29 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn rename_status(
+    async fn add_status(
         &self,
         _id: &ProjectId,
-        _from: &StatusKey,
-        _to: &StatusKey,
+        _status: StatusDefinition,
+        _actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn update_status(
+        &self,
+        _id: &ProjectId,
+        _status_key: &StatusKey,
+        _status: StatusDefinition,
+        _actor: &ActorRef,
+    ) -> Result<(StatusDefinition, VersionNumber), StoreError> {
+        fail()
+    }
+
+    async fn delete_status(
+        &self,
+        _id: &ProjectId,
+        _status_key: &StatusKey,
         _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         fail()

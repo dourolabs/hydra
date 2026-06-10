@@ -21,14 +21,16 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { Avatar, Icons, TypeChip } from "@hydra/ui";
+import { Avatar, FlowPill, Icons, TypeChip } from "@hydra/ui";
 import type {
   IssueSummaryRecord,
+  ListIssuesResponse,
   ListProjectsResponse,
   Project,
   ProjectId,
   ProjectRecord,
   StatusDefinition,
+  StatusKey,
 } from "@hydra/api";
 import {
   principalAvatarKind,
@@ -45,8 +47,9 @@ import {
   applyOptimisticUpsert,
 } from "../../projects/projectCache";
 import { apiClient } from "../../../api/client";
+import { useIssueCreateModal } from "../../dashboard/useIssueCreateModal";
 import { useToast } from "../../toast/useToast";
-import type { ChildStatus } from "../../dashboard/computeIssueProgress";
+import { computeFlowPillState, type IssueNeighborhood } from "../flowPill";
 import {
   useBoardIssuesByProject,
   type BoardCellQuery,
@@ -55,11 +58,12 @@ import {
 } from "../usePaginatedIssues";
 import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
 import { AgoTime } from "../../../components/Runtime/Runtime";
+import { useProjectCollapseState } from "./useProjectCollapseState";
+import { RestoreIssueButton } from "../RestoreIssueButton";
 import styles from "./IssuesBoard.module.css";
 
 interface IssuesBoardProps {
   baseFilters: IssueFilters;
-  username: string;
   filterRootId: string | null;
   // Projects-tab variant: render the same board chrome (project bars,
   // status columns, ghost rows) but skip per-cell issue fetches and
@@ -67,15 +71,6 @@ interface IssuesBoardProps {
   // placeholders, the project bar's "N issues" pill. The card bodies stay
   // empty by virtue of the fetch being disabled.
   hideIssues?: boolean;
-}
-
-function progressFraction(children: ChildStatus[] | undefined): number {
-  if (!children || children.length === 0) return 0;
-  const total = children.length;
-  const done = children.filter(
-    (c) => c.status === "closed" || c.status === "issue-closed",
-  ).length;
-  return Math.round((done / total) * 100);
 }
 
 // Step used at the ends of the list when there is no opposite neighbor to
@@ -124,9 +119,29 @@ function sortProjectsByPriority(list: ProjectRecord[]): ProjectRecord[] {
     .sort((a, b) => a.project.priority - b.project.priority);
 }
 
+// Custom dataTransfer MIME for issue-card drags. Picked up by the column
+// drop handler to disambiguate from arbitrary OS-level drags (file drops,
+// text selections, etc.) so neither side preventDefaults the wrong drop.
+const ISSUE_CARD_DRAG_MIME = "application/x.hydra-issue-card";
+
+interface IssueDragPayload {
+  issueId: string;
+  sourceProjectId: string;
+  sourceStatusKey: string;
+}
+
+interface IssueDropTarget {
+  projectId: string;
+  statusKey: string;
+}
+
+type IssueDropHandler = (
+  payload: IssueDragPayload,
+  target: IssueDropTarget,
+) => void;
+
 export function IssuesBoard({
   baseFilters,
-  username,
   filterRootId,
   hideIssues = false,
 }: IssuesBoardProps) {
@@ -134,6 +149,8 @@ export function IssuesBoard({
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const { data: allProjects } = useProjects();
+  const { open: openIssueCreate } = useIssueCreateModal();
+  const { isCollapsed, onToggle: onToggleCollapse } = useProjectCollapseState();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
 
   const projects: BoardProjectDescriptor[] = useMemo(() => {
@@ -190,9 +207,8 @@ export function IssuesBoard({
     return out;
   }, [projects, cells]);
 
-  const { childStatusMap } = usePageIssueTrees(
+  const { neighborhoodMap } = usePageIssueTrees(
     hideIssues ? [] : boardIssuesUnion,
-    username,
   );
 
   const projectRecordById = useMemo(() => {
@@ -234,6 +250,13 @@ export function IssuesBoard({
     });
     navigate(`/issues/${id}?${params.toString()}`);
   };
+
+  const handleAddIssueClick = useCallback(
+    (projectId: string, statusKey: string) => {
+      openIssueCreate({ projectId, status: statusKey });
+    },
+    [openIssueCreate],
+  );
 
   const settingsProject: ProjectRecord | null = useMemo(() => {
     if (!settingsProjectId) return null;
@@ -282,7 +305,10 @@ export function IssuesBoard({
       priority: number;
     }) => {
       return apiClient.updateProject(projectRecord.project_id, {
-        project: { ...projectRecord.project, priority },
+        key: projectRecord.project.key,
+        name: projectRecord.project.name,
+        prompt_path: projectRecord.project.prompt_path ?? null,
+        priority,
       });
     },
     onMutate: async ({ projectRecord, priority }) => {
@@ -316,6 +342,169 @@ export function IssuesBoard({
       queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
     },
   });
+
+  // Cross-column / cross-project issue-card drag. The mutation fetches the
+  // full Issue (so the truncated `IssueSummary` description / progress
+  // doesn't clobber the server-side body) and persists `status` +
+  // `project_id` via the existing update-issue endpoint.
+  const moveIssue = useMutation({
+    mutationFn: async ({
+      issueId,
+      targetProjectId,
+      targetStatusKey,
+    }: {
+      issueId: string;
+      sourceProjectId: string;
+      sourceStatusKey: string;
+      targetProjectId: string;
+      targetStatusKey: StatusKey;
+    }) => {
+      const record = await apiClient.getIssue(issueId);
+      return apiClient.updateIssue(issueId, {
+        issue: {
+          ...record.issue,
+          status: targetStatusKey,
+          project_id: targetProjectId,
+        },
+        session_id: null,
+      });
+    },
+    onMutate: async ({
+      issueId,
+      sourceProjectId,
+      sourceStatusKey,
+      targetProjectId,
+      targetStatusKey,
+    }) => {
+      await queryClient.cancelQueries({ queryKey: ["paginatedIssues"] });
+
+      // The `["paginatedIssues", …]` prefix is shared with the table-view
+      // `usePaginatedIssues` hook, which is a `useInfiniteQuery` whose `data`
+      // is `{ pages, pageParams }` — not the per-cell `ListIssuesResponse[]`
+      // produced by `useBoardIssuesByProject`. Filter to the board-cell key
+      // shape (`[…, filters, "depth", depth]`) so the optimistic surgery
+      // never tries to iterate the infinite-query payload.
+      const all = queryClient
+        .getQueryCache()
+        .findAll({ queryKey: ["paginatedIssues"] })
+        .filter((q) => {
+          const key = q.queryKey as readonly unknown[];
+          return key.length === 4 && key[2] === "depth";
+        });
+
+      // Locate the source record so the optimistic insert into the target
+      // cell carries the same summary fields as the rendered card.
+      let sourceRecord: IssueSummaryRecord | undefined;
+      for (const q of all) {
+        const data = q.state.data as ListIssuesResponse[] | undefined;
+        if (!data) continue;
+        for (const page of data) {
+          const found = page.issues.find((r) => r.issue_id === issueId);
+          if (found) {
+            sourceRecord = found;
+            break;
+          }
+        }
+        if (sourceRecord) break;
+      }
+
+      const snapshots: Array<{
+        key: readonly unknown[];
+        data: unknown;
+      }> = [];
+
+      if (!sourceRecord) {
+        return { snapshots };
+      }
+
+      const updatedRecord: IssueSummaryRecord = {
+        ...sourceRecord,
+        issue: {
+          ...sourceRecord.issue,
+          project_id: targetProjectId,
+          status: { ...sourceRecord.issue.status, key: targetStatusKey },
+        },
+      };
+
+      for (const q of all) {
+        const key = q.queryKey;
+        const filters = (key as readonly unknown[])[1] as
+          | (IssueFilters & { project_id?: string; status?: string })
+          | undefined;
+        if (!filters || typeof filters !== "object") continue;
+        const data = q.state.data as ListIssuesResponse[] | undefined;
+        if (!data) continue;
+        const matchesSource =
+          filters.project_id === sourceProjectId &&
+          filters.status === sourceStatusKey;
+        const matchesTarget =
+          filters.project_id === targetProjectId &&
+          filters.status === targetStatusKey;
+        if (matchesSource) {
+          snapshots.push({ key, data });
+          const next = data.map((p) => ({
+            ...p,
+            issues: p.issues.filter((r) => r.issue_id !== issueId),
+          }));
+          queryClient.setQueryData(key, next);
+        } else if (matchesTarget) {
+          snapshots.push({ key, data });
+          // Dedupe before prepending in case the issue is somehow already
+          // in the target cell's cache (e.g. an SSE invalidate raced us).
+          const dedup = data.map((p) => ({
+            ...p,
+            issues: p.issues.filter((r) => r.issue_id !== issueId),
+          }));
+          const next =
+            dedup.length === 0
+              ? [{ issues: [updatedRecord], next_cursor: null }]
+              : [
+                  {
+                    ...dedup[0],
+                    issues: [updatedRecord, ...dedup[0].issues],
+                  },
+                  ...dedup.slice(1),
+                ];
+          queryClient.setQueryData(key, next);
+        }
+      }
+
+      return { snapshots };
+    },
+    onError: (err, _vars, context) => {
+      if (context) {
+        for (const s of context.snapshots) {
+          queryClient.setQueryData(s.key, s.data);
+        }
+      }
+      addToast(
+        err instanceof Error ? err.message : "Failed to move issue",
+        "error",
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+    },
+  });
+
+  const handleIssueDrop = useCallback<IssueDropHandler>(
+    (payload, target) => {
+      if (
+        payload.sourceProjectId === target.projectId &&
+        payload.sourceStatusKey === target.statusKey
+      ) {
+        return;
+      }
+      moveIssue.mutate({
+        issueId: payload.issueId,
+        sourceProjectId: payload.sourceProjectId,
+        sourceStatusKey: payload.sourceStatusKey,
+        targetProjectId: target.projectId,
+        targetStatusKey: target.statusKey,
+      });
+    },
+    [moveIssue],
+  );
 
   const projectSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -360,13 +549,17 @@ export function IssuesBoard({
       projectRecord,
       perStatus,
       projectIssueCount,
-      childStatusMap,
+      neighborhoodMap,
       hideIssues,
+      collapsed: isCollapsed(project.project_id),
+      onToggleCollapsed: onToggleCollapse,
       dragActive: activeProjectId !== null,
       onCardClick: handleCardClick,
       onOpenSettings: setSettingsProjectId,
       onGearClick: handleGearClick,
       onAddStatus: setNewStatusProjectId,
+      onAddIssue: handleAddIssueClick,
+      onIssueDrop: handleIssueDrop,
     };
     return allowProjectReorder ? (
       <SortableProjectSection key={project.project_id} {...sectionProps} />
@@ -471,8 +664,10 @@ interface ProjectSectionProps {
   projectRecord: ProjectRecord;
   perStatus: Map<string, BoardCellQuery> | undefined;
   projectIssueCount: number;
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   hideIssues: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: (projectId: string) => void;
   // True while any project section is being dragged. Every section collapses
   // to just its bar so the reorder list is a row of uniform-height headers —
   // far more reliable for dnd-kit than reordering full-height sections.
@@ -485,6 +680,8 @@ interface ProjectSectionProps {
     cell: BoardCellQuery | undefined,
   ) => void;
   onAddStatus: (projectId: string) => void;
+  onAddIssue: (projectId: string, statusKey: string) => void;
+  onIssueDrop: IssueDropHandler;
 }
 
 interface SortableSectionHandleProps {
@@ -554,13 +751,17 @@ function ProjectSection({
   projectRecord,
   perStatus,
   projectIssueCount,
-  childStatusMap,
+  neighborhoodMap,
   hideIssues,
+  collapsed,
+  onToggleCollapsed,
   dragActive,
   onCardClick,
   onOpenSettings,
   onGearClick,
   onAddStatus,
+  onAddIssue,
+  onIssueDrop,
   sortableSetNodeRef,
   sortableStyle,
   sortableIsDragging,
@@ -575,9 +776,19 @@ function ProjectSection({
       nextStatuses: StatusDefinition[];
       previous: ListProjectsResponse | undefined;
     }) => {
-      return apiClient.updateProject(projectRecord.project_id, {
-        project: { ...projectRecord.project, statuses: nextStatuses },
-      });
+      // Per-status PUTs persist the new `position` values. The
+      // drag-to-reorder UI recomputes positions to `index * 100`
+      // before mutating, so a stale cached project still sorts
+      // correctly on next read. We fire requests sequentially to keep
+      // mock-server ordering predictable; in production the server's
+      // version-bump-per-call already serializes them.
+      const ref = projectRecord.project_id;
+      let lastVersion = projectRecord.version;
+      for (const status of nextStatuses) {
+        const resp = await apiClient.updateProjectStatus(ref, status.key, status);
+        lastVersion = resp.version;
+      }
+      return { project_id: ref, version: lastVersion };
     },
     onError: (err, { previous }) => {
       if (previous) {
@@ -613,7 +824,13 @@ function ProjectSection({
       const oldIdx = statuses.findIndex((s) => s.key === active.id);
       const newIdx = statuses.findIndex((s) => s.key === over.id);
       if (oldIdx < 0 || newIdx < 0) return;
-      const next = arrayMove(statuses, oldIdx, newIdx);
+      // Recompute `position` to `index * 100` after the reorder so
+      // the persisted column order matches the optimistic UI.
+      const reorderedRaw = arrayMove(statuses, oldIdx, newIdx);
+      const next: StatusDefinition[] = reorderedRaw.map((s, i) => ({
+        ...s,
+        position: i * 100,
+      }));
       // Apply the optimistic reorder synchronously here, inside the drop event
       // handler, so React batches it into the SAME commit as dnd-kit clearing
       // the drag transform. Doing it in the mutation's onMutate instead defers
@@ -645,10 +862,12 @@ function ProjectSection({
         projectRecord={projectRecord}
         status={status}
         cell={cell}
-        childStatusMap={childStatusMap}
+        neighborhoodMap={neighborhoodMap}
         hideIssues={hideIssues}
         onCardClick={onCardClick}
         onGearClick={onGearClick}
+        onAddIssue={onAddIssue}
+        onIssueDrop={onIssueDrop}
       />
     );
   });
@@ -687,6 +906,30 @@ function ProjectSection({
         data-testid={`board-project-bar-${project.key}`}
         {...(sortableDragHandleProps ?? {})}
       >
+        <button
+          type="button"
+          className={
+            collapsed
+              ? `${styles.projectCollapseToggle} ${styles.projectCollapseToggleCollapsed}`
+              : styles.projectCollapseToggle
+          }
+          onClick={(e) => {
+            // The whole bar is the drag handle; suppress propagation so the
+            // dnd-kit listeners can't misread a chevron click as a tiny drag.
+            e.stopPropagation();
+            onToggleCollapsed(project.project_id);
+          }}
+          aria-expanded={!collapsed}
+          aria-label={
+            collapsed
+              ? `Expand project ${project.name}`
+              : `Collapse project ${project.name}`
+          }
+          title={collapsed ? "Expand project" : "Collapse project"}
+          data-testid={`board-project-collapse-${project.key}`}
+        >
+          <Icons.IconChevronDown size={14} />
+        </button>
         <div className={styles.projectBarLeft}>
           <ProjectChip
             projectKey={project.key}
@@ -724,18 +967,30 @@ function ProjectSection({
           headers (reliable drop targets) and hides the body of the section
           that's travelling with the cursor inside <DragOverlay>. */}
       {!dragActive && (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
+        <div
+          className={
+            collapsed
+              ? `${styles.projectGroupBody} ${styles.projectGroupBodyCollapsed}`
+              : styles.projectGroupBody
+          }
+          data-testid={`board-project-body-${project.key}`}
+          aria-hidden={collapsed}
         >
-          <SortableContext
-            items={sortableIds}
-            strategy={horizontalListSortingStrategy}
-          >
-            {columnsRow}
-          </SortableContext>
-        </DndContext>
+          <div className={styles.projectGroupBodyInner}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={sortableIds}
+                strategy={horizontalListSortingStrategy}
+              >
+                {columnsRow}
+              </SortableContext>
+            </DndContext>
+          </div>
+        </div>
       )}
     </section>
   );
@@ -746,7 +1001,7 @@ interface BoardColumnProps {
   projectRecord: ProjectRecord;
   status: StatusDefinition;
   cell: BoardCellQuery | undefined;
-  childStatusMap: Map<string, ChildStatus[]>;
+  neighborhoodMap: Map<string, IssueNeighborhood>;
   hideIssues: boolean;
   onCardClick: (id: string) => void;
   onGearClick: (
@@ -754,6 +1009,8 @@ interface BoardColumnProps {
     statusKey: string,
     cell: BoardCellQuery | undefined,
   ) => void;
+  onAddIssue: (projectId: string, statusKey: string) => void;
+  onIssueDrop: IssueDropHandler;
 }
 
 interface SortableHandleProps {
@@ -800,10 +1057,12 @@ function BoardColumn({
   projectRecord,
   status,
   cell,
-  childStatusMap,
+  neighborhoodMap,
   hideIssues,
   onCardClick,
   onGearClick,
+  onAddIssue,
+  onIssueDrop,
   setNodeRef,
   style,
   isDragging,
@@ -812,15 +1071,40 @@ function BoardColumn({
   const colIssues = cell?.issues ?? [];
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const assignTo = status.on_enter?.assign_to ?? null;
-  const interactiveLabel = status.interactive === true ? "interactive" : "auto";
+  const isInteractive = status.interactive === true;
   const colClasses = [styles.col];
   if (isDragging) colClasses.push(styles.colDragging);
+
+  const handleColumnDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer.types.includes(ISSUE_CARD_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleColumnDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const raw = e.dataTransfer.getData(ISSUE_CARD_DRAG_MIME);
+    if (!raw) return;
+    e.preventDefault();
+    let payload: IssueDragPayload;
+    try {
+      payload = JSON.parse(raw) as IssueDragPayload;
+    } catch {
+      return;
+    }
+    onIssueDrop(payload, {
+      projectId: project.project_id,
+      statusKey: status.key,
+    });
+  };
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={colClasses.join(" ")}
       data-testid={`board-col-${project.key}-${status.key}`}
+      onDragOver={handleColumnDragOver}
+      onDrop={handleColumnDrop}
     >
       <div
         className={
@@ -863,34 +1147,85 @@ function BoardColumn({
           </span>
         )}
         <span
-          className={styles.modeBadge}
+          className={
+            isInteractive
+              ? `${styles.modeBadge} ${styles.modeBadgeInteractive}`
+              : styles.modeBadge
+          }
+          title={
+            isInteractive
+              ? "Interactive — human in the loop"
+              : "Autonomous agent work"
+          }
           data-testid={`board-col-mode-${project.key}-${status.key}`}
         >
-          {interactiveLabel}
+          {isInteractive ? (
+            <>
+              <Icons.IconSpark size={11} />
+              interactive
+            </>
+          ) : (
+            "auto"
+          )}
         </span>
       </div>
       <div className={styles.colBody}>
         {!hideIssues && showInitialLoading && (
           <div className={styles.colEmpty}>Loading…</div>
         )}
-        {!hideIssues && !showInitialLoading && colIssues.length === 0 && (
-          <div className={styles.colEmpty}>No issues</div>
-        )}
         {colIssues.map((rec) => {
           const issue = rec.issue;
           const id = rec.issue_id;
-          const children = childStatusMap.get(id);
-          const pct = progressFraction(children);
+          const pill = computeFlowPillState(neighborhoodMap.get(id));
+          const archived = issue.deleted === true;
+          const cardClass = archived
+            ? `${styles.card} ${styles.cardArchived}`
+            : styles.card;
 
+          const handleCardDragStart = (
+            e: React.DragEvent<HTMLDivElement>,
+          ) => {
+            const payload: IssueDragPayload = {
+              issueId: id,
+              sourceProjectId: project.project_id,
+              sourceStatusKey: status.key,
+            };
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData(
+              ISSUE_CARD_DRAG_MIME,
+              JSON.stringify(payload),
+            );
+          };
           return (
             <div
               key={id}
-              className={styles.card}
+              className={cardClass}
               onClick={() => onCardClick(id)}
+              draggable
+              onDragStart={handleCardDragStart}
+              data-testid={`board-card-${id}`}
+              data-archived={archived ? "true" : undefined}
             >
-              {issue.type && issue.type !== "unknown" && (
+              {(archived || (issue.type && issue.type !== "unknown")) && (
                 <div className={styles.cardHead}>
-                  <TypeChip type={issue.type} />
+                  {issue.type && issue.type !== "unknown" && (
+                    <TypeChip type={issue.type} />
+                  )}
+                  {archived && (
+                    <span
+                      className={styles.cardArchivedTag}
+                      data-testid={`board-card-archived-${id}`}
+                    >
+                      ARCHIVED
+                    </span>
+                  )}
+                  {archived && (
+                    <RestoreIssueButton
+                      issueId={id}
+                      className={styles.cardRestoreButton}
+                      data-testid={`board-card-restore-${id}`}
+                    />
+                  )}
                 </div>
               )}
               <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
@@ -904,10 +1239,14 @@ function BoardColumn({
                 )}
                 <AgoTime iso={rec.timestamp} />
                 <span className={styles.cardFootSpacer} />
-                {children && children.length > 0 && (
-                  <div className={styles.progress} title={`${pct}%`}>
-                    <span style={{ width: `${pct}%` }} />
-                  </div>
+                {pill && (
+                  <FlowPill
+                    phase={pill.phase}
+                    num={pill.num}
+                    den={pill.den}
+                    title={pill.title}
+                    data-testid={`board-card-flowpill-${id}`}
+                  />
                 )}
               </div>
             </div>
@@ -925,6 +1264,21 @@ function BoardColumn({
               {cell.isFetchingNextPage ? "Loading…" : "Load more"}
             </button>
           </div>
+        )}
+        {!hideIssues && (
+          // Hover-revealed in CSS via `.col:hover`. Rendered with
+          // `visibility: hidden` by default so the space is reserved and the
+          // column doesn't reflow on hover. See IssuesBoard.module.css.
+          <button
+            type="button"
+            className={styles.colAddIssue}
+            onClick={() => onAddIssue(project.project_id, status.key)}
+            aria-label={`Add issue to ${status.label || status.key}`}
+            data-testid={`board-col-add-issue-${project.key}-${status.key}`}
+          >
+            <span className={styles.colAddIssueIcon}>+</span>
+            Add issue
+          </button>
         )}
       </div>
     </div>

@@ -72,12 +72,25 @@ import type { SearchTriggersQuery } from "./generated/SearchTriggersQuery";
 import type { ListTriggersResponse } from "./generated/ListTriggersResponse";
 import type { ListTriggerVersionsResponse } from "./generated/ListTriggerVersionsResponse";
 import type {
+  ProjectRef,
   UpsertProjectRequest,
   UpsertProjectResponse,
+  UpsertProjectStatusResponse,
   ProjectRecord,
   ListProjectsResponse,
   ProjectStatusesResponse,
 } from "./projects";
+import type { StatusDefinition } from "./generated/StatusDefinition";
+import type { PatchesThroughputQuery } from "./generated/PatchesThroughputQuery";
+import type { PatchesOverTimeResponse } from "./generated/PatchesOverTimeResponse";
+import type { PatchesTerminalMixResponse } from "./generated/PatchesTerminalMixResponse";
+import type { PatchesTimeToMergeResponse } from "./generated/PatchesTimeToMergeResponse";
+import type { PatchesInFlightOverTimeResponse } from "./generated/PatchesInFlightOverTimeResponse";
+import type { IssuesThroughputQuery } from "./generated/IssuesThroughputQuery";
+import type { IssuesCycleTimeResponse } from "./generated/IssuesCycleTimeResponse";
+import type { IssuesTimeInStatusBreakdownResponse } from "./generated/IssuesTimeInStatusBreakdownResponse";
+import type { IssuesPerStatusDistributionResponse } from "./generated/IssuesPerStatusDistributionResponse";
+import type { IssuesOverTimeResponse } from "./generated/IssuesOverTimeResponse";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -736,24 +749,149 @@ export class HydraApiClient {
     return this.get("/v1/projects");
   }
 
-  /** GET /v1/projects/:projectId */
-  getProject(projectId: string): Promise<ProjectRecord> {
-    return this.get(`/v1/projects/${encodeURIComponent(projectId)}`);
+  /** GET /v1/projects/:projectRef — accepts either an id (`j-…`) or key. */
+  getProject(projectRef: ProjectRef): Promise<ProjectRecord> {
+    return this.get(`/v1/projects/${encodeURIComponent(projectRef)}`);
   }
 
-  /** PUT /v1/projects/:projectId */
-  updateProject(projectId: string, request: UpsertProjectRequest): Promise<UpsertProjectResponse> {
-    return this.put(`/v1/projects/${encodeURIComponent(projectId)}`, request);
+  /** PUT /v1/projects/:projectRef — accepts either an id (`j-…`) or key. */
+  updateProject(
+    projectRef: ProjectRef,
+    request: UpsertProjectRequest,
+  ): Promise<UpsertProjectResponse> {
+    return this.put(`/v1/projects/${encodeURIComponent(projectRef)}`, request);
   }
 
-  /** DELETE /v1/projects/:projectId */
-  deleteProject(projectId: string): Promise<UpsertProjectResponse> {
-    return this.del(`/v1/projects/${encodeURIComponent(projectId)}`);
+  /** DELETE /v1/projects/:projectRef — accepts either an id (`j-…`) or key. */
+  deleteProject(projectRef: ProjectRef): Promise<UpsertProjectResponse> {
+    return this.del(`/v1/projects/${encodeURIComponent(projectRef)}`);
   }
 
-  /** GET /v1/projects/:projectId/statuses */
-  getProjectStatuses(projectId: string): Promise<ProjectStatusesResponse> {
-    return this.get(`/v1/projects/${encodeURIComponent(projectId)}/statuses`);
+  /** GET /v1/projects/:projectRef/statuses — accepts either an id (`j-…`) or key. */
+  getProjectStatuses(projectRef: ProjectRef): Promise<ProjectStatusesResponse> {
+    return this.get(`/v1/projects/${encodeURIComponent(projectRef)}/statuses`);
+  }
+
+  /** POST /v1/projects/:projectRef/statuses — add a new status. */
+  createProjectStatus(
+    projectRef: ProjectRef,
+    status: StatusDefinition,
+  ): Promise<UpsertProjectStatusResponse> {
+    return this.post(`/v1/projects/${encodeURIComponent(projectRef)}/statuses`, status);
+  }
+
+  /**
+   * PUT /v1/projects/:projectRef/statuses/:statusKey — update or
+   * rename an existing status. A body whose `key` differs from
+   * `statusKey` is a rename in place.
+   */
+  updateProjectStatus(
+    projectRef: ProjectRef,
+    statusKey: string,
+    status: StatusDefinition,
+  ): Promise<UpsertProjectStatusResponse> {
+    return this.put(
+      `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}`,
+      status,
+    );
+  }
+
+  /**
+   * DELETE /v1/projects/:projectRef/statuses/:statusKey — remove a
+   * status. Fails with 400 if any issue still references the
+   * status.
+   */
+  deleteProjectStatus(
+    projectRef: ProjectRef,
+    statusKey: string,
+  ): Promise<UpsertProjectResponse> {
+    return this.del(
+      `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Analytics — Throughput
+  // ---------------------------------------------------------------------------
+
+  /** GET /v1/analytics/throughput/patches/over_time */
+  getPatchesThroughputOverTime(
+    query: PatchesThroughputQuery,
+  ): Promise<PatchesOverTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/over_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/patches/terminal_mix */
+  getPatchesThroughputTerminalMix(
+    query: PatchesThroughputQuery,
+  ): Promise<PatchesTerminalMixResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/terminal_mix",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/patches/time_to_merge */
+  getPatchesThroughputTimeToMerge(
+    query: PatchesThroughputQuery,
+  ): Promise<PatchesTimeToMergeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/time_to_merge",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/patches/in_flight_over_time */
+  getPatchesThroughputInFlightOverTime(
+    query: PatchesThroughputQuery,
+  ): Promise<PatchesInFlightOverTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/patches/in_flight_over_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/cycle_time */
+  getIssuesThroughputCycleTime(
+    query: IssuesThroughputQuery,
+  ): Promise<IssuesCycleTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/cycle_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/time_in_status_breakdown */
+  getIssuesThroughputTimeInStatusBreakdown(
+    query: IssuesThroughputQuery,
+  ): Promise<IssuesTimeInStatusBreakdownResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/time_in_status_breakdown",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/per_status_distribution */
+  getIssuesThroughputPerStatusDistribution(
+    query: IssuesThroughputQuery,
+  ): Promise<IssuesPerStatusDistributionResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/per_status_distribution",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  /** GET /v1/analytics/throughput/issues/over_time */
+  getIssuesThroughputOverTime(
+    query: IssuesThroughputQuery,
+  ): Promise<IssuesOverTimeResponse> {
+    return this.get(
+      "/v1/analytics/throughput/issues/over_time",
+      query as unknown as Record<string, unknown>,
+    );
   }
 
   // ---------------------------------------------------------------------------

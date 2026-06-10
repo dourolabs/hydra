@@ -17,6 +17,8 @@ function draftWith(overrides: Partial<TriggerDraft> = {}): TriggerDraft {
         ...emptyAction(),
         title: "Daily standup",
         description: "Post the standup thread",
+        projectId: "j-defaul",
+        status: "open",
       },
     ],
     ...overrides,
@@ -107,17 +109,27 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
               ...emptyAction(),
               title: "T",
               description: "D",
+              projectId: "j-defaul",
+              status: "open",
             },
           ],
         }),
         "alice",
       );
       expect(req!.actions).toEqual([
-        { CreateIssue: { type: "task", title: "T", description: "D" } },
+        {
+          CreateIssue: {
+            type: "task",
+            title: "T",
+            description: "D",
+            project_id: "j-defaul",
+            status: "open",
+          },
+        },
       ]);
     });
 
-    it("includes assignee (trimmed), status, and session_settings.repo_name (trimmed) when present", () => {
+    it("includes assignee (trimmed) and session_settings.repo_name (trimmed) when present", () => {
       const req = buildUpsertRequest(
         draftWith({
           actions: [
@@ -126,6 +138,7 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
               title: "T",
               description: "D",
               assignee: "  alice  ",
+              projectId: "j-defaul",
               status: "open",
               repoName: "  acme/widgets  ",
             },
@@ -139,15 +152,16 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
             type: "task",
             title: "T",
             description: "D",
-            assignee: "alice",
+            project_id: "j-defaul",
             status: "open",
+            assignee: "alice",
             session_settings: { repo_name: "acme/widgets" },
           },
         },
       ]);
     });
 
-    it("omits assignee, status, and session_settings when blank/empty", () => {
+    it("omits assignee and session_settings when blank/empty", () => {
       const req = buildUpsertRequest(
         draftWith({
           actions: [
@@ -156,7 +170,8 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
               title: "T",
               description: "D",
               assignee: "   ",
-              status: "",
+              projectId: "j-defaul",
+              status: "open",
               repoName: "   ",
             },
           ],
@@ -164,10 +179,50 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
         "alice",
       );
       const ci = req!.actions[0].CreateIssue;
-      expect(ci).toEqual({ type: "task", title: "T", description: "D" });
+      expect(ci).toEqual({
+        type: "task",
+        title: "T",
+        description: "D",
+        project_id: "j-defaul",
+        status: "open",
+      });
       expect("assignee" in ci).toBe(false);
-      expect("status" in ci).toBe(false);
       expect("session_settings" in ci).toBe(false);
+    });
+
+    it("returns null when any action has an empty project_id or status", () => {
+      expect(
+        buildUpsertRequest(
+          draftWith({
+            actions: [
+              {
+                ...emptyAction(),
+                title: "T",
+                description: "D",
+                projectId: "",
+                status: "open",
+              },
+            ],
+          }),
+          "alice",
+        ),
+      ).toBeNull();
+      expect(
+        buildUpsertRequest(
+          draftWith({
+            actions: [
+              {
+                ...emptyAction(),
+                title: "T",
+                description: "D",
+                projectId: "j-defaul",
+                status: "",
+              },
+            ],
+          }),
+          "alice",
+        ),
+      ).toBeNull();
     });
 
     it("round-trips multiple actions in order", () => {
@@ -179,11 +234,15 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
               title: "First",
               description: "first desc",
               assignee: "alice",
+              projectId: "j-defaul",
+              status: "open",
             },
             {
               ...emptyAction(),
               title: "Second",
               description: "second desc",
+              projectId: "j-defaul",
+              status: "open",
               repoName: "acme/widgets",
             },
           ],
@@ -203,7 +262,15 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
       expect(
         buildUpsertRequest(
           draftWith({
-            actions: [{ ...emptyAction(), title: "", description: "D" }],
+            actions: [
+              {
+                ...emptyAction(),
+                title: "",
+                description: "D",
+                projectId: "j-defaul",
+                status: "open",
+              },
+            ],
           }),
           "alice",
         ),
@@ -211,7 +278,15 @@ describe("buildUpsertRequest (covers buildSchedule)", () => {
       expect(
         buildUpsertRequest(
           draftWith({
-            actions: [{ ...emptyAction(), title: "T", description: "   " }],
+            actions: [
+              {
+                ...emptyAction(),
+                title: "T",
+                description: "   ",
+                projectId: "j-defaul",
+                status: "open",
+              },
+            ],
           }),
           "alice",
         ),
@@ -233,12 +308,21 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
     Cron: { expression: "0 9 * * 1-5", timezone: "UTC" },
   };
 
-  it("hydrates a cron schedule and its timezone", () => {
-    const draft = initialDraftFromExisting(cronSched, true, [
-      {
-        CreateIssue: { type: "task", title: "T", description: "D" },
+  function ci(overrides: Partial<TriggerAction["CreateIssue"]> = {}): TriggerAction {
+    return {
+      CreateIssue: {
+        type: "task",
+        title: "T",
+        description: "D",
+        project_id: "j-defaul",
+        status: "open",
+        ...overrides,
       },
-    ]);
+    };
+  }
+
+  it("hydrates a cron schedule and its timezone", () => {
+    const draft = initialDraftFromExisting(cronSched, true, [ci()]);
     expect(draft.scheduleKind).toBe("cron");
     expect(draft.cronExpression).toBe("0 9 * * 1-5");
     expect(draft.cronTimezone).toBe("UTC");
@@ -250,7 +334,7 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
     const draft = initialDraftFromExisting(
       { Cron: { expression: "* * * * *" } },
       false,
-      [{ CreateIssue: { type: "task", title: "T", description: "D" } }],
+      [ci()],
     );
     expect(draft.cronTimezone).toBe("");
     expect(draft.enabled).toBe(false);
@@ -260,7 +344,7 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
     const draft = initialDraftFromExisting(
       { Once: { at: "2026-06-10T09:00:00Z" } },
       true,
-      [{ CreateIssue: { type: "task", title: "T", description: "D" } }],
+      [ci()],
     );
     expect(draft.scheduleKind).toBe("once");
     expect(draft.onceAt).toBe("2026-06-10T09:00:00Z");
@@ -281,6 +365,7 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
           title: "First",
           description: "first desc",
           assignee: "alice",
+          project_id: "j-defaul",
           status: "open",
           session_settings: { repo_name: "acme/widgets" },
         },
@@ -290,6 +375,8 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
           type: "task",
           title: "Second",
           description: "second desc",
+          project_id: "j-defaul",
+          status: "in-progress",
         },
       },
     ];
@@ -300,6 +387,7 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
       title: "First",
       description: "first desc",
       assignee: "alice",
+      projectId: "j-defaul",
       status: "open",
       repoName: "acme/widgets",
     });
@@ -308,12 +396,13 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
       title: "Second",
       description: "second desc",
       assignee: "",
-      status: "",
+      projectId: "j-defaul",
+      status: "in-progress",
       repoName: "",
     });
   });
 
-  it("normalizes null assignee/status from the wire as empty strings", () => {
+  it("normalizes a null assignee from the wire as an empty string", () => {
     const draft = initialDraftFromExisting(cronSched, true, [
       {
         CreateIssue: {
@@ -321,12 +410,12 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
           title: "T",
           description: "D",
           assignee: null,
-          status: null,
+          project_id: "j-defaul",
+          status: "open",
         },
       },
     ]);
     expect(draft.actions[0].assignee).toBe("");
-    expect(draft.actions[0].status).toBe("");
   });
 
   it("survives a hydrate -> buildUpsertRequest round-trip", () => {
@@ -337,6 +426,7 @@ describe("initialDraftFromExisting (covers draftFromTriggerActions)", () => {
           title: "T",
           description: "D",
           assignee: "alice",
+          project_id: "j-defaul",
           status: "open",
           session_settings: { repo_name: "acme/widgets" },
         },

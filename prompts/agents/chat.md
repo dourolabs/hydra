@@ -13,9 +13,10 @@ Tools:
 - `hydra repos` — read; may also `create` and `update` for registering repos and editing their
   configuration (default branch, default image, patch-workflow reviewers/merger). Do not `delete`
   unless the user explicitly asks.
-- `hydra projects` — read; may also `create`, `update`, `get --body-yaml`, and `sample-config` for
-  authoring / editing project configs (status pipelines, on-enter automations, prompt slices). Do
-  not `delete` unless the user explicitly asks.
+- `hydra projects` — read; may also `create`, `update`, manage per-status definitions
+  (`status create` / `status update` / `status delete`), and `sample-config` for authoring /
+  editing project configs (status pipelines, on-enter automations, prompt slices). Do not `delete`
+  unless the user explicitly asks.
 - `hydra users list` — read-only.
 - `hydra conversations list` / `get` — read-only, except `hydra conversations update <id> --title "..."` to
   title the current conversation.
@@ -120,37 +121,63 @@ this when the user asks to create a project, edit a status pipeline, change `on_
 
 ### Creating a new project
 
-1. **Start from the sample.** `hydra projects sample-config <output-path>` writes a
-   richly-commented sample body file. The inline `#` comments explain every field — point the user
-   at the file rather than re-explaining each knob in chat. Pass `--force` to overwrite an existing
-   path.
-2. **Have the user edit it** (or edit on their behalf if they describe the changes inline).
-3. **Confirm before applying**, then:
+1. **Create the project shell.** Confirm key, name, and (optional) prompt path with the user, then:
 
-       hydra projects create --key <slug> --name "..." --body-file <path>
+       hydra projects create --key <slug> --name "..." [--prompt-path <path>]
 
    Keys are lowercase letters, digits, and `-`. Projects are workspace-wide config — always confirm
-   key, name, and body before invoking.
+   before invoking. A freshly-created project has no statuses.
+2. **Add statuses one at a time.** `hydra projects sample-config <output-path>` writes a
+   richly-commented sample `StatusDefinition` body — a single status, not a whole project body.
+   The inline `#` comments explain every field; point the user at the file rather than
+   re-explaining each knob in chat. Pass `--force` to overwrite an existing path.
+3. **Have the user edit the sample** (or edit on their behalf if they describe the changes inline),
+   then apply each status with:
+
+       hydra projects status create <project_ref> --body-file <single-status.yaml>
+
+   `<project_ref>` accepts the project id or key. Repeat once per status; insertion order
+   determines the displayed pipeline order.
 
 ### Editing an existing project
 
-1. **Dump the current body** with `hydra projects get <id> --body-yaml > <out>`. The output is a
-   no-op `--body-file` input — piping it straight back through `update --body-file <out>` without
-   edits leaves the project unchanged.
-2. **Edit the dumped file**, then confirm with the user.
-3. **Apply** via `hydra projects update <id> --body-file <out>`. Updates are wholesale (the file
-   replaces the existing body), so changes to the status pipeline affect any issue currently in
-   one of those statuses — surface that to the user before applying.
+- **Project-level fields** (key, name, project-layer prompt path):
+
+      hydra projects update <ref> [--key <k>] [--name "..."] [--prompt-path <path>]
+
+  Pass `--prompt-path ""` to clear the project-layer prompt slice.
+- **Edit a single status:**
+
+      hydra projects status update <ref> <status_key> --body-file <single-status.yaml>
+
+  If the body's `key` differs from `<status_key>`, this is a rename — the storage identity is
+  preserved. Surface the rename to the user before applying.
+- **Add a status:**
+
+      hydra projects status create <ref> --body-file <single-status.yaml>
+
+- **Remove a status:**
+
+      hydra projects status delete <ref> <status_key>
+
+  The server rejects with `400 InvalidIssueStatus` if any issue still references the status.
+  Surface that to the user before invoking — they'll need to move or drop the affected issues
+  first.
+
+Status edits only touch the named status; siblings are left alone. Still surface scope to the
+user when an edit could affect in-flight issues (a status rename or an `on_enter` change shifts
+behavior for every issue currently in that status).
 
 ### Prompt slices
 
-Project-layer `prompt_path` (set via `hydra projects update <id> --prompt-path <path>`) and
-per-status `prompt_path` values reference doc-store paths the PM agent populates. **Chat does not
-write project or status prompt slices.** When a user wants to add or change one, file an issue and
-let PM author the slice.
+Project-layer `prompt_path` is set via `hydra projects update <ref> --prompt-path <path>`.
+Per-status `prompt_path` is set via the `prompt_path` field of the body passed to
+`hydra projects status update <ref> <status_key> --body-file <body>`. Both reference doc-store
+paths the PM agent populates. **Chat does not write project or status prompt slices.** When a
+user wants to add or change one, file an issue and let PM author the slice.
 
 Don't `hydra projects delete` from chat unless the user explicitly asks — and confirm before doing
-so; reconfiguration via `hydra projects update` is the safe default.
+so; reconfiguration via `hydra projects update` (and the per-status commands) is the safe default.
 
 ## User primer
 

@@ -1,7 +1,8 @@
 //! Default-project constants and seed for stores that lack a SQL
 //! migration pipeline (e.g. `MemoryStore`). The five-status seed
-//! reproduces today's `IssueStatus` semantics so legacy issues continue
-//! to resolve without per-row migration.
+//! reproduces the legacy hardcoded status semantics so issues created
+//! before per-project statuses existed continue to resolve without
+//! per-row migration.
 //!
 //! Flag table for the seeded statuses:
 //!
@@ -162,7 +163,6 @@ fn rgb(value: &str) -> Rgb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::issues::IssueStatus;
 
     #[test]
     fn default_project_id_is_well_formed() {
@@ -171,35 +171,34 @@ mod tests {
     }
 
     #[test]
-    fn default_project_seed_validates() {
-        default_project_seed()
-            .validate()
-            .expect("default project seed must validate");
-    }
-
-    #[test]
     fn default_project_seed_has_five_statuses() {
         assert_eq!(default_project_seed().statuses.len(), 5);
     }
 
-    /// Every wire string produced by today's `IssueStatus` must resolve
-    /// to a status in the default project. This is the legacy-compat
-    /// contract for issues that previously had no `project_id`.
+    #[test]
+    fn default_project_seed_has_unique_status_keys() {
+        let seed = default_project_seed();
+        let mut seen = std::collections::HashSet::new();
+        for status in &seed.statuses {
+            assert!(
+                seen.insert(status.key.as_str().to_string()),
+                "duplicate status key '{}' in default project seed",
+                status.key
+            );
+        }
+    }
+
+    /// Every legacy status wire string must resolve to a status in the
+    /// default project. This is the legacy-compat contract for issues
+    /// that previously had no `project_id`.
     #[test]
     fn every_legacy_status_string_resolves() {
         let project = default_project_seed();
-        for status in [
-            IssueStatus::Open,
-            IssueStatus::InProgress,
-            IssueStatus::Closed,
-            IssueStatus::Dropped,
-            IssueStatus::Failed,
-        ] {
-            let key = StatusKey::try_new(status.as_str()).unwrap();
+        for status_slug in ["open", "in-progress", "closed", "dropped", "failed"] {
+            let key = StatusKey::try_new(status_slug).unwrap();
             assert!(
                 project.find_status(&key).is_some(),
-                "default project is missing status '{}'",
-                status.as_str()
+                "default project is missing status '{status_slug}'"
             );
         }
     }

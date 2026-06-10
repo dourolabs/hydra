@@ -1,6 +1,4 @@
 #[cfg(test)]
-use crate::domain::issues::IssueStatus;
-#[cfg(test)]
 use crate::domain::issues::{IssueDependency, IssueType};
 #[cfg(test)]
 use crate::domain::users::Username;
@@ -22,6 +20,8 @@ use hydra_common::api::v1 as api;
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::projects::StatusKey;
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
+#[cfg(test)]
+use hydra_common::test_utils::status::status;
 use hydra_common::{ConversationId, IssueId, SessionId, VersionNumber};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
@@ -657,7 +657,7 @@ mod tests {
     fn issue_with_type(
         issue_type: IssueType,
         description: &str,
-        status: IssueStatus,
+        status: StatusKey,
         assignee: Option<&str>,
         dependencies: Vec<IssueDependency>,
         repo_name: &RepoName,
@@ -668,7 +668,7 @@ mod tests {
             description.to_string(),
             default_user(),
             String::new(),
-            status.into(),
+            status,
             crate::domain::projects::default_project_id(),
             assignee.map(test_agent_principal),
             Some(session_settings(repo_name)),
@@ -682,7 +682,7 @@ mod tests {
 
     fn issue(
         description: &str,
-        status: IssueStatus,
+        status: StatusKey,
         assignee: Option<&str>,
         dependencies: Vec<IssueDependency>,
         repo_name: &RepoName,
@@ -697,14 +697,14 @@ mod tests {
         )
     }
 
-    fn issue_without_repo(description: &str, status: IssueStatus, assignee: Option<&str>) -> Issue {
+    fn issue_without_repo(description: &str, status: StatusKey, assignee: Option<&str>) -> Issue {
         Issue {
             issue_type: IssueType::Task,
             title: String::new(),
             description: description.to_string(),
             creator: default_user(),
             progress: String::new(),
-            status: status.into(),
+            status,
             project_id: crate::domain::projects::default_project_id(),
             assignee: assignee.map(test_agent_principal),
             session_settings: SessionSettings::default(),
@@ -751,7 +751,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Fix login page",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -765,7 +765,7 @@ mod tests {
             .add_issue(
                 issue(
                     "In-progress but ready",
-                    IssueStatus::InProgress,
+                    status("in-progress"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -779,7 +779,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Ignore closed",
-                    IssueStatus::Closed,
+                    status("closed"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -847,7 +847,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Already queued",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -912,7 +912,7 @@ mod tests {
                     description: "Review patch".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
@@ -972,7 +972,7 @@ mod tests {
                 issue_with_type(
                     IssueType::Task,
                     "Task",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("pm"),
                     vec![],
                     &repo_name,
@@ -1003,7 +1003,7 @@ mod tests {
         let (issue_id, _) = handles
             .store
             .add_issue(
-                issue_without_repo("Needs assignment", IssueStatus::Open, None),
+                issue_without_repo("Needs assignment", status("open"), None),
                 &ActorRef::test(),
             )
             .await?;
@@ -1040,7 +1040,7 @@ mod tests {
         let (issue_id, _) = handles
             .store
             .add_issue(
-                issue_without_repo("Needs assignment", IssueStatus::Open, None),
+                issue_without_repo("Needs assignment", status("open"), None),
                 &ActorRef::test(),
             )
             .await?;
@@ -1062,7 +1062,7 @@ mod tests {
         let (blocker_id, _) = handles
             .store
             .add_issue(
-                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                issue("Blocker", status("open"), None, vec![], &repo_name),
                 &ActorRef::test(),
             )
             .await?;
@@ -1072,7 +1072,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Blocked issue",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![IssueDependency::new(
                         IssueDependencyType::BlockedOn,
@@ -1103,7 +1103,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Parent issue",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1139,7 +1139,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Child issue",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![IssueDependency::new(
                         IssueDependencyType::ChildOf,
@@ -1174,7 +1174,7 @@ mod tests {
                     description: "Missing repo".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
@@ -1208,7 +1208,7 @@ mod tests {
                     description: "Missing image".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
@@ -1308,7 +1308,7 @@ mod tests {
                     description: "Override retries".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
@@ -1366,7 +1366,7 @@ mod tests {
                     description: "Already running".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
@@ -1428,7 +1428,7 @@ mod tests {
                     description: "First issue".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
@@ -1451,7 +1451,7 @@ mod tests {
                     description: "Second issue".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
@@ -1516,7 +1516,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Retry limited",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1562,7 +1562,7 @@ mod tests {
             .add_issue(
                 issue(
                     "State change reset",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1592,7 +1592,7 @@ mod tests {
 
         let issue_ver = handles.store.get_issue(&issue_id, false).await?;
         let mut issue_item = issue_ver.item;
-        issue_item.status = IssueStatus::InProgress.into();
+        issue_item.status = status("in-progress");
         handles
             .store
             .update_issue(&issue_id, issue_item, &ActorRef::test())
@@ -1619,7 +1619,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Parent with children progress",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1654,7 +1654,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Child issue",
-                    IssueStatus::Closed,
+                    status("closed"),
                     Some("agent-b"),
                     vec![IssueDependency::new(
                         IssueDependencyType::ChildOf,
@@ -1704,7 +1704,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Parent with child update",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1719,7 +1719,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Child issue",
-                    IssueStatus::Closed,
+                    status("closed"),
                     Some("agent-a"),
                     vec![IssueDependency::new(
                         IssueDependencyType::ChildOf,
@@ -1781,7 +1781,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Parent no progress",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1797,7 +1797,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Child issue",
-                    IssueStatus::Closed,
+                    status("closed"),
                     Some("agent-b"),
                     vec![IssueDependency::new(
                         IssueDependencyType::ChildOf,
@@ -1861,7 +1861,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Dropped issue",
-                    IssueStatus::Dropped,
+                    status("dropped"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1889,7 +1889,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Failed issue",
-                    IssueStatus::Failed,
+                    status("failed"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -1928,7 +1928,7 @@ mod tests {
                     description: "Assigned".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
@@ -2005,7 +2005,7 @@ mod tests {
                     description: "Issue with secrets".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
@@ -2060,7 +2060,7 @@ mod tests {
                     description: "Issue without secrets".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings {
@@ -2109,7 +2109,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Persistent counter",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2172,7 +2172,7 @@ mod tests {
         // Create an issue with issue-level secrets.
         let mut issue_with_secrets = issue(
             "Issue with secrets",
-            IssueStatus::Open,
+            status("open"),
             Some("agent-a"),
             vec![],
             &repo_name,
@@ -2230,7 +2230,7 @@ mod tests {
             .add_issue(
                 issue(
                     "No issue secrets",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2272,7 +2272,7 @@ mod tests {
             .add_issue(
                 issue(
                     "No secrets anywhere",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2366,7 +2366,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Test MCP config",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2403,7 +2403,7 @@ mod tests {
             .add_issue(
                 issue(
                     "No MCP config",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2434,7 +2434,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Missing MCP doc",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2476,7 +2476,7 @@ mod tests {
         let (blocker_id, _) = handles
             .store
             .add_issue(
-                issue("Blocker", IssueStatus::Open, None, vec![], &repo_name),
+                issue("Blocker", status("open"), None, vec![], &repo_name),
                 &ActorRef::test(),
             )
             .await?;
@@ -2487,7 +2487,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Parent issue",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2528,7 +2528,7 @@ mod tests {
                     description: "Needs feedback".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Closed.into(),
+                    status: status("closed"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
@@ -2602,7 +2602,7 @@ mod tests {
                     description: "Dropped with feedback".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Dropped.into(),
+                    status: status("dropped"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: session_settings(&repo_name),
@@ -2645,7 +2645,7 @@ mod tests {
                     description: "Feedback attempt reset".to_string(),
                     creator: default_user(),
                     progress: String::new(),
-                    status: IssueStatus::Open.into(),
+                    status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
                     session_settings: SessionSettings::default(),
@@ -2721,7 +2721,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Parity test (agent_queue path)",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2748,7 +2748,7 @@ mod tests {
             .add_issue(
                 issue(
                     "Parity test (HTTP path)",
-                    IssueStatus::Open,
+                    status("open"),
                     Some("agent-a"),
                     vec![],
                     &repo_name,
@@ -2902,7 +2902,7 @@ mod tests {
         let project = ApiProject::new(
             ProjectKey::try_new("engineering-v2").unwrap(),
             "Engineering v2".to_string(),
-            vec![interactive_def, backlog_def],
+            Vec::new(),
             hydra_common::api::v1::users::Username::from("alice"),
             false,
             0.0,
@@ -2912,6 +2912,15 @@ mod tests {
             .add_project(project, &ActorRef::test())
             .await
             .unwrap();
+        // Post-cutover, statuses are added independently via the
+        // per-status path.
+        for def in [interactive_def, backlog_def] {
+            handles
+                .store
+                .add_status(&project_id, def, &ActorRef::test())
+                .await
+                .unwrap();
+        }
         (project_id, interactive_key, backlog_key)
     }
 

@@ -7,79 +7,6 @@ use hydra_common::{IssueId, PatchId, ProjectId, RepoName};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum IssueStatus {
-    #[default]
-    Open,
-    InProgress,
-    Closed,
-    Dropped,
-    Failed,
-}
-
-impl IssueStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            IssueStatus::Open => "open",
-            IssueStatus::InProgress => "in-progress",
-            IssueStatus::Closed => "closed",
-            IssueStatus::Dropped => "dropped",
-            IssueStatus::Failed => "failed",
-        }
-    }
-
-    /// Terminal states: Closed, Dropped, Failed.
-    pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            IssueStatus::Closed | IssueStatus::Dropped | IssueStatus::Failed
-        )
-    }
-
-    /// Active states: Open, InProgress.
-    pub fn is_active(&self) -> bool {
-        matches!(self, IssueStatus::Open | IssueStatus::InProgress)
-    }
-
-    /// Returns the [`StatusKey`] equivalent of this legacy enum variant.
-    /// Always succeeds: the five legacy strings are well-formed
-    /// [`StatusKey`]s by construction.
-    pub fn as_status_key(&self) -> StatusKey {
-        StatusKey::try_new(self.as_str()).expect("legacy status strings are well-formed StatusKeys")
-    }
-}
-
-impl fmt::Display for IssueStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for IssueStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = s.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "open" => Ok(IssueStatus::Open),
-            "in-progress" | "inprogress" | "in_progress" => Ok(IssueStatus::InProgress),
-            "closed" => Ok(IssueStatus::Closed),
-            "dropped" => Ok(IssueStatus::Dropped),
-            // Backward-compat: old "rejected" wire values deserialize to Dropped; remove once the 2026-05-08 migration has soaked.
-            "rejected" => Ok(IssueStatus::Dropped),
-            "failed" => Ok(IssueStatus::Failed),
-            other => Err(format!("unsupported issue status '{other}'")),
-        }
-    }
-}
-
-impl From<IssueStatus> for StatusKey {
-    fn from(value: IssueStatus) -> Self {
-        value.as_status_key()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueType {
@@ -216,7 +143,7 @@ pub struct Issue {
 }
 
 fn default_status_key() -> StatusKey {
-    IssueStatus::Open.as_status_key()
+    StatusKey::try_new("open").expect("\"open\" is a well-formed StatusKey")
 }
 
 impl Issue {
@@ -316,31 +243,6 @@ impl SessionSettings {
         }
         if self.secrets.is_none() {
             self.secrets = other.secrets.take();
-        }
-    }
-}
-
-impl From<api::issues::IssueStatus> for IssueStatus {
-    fn from(value: api::issues::IssueStatus) -> Self {
-        match value {
-            api::issues::IssueStatus::Open => IssueStatus::Open,
-            api::issues::IssueStatus::InProgress => IssueStatus::InProgress,
-            api::issues::IssueStatus::Closed => IssueStatus::Closed,
-            api::issues::IssueStatus::Dropped => IssueStatus::Dropped,
-            api::issues::IssueStatus::Failed => IssueStatus::Failed,
-            _ => unreachable!("unsupported IssueStatus variant"),
-        }
-    }
-}
-
-impl From<IssueStatus> for api::issues::IssueStatus {
-    fn from(value: IssueStatus) -> Self {
-        match value {
-            IssueStatus::Open => api::issues::IssueStatus::Open,
-            IssueStatus::InProgress => api::issues::IssueStatus::InProgress,
-            IssueStatus::Closed => api::issues::IssueStatus::Closed,
-            IssueStatus::Dropped => api::issues::IssueStatus::Dropped,
-            IssueStatus::Failed => api::issues::IssueStatus::Failed,
         }
     }
 }

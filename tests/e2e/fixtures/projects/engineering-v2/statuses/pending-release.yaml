@@ -1,0 +1,6 @@
+key: pending-release
+label: Pending release
+color: "#2ecc71"
+unblocks_parents: true
+unblocks_dependents: true
+cascades_to_children: false
