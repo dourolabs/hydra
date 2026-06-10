@@ -515,7 +515,7 @@ mod tests {
             payload,
         };
 
-        let automation = KillSessionsOnEnterAutomation;
+        let automation = TeardownIssueWorkAutomation;
         let ctx = AutomationContext {
             event: &event,
             app_state: &handles.state,
