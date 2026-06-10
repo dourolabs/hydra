@@ -36,7 +36,7 @@
 }
 
 .done {
-  color: var(--fg-0);
+  color: var(--acc-bright);
 }
 
 .num {
@@ -47,25 +47,9 @@
   color: var(--fg-2);
 }
 
-.flowpill[data-phase="blocked"] {
-  border-color: color-mix(in oklch, var(--s-blocked) 36%, var(--line));
-}
 .flowpill[data-phase="blocked"] .num {
   color: var(--s-blocked);
 }
 .flowpill[data-phase="blocked"] .total {
   color: color-mix(in oklch, var(--s-blocked) 68%, var(--fg-2));
-}
-
-.flowpill[data-phase="progress"] .done {
-  color: var(--acc-bright);
-}
-
-.flowpill[data-phase="done"] {
-  border-color: color-mix(in oklch, var(--s-closed) 36%, var(--line));
-  background: color-mix(in oklch, var(--s-closed) 12%, transparent);
-}
-.flowpill[data-phase="done"] .done,
-.flowpill[data-phase="done"] .total {
-  color: var(--s-closed);
 }
