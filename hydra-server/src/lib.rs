@@ -276,6 +276,22 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             post(routes::patches::merge_check),
         )
         .route(
+            "/v1/analytics/throughput/patches/over_time",
+            get(routes::analytics::patches_over_time),
+        )
+        .route(
+            "/v1/analytics/throughput/patches/terminal_mix",
+            get(routes::analytics::patches_terminal_mix),
+        )
+        .route(
+            "/v1/analytics/throughput/patches/time_to_merge",
+            get(routes::analytics::patches_time_to_merge),
+        )
+        .route(
+            "/v1/analytics/throughput/patches/in_flight_over_time",
+            get(routes::analytics::patches_in_flight_over_time),
+        )
+        .route(
             "/v1/documents",
             get(routes::documents::list_documents).post(routes::documents::create_document),
         )
