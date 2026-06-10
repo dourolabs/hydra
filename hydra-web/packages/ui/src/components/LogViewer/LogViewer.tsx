@@ -146,7 +146,7 @@ export function LogViewer({
         rowHeight={ROW_HEIGHT}
         rowProps={{ getHtml, lineNumberWidth }}
         overscanCount={50}
-        style={{ height: "100%" }}
+        className={styles.list}
       />
     </div>
   );
