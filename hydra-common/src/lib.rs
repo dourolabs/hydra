@@ -28,9 +28,9 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, conversations, documents, events, form, issues, labels, login, logs, merge_check,
-    merge_queues, patches, projects, relay, repositories, secrets, session_status, sessions,
-    task_status, triggers, users, version, whoami,
+    agents, analytics, conversations, documents, events, form, issues, labels, login, logs,
+    merge_check, merge_queues, patches, projects, relay, repositories, secrets, session_status,
+    sessions, task_status, triggers, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -119,6 +119,21 @@ mod ts_export {
         crate::agents::AgentResponse::export_all(&cfg).expect("AgentResponse");
         crate::agents::DeleteAgentResponse::export_all(&cfg).expect("DeleteAgentResponse");
         crate::agents::ListAgentsResponse::export_all(&cfg).expect("ListAgentsResponse");
+
+        // API v1: analytics
+        crate::analytics::BucketGranularity::export_all(&cfg).expect("BucketGranularity");
+        crate::analytics::PatchesThroughputQuery::export_all(&cfg).expect("PatchesThroughputQuery");
+        crate::analytics::PatchOverTimeBucket::export_all(&cfg).expect("PatchOverTimeBucket");
+        crate::analytics::PatchesOverTimeResponse::export_all(&cfg)
+            .expect("PatchesOverTimeResponse");
+        crate::analytics::PatchesTerminalMixResponse::export_all(&cfg)
+            .expect("PatchesTerminalMixResponse");
+        crate::analytics::TimeToMergeBin::export_all(&cfg).expect("TimeToMergeBin");
+        crate::analytics::PatchesTimeToMergeResponse::export_all(&cfg)
+            .expect("PatchesTimeToMergeResponse");
+        crate::analytics::PatchInFlightBucket::export_all(&cfg).expect("PatchInFlightBucket");
+        crate::analytics::PatchesInFlightOverTimeResponse::export_all(&cfg)
+            .expect("PatchesInFlightOverTimeResponse");
 
         // API v1: documents
         crate::documents::Document::export_all(&cfg).expect("Document");
