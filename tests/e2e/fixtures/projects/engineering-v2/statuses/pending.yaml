@@ -1,6 +1,0 @@
-key: pending
-label: Pending
-color: "#f39c12"
-unblocks_parents: false
-unblocks_dependents: false
-cascades_to_children: false

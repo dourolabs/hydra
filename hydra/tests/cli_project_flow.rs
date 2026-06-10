@@ -4,41 +4,6 @@ use anyhow::Result;
 use hydra_common::api::v1::projects::{
     ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
 };
-use std::io::Write;
-use tempfile::NamedTempFile;
-
-fn write_body_file(body: &str) -> NamedTempFile {
-    let mut file = NamedTempFile::new().expect("create body file");
-    file.write_all(body.as_bytes()).expect("write body file");
-    file
-}
-
-const INBOX_BODY: &str = r##"{
-    "key": "inbox",
-    "label": "Inbox",
-    "color": "#aabbcc",
-    "unblocks_parents": false,
-    "unblocks_dependents": false,
-    "cascades_to_children": false
-}"##;
-
-const BACKLOG_BODY: &str = r##"{
-    "key": "backlog",
-    "label": "Backlog",
-    "color": "#1199ee",
-    "unblocks_parents": false,
-    "unblocks_dependents": false,
-    "cascades_to_children": false
-}"##;
-
-const RELEASED_BODY: &str = r##"{
-    "key": "released",
-    "label": "Released",
-    "color": "#22aa44",
-    "unblocks_parents": true,
-    "unblocks_dependents": true,
-    "cascades_to_children": false
-}"##;
 
 #[tokio::test]
 async fn cli_projects_crud_round_trip() -> Result<()> {
@@ -47,9 +12,6 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
         .build()
         .await?;
     let user = harness.default_user();
-    let inbox_file = write_body_file(INBOX_BODY);
-    let backlog_file = write_body_file(BACKLOG_BODY);
-    let released_file = write_body_file(RELEASED_BODY);
 
     // Create a project via the CLI (project-level fields only post-cutover).
     user.cli(&[
@@ -73,18 +35,48 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
         .expect("engineering project listed");
     let project_id = listed.project_id.clone();
 
-    // Add statuses one at a time via `projects status create --body-file`.
-    for body in [&inbox_file, &backlog_file, &released_file] {
-        user.cli(&[
-            "projects",
-            "status",
-            "create",
-            project_id.as_ref(),
-            "--body-file",
-            body.path().to_str().expect("body path utf-8"),
-        ])
-        .await?;
-    }
+    // Add statuses one at a time via `projects status create` direct flags.
+    user.cli(&[
+        "projects",
+        "status",
+        "create",
+        project_id.as_ref(),
+        "--key",
+        "inbox",
+        "--label",
+        "Inbox",
+        "--color",
+        "#aabbcc",
+    ])
+    .await?;
+    user.cli(&[
+        "projects",
+        "status",
+        "create",
+        project_id.as_ref(),
+        "--key",
+        "backlog",
+        "--label",
+        "Backlog",
+        "--color",
+        "#1199ee",
+    ])
+    .await?;
+    user.cli(&[
+        "projects",
+        "status",
+        "create",
+        project_id.as_ref(),
+        "--key",
+        "released",
+        "--label",
+        "Released",
+        "--color",
+        "#22aa44",
+        "--unblocks-parents",
+        "--unblocks-dependents",
+    ])
+    .await?;
 
     // Get by id round-trips the body.
     let project_ref = ProjectRef::Id(project_id.clone());
