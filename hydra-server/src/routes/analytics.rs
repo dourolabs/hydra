@@ -198,7 +198,14 @@ pub async fn issues_over_time(
     let projects = resolve_projects_for_histories(state.store(), &histories)
         .await
         .map_err(map_store_error)?;
-    let resp = compute_issues_over_time(&histories, &projects, query.from, query.to, bucket);
+    let resp = compute_issues_over_time(
+        &histories,
+        &projects,
+        query.from,
+        query.to,
+        bucket,
+        &query.status_keys,
+    );
     Ok(Json(resp))
 }
 
@@ -229,6 +236,7 @@ pub async fn issues_time_in_status_breakdown(
         &project,
         query.from,
         query.to,
+        &query.status_keys,
     );
     Ok(Json(resp))
 }
@@ -260,6 +268,7 @@ pub async fn issues_per_status_distribution(
         &project,
         query.from,
         query.to,
+        &query.status_keys,
     );
     Ok(Json(resp))
 }

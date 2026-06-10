@@ -518,6 +518,25 @@ pub async fn resolve_projects_for_histories(
     Ok(cache)
 }
 
+/// Returns `true` iff `history` should be included in the cohort under
+/// the supplied `status_keys` include-filter. Empty `status_keys`
+/// imposes no filter (all issues pass). Otherwise the issue must have
+/// reached a terminal status (per the project's definitions) whose key
+/// is in the set.
+fn issue_passes_status_filter(
+    history: &IssueHistory,
+    project: &Project,
+    status_keys: &[StatusKey],
+) -> bool {
+    if status_keys.is_empty() {
+        return true;
+    }
+    history
+        .first_terminal(project)
+        .map(|(def, _)| status_keys.contains(&def.key))
+        .unwrap_or(false)
+}
+
 /// Compute `issues/cycle_time`: histogram of `created_at → terminal_at`
 /// for issues that reached a terminal status (per their *own* project's
 /// status definitions) within `[from, to)`.
@@ -537,13 +556,13 @@ pub fn compute_issues_cycle_time(
         let Some(project) = projects.get(history.project_id()) else {
             continue;
         };
-        let Some((status_def, terminal_at)) = history.first_terminal(project) else {
+        let Some((_, terminal_at)) = history.first_terminal(project) else {
             continue;
         };
         if terminal_at < from || terminal_at >= to {
             continue;
         }
-        if !status_keys.is_empty() && !status_keys.contains(&status_def.key) {
+        if !issue_passes_status_filter(history, project, status_keys) {
             continue;
         }
         let created = history.created_at();
@@ -562,12 +581,19 @@ pub fn compute_issues_cycle_time(
 /// Compute `issues/over_time`: per-bucket counts of issues created and
 /// of issues that reached terminal status (each per the issue's own
 /// project's status definitions).
+///
+/// `status_keys`: when populated, gates only the `reached_terminal`
+/// increment on the issue's terminal-status key being in the set.
+/// `created` counts remain unfiltered — an issue's `created_at`
+/// predates any terminal flip, so filtering creation on a future
+/// status would surprise callers.
 pub fn compute_issues_over_time(
     histories: &[IssueHistory],
     projects: &HashMap<ProjectId, Project>,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     bucket: BucketGranularity,
+    status_keys: &[StatusKey],
 ) -> IssuesOverTimeResponse {
     let starts = bucket_starts(from, to, bucket);
     if starts.is_empty() {
@@ -600,6 +626,9 @@ pub fn compute_issues_over_time(
             continue;
         };
         if let Some((_, terminal_at)) = history.first_terminal(project) {
+            if !issue_passes_status_filter(history, project, status_keys) {
+                continue;
+            }
             if let Some(idx) = bucket_for(terminal_at) {
                 buckets[idx].reached_terminal += 1;
             }
@@ -617,12 +646,17 @@ pub fn compute_issues_over_time(
 /// Cohort = issues whose terminal-status flip falls inside `[from, to)`.
 /// `histories` is assumed to already be scoped to `project_id` — the
 /// route handler enforces `project_id` is required for this endpoint.
+///
+/// `status_keys`: when populated, excludes issues whose terminal status
+/// key isn't in the set (include-form filter). Issues that never
+/// reached terminal continue to be excluded regardless.
 pub fn compute_issues_time_in_status_breakdown(
     histories: &[IssueHistory],
     project_id: &ProjectId,
     project: &Project,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
+    status_keys: &[StatusKey],
 ) -> IssuesTimeInStatusBreakdownResponse {
     let mut total_per_status: HashMap<StatusKey, u64> = HashMap::new();
     let mut cohort_size: u64 = 0;
@@ -635,6 +669,9 @@ pub fn compute_issues_time_in_status_breakdown(
             continue;
         };
         if terminal_at < from || terminal_at >= to {
+            continue;
+        }
+        if !issue_passes_status_filter(history, project, status_keys) {
             continue;
         }
         cohort_size += 1;
@@ -674,16 +711,26 @@ pub fn compute_issues_time_in_status_breakdown(
 /// `(issue, status)` dwell-segment that *ended* inside `[from, to)`.
 /// An issue still sitting in a status when the window closes does not
 /// contribute.
+///
+/// `status_keys`: when populated, only segments from issues that
+/// reached a terminal status whose key is in the set contribute samples
+/// (issues that never reached terminal are excluded). When empty, all
+/// issues contribute their ended segments — including those that never
+/// reached terminal — matching the unfiltered baseline.
 pub fn compute_issues_per_status_distribution(
     histories: &[IssueHistory],
     project_id: &ProjectId,
     project: &Project,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
+    status_keys: &[StatusKey],
 ) -> IssuesPerStatusDistributionResponse {
     let mut samples_per_status: HashMap<StatusKey, Vec<u64>> = HashMap::new();
     for history in histories {
         if history.project_id() != project_id {
+            continue;
+        }
+        if !issue_passes_status_filter(history, project, status_keys) {
             continue;
         }
         let versions = &history.versions;
@@ -1565,7 +1612,7 @@ mod tests {
         let histories = vec![issue_history(i1), issue_history(i2)];
         let projects = projects_map_default();
         let resp =
-            compute_issues_over_time(&histories, &projects, from, to, BucketGranularity::Day);
+            compute_issues_over_time(&histories, &projects, from, to, BucketGranularity::Day, &[]);
         assert_eq!(resp.buckets.len(), 3);
         assert_eq!(resp.buckets[0].bucket_start, dt("2026-05-10T00:00:00Z"));
         assert_eq!(resp.buckets[0].created, 1);
@@ -1604,6 +1651,7 @@ mod tests {
             &project,
             dt("2026-05-10T00:00:00Z"),
             dt("2026-05-15T00:00:00Z"),
+            &[],
         );
         assert_eq!(resp.issue_count, 1);
         let open_segment = resp
@@ -1663,6 +1711,7 @@ mod tests {
             &project,
             dt("2026-05-10T00:00:00Z"),
             dt("2026-05-20T00:00:00Z"),
+            &[],
         );
         assert_eq!(resp.issue_count, 1);
         let open_seg = resp
@@ -1707,6 +1756,7 @@ mod tests {
             &project,
             dt("2026-05-10T00:00:00Z"),
             dt("2026-05-13T00:00:00Z"),
+            &[],
         );
         assert_eq!(resp.issue_count, 1);
     }
@@ -1747,6 +1797,7 @@ mod tests {
             &project,
             dt("2026-05-10T00:00:00Z"),
             dt("2026-05-15T00:00:00Z"),
+            &[],
         );
         let open_dist = resp
             .statuses
@@ -1770,6 +1821,181 @@ mod tests {
             .expect("closed");
         assert_eq!(closed_dist.sample_count, 0);
         assert!(closed_dist.median_seconds.is_none());
+    }
+
+    #[test]
+    fn over_time_status_keys_include_filter_drops_unmatched_terminal_increment() {
+        let from = dt("2026-05-10T00:00:00Z");
+        let to = dt("2026-05-13T00:00:00Z");
+        // Issue 1: closed in window (matches if status_keys=[closed]).
+        let i1 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "alice"),
+                1,
+                dt("2026-05-10T08:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("closed", "alice"),
+                2,
+                dt("2026-05-11T08:00:00Z"),
+            ),
+        ];
+        // Issue 2: dropped in window (excluded if status_keys=[closed]).
+        let i2 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "bob"),
+                1,
+                dt("2026-05-10T08:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("dropped", "bob"),
+                2,
+                dt("2026-05-12T08:00:00Z"),
+            ),
+        ];
+        let histories = vec![issue_history(i1), issue_history(i2)];
+        let projects = projects_map_default();
+        let resp = compute_issues_over_time(
+            &histories,
+            &projects,
+            from,
+            to,
+            BucketGranularity::Day,
+            &[skey("closed")],
+        );
+        // Both issues created within window — created counts unfiltered.
+        let total_created: u64 = resp.buckets.iter().map(|b| b.created).sum();
+        assert_eq!(total_created, 2);
+        // Only the closed-terminal issue contributes reached_terminal.
+        let total_terminal: u64 = resp.buckets.iter().map(|b| b.reached_terminal).sum();
+        assert_eq!(total_terminal, 1);
+        // The increment lands in the day-1 bucket (the closed flip).
+        assert_eq!(resp.buckets[1].reached_terminal, 1);
+        assert_eq!(resp.buckets[2].reached_terminal, 0);
+        // Without the filter, both terminals count.
+        let resp_no_filter =
+            compute_issues_over_time(&histories, &projects, from, to, BucketGranularity::Day, &[]);
+        let total_terminal_no_filter: u64 = resp_no_filter
+            .buckets
+            .iter()
+            .map(|b| b.reached_terminal)
+            .sum();
+        assert_eq!(total_terminal_no_filter, 2);
+    }
+
+    #[test]
+    fn time_in_status_breakdown_status_keys_include_filter_drops_unmatched_cohort() {
+        // Issue 1: closed (matches if status_keys=[closed]).
+        let i1 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "alice"),
+                1,
+                dt("2026-05-10T00:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("closed", "alice"),
+                2,
+                dt("2026-05-11T00:00:00Z"),
+            ),
+        ];
+        // Issue 2: dropped (excluded if status_keys=[closed]).
+        let i2 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "bob"),
+                1,
+                dt("2026-05-10T00:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("dropped", "bob"),
+                2,
+                dt("2026-05-11T00:00:00Z"),
+            ),
+        ];
+        let histories = vec![issue_history(i1), issue_history(i2)];
+        let project = default_project_seed();
+        let resp = compute_issues_time_in_status_breakdown(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[skey("closed")],
+        );
+        assert_eq!(resp.issue_count, 1);
+        // Without the filter, both issues are in the cohort.
+        let resp_no_filter = compute_issues_time_in_status_breakdown(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        assert_eq!(resp_no_filter.issue_count, 2);
+    }
+
+    #[test]
+    fn per_status_distribution_status_keys_include_filter_drops_unmatched_terminals() {
+        // Issue 1: open for 1d, then closed in window.
+        let i1 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "alice"),
+                1,
+                dt("2026-05-10T00:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("closed", "alice"),
+                2,
+                dt("2026-05-11T00:00:00Z"),
+            ),
+        ];
+        // Issue 2: open for 2d, then dropped in window — excluded when
+        // status_keys=[closed]. Its `open` segment would otherwise show.
+        let i2 = vec![
+            issue_versioned(
+                issue_in_default_project("open", "bob"),
+                1,
+                dt("2026-05-10T00:00:00Z"),
+            ),
+            issue_versioned(
+                issue_in_default_project("dropped", "bob"),
+                2,
+                dt("2026-05-12T00:00:00Z"),
+            ),
+        ];
+        let histories = vec![issue_history(i1), issue_history(i2)];
+        let project = default_project_seed();
+        let resp = compute_issues_per_status_distribution(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[skey("closed")],
+        );
+        let open_dist = resp
+            .statuses
+            .iter()
+            .find(|s| s.status_key == skey("open"))
+            .expect("open");
+        // Only the closed-terminal issue's 1-day open segment counts.
+        assert_eq!(open_dist.sample_count, 1);
+        assert_eq!(open_dist.median_seconds, Some(86_400));
+        // Without the filter, both issues' open segments contribute.
+        let resp_no_filter = compute_issues_per_status_distribution(
+            &histories,
+            &default_project_id(),
+            &project,
+            dt("2026-05-10T00:00:00Z"),
+            dt("2026-05-13T00:00:00Z"),
+            &[],
+        );
+        let open_dist_no_filter = resp_no_filter
+            .statuses
+            .iter()
+            .find(|s| s.status_key == skey("open"))
+            .expect("open");
+        assert_eq!(open_dist_no_filter.sample_count, 2);
     }
 
     // ----- fetch / status-set evolution -----
