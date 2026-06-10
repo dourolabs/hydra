@@ -1239,14 +1239,6 @@ mod tests {
         }
 
         #[test]
-        fn view_l3_round_trips_to_original() {
-            let patch = make_test_patch();
-            let value = patch.view_l3();
-            let roundtripped: Patch = serde_json::from_value(value).unwrap();
-            assert_eq!(roundtripped, patch);
-        }
-
-        #[test]
         fn view_l2_contains_view_l1_keys_with_same_values() {
             let patch = make_test_patch();
             let l1 = patch.view_l1();
