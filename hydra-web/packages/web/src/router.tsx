@@ -12,8 +12,7 @@ export const router = createBrowserRouter([
   {
     path: "/login",
     hydrateFallbackElement,
-    lazy: () =>
-      import("./pages/LoginPage").then((m) => ({ Component: m.LoginPage })),
+    lazy: () => import("./pages/LoginPage").then((m) => ({ Component: m.LoginPage })),
   },
   {
     path: "/",
@@ -218,6 +217,17 @@ export const router = createBrowserRouter([
             element: (
               <ErrorBoundary>
                 <m.AnalyticsThroughputPage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
+        path: "*",
+        lazy: () =>
+          import("./pages/NotFoundPage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.NotFoundPage />
               </ErrorBoundary>
             ),
           })),

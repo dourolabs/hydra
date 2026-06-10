@@ -89,6 +89,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@errors:404` — User sees a not-found message for non-existent entities
 - `@errors:server-error` — User sees an error message when the server returns 500
+- `@errors:route-not-found` — Navigating to a URL that doesn't match any defined route renders a styled NotFound page inside the normal `AppLayout` chrome (sidebar visible). The page shows a "Page not found" heading and a "Go to dashboard" action that client-side navigates back to `/` (no full reload).
 
 ## Sessions
 
