@@ -21,12 +21,12 @@ test.describe("Projects @projects:create", () => {
     await expect(page.getByTestId("project-editor-add-status")).toHaveCount(0);
     await expect(page.getByTestId("project-editor-prompt-path")).toHaveCount(0);
 
-    await page.getByTestId("new-project-name").fill("E2E Engineering");
+    await page.getByTestId("project-form-name").fill("E2E Engineering");
     await page
-      .getByTestId("new-project-prompt-body")
+      .getByTestId("project-form-prompt-body")
       .fill("# E2E project prompt");
 
-    await page.getByTestId("new-project-save").click();
+    await page.getByTestId("project-form-save").click();
 
     // Key is slugified from name and the page routes to the detail page.
     await page.waitForURL("**/projects/e2e-engineering");
