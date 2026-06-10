@@ -244,6 +244,22 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("add_statuses_position: Store::get_project round-trips position values")?;
 
+    add_statuses_auto_archive_after_seconds_schema_invariants(&pool)
+        .await
+        .context(
+            "add_statuses_auto_archive_after_seconds: column is BIGINT NULL on metis.statuses",
+        )?;
+    add_statuses_auto_archive_after_seconds_defaults_to_null(&pool)
+        .await
+        .context(
+            "add_statuses_auto_archive_after_seconds: existing rows default to NULL (no backfill)",
+        )?;
+    add_statuses_auto_archive_after_seconds_domain_roundtrip(&pool)
+        .await
+        .context(
+            "add_statuses_auto_archive_after_seconds: Store::get_project reads field as None",
+        )?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -256,6 +272,11 @@ async fn migration_roundtrip() -> Result<()> {
     add_statuses_position_backfills_to_sequence(&pool)
         .await
         .context("add_statuses_position: idempotent rerun preserves position values")?;
+    add_statuses_auto_archive_after_seconds_defaults_to_null(&pool)
+        .await
+        .context(
+            "add_statuses_auto_archive_after_seconds: idempotent rerun keeps existing NULLs",
+        )?;
 
     Ok(())
 }
@@ -412,6 +433,75 @@ async fn add_statuses_position_domain_roundtrip(pool: &PgPool) -> Result<()> {
                 "j-defaul.statuses[{idx}] ({key:?}): expected position={expected}; got {got}",
                 key = status.key,
                 got = status.position,
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260617000000_add_statuses_auto_archive_after_seconds. Adds
+// `auto_archive_after_seconds BIGINT NULL` to `metis.statuses` — the
+// per-status plumbing for the periodic auto-archive worker. `NULL`
+// (the column default) leaves the feature off for the row.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_auto_archive_after_seconds_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "statuses", "auto_archive_after_seconds").await? {
+        bail!(
+            "expected `metis.statuses.auto_archive_after_seconds` column to exist post-rollforward"
+        );
+    }
+    if !column_is_nullable(pool, "statuses", "auto_archive_after_seconds").await? {
+        bail!("expected `metis.statuses.auto_archive_after_seconds` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_defaults_to_null(pool: &PgPool) -> Result<()> {
+    // The migration has no backfill: every existing row must come out
+    // with the column NULL.
+    let rows =
+        sqlx::query("SELECT project_id, sequence, auto_archive_after_seconds FROM metis.statuses")
+            .fetch_all(pool)
+            .await
+            .context("read metis.statuses for auto_archive_after_seconds default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one metis.statuses row to assert default against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: Option<i64> = row.try_get("auto_archive_after_seconds")?;
+        if value.is_some() {
+            bail!(
+                "metis.statuses({project_id}, sequence={sequence}): expected NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    // Read j-defaul back through the production `get_project` path —
+    // verifies that the new column is included in the `StatusRow`
+    // SELECT projection and round-trips into the `StatusDefinition`
+    // value (as `None`, since no row has been set yet).
+    let store = PostgresStoreV2::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("PostgresStoreV2::get_project(j-defaul) post-auto-archive migration")?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for (idx, status) in fetched.item.statuses.iter().enumerate() {
+        if status.auto_archive_after_seconds.is_some() {
+            bail!(
+                "j-defaul.statuses[{idx}] ({key:?}): expected auto_archive_after_seconds=None; got {got:?}",
+                key = status.key,
+                got = status.auto_archive_after_seconds,
             );
         }
     }

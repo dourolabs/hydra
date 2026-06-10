@@ -32,6 +32,11 @@ position: 100.0
 # (live chat) instead of a headless session.
 interactive: false
 
+# Integer seconds an issue may sit in this status before being
+# auto-archived by the periodic worker. Omit (or set to `null`) to
+# leave the feature off for the status. Example: `1209600` is 14 days.
+# auto_archive_after_seconds: 1209600
+
 # Doc-store path for the per-status prompt slice concatenated into
 # spawned-session system prompts. Omit on terminal statuses.
 prompt_path: /projects/sample/statuses/in-development.md
