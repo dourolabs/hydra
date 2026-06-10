@@ -77,7 +77,6 @@ export function DocumentsPage() {
               <li>
                 <div
                   className={`${styles.folderRow}${activePath === ROOT_PATH ? ` ${styles.folderRowActive}` : ""}`}
-                  style={{ paddingLeft: "8px" }}
                   onClick={() => setActivePath(ROOT_PATH)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
