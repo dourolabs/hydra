@@ -261,7 +261,7 @@ impl AppState {
 
                 let updated_issue = issue.clone();
 
-                // Run restriction policies (require_creator, issue_lifecycle_validation)
+                // Run restriction policies (require_creator)
                 {
                     self.policy_engine
                         .check_update_issue(&id, &updated_issue, None, store, &actor)
@@ -320,7 +320,7 @@ impl AppState {
                     }
                 }
 
-                // Run restriction policies (require_creator, issue_lifecycle_validation)
+                // Run restriction policies (require_creator)
                 {
                     self.policy_engine
                         .check_create_issue(&issue, store, &actor)

@@ -7,9 +7,7 @@
 //! ## "Terminal" — issues
 //!
 //! The issues endpoints (`/v1/analytics/throughput/issues/...`) treat a
-//! status as **terminal** iff its `unblocks_parents` flag is `true` —
-//! mirroring the existing helper at
-//! `hydra-server/src/policy/restrictions/issue_lifecycle.rs:153`. This
+//! status as **terminal** iff its `unblocks_parents` flag is `true`. This
 //! groups `closed` with `dropped` / `failed` for the purposes of
 //! cycle-time and over-time charts; clients that want to exclude the
 //! cancellation lanes can pass `status_keys=closed`.

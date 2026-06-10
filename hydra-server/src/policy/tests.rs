@@ -259,24 +259,6 @@ async fn check_restrictions_returns_first_violation() {
     assert!(violation.message.contains("2 children still open"));
 }
 
-#[tokio::test]
-async fn policy_violation_has_descriptive_message() {
-    let violation = PolicyViolation {
-        policy_name: "issue_lifecycle_validation".to_string(),
-        message: "Cannot close issue i-abc123: 2 child issues are still open (i-def456, i-ghi789). Close or drop all children first.".to_string(),
-    };
-    assert_eq!(violation.policy_name, "issue_lifecycle_validation");
-    assert!(violation.message.contains("Cannot close issue"));
-    assert!(
-        violation
-            .message
-            .contains("Close or drop all children first")
-    );
-
-    let display = format!("{violation}");
-    assert!(display.contains("[issue_lifecycle_validation]"));
-}
-
 // ---------------------------------------------------------------------------
 // PolicyEngine::run_automations tests
 // ---------------------------------------------------------------------------
@@ -539,7 +521,7 @@ fn registry_build_with_params() {
 fn policy_config_deserializes_from_yaml() {
     let yaml_str = r#"
 restrictions:
-  - "issue_lifecycle_validation"
+  - "require_creator"
   - "task_state_machine"
 automations:
   - "cascade_issue_status"
@@ -547,10 +529,7 @@ automations:
 
     let config: PolicyConfig = serde_yaml_ng::from_str(yaml_str).expect("should deserialize");
     assert_eq!(config.global.restrictions.len(), 2);
-    assert_eq!(
-        config.global.restrictions[0].name(),
-        "issue_lifecycle_validation"
-    );
+    assert_eq!(config.global.restrictions[0].name(), "require_creator");
     assert_eq!(config.global.restrictions[1].name(), "task_state_machine");
     assert_eq!(config.global.automations.len(), 1);
     assert_eq!(config.global.automations[0].name(), "cascade_issue_status");
@@ -778,14 +757,13 @@ fn default_config_enables_all_builtin_policies() {
     // Build engine with no PolicyConfig (simulates absent [policies] section)
     let engine = crate::app::AppState::build_policy_engine(None);
 
-    assert_eq!(engine.restriction_count(), 6);
+    assert_eq!(engine.restriction_count(), 5);
     assert_eq!(engine.automation_count(), 10);
 
     // Also verify that an explicit config listing all policies gives the same counts
     let all_config = PolicyConfig {
         global: PolicyList {
             restrictions: vec![
-                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
                 PolicyEntry::Name("task_state_machine".to_string()),
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
                 PolicyEntry::Name("require_creator".to_string()),
@@ -807,7 +785,7 @@ fn default_config_enables_all_builtin_policies() {
         },
     };
     let explicit_engine = registry.build(&all_config).unwrap();
-    assert_eq!(explicit_engine.restriction_count(), 6);
+    assert_eq!(explicit_engine.restriction_count(), 5);
     assert_eq!(explicit_engine.automation_count(), 10);
 }
 
@@ -854,7 +832,6 @@ async fn disabling_restriction_allows_blocked_operation() {
     let partial_config = PolicyConfig {
         global: PolicyList {
             restrictions: vec![
-                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
                 PolicyEntry::Name("task_state_machine".to_string()),
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
                 // require_creator is intentionally omitted
@@ -868,7 +845,7 @@ async fn disabling_restriction_allows_blocked_operation() {
     };
 
     let partial_engine = crate::app::AppState::build_policy_engine(Some(&partial_config));
-    assert_eq!(partial_engine.restriction_count(), 3);
+    assert_eq!(partial_engine.restriction_count(), 2);
 
     // Partial engine should allow this
     let result = partial_engine
@@ -990,7 +967,7 @@ background: {}
 
 policies:
   restrictions:
-    - "issue_lifecycle_validation"
+    - "require_creator"
     - "task_state_machine"
   automations:
     - "cascade_issue_status"
@@ -1002,10 +979,7 @@ policies:
     let policies = config.policies.expect("policies should be present");
     assert_eq!(policies.global.restrictions.len(), 2);
     assert_eq!(policies.global.automations.len(), 1);
-    assert_eq!(
-        policies.global.restrictions[0].name(),
-        "issue_lifecycle_validation"
-    );
+    assert_eq!(policies.global.restrictions[0].name(), "require_creator");
     assert_eq!(
         policies.global.automations[0].name(),
         "cascade_issue_status"

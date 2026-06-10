@@ -11,11 +11,9 @@
 //! ## "Terminal" — issues
 //!
 //! A status is **terminal** iff `unblocks_parents = TRUE` on its
-//! [`StatusDefinition`] — same criterion as
-//! `policy/restrictions/issue_lifecycle.rs::is_terminal` (line 153).
-//! `closed`, `dropped`, and `failed` are all terminal under this
-//! definition; clients that want to exclude the cancellation lanes can
-//! pass `status_keys=closed` on the query.
+//! [`StatusDefinition`]. `closed`, `dropped`, and `failed` are all
+//! terminal under this definition; clients that want to exclude the
+//! cancellation lanes can pass `status_keys=closed` on the query.
 //!
 //! [`StatusDefinition`]: hydra_common::api::v1::projects::StatusDefinition
 

@@ -47,7 +47,6 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
     PolicyConfig {
         global: PolicyList {
             restrictions: vec![
-                PolicyEntry::Name("issue_lifecycle_validation".to_string()),
                 PolicyEntry::Name("task_state_machine".to_string()),
                 PolicyEntry::Name("duplicate_branch_name".to_string()),
                 PolicyEntry::Name("require_creator".to_string()),

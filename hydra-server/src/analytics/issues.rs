@@ -155,8 +155,7 @@ pub async fn fetch_issue_histories(
 /// returning a `(ProjectId, Project)` cache. Failed lookups are skipped
 /// — the calling aggregator treats issues with no resolvable project as
 /// if their status weren't declared (no terminal flip, no time-in-status
-/// contribution). This matches the conservative posture in the
-/// `is_terminal` helper of `policy/restrictions/issue_lifecycle.rs`.
+/// contribution).
 pub async fn resolve_projects_for_histories(
     store: &dyn ReadOnlyStore,
     histories: &[IssueHistory],
