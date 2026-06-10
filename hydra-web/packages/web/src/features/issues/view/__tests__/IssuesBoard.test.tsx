@@ -193,10 +193,12 @@ vi.mock("@hydra/ui", () => ({
         <div>{children}</div>
       </div>
     ) : null,
+  FlowPill: () => <span data-testid="flow-pill" />,
   Icons: {
     IconSettings: () => <span data-testid="icon-settings" />,
     IconSpark: () => <span data-testid="icon-spark" />,
     IconChevronDown: () => <span data-testid="icon-chevron-down" />,
+    IconPlus: () => <span data-testid="icon-plus" />,
   },
 }));
 
