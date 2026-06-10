@@ -204,6 +204,12 @@ pub struct StatusDefinition {
     pub unblocks_parents: bool,
     pub unblocks_dependents: bool,
     pub cascades_to_children: bool,
+    /// When `true`, ready issues that land in this status do NOT spawn an
+    /// agent session (headless or interactive). Lets a project mark
+    /// statuses as "tracked but inert" without changing the dependency
+    /// semantics encoded by `unblocks_parents` / `unblocks_dependents`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppress_sessions: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_enter: Option<StatusOnEnter>,
     /// Doc-store path for the per-status prompt slice that gets concatenated
@@ -246,6 +252,7 @@ impl StatusDefinition {
             unblocks_parents,
             unblocks_dependents,
             cascades_to_children,
+            suppress_sessions: false,
             on_enter,
             prompt_path: None,
             interactive: false,

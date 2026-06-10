@@ -1362,6 +1362,7 @@ impl PostgresStoreV2 {
         def.prompt_path = row.prompt_path.clone();
         def.interactive = row.interactive;
         def.auto_archive_after_seconds = row.auto_archive_after_seconds;
+        def.suppress_sessions = row.suppress_sessions;
         def.position = row.position;
         Ok(def)
     }
@@ -1374,7 +1375,7 @@ impl PostgresStoreV2 {
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position \
              FROM metis.statuses WHERE project_id = $1 ORDER BY position, sequence",
         )
         .bind(project_id)
@@ -1396,7 +1397,7 @@ impl PostgresStoreV2 {
             out.entry(id.clone()).or_default();
         }
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position \
              FROM metis.statuses WHERE project_id = ANY($1) ORDER BY project_id, position, sequence",
         )
         .bind(project_ids)
@@ -1429,8 +1430,8 @@ impl PostgresStoreV2 {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, position) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(project_id)
         .bind(sequence)
@@ -1444,6 +1445,7 @@ impl PostgresStoreV2 {
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
         .bind(status.auto_archive_after_seconds)
+        .bind(status.suppress_sessions)
         .bind(status.position)
         .execute(&mut **tx)
         .await
@@ -1894,6 +1896,7 @@ struct StatusRow {
     prompt_path: Option<String>,
     interactive: bool,
     auto_archive_after_seconds: Option<i64>,
+    suppress_sessions: bool,
     // No `#[sqlx(default)]`: forces every SELECT site on
     // `metis.statuses` to project `position`. A missing column should
     // fail loud at runtime instead of silently surfacing `0.0` in
@@ -6014,8 +6017,8 @@ impl Store for PostgresStoreV2 {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, position = $11 \
-             WHERE project_id = $12 AND sequence = $13",
+            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, suppress_sessions = $11, position = $12 \
+             WHERE project_id = $13 AND sequence = $14",
         )
         .bind(status.key.as_str())
         .bind(&status.label)
@@ -6027,6 +6030,7 @@ impl Store for PostgresStoreV2 {
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
         .bind(status.auto_archive_after_seconds)
+        .bind(status.suppress_sessions)
         .bind(status.position)
         .bind(id.as_ref())
         .bind(sequence)
@@ -10829,6 +10833,65 @@ mod tests {
             store.get_project(&id, false).await,
             Err(StoreError::ProjectNotFound(_))
         ));
+    }
+
+    /// Custom statuses with `suppress_sessions: true` must round-trip
+    /// through PostgresStoreV2 — exercises the
+    /// `metis.statuses.suppress_sessions` column on INSERT, every
+    /// SELECT projection, and `status_row_to_definition`. Without an
+    /// explicit projection on the SELECT side, `StatusRow` would fail
+    /// to decode (no `#[sqlx(default)]`), so this test is the
+    /// load-bearing guard against a missing-column regression on the
+    /// Postgres backend.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn suppress_sessions_round_trips_through_postgres_store(pool: PgStorePool) {
+        use crate::domain::projects::default_project_id;
+        use hydra_common::api::v1::projects::{ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let store = PostgresStoreV2::new(pool);
+
+        let mut parked = StatusDefinition::new(
+            StatusKey::try_new("parked").unwrap(),
+            "Parked".to_string(),
+            "#95a5a6".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        parked.suppress_sessions = true;
+
+        let project = Project::new(
+            ProjectKey::try_new("engineering").unwrap(),
+            "Engineering".to_string(),
+            vec![parked],
+            ApiUsername::from("alice"),
+            false,
+            0.0,
+        );
+        let (id, _) = add_project_with_statuses_pg(&store, project, &ActorRef::test()).await;
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(fetched.item.statuses.len(), 1);
+        assert!(
+            fetched.item.statuses[0].suppress_sessions,
+            "custom status must round-trip suppress_sessions = true"
+        );
+
+        let default = store
+            .get_project(&default_project_id(), false)
+            .await
+            .unwrap();
+        assert!(!default.item.statuses.is_empty());
+        for status in &default.item.statuses {
+            assert!(
+                !status.suppress_sessions,
+                "default project status '{}' must not suppress sessions",
+                status.key
+            );
+        }
     }
 
     #[sqlx::test(migrations = "./migrations")]

@@ -9860,6 +9860,41 @@ mod tests {
         assert!(tombstoned.item.deleted);
     }
 
+    /// `suppress_sessions` is stored directly on the inline
+    /// `StatusDefinition` inside the in-memory index, so a trivial
+    /// roundtrip exercises only the Rust-level wiring. Kept as a guard
+    /// against an accidental drop in a future MemoryStore refactor.
+    #[tokio::test]
+    async fn suppress_sessions_round_trips_through_memory_store() {
+        use hydra_common::api::v1::projects::{ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let store = MemoryStore::new();
+        let mut parked = StatusDefinition::new(
+            StatusKey::try_new("parked").unwrap(),
+            "Parked".to_string(),
+            "#95a5a6".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        parked.suppress_sessions = true;
+        let project = Project::new(
+            ProjectKey::try_new("engineering").unwrap(),
+            "Engineering".to_string(),
+            vec![parked],
+            ApiUsername::from("alice"),
+            false,
+            0.0,
+        );
+        let (id, _) = add_project_with_statuses(&store, project, &ActorRef::test()).await;
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(fetched.item.statuses.len(), 1);
+        assert!(fetched.item.statuses[0].suppress_sessions);
+    }
+
     #[tokio::test]
     async fn get_project_not_found() {
         let store = MemoryStore::new();
