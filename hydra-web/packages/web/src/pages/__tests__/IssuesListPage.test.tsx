@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import type { IssueNeighborhood } from "../../features/issues/flowPill";
 
@@ -50,12 +51,14 @@ interface PaginatedState {
   totalCount: number | undefined;
   paginatedFilters: unknown;
   countFilters: unknown;
+  boardBaseFilters: unknown;
 }
 const paginatedState: PaginatedState = {
   issues: [],
   totalCount: undefined,
   paginatedFilters: undefined,
   countFilters: undefined,
+  boardBaseFilters: undefined,
 };
 
 vi.mock("../../features/issues/usePaginatedIssues", () => ({
@@ -73,10 +76,15 @@ vi.mock("../../features/issues/usePaginatedIssues", () => ({
     paginatedState.countFilters = filters;
     return { data: paginatedState.totalCount };
   },
-  // Board owns its own fetches via this hook. The test suite renders the
-  // default (table) layout, but the import graph still pulls IssuesBoard in
-  // so the mock must export every name IssuesBoard reads.
-  useBoardIssuesByProject: () => new Map(),
+  // Board owns its own fetches via this hook. Most tests render the default
+  // (table) layout but the import graph still pulls IssuesBoard in, so the
+  // mock must export every name IssuesBoard reads. Board-mode tests assert
+  // against `paginatedState.boardBaseFilters` to verify the search query and
+  // filter chips thread through to the per-cell fetches.
+  useBoardIssuesByProject: (filters: unknown) => {
+    paginatedState.boardBaseFilters = filters;
+    return new Map();
+  },
 }));
 
 vi.mock("../../features/auth/useAuth", () => ({
@@ -205,13 +213,21 @@ function LocationDisplay() {
 }
 
 function renderIssuesList(initialEntry: string) {
+  // IssuesBoard reaches for `useQueryClient` even though the data hooks are
+  // stubbed. Provide a throw-away client so board-mode renders don't crash on
+  // the missing provider.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <Routes>
-        <Route path="/" element={<IssuesListPage />} />
-      </Routes>
-      <LocationDisplay />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/" element={<IssuesListPage />} />
+        </Routes>
+        <LocationDisplay />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -281,6 +297,8 @@ beforeEach(() => {
   paginatedState.totalCount = undefined;
   paginatedState.paginatedFilters = undefined;
   paginatedState.countFilters = undefined;
+  paginatedState.boardBaseFilters = undefined;
+  window.localStorage.removeItem("hydra:issues:layout");
   treesState.neighborhoodMap = new Map();
   treesState.sessionsByIssue = new Map();
   relationsState.issueIds = null;
@@ -775,5 +793,32 @@ describe("IssuesListPage project URL params", () => {
     expect(getByTestId("location").textContent).toBe(
       "/?project_key=engineering-v2",
     );
+  });
+});
+
+describe("IssuesListPage board layout toolbar", () => {
+  // Board view shares the search input + FilterBar with the table view so
+  // typing in the search box and adding filter chips narrow the per-column
+  // fetches the same way they narrow the table.
+
+  function renderBoardLayout(initialEntry: string) {
+    window.localStorage.setItem("hydra:issues:layout", "board");
+    return renderIssuesList(initialEntry);
+  }
+
+  it("renders the search input and FilterBar on board view", () => {
+    const { getByTestId } = renderBoardLayout("/");
+    expect(getByTestId("issues-search")).toBeDefined();
+    expect(getByTestId("filter-bar")).toBeDefined();
+  });
+
+  it("threads ?q=<search> through to the board's base filters", () => {
+    renderBoardLayout("/?q=deployment");
+    expect(paginatedState.boardBaseFilters).toEqual({ q: "deployment" });
+  });
+
+  it("threads URL filter chips through to the board's base filters", () => {
+    renderBoardLayout("/?status=in-progress");
+    expect(paginatedState.boardBaseFilters).toEqual({ status: "in-progress" });
   });
 });

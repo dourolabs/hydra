@@ -99,31 +99,29 @@ export function IssuesView({
         </div>
       </div>
 
-      {layout === "table" && (
-        <div className={styles.toolbar}>
-          <div className={styles.searchBox}>
-            <span className={styles.searchIcon}>
-              <Icons.IconSearch size={14} />
-            </span>
-            <input
-              type="text"
-              placeholder="Search issues…"
-              value={searchValue}
-              onChange={(e) => onSearchChange(e.target.value)}
-              aria-label="Search issues"
-              data-testid="issues-search"
-            />
-          </div>
-          <FilterBar
-            filters={filters}
-            setFilters={setFilters}
-            definitions={definitions}
-            count={filteredCount}
-            total={totalCount}
-            onMenuOpenChange={onFilterMenuOpenChange}
+      <div className={styles.toolbar}>
+        <div className={styles.searchBox}>
+          <span className={styles.searchIcon}>
+            <Icons.IconSearch size={14} />
+          </span>
+          <input
+            type="text"
+            placeholder="Search issues…"
+            value={searchValue}
+            onChange={(e) => onSearchChange(e.target.value)}
+            aria-label="Search issues"
+            data-testid="issues-search"
           />
         </div>
-      )}
+        <FilterBar
+          filters={filters}
+          setFilters={setFilters}
+          definitions={definitions}
+          count={filteredCount}
+          total={totalCount}
+          onMenuOpenChange={onFilterMenuOpenChange}
+        />
+      </div>
 
       <div className={styles.body}>
         {layout === "table" && (
