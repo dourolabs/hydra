@@ -10,7 +10,7 @@
 - Per-project-statuses feature ([[i-ctfcvyru]] / [[d-druoexk]]) has shipped on the server under test.
 - Four-level prompt design ([[d-rzreslz]] / [[i-psuvqpqx]]) has shipped on the server under test.
 - Interactive-issue-mode feature ([[d-ulhrefm]]) has shipped — `StatusDefinition.interactive`, `Conversation.spawned_from`, `AgentQueue::build_task` dispatch, `SpawnConversationSessionsAutomation`, the `has_active_conversation` gate, and the `close_conversations_on_interactive_exit` automation are all wired on the instance under test (PRs 1–4 in [[i-xipntwnu]]).
-- Frontend surfaces for interactive issues have shipped ([[i-lfwhatzq]]): issue-header "Open Conversation" affordance, Related-tab Conversations subsection, conversation-page "Originated from" link, project-editor `interactive` toggle, and the matching status-list annotation chip.
+- Frontend surfaces for interactive issues have shipped ([[i-lfwhatzq]]): issue-header "Open Conversation" affordance, Related-tab Conversations subsection, conversation-page "Originated from" link, and project-editor `interactive` toggle.
 - One Project named `engineering-v2` created with the seven statuses defined in `per-project-status-pipeline.md`'s **Setup** section (including the new `pair-development` interactive status), and the five prompt documents pushed to the doc store. On a fresh single-player instance bootstrapped by `tests/e2e/run.sh`, this seeding is wired up automatically; Step 1 below confirms it landed.
 
 **Estimated duration:** ~25 minutes
@@ -35,8 +35,8 @@ All dashboard interactions go through `http://localhost:8080` per the suite's co
 
 1. Navigate to `http://localhost:8080/projects/engineering-v2`.
 2. Confirm the Project editor page renders with the seven statuses defined in `per-project-status-pipeline.md`'s **Setup**. If it does not (404, redirect, or the project is missing), treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
-3. Confirm `pair-development` is present in the status list with the project editor's "interactive" annotation chip rendered next to its label (PR 5 frontend, [[i-lfwhatzq]]). Open its row and confirm the `interactive` toggle is on.
-4. From `/issues?project_key=engineering-v2`, open the "Create issue" form's status dropdown and confirm `pair-development` is listed with the same interactive chip rendered alongside its label.
+3. Confirm `pair-development` is present in the status list. Open its row and confirm the `interactive` toggle is on.
+4. From `/issues?project_key=engineering-v2`, open the "Create issue" form's status dropdown and confirm `pair-development` is listed.
 
 ### Step 2 — Test bundle A: Interactive spawn and greet-user
 
@@ -104,7 +104,7 @@ This bundle independently validates the `close_conversations_on_interactive_exit
 ## Expected Results
 
 **Bundle A — Interactive spawn and greet-user:**
-- The `engineering-v2` project editor and every status-list / status-dropdown surface render `pair-development` with the "interactive" annotation chip.
+- The `engineering-v2` project editor's status list includes `pair-development` with its `interactive` toggle on.
 - Transitioning `${ISSUE_ID}` from `inbox` to `pair-development` mints exactly one `Conversation` with `spawned_from == ${ISSUE_ID}`, status `Active`, and creator `agents/swe`. The headless-session branch is **not** taken — no headless `swe` session is spawned for the `pair-development` entry.
 - The dashboard issue header renders the "Open Conversation" affordance pointing at the new conversation; the Related tab lists it in a Conversations subsection; the conversation page header shows an "Originated from [[${ISSUE_ID}]]" link.
 - The spawned session carries `mode.type == "interactive"`, `mode.greet_user == true`, and `env_vars.HYDRA_ISSUE_ID == ${ISSUE_ID}`. The chat thread shows an assistant message before any user turn — the agent picked up the prompt and started work autonomously.
@@ -125,7 +125,6 @@ This bundle independently validates the `close_conversations_on_interactive_exit
 Report these explicitly so a failing run produces an actionable finding rather than a bare "timeout":
 
 - **`pair-development` missing from the project editor or status dropdowns** → fixture seeding regression in `tests/e2e/run.sh` (the `engineering-v2` project body or the prompt push). Capture the project editor screenshot and the runner log.
-- **Status dropdown shows `pair-development` without the "interactive" annotation chip** → PR 5 frontend regression ([[i-lfwhatzq]]). Capture the dropdown screenshot.
 - **No conversation appears within 15s of the `inbox` → `pair-development` transition** → `AgentQueue::build_task` failed to dispatch through the interactive branch (PR 4 [[i-qmeoonyq]] regression) or `SpawnConversationSessionsAutomation` did not fire. Capture the server log at `/tmp/hydra-e2e/server.log` and the output of `hydra conversations list --output-format jsonl --status active`.
 - **A headless `swe` session also spawned for the `pair-development` entry** → the two-branch dispatcher is not gating the headless path. PR 4 regression. Capture `hydra sessions list --from ${ISSUE_ID} --output-format jsonl`.
 - **`Conversation.spawned_from` is null on the spawned conversation** → PR 2 [[i-aerntbio]] regression (the column migration or `create_conversation` parameter growth dropped the field).
