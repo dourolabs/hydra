@@ -9,10 +9,8 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { GlobalSearchModal } from "../features/search/GlobalSearchModal";
 import { useGlobalSearchShortcut } from "../features/search/useGlobalSearchShortcut";
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
-import {
-  IssueCreateModalProvider,
-  useIssueCreateModal,
-} from "../features/dashboard/useIssueCreateModal";
+import { IssueCreateModalProvider } from "../features/dashboard/IssueCreateModalProvider";
+import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { Sidebar } from "./Sidebar";
 import { SiteHeader } from "./SiteHeader";
 import { BreadcrumbsProvider } from "./BreadcrumbsProvider";
