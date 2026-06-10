@@ -277,12 +277,12 @@ export function DemoApp() {
           <h2 className={styles.sectionTitle}>Panel</h2>
           <div className={styles.grid}>
             <Panel header="Issue Details">
-              <p style={{ color: "var(--color-text-secondary)" }}>
+              <p className={styles.mutedText}>
                 Panel with a header and body content. Used for containing sections of the UI.
               </p>
             </Panel>
             <Panel>
-              <p style={{ color: "var(--color-text-secondary)" }}>Panel without a header.</p>
+              <p className={styles.mutedText}>Panel without a header.</p>
             </Panel>
           </div>
         </section>
@@ -300,8 +300,8 @@ export function DemoApp() {
             onTabChange={setActiveTab}
           />
           <Panel>
-            <p style={{ color: "var(--color-text-secondary)" }}>
-              Active tab: <strong style={{ color: "var(--color-accent)" }}>{activeTab}</strong>
+            <p className={styles.mutedText}>
+              Active tab: <strong className={styles.accentText}>{activeTab}</strong>
             </p>
           </Panel>
         </section>
@@ -319,10 +319,10 @@ export function DemoApp() {
           <h2 className={styles.sectionTitle}>Modal</h2>
           <Button onClick={() => setModalOpen(true)}>Open Modal</Button>
           <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Confirm Action">
-            <p style={{ color: "var(--color-text-secondary)", marginBottom: "var(--space-4)" }}>
+            <p className={styles.modalBody}>
               Are you sure you want to perform this action? This cannot be undone.
             </p>
-            <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "flex-end" }}>
+            <div className={styles.modalActions}>
               <Button variant="ghost" onClick={() => setModalOpen(false)}>
                 Cancel
               </Button>
@@ -394,18 +394,7 @@ export function DemoApp() {
               Info toast
             </Button>
           </div>
-          <div
-            style={{
-              position: "fixed",
-              bottom: "var(--space-4)",
-              right: "var(--space-4)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--space-2)",
-              zIndex: 1000,
-              pointerEvents: "none",
-            }}
-          >
+          <div className={styles.toastStack}>
             {toasts.map((t) => (
               <Toast
                 key={t.id}
