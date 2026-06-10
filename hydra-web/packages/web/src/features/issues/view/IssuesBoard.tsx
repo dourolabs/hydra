@@ -880,9 +880,11 @@ function ProjectSection({
         className={styles.colGhost}
         onClick={() => onAddStatus(projectRecord.project_id)}
         aria-label={`Add status to ${project.name}`}
+        title="Add a status to this project"
         data-testid={`board-col-add-${project.key}`}
       >
-        + Add status
+        <Icons.IconPlus size={14} />
+        <span>Add status</span>
       </button>
     </div>
   );
