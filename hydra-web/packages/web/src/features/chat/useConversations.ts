@@ -8,7 +8,7 @@ export function useConversations(
 ) {
   return useQuery({
     queryKey: ["conversations", query],
-    queryFn: () => apiClient.listConversations(query),
+    queryFn: async () => (await apiClient.listConversations(query)).conversations,
     enabled: options?.enabled ?? true,
   });
 }

@@ -45,7 +45,7 @@ test.describe("Chat conversation switch @chat:conversation-switch", () => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(dualSidebarConversations),
+        body: JSON.stringify({ conversations: dualSidebarConversations }),
       });
     });
     await page.goto("/chat/c-seed00001");
@@ -77,7 +77,7 @@ test.describe("Chat conversation switch @chat:conversation-switch", () => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(dualSidebarConversations),
+        body: JSON.stringify({ conversations: dualSidebarConversations }),
       });
     });
     await page.goto("/chat/c-seed00001");

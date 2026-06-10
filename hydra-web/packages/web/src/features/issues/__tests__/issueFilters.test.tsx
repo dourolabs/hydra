@@ -12,7 +12,9 @@ const listPatches = vi.fn(() =>
 const listSessions = vi.fn(() =>
   Promise.resolve({ sessions: [], next_cursor: null, total_count: 0n }),
 );
-const listConversations = vi.fn(() => Promise.resolve([]));
+const listConversations = vi.fn(() =>
+  Promise.resolve({ conversations: [], next_cursor: null }),
+);
 const listIssues = vi.fn(() =>
   Promise.resolve({ issues: [], next_cursor: null, total_count: 0n }),
 );

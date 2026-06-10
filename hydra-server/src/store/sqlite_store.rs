@@ -4746,7 +4746,7 @@ impl ReadOnlyStore for SqliteStore {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "updated_at",
+            "created_at",
             "id",
         )?;
 

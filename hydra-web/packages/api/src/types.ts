@@ -188,5 +188,6 @@ export type { ConversationId } from "./generated/ConversationId";
 export type { ConversationStatus } from "./generated/ConversationStatus";
 export type { ConversationSummary } from "./generated/ConversationSummary";
 export type { CreateConversationRequest } from "./generated/CreateConversationRequest";
+export type { ListConversationsResponse } from "./generated/ListConversationsResponse";
 export type { SearchConversationsQuery } from "./generated/SearchConversationsQuery";
 export type { SendMessageRequest } from "./generated/SendMessageRequest";

@@ -58,7 +58,7 @@ import type { ListSecretsResponse } from "./generated/ListSecretsResponse";
 import type { SetSecretRequest } from "./generated/SetSecretRequest";
 import type { VersionResponse } from "./generated/VersionResponse";
 import type { Conversation } from "./generated/Conversation";
-import type { ConversationSummary } from "./generated/ConversationSummary";
+import type { ListConversationsResponse } from "./generated/ListConversationsResponse";
 import type { CreateConversationRequest } from "./generated/CreateConversationRequest";
 import type { ListProxyTargetsResponse } from "./generated/ListProxyTargetsResponse";
 import type { SendMessageRequest } from "./generated/SendMessageRequest";
@@ -716,7 +716,9 @@ export class HydraApiClient {
   // ---------------------------------------------------------------------------
 
   /** GET /v1/conversations */
-  listConversations(query?: Partial<SearchConversationsQuery>): Promise<ConversationSummary[]> {
+  listConversations(
+    query?: Partial<SearchConversationsQuery>,
+  ): Promise<ListConversationsResponse> {
     return this.get("/v1/conversations", query as Record<string, unknown>);
   }
 

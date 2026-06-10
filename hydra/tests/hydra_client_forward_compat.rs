@@ -675,7 +675,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     server.mock(move |when, then| {
         when.method(GET).path("/v1/conversations");
         then.status(200)
-            .json_body(json!([conversation_summary_for_list]));
+            .json_body(json!({ "conversations": [conversation_summary_for_list] }));
     });
 
     let conversation_get_path = conversation_path.clone();
@@ -1464,7 +1464,8 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let listed_conversations = client
         .list_conversations(&SearchConversationsQuery::default())
-        .await?;
+        .await?
+        .conversations;
     assert_eq!(listed_conversations.len(), 1);
     assert!(matches!(
         listed_conversations[0].status,

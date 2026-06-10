@@ -334,7 +334,7 @@ describe("Conversations", () => {
   });
 
   it("list returns summaries with chat-text event_count aggregated across linked sessions", async () => {
-    const list = await client.listConversations();
+    const { conversations: list } = await client.listConversations();
 
     // c-seed00001 (active) is backed by session t-seed00016 which carries 2
     // user_message + 2 assistant_message events.
@@ -360,7 +360,7 @@ describe("Conversations", () => {
     const fetched = await client.getConversation(cid);
     expect(fetched.conversation_id).toBe(cid);
 
-    const list = await client.listConversations();
+    const { conversations: list } = await client.listConversations();
     expect(list.some((c) => c.conversation_id === cid)).toBe(true);
 
     // sendMessage appends a user_message SessionEvent on the conversation's
@@ -391,14 +391,17 @@ describe("Conversations", () => {
   });
 
   it("filters list by status and q", async () => {
-    const active = await client.listConversations({ status: "active" });
+    const active = (await client.listConversations({ status: "active" }))
+      .conversations;
     expect(active.every((c) => c.status === "active")).toBe(true);
     expect(active.some((c) => c.conversation_id === "c-seed00001")).toBe(true);
 
-    const closed = await client.listConversations({ status: "closed" });
+    const closed = (await client.listConversations({ status: "closed" }))
+      .conversations;
     expect(closed.every((c) => c.status === "closed")).toBe(true);
 
-    const matches = await client.listConversations({ q: "welcome" });
+    const matches = (await client.listConversations({ q: "welcome" }))
+      .conversations;
     expect(matches.some((c) => c.conversation_id === "c-seed00001")).toBe(true);
   });
 
@@ -1257,7 +1260,7 @@ describe("Seed data", () => {
   });
 
   it("seed conversations are loaded", async () => {
-    const list = await client.listConversations();
+    const { conversations: list } = await client.listConversations();
     expect(list.length).toBeGreaterThanOrEqual(1);
     expect(list.some((c) => c.conversation_id === "c-seed00001")).toBe(true);
   });

@@ -161,6 +161,25 @@ impl ConversationSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct ListConversationsResponse {
+    pub conversations: Vec<ConversationSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+impl ListConversationsResponse {
+    pub fn new(conversations: Vec<ConversationSummary>) -> Self {
+        Self {
+            conversations,
+            next_cursor: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
 pub struct CreateConversationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,

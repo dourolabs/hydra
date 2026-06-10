@@ -69,7 +69,7 @@ export function useGlobalSearch(query: string): GlobalSearchResults {
     issues: issues.data?.issues ?? [],
     patches: patches.data?.patches ?? [],
     documents: documents.data?.documents ?? [],
-    conversations: conversations.data ?? [],
+    conversations: conversations.data?.conversations ?? [],
     sessions: sessions.data?.sessions ?? [],
   };
 }
