@@ -14,6 +14,13 @@ export type StatusDefinition = {
   unblocks_parents: boolean;
   unblocks_dependents: boolean;
   cascades_to_children: boolean;
+  /**
+   * When `true`, ready issues that land in this status do NOT spawn an
+   * agent session (headless or interactive). Lets a project mark
+   * statuses as "tracked but inert" without changing the dependency
+   * semantics encoded by `unblocks_parents` / `unblocks_dependents`.
+   */
+  suppress_sessions?: boolean;
   on_enter?: StatusOnEnter | null;
   /**
    * Doc-store path for the per-status prompt slice that gets concatenated

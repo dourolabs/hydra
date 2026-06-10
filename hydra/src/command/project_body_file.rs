@@ -158,4 +158,37 @@ cascades_to_children: false
         let body = load_status_body_file(file.path()).unwrap();
         assert_eq!(body.auto_archive_after_seconds, None);
     }
+
+    #[test]
+    fn load_status_body_file_preserves_suppress_sessions() {
+        let file = write_body(
+            r##"
+key: parked
+label: Parked
+color: "#95a5a6"
+unblocks_parents: false
+unblocks_dependents: false
+cascades_to_children: false
+suppress_sessions: true
+"##,
+        );
+        let body = load_status_body_file(file.path()).unwrap();
+        assert!(body.suppress_sessions);
+    }
+
+    #[test]
+    fn load_status_body_file_defaults_suppress_sessions_when_absent() {
+        let file = write_body(
+            r##"
+key: parked
+label: Parked
+color: "#95a5a6"
+unblocks_parents: false
+unblocks_dependents: false
+cascades_to_children: false
+"##,
+        );
+        let body = load_status_body_file(file.path()).unwrap();
+        assert!(!body.suppress_sessions);
+    }
 }

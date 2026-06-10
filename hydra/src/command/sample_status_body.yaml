@@ -22,6 +22,7 @@ color: "#3498db"
 unblocks_parents: false       # When true, a child entering this status no longer counts as "blocking" its parent's readiness.
 unblocks_dependents: false    # When true, downstream issues that depend on this one become eligible to start once this status is reached.
 cascades_to_children: false   # When true, applying this status to a parent re-applies it to children (e.g. closing a parent closes its children).
+suppress_sessions: false      # When true, ready issues that land in this status do NOT spawn an agent session — the issue is tracked but inert.
 
 # Sort key for ordering within the project. Smaller values appear
 # earlier. Default 0.0. The IssuesBoard drag-to-reorder UI persists

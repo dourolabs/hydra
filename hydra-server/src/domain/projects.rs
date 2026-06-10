@@ -346,6 +346,26 @@ mod tests {
         assert!(!status.interactive);
     }
 
+    /// Default-project statuses must all leave `suppress_sessions` false —
+    /// flipping any of them would silently change spawn behavior for the
+    /// built-in statuses.
+    #[test]
+    fn default_project_seed_has_suppress_sessions_false_for_every_status() {
+        for status in &default_project_seed().statuses {
+            assert!(
+                !status.suppress_sessions,
+                "default project status '{}' must not suppress sessions",
+                status.key
+            );
+        }
+    }
+
+    #[test]
+    fn no_project_sentinel_status_does_not_suppress_sessions() {
+        let (_, status) = no_project_sentinel();
+        assert!(!status.suppress_sessions);
+    }
+
     /// Locks the default-project priority to `1000.0`. The seed migration
     /// in `20260607000000_seed_default_project.sql` predates the priority
     /// column, so the value is supplied by the rank backfill in
