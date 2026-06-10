@@ -25,6 +25,10 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@nav:header-create-menu` — Header `+` button opens a menu with New issue / New conversation; selection invokes the matching action and closes the menu
 - `@nav:tooltip-viewport` — Header tooltips stay within viewport at desktop and mobile sizes
 
+## Global Search
+
+- `@global-search` — Cmd-K (or the header magnifying-glass) opens a global search modal that finds issues by query, navigates to the result on click, and closes on Escape or the toggle shortcut
+
 ## Issues
 
 - `@issues:view-detail` — User can view an issue's description, metadata, and progress
@@ -36,12 +40,18 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@issues:filter-related-chat-no-flash` — Changing a rehydrated Related chat chip's selection (adding a second value) keeps the previous narrowed rows rendered until the new resolution lands: with the swap's `/v1/relations` call held by a test intercept, the rows container never empties to zero and neither the "Loading issues…" skeleton nor the empty state appears. Releasing the held call swaps in the new union of rows.
 - `@issues:interactive-conversation` — When an issue has a spawned conversation (`Conversation.spawned_from == issueId`), the issue header surfaces a deep-link to `/chat/<conversation_id>`: labeled "Open Conversation" for `active`, "Resume Conversation" for `idle`, and absent for `closed`. The Related tab's Conversations subsection lists every linked conversation (live + historical) via `listConversations({ spawned_from })`. The target conversation's header in turn renders an "originated from [[issue_id]]" link back to the issue.
 - `@issues:board-drag-reorder` — On the `/issues` Board layout, dragging a project bar with real-DOM mouse events fires exactly one `PUT /v1/projects/<id>` with the new numeric `priority` and the new order survives reload (the mock server returns projects sorted `priority ASC`, matching the real backend). Dragging a status column head fires sequential `PUT /v1/projects/<ref>/statuses/<key>` calls — one per status — each carrying the recomputed `position` (multiples of 100), and the new column order survives reload (statuses are sorted `position ASC` server-side).
+- `@issues:board` — On the Board layout, hovering a column reveals a `+ Add issue` button that opens the create-issue modal pre-populated with the column's project and status; empty columns render no "No issues" placeholder
+- `@issues:filter-include-archived` — Issues page FilterBar exposes an "Include archived" presence chip that adds `include_deleted=true` to `listIssues`, persists `?includeArchived=1`, surfaces soft-deleted rows with an ARCHIVED tag, and clears both the flag and the rows when dismissed
+- `@issues:filter-include-archived-rehydrate` — Loading `/?includeArchived=1` rehydrates the Include archived chip on first paint and the initial `listIssues` request carries `include_deleted=true`
+- `@issues:filter-include-archived-sidebar` — Clicking Sidebar > Views > Archive navigates to the issues page with the Include archived chip activated and `?includeArchived=1` in the URL
+- `@issues:restore-archived` — Hovering an archived row reveals a Restore action; clicking it optimistically clears the ARCHIVED tag from the list cache before the `PUT { deleted: false }` confirms, and the restored issue appears in the default (non-archived) view
 
 ## Labels
 
 - `@labels:display` — Labels are displayed on issue detail
 - `@labels:create-with` — User can create an issue with existing and new labels
 - `@labels:edit` — User can add and remove labels on an existing issue
+- `@labels:hidden` — Hidden labels (e.g. `inbox`) are excluded from the issue-detail label display, the editor's selected chips, and the label-picker dropdown, while remaining preserved through save-without-changes round-trips
 
 ## Projects
 
@@ -51,6 +61,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@projects:interactive-status` — The board's `StatusSettingsModal` (gear icon on a status column) exposes an "Interactive" checkbox alongside the existing status flags (`unblocks_parents`, `unblocks_dependents`, `cascades_to_children`). Toggling it on round-trips through the upsert request, and statuses with `interactive: true` render a small "interactive" annotation chip next to the status label in any `<StatusChip>` view.
 - `@projects:details-rail-project-block` — The issue detail right-rail Details tab includes a Project row between Status and Assignee. The row renders a `<ProjectChip>` with the issue's resolved project key + name. Issues created without an explicit `project_id` are persisted against the seeded default project (`j-defaul`), and the chip renders that project.
 - `@issues:blocked-tag` — The Details rail's Status row shows a mono "BLOCKED" tag next to the StatusChip when the issue has at least one `blocked-on` dependency target whose status is not `closed`. The tag is absent for issues with no open blockers.
+- `@projects:status` — A status column's gear icon opens the StatusSettingsModal "Auto-archive after" (value + unit) controls; saving 14 days persists via the per-status PUT and on reload inverse-renders as 2 weeks; clearing the field round-trips back to empty
 
 ## Patches
 
@@ -76,6 +87,12 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@chat:activity-status` — After the user sends a message, an inline activity line appears as the trailing transcript item inside the message list (`Thinking…`), transitions through at least one `ToolUse` label as the worker emits `tool_use` events (with a tool's `description` surfaced in the detail span), and settles into a `done`-state summary (e.g. `2 steps`) once an `AssistantMessage` lands. The line lives inside `ChatMessageList` and is preserved alongside the assistant reply so the user can review what happened.
 - `@chat:reference-preview-cards` — A chat message containing `[[id]]` references for issues / patches / documents / sessions / conversations renders a preview card per unique referenced object at the end of the message, in source order, deduplicated. Inline `[[id]]` rendering in the message body is unchanged.
 - `@chat:proxy-tab` — The right-panel Proxy tab is hidden when the conversation's active session has no advertised `proxy_targets`. Once a worker advertises a port (via `POST /v1/sessions/<sid>/proxy-targets`), the tab appears with a per-port row and a status badge driven by `useConversationProxyStatus` (HEAD probe against `<port>-<conv-id>.proxy.<host>`). Clicking "Open in new tab" calls `POST /v1/conversations/<cid>/proxy-auth` to mint the proxy cookie, then `window.open`s the proxy URL — never iframed.
+- `@chat:list` — Chat list rows render literal Active / Idle / Closed status badges per conversation
+
+## Analytics
+
+- `@analytics:throughput` — Throughput analytics page (linked from the sidebar) renders patches and issues chart cards and exposes time-range, repo, issue-type, and project slicers that persist to URL query params and refetch the scoped charts
+- `@analytics:token-usage` — Token Usage analytics page renders a tokens-over-time chart with input/output/cache series and time-range buttons that re-issue the request with updated `from` / `to` params
 
 ## Repositories
 
@@ -95,6 +112,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 - `@sessions:kill` — User can kill a running session with confirmation
 - `@sessions:filter-bar` — Sessions list toolbar uses the shared `<FilterBar>`. On first visit a creator chip is auto-added for the logged-in user (`?creator=users/<me>`) and `listSessions` narrows by creator; opening the + Filter menu, picking Status → running writes `?status=running` and refetches with the new server params; removing the auto-added creator chip strips `?creator=` from the URL and refetches without it; legacy `?scope=mine` redirects to the creator chip on first paint and the legacy param is stripped.
+- `@sessions:list` — Sessions page renders rows in active-first order (terminal sessions trail running ones), bounds first paint to PAGE_SIZE (≤50) and hides Load more when the cursor is exhausted, and clicking a row navigates to the universal session detail page
 
 ## Mobile Viewport
 
@@ -113,6 +131,7 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 - `@mobile:issue-detail-bottom-safe-area` — At mobile widths the issue detail SessionList sits clear of the iOS Safari home-indicator: the AppLayout main scroll container's bottom padding scales with `env(safe-area-inset-bottom)`, and the list remains reachable via vertical scroll
 - `@mobile:documents-single-pane` — At ≤768px the documents page collapses to a single pane (the reader pane); the left document tree (`aside[aria-label="Document tree"]`) is hidden via `display: none`
 - `@mobile:chat-header-meta` — At mobile widths the chat-details subheading renders "started Xm ago" with a visible space and the meta row wraps cleanly (no separator at line edges, no overlapping characters)
+- `@mobile:issues-row-overflow` — At 320, 360, and 375 px viewports the issues list has no document-level, `<main>`-level, or per-row horizontal overflow, even when a row's title is an unbreakable long token
 
 ## Responsive Layout
 
