@@ -161,7 +161,7 @@ test.describe("Analytics throughput @analytics:throughput", () => {
     ).toBeVisible();
   });
 
-  test("issue-type slicer is multi-select and writes issue_types to the URL", async ({
+  test("issue-type slicer writes singular `issue_type` for one and plural `issue_types` for many", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/analytics/throughput");
@@ -178,21 +178,23 @@ test.describe("Analytics throughput @analytics:throughput", () => {
       }
     });
 
-    // Single-checkbox subcase: one tick → `issue_types=feature`.
+    // One selected → singular `issue_type=feature`, no plural.
     await page.getByTestId("slicer-issue-type-feature").click();
-    await expect(page).toHaveURL(/issue_types=feature(?!%2C|,)/);
+    await expect(page).toHaveURL(/[?&]issue_type=feature(?:&|$)/);
+    await expect(page).not.toHaveURL(/issue_types=/);
     await expect
-      .poll(() => requests.some((u) => /issue_types=feature(?!%2C|,)/.test(u)), {
+      .poll(() => requests.some((u) => /[?&]issue_type=feature(?:&|$)/.test(u)), {
         timeout: 5_000,
       })
       .toBe(true);
 
-    // Tick a second checkbox: URL carries both values, comma-joined
-    // (order-insensitive — the URL-encoded comma is `%2C`).
+    // Two selected → plural `issue_types=feature,bug` (order-insensitive,
+    // URL-encoded comma is `%2C`); the singular key is gone.
     await page.getByTestId("slicer-issue-type-bug").click();
     await expect(page).toHaveURL(
       /issue_types=(feature%2Cbug|bug%2Cfeature|feature,bug|bug,feature)/,
     );
+    await expect(page).not.toHaveURL(/[?&]issue_type=/);
     await expect
       .poll(
         () => {
@@ -207,11 +209,15 @@ test.describe("Analytics throughput @analytics:throughput", () => {
       )
       .toBe(true);
 
-    // Unchecking both clears the param.
+    // Uncheck back to one → URL collapses to singular for the remaining type.
     await page.getByTestId("slicer-issue-type-feature").click();
+    await expect(page).toHaveURL(/[?&]issue_type=bug(?:&|$)/);
+    await expect(page).not.toHaveURL(/issue_types=/);
+
+    // Clear the last one → neither key is present.
     await page.getByTestId("slicer-issue-type-bug").click();
     await expect(page).not.toHaveURL(/issue_types=/);
-    await expect(page).not.toHaveURL(/issue_type=/);
+    await expect(page).not.toHaveURL(/[?&]issue_type=/);
   });
 
   test("changing the repo slicer triggers a chart refetch", async ({
