@@ -85,6 +85,7 @@
   width: 10px;
   height: 10px;
   border-radius: var(--radius-xs);
+  background: var(--swatch);
 }
 
 .chartContent {

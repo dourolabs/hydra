@@ -92,14 +92,14 @@ function IssuesOverTimeChartContent({
         <li className={styles.legendItem}>
           <span
             className={styles.legendSwatch}
-            style={{ background: CHART_COLORS.created }}
+            style={{ "--swatch": CHART_COLORS.created } as React.CSSProperties}
           />
           Created
         </li>
         <li className={styles.legendItem}>
           <span
             className={styles.legendSwatch}
-            style={{ background: CHART_COLORS.merged }}
+            style={{ "--swatch": CHART_COLORS.merged } as React.CSSProperties}
           />
           Reached terminal
         </li>
