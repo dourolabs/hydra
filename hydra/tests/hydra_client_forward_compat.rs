@@ -7,6 +7,7 @@ use httpmock::prelude::*;
 use httpmock::Method::PATCH;
 use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
+    agents::UpsertAgentRequest,
     api::v1::events::EventsQuery,
     api::v1::projects::{
         ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
@@ -31,7 +32,7 @@ use hydra_common::{
     sessions::{Bundle, CreateSessionRequest, SearchSessionsQuery},
     task_status::Status,
     test_utils::status::status,
-    users::Username,
+    users::{SearchUsersQuery, Username},
     whoami::ActorIdentity,
     ConversationId, DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
     SessionId, TriggerId,
@@ -120,6 +121,20 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let trigger_record_for_delete = trigger_record_body.clone();
     let trigger_id_for_create = trigger_id.clone();
     let trigger_id_for_update = trigger_id.clone();
+    let agent_name = "future-agent";
+    let secret_name = "FUTURE_SECRET";
+    let user_path = format!("/v1/users/{username}");
+    let user_secrets_path = format!("/v1/users/{username}/secrets");
+    let user_secret_path = format!("/v1/users/{username}/secrets/{secret_name}");
+    let agent_path = format!("/v1/agents/{agent_name}");
+    let user_record_body = forward_user_json(&username);
+    let user_record_for_get = user_record_body.clone();
+    let user_record_for_list = user_record_body.clone();
+    let agent_record_body = forward_agent_json(agent_name);
+    let agent_record_for_get = agent_record_body.clone();
+    let agent_record_for_create = agent_record_body.clone();
+    let agent_record_for_update = agent_record_body.clone();
+    let agent_record_for_delete = agent_record_body.clone();
     let merge_queue_path = format!(
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
@@ -741,6 +756,85 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             .json_body(trigger_record_for_delete_clone.clone());
     });
 
+    // GET /v1/users
+    let user_record_for_list_clone = user_record_for_list.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path("/v1/users");
+        then.status(200).json_body(json!({
+            "users": [user_record_for_list_clone.clone()],
+            "extra": "list-users"
+        }));
+    });
+
+    // GET /v1/users/:username
+    let user_get_path = user_path.clone();
+    let user_record_for_get_clone = user_record_for_get.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(user_get_path.as_str());
+        then.status(200)
+            .json_body(user_record_for_get_clone.clone());
+    });
+
+    // GET /v1/users/:username/secrets
+    let user_secrets_list_path = user_secrets_path.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(user_secrets_list_path.as_str());
+        then.status(200).json_body(json!({
+            "secrets": ["FOO_KEY", "BAR_KEY"],
+            "extra": "list-secrets"
+        }));
+    });
+
+    // PUT /v1/users/:username/secrets/:name
+    let user_secret_set_path = user_secret_path.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(user_secret_set_path.as_str());
+        then.status(200).json_body(json!({ "extra": "set-secret" }));
+    });
+
+    // DELETE /v1/users/:username/secrets/:name
+    let user_secret_delete_path = user_secret_path.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(user_secret_delete_path.as_str());
+        then.status(200)
+            .json_body(json!({ "extra": "delete-secret" }));
+    });
+
+    // POST /v1/agents (list_agents is already mocked above)
+    let agent_record_for_create_clone = agent_record_for_create.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path("/v1/agents");
+        then.status(200)
+            .json_body(agent_record_for_create_clone.clone());
+    });
+
+    // PUT /v1/agents/:name
+    let agent_update_path = agent_path.clone();
+    let agent_record_for_update_clone = agent_record_for_update.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(agent_update_path.as_str());
+        then.status(200)
+            .json_body(agent_record_for_update_clone.clone());
+    });
+
+    // GET /v1/agents/:name
+    let agent_get_path = agent_path.clone();
+    let agent_record_for_get_clone = agent_record_for_get.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(agent_get_path.as_str());
+        then.status(200)
+            .json_body(agent_record_for_get_clone.clone());
+    });
+
+    // DELETE /v1/agents/:name
+    let agent_delete_path = agent_path.clone();
+    let agent_record_for_delete_clone = agent_record_for_delete.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(agent_delete_path.as_str());
+        then.status(200)
+            .json_body(agent_record_for_delete_clone.clone());
+    });
+
     // GET /v1/events — SSE stream. Includes one event with an unknown event
     // type (skipped by the SSE parser without erroring) plus a known
     // `heartbeat` event whose payload carries extra unknown fields.
@@ -1214,6 +1308,57 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let deleted_trigger = client.delete_trigger(&trigger_id).await?;
     assert_eq!(deleted_trigger.trigger_id, trigger_id);
 
+    // Users + secrets. Neither `UserSummary` nor `ListSecretsResponse`
+    // carries an enum member with an `Unknown` variant, so forward-compat
+    // coverage here is unknown-extra-field tolerance plus a successful
+    // decode. `set_user_secret` / `delete_user_secret` return `()`; the
+    // successful await confirms the (extra-field-bearing) response body
+    // decoded.
+    let listed_users = client.list_users(&SearchUsersQuery::default()).await?;
+    assert_eq!(listed_users.users.len(), 1);
+    assert_eq!(listed_users.users[0].username, username);
+
+    let fetched_user = client.get_user(username.as_str()).await?;
+    assert_eq!(fetched_user.username, username);
+
+    let listed_secrets = client.list_user_secrets(username.as_str()).await?;
+    assert_eq!(listed_secrets.secrets.len(), 2);
+
+    client
+        .set_user_secret(username.as_str(), secret_name, "ssshhh")
+        .await?;
+    client
+        .delete_user_secret(username.as_str(), secret_name)
+        .await?;
+
+    // Agents (CRUD; `list_agents` is covered above). `AgentRecord` and the
+    // `AgentResponse` / `DeleteAgentResponse` envelopes carry no enum
+    // members with an `Unknown` variant, so coverage here is the
+    // unknown-extra-field tolerance plus a successful decode.
+    let upsert_agent = UpsertAgentRequest::new(
+        agent_name,
+        "future agent prompt".to_string(),
+        3,
+        5,
+        None,
+        None,
+        true,
+        false,
+        vec!["FUTURE_KEY".to_string()],
+    );
+
+    let created_agent = client.create_agent(&upsert_agent).await?;
+    assert_eq!(created_agent.agent.name, agent_name);
+
+    let updated_agent = client.update_agent(agent_name, &upsert_agent).await?;
+    assert_eq!(updated_agent.agent.name, agent_name);
+
+    let fetched_agent = client.get_agent(agent_name).await?;
+    assert_eq!(fetched_agent.agent.name, agent_name);
+
+    let deleted_agent = client.delete_agent(agent_name).await?;
+    assert_eq!(deleted_agent.agent.name, agent_name);
+
     // Events (SSE). The mock emits one block with an unknown event type
     // (the SSE parser skips it without erroring) and one `heartbeat` block
     // whose payload carries an extra unknown field. Driving the stream to
@@ -1596,6 +1741,33 @@ fn forward_worker_context_json() -> Value {
         "resolved_env": { "foo": "bar" },
         "github_token": null,
         "note": "context"
+    })
+}
+
+fn forward_user_json(username: &Username) -> Value {
+    json!({
+        "username": username,
+        "github_user_id": 4242,
+        "future": "user-field"
+    })
+}
+
+fn forward_agent_json(agent_name: &str) -> Value {
+    json!({
+        "agent": {
+            "name": agent_name,
+            "prompt": "future agent prompt",
+            "prompt_path": "/agents/future/prompt.md",
+            "mcp_config_path": null,
+            "mcp_config": null,
+            "max_tries": 3,
+            "max_simultaneous": 5,
+            "is_assignment_agent": true,
+            "is_default_conversation_agent": false,
+            "secrets": ["FUTURE_KEY"],
+            "future": "agent-record-field"
+        },
+        "extra": "agent-response"
     })
 }
 
