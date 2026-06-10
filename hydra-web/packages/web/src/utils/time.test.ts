@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatDuration, getRuntime } from "./time";
+import { formatDuration, formatDurationSeconds, getRuntime } from "./time";
 
 describe("formatDuration", () => {
   it("formats seconds", () => {
@@ -22,6 +22,28 @@ describe("formatDuration", () => {
     expect(formatDuration(-1000)).toBe("0s");
     expect(formatDuration(-500)).toBe("0s");
     expect(formatDuration(-999999)).toBe("0s");
+  });
+});
+
+describe("formatDurationSeconds", () => {
+  it("formats sub-minute values as seconds", () => {
+    expect(formatDurationSeconds(0)).toBe("0s");
+    expect(formatDurationSeconds(45)).toBe("45s");
+  });
+
+  it("formats minutes / hours / days, rounding one decimal when small", () => {
+    expect(formatDurationSeconds(60)).toBe("1m");
+    expect(formatDurationSeconds(90)).toBe("1.5m");
+    expect(formatDurationSeconds(3600)).toBe("1h");
+    expect(formatDurationSeconds(18000)).toBe("5h");
+    expect(formatDurationSeconds(86400)).toBe("1d");
+    expect(formatDurationSeconds(86400 * 3)).toBe("3d");
+  });
+
+  it("returns an em dash for negative or non-finite input", () => {
+    expect(formatDurationSeconds(-1)).toBe("—");
+    expect(formatDurationSeconds(NaN)).toBe("—");
+    expect(formatDurationSeconds(Infinity)).toBe("—");
   });
 });
 

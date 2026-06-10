@@ -1,3 +1,26 @@
+const MINUTE = 60;
+const HOUR = 60 * 60;
+const DAY = 24 * HOUR;
+
+function roundOne(value: number): number {
+  if (value >= 10) return Math.round(value);
+  return Math.round(value * 10) / 10;
+}
+
+/**
+ * Compact single-unit duration formatter (`5s` / `12m` / `5h` / `1d`).
+ * Picks the largest unit yielding a value ≥ 1 and rounds. Distinct from
+ * `formatDuration(ms)` (two-unit, ms input) — used for analytics callouts
+ * and histogram bin labels where space is tight.
+ */
+export function formatDurationSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < MINUTE) return `${Math.round(seconds)}s`;
+  if (seconds < HOUR) return `${roundOne(seconds / MINUTE)}m`;
+  if (seconds < DAY) return `${roundOne(seconds / HOUR)}h`;
+  return `${roundOne(seconds / DAY)}d`;
+}
+
 /** Format a duration in milliseconds to a human-readable string. */
 export function formatDuration(ms: number): string {
   const seconds = Math.floor(Math.max(0, ms) / 1000);
