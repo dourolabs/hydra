@@ -49,8 +49,8 @@ struct AuthTokenEntry {
     creator: Username,
 }
 
-/// In-memory equivalent of the post-cutover `metis.statuses` table for
-/// a single project. Issues store a sequence id; the index resolves
+/// In-memory equivalent of the `metis.statuses` table for a single
+/// project. Issues store a sequence id; the index resolves
 /// `(project_id, sequence) → current key` on read, so a status-key
 /// rename does NOT orphan issues (matches the FK semantics of the SQL
 /// backends, where storage is by `status_sequence`).
@@ -136,13 +136,13 @@ pub struct MemoryStore {
     triggers: DashMap<TriggerId, Vec<Versioned<Trigger>>>,
     /// Maps project IDs to their versioned Project data
     projects: DashMap<ProjectId, Vec<Versioned<Project>>>,
-    /// Per-project statuses index. Mirrors the post-cutover
-    /// `metis.statuses` table semantics: every status carries a stable
-    /// `sequence` id; issues store the sequence and resolve to the
-    /// current key on read. A `StatusKey` rename via mutation of this
-    /// index does NOT orphan issues. Wrapped in a `Mutex` because
-    /// `add_project` / `update_project` mutate the inner map atomically
-    /// against the same project key.
+    /// Per-project statuses index. Mirrors the `metis.statuses` table
+    /// semantics: every status carries a stable `sequence` id; issues
+    /// store the sequence and resolve to the current key on read. A
+    /// `StatusKey` rename via mutation of this index does NOT orphan
+    /// issues. Wrapped in a `Mutex` because `add_project` /
+    /// `update_project` mutate the inner map atomically against the
+    /// same project key.
     statuses_indexes: DashMap<ProjectId, Mutex<StatusesIndex>>,
     /// Per-issue-version status sequence. The Issue value stored in
     /// `issues` keeps its `status` field as the key at write time, but
@@ -2832,10 +2832,9 @@ impl Store for MemoryStore {
             return Err(StoreError::ProjectKeyExists(project.key.clone()));
         }
         let id = self.next_project_id();
-        // Post-cutover, `add_project` is project-level only — the new
-        // project starts with an empty statuses index. Subsequent
-        // `add_status` calls populate the index and the project row's
-        // `statuses` field.
+        // `add_project` is project-level only — the new project starts
+        // with an empty statuses index. Subsequent `add_status` calls
+        // populate the index and the project row's `statuses` field.
         self.statuses_indexes
             .insert(id.clone(), Mutex::new(StatusesIndex::new(&[])));
         let mut row = project;
@@ -2861,10 +2860,10 @@ impl Store for MemoryStore {
             .get_mut(id)
             .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
         let versions = entry.value_mut();
-        // `update_project` is project-level only post-cutover. Carry
-        // the current statuses index snapshot forward on the new
-        // version row; status changes flow exclusively through
-        // `add_status` / `update_status` / `delete_status`.
+        // `update_project` is project-level only; status changes flow
+        // through `add_status` / `update_status` / `delete_status`.
+        // Carry the current statuses index snapshot forward on the new
+        // version row.
         let statuses = self
             .statuses_indexes
             .get(id)
@@ -9734,12 +9733,11 @@ mod tests {
 
     // ---- Project CRUD tests -------------------------------------------------
 
-    /// Test helper: add a project plus every inline status on it via
-    /// the new per-status API. Returns the assigned project id and the
-    /// project version after the last `add_status` call. Mirrors the
-    /// pre-cutover behavior of `add_project(project_with_statuses)`
-    /// so tests that need a fully-populated project keep their
-    /// existing setup-then-assert shape against the new wire surface.
+    /// Test helper: add a project and then each inline status on it
+    /// via `add_status`. Returns the assigned project id and the
+    /// project version after the last `add_status` call. Lets tests
+    /// that need a fully-populated project keep a single setup call
+    /// instead of interleaving `add_project` + per-status follow-ups.
     async fn add_project_with_statuses(
         store: &MemoryStore,
         project: Project,

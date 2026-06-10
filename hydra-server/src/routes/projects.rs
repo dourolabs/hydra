@@ -11,9 +11,9 @@
 //! and store calls below this layer continue to address projects
 //! exclusively by `ProjectId`.
 //!
-//! Post-cutover, `POST /v1/projects` and `PUT /v1/projects/:project_ref`
-//! carry only project-level fields. Per-status add / update / delete
-//! lives at `POST/PUT/DELETE /v1/projects/:project_ref/statuses[/:status_key]`.
+//! `POST /v1/projects` and `PUT /v1/projects/:project_ref` carry only
+//! project-level fields. Per-status add / update / delete lives at
+//! `POST/PUT/DELETE /v1/projects/:project_ref/statuses[/:status_key]`.
 
 use crate::app::AppState;
 use crate::domain::actors::{Actor, ActorRef};

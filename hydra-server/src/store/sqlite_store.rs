@@ -266,8 +266,9 @@ struct ProjectRow {
     priority: f64,
     // Per-project high-water mark for `statuses.sequence` assignment.
     // Monotonically non-decreasing across status add/remove cycles to
-    // forbid sequence id reuse. Set by `apply_statuses_diff_in_tx`;
-    // read here only for `get_project` / `list_projects` sanity.
+    // forbid sequence id reuse. Bumped by `add_status` (the only writer
+    // that allocates a new sequence id); read here for `get_project` /
+    // `list_projects` sanity.
     #[allow(dead_code)]
     next_status_sequence: i64,
 }
@@ -2670,9 +2671,9 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
 }
 
 /// True iff `err` is a SQLite FK-constraint violation. Used by
-/// `apply_statuses_diff_in_tx` (scoped to its DELETE on `statuses`) to
-/// translate the raw sqlx error into [`StoreError::InvalidIssueStatus`]
-/// so the route layer can surface a 400 instead of an opaque 500.
+/// `delete_status` (scoped to its DELETE on `statuses`) to translate
+/// the raw sqlx error into [`StoreError::InvalidIssueStatus`] so the
+/// route layer can surface a 400 instead of an opaque 500.
 ///
 /// SQLite messages do not carry a constraint name, so the predicate is
 /// intentionally generic; only call from a site where the only FK that
@@ -6041,9 +6042,9 @@ impl Store for SqliteStore {
         .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
-        // Post-cutover, `add_project` is project-level only. The new
-        // row starts with `next_status_sequence = 1`; statuses are
-        // created independently via `add_status`.
+        // `add_project` is project-level only. The new row starts
+        // with `next_status_sequence = 1`; statuses are created
+        // independently via `add_status`.
         Self::insert_project_row_in_tx(&mut *tx, &id, 1, &project, Some(&actor_json), 1).await?;
         tx.commit().await.map_err(map_sqlx_error)?;
 
@@ -6090,9 +6091,9 @@ impl Store for SqliteStore {
         .execute(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
-        // Post-cutover, `update_project` is project-level only and
-        // carries the existing `next_status_sequence` forward unchanged
-        // — only `add_status` mutates it.
+        // `update_project` is project-level only and carries the
+        // existing `next_status_sequence` forward unchanged — only
+        // `add_status` mutates it.
         Self::insert_project_row_in_tx(
             &mut *tx,
             id,
@@ -6359,11 +6360,11 @@ mod tests {
     /// that fabricate a `ProjectId::new()` and then `add_issue` against
     /// it would otherwise fail the
     /// `issues_v2_status_sequence_fkey` because no matching status row
-    /// exists. The post-cutover store layer also rejects writes whose
+    /// exists. The store layer also rejects writes whose
     /// `(project_id, status_key)` doesn't resolve to a sequence, so
     /// seed both columns. Sequence numbers are assigned in input order
-    /// starting at 1 — same shape `apply_statuses_diff_in_tx` would
-    /// produce on a fresh project.
+    /// starting at 1 — same shape `add_status` calls in input order
+    /// would produce on a fresh project.
     async fn seed_status_keys_for_project(
         store: &SqliteStore,
         project_id: &hydra_common::ProjectId,
@@ -13704,7 +13705,7 @@ mod tests {
         assert_eq!(status.key.as_str(), "open");
     }
 
-    // ---- Per-status CRUD (post-cutover) ----
+    // ---- Per-status CRUD ----
 
     fn cutover_status_def(k: &str) -> hydra_common::api::v1::projects::StatusDefinition {
         use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};

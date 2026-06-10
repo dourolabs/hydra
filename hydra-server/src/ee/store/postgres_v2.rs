@@ -2427,9 +2427,9 @@ fn is_project_key_unique_violation_pg(err: &sqlx::Error) -> bool {
 /// True iff `err` is a Postgres FK-violation on
 /// `issues_v2_status_sequence_fkey` — the RESTRICT that blocks deleting
 /// a `metis.statuses` row while an `issues_v2` row still references it.
-/// Used by `apply_statuses_diff_in_tx` to translate the raw sqlx error
-/// into [`StoreError::InvalidIssueStatus`] so the route layer can
-/// surface a 400 instead of an opaque 500.
+/// Used by `delete_status` to translate the raw sqlx error into
+/// [`StoreError::InvalidIssueStatus`] so the route layer can surface a
+/// 400 instead of an opaque 500.
 fn is_status_sequence_fk_violation_pg(err: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db_err) = err {
         if db_err.code().as_deref() == Some("23503") {
@@ -11109,7 +11109,7 @@ mod tests {
         assert_eq!(status.key.as_str(), "open");
     }
 
-    // ---- Per-status CRUD (post-cutover) ----
+    // ---- Per-status CRUD ----
 
     fn cutover_empty_project_pg(name: &str) -> Project {
         use hydra_common::api::v1::projects::ProjectKey;
