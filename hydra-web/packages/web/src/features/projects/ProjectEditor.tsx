@@ -39,6 +39,11 @@ interface ProjectEditorProps {
   creator: string;
 }
 
+interface StatusRow {
+  status: StatusDefinition;
+  originalKey: string | null;
+}
+
 export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProps) {
   const navigate = useNavigate();
   const { addToast } = useToast();
@@ -50,9 +55,19 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
   const [key, setKey] = useState(initial?.key ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [promptPath, setPromptPath] = useState(initial?.prompt_path ?? "");
-  const [statuses, setStatuses] = useState<StatusDefinition[]>(
-    initial?.statuses ?? defaultNewStatuses(),
+  // Each row pairs the editor's current `StatusDefinition` with the
+  // key it was loaded under. `originalKey === null` marks a row that
+  // didn't exist on the server at mount (new project, or `+ Add
+  // status`); existing rows preserve their load-time key so a Key
+  // edit becomes a rename PUT instead of a delete-old + create-new
+  // pair (which would 400 against the `ON DELETE RESTRICT` FK on
+  // `issues_v2.status_sequence`).
+  const [rows, setRows] = useState<StatusRow[]>(() =>
+    initial?.statuses
+      ? initial.statuses.map((s) => ({ status: s, originalKey: s.key }))
+      : defaultNewStatuses().map((s) => ({ status: s, originalKey: null })),
   );
+  const statuses = useMemo(() => rows.map((r) => r.status), [rows]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [projectPromptExpanded, setProjectPromptExpanded] = useState(false);
   // Per-status expanded set keyed by index so each row's textarea stays
@@ -74,6 +89,11 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     project: Project;
     nextStatuses: StatusDefinition[];
     initialStatuses: StatusDefinition[];
+    // Parallel to `nextStatuses`: the key each row was loaded under
+    // (or `null` for rows added during this edit). Drives the per-row
+    // create/update/delete decision so a Key edit on an existing row
+    // becomes one rename PUT instead of a delete + create pair.
+    originalKeys: (string | null)[];
   }
 
   const mutation = useMutation({
@@ -82,27 +102,32 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
         isEdit && projectId
           ? await apiClient.updateProject(projectId, payload.request)
           : await apiClient.createProject(payload.request);
-      // Status-level changes go through per-status endpoints.
-      // `initialStatuses` is the at-load snapshot from `initial`;
-      // `nextStatuses` is the editor's local edit. For create, the
-      // initial slice is empty and everything in `nextStatuses` is a
-      // POST.
+      // Status-level changes go through per-status endpoints, keyed
+      // off each row's `originalKey`. New rows (`originalKey === null`)
+      // POST; existing rows PUT against their original key — a body
+      // whose `key` differs from the path segment is treated as an
+      // in-place rename by the backend, preserving the
+      // `(project_id, sequence)` storage identity.
+      //
+      // Known limitation: a swap-rename (A→B + B→A in one save) will
+      // 400 on the first PUT due to a transient key collision. We
+      // surface the backend error via the existing toast and do not
+      // try to special-case it.
       const ref = upsertResp.project_id;
-      const existingByKey = new Map(
-        payload.initialStatuses.map((s) => [s.key, s] as const),
-      );
-      const nextKeys = new Set(payload.nextStatuses.map((s) => s.key));
-      for (const status of payload.nextStatuses) {
-        if (existingByKey.has(status.key)) {
-          await apiClient.updateProjectStatus(ref, status.key, status);
-          existingByKey.delete(status.key);
-        } else {
+      const survivingOriginalKeys = new Set<string>();
+      for (let i = 0; i < payload.nextStatuses.length; i++) {
+        const status = payload.nextStatuses[i];
+        const originalKey = payload.originalKeys[i];
+        if (originalKey === null) {
           await apiClient.createProjectStatus(ref, status);
+        } else {
+          await apiClient.updateProjectStatus(ref, originalKey, status);
+          survivingOriginalKeys.add(originalKey);
         }
       }
-      for (const key of existingByKey.keys()) {
-        if (!nextKeys.has(key)) {
-          await apiClient.deleteProjectStatus(ref, key);
+      for (const initial of payload.initialStatuses) {
+        if (!survivingOriginalKeys.has(initial.key)) {
+          await apiClient.deleteProjectStatus(ref, initial.key);
         }
       }
       return upsertResp;
@@ -167,7 +192,8 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
     const trimmedPromptPath = promptPath.trim();
     const promptPathOrNull = trimmedPromptPath ? trimmedPromptPath : null;
     const priority = initial?.priority ?? 0;
-    const nextStatuses = statuses.map(normalizeStatusForSubmit);
+    const nextStatuses = rows.map((r) => normalizeStatusForSubmit(r.status));
+    const originalKeys = rows.map((r) => r.originalKey);
     const project: Project = {
       key: key.trim(),
       name: name.trim(),
@@ -190,13 +216,14 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
       project,
       nextStatuses,
       initialStatuses: initial?.statuses ?? [],
+      originalKeys,
     });
   }, [
     formError,
     key,
     name,
     promptPath,
-    statuses,
+    rows,
     creator,
     initial,
     mutation,
@@ -205,19 +232,21 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
 
   const updateStatus = useCallback(
     (index: number, patch: Partial<StatusDefinition>) => {
-      setStatuses((prev) =>
-        prev.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+      setRows((prev) =>
+        prev.map((r, i) =>
+          i === index ? { ...r, status: { ...r.status, ...patch } } : r,
+        ),
       );
     },
     [],
   );
 
   const removeStatus = useCallback((index: number) => {
-    setStatuses((prev) => prev.filter((_, i) => i !== index));
+    setRows((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const moveStatus = useCallback((index: number, delta: number) => {
-    setStatuses((prev) => {
+    setRows((prev) => {
       const target = index + delta;
       if (target < 0 || target >= prev.length) return prev;
       const next = [...prev];
@@ -229,7 +258,10 @@ export function ProjectEditor({ projectId, initial, creator }: ProjectEditorProp
   }, []);
 
   const addStatus = useCallback(() => {
-    setStatuses((prev) => [...prev, blankStatus(prev.length)]);
+    setRows((prev) => [
+      ...prev,
+      { status: blankStatus(prev.length), originalKey: null },
+    ]);
   }, []);
 
   return (
