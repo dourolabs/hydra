@@ -81,7 +81,7 @@ export function createAnalyticsRoutes(): Hono {
     const common = readCommon(params);
     if ("error" in common) return c.json(common, 400);
     // Mirrors the prod bin scheme from
-    // hydra-server/src/domain/analytics.rs: [0,1h), [1h,4h), [4h,1d), [1d,3d),
+    // hydra-server/src/analytics/buckets.rs: [0,1h), [1h,4h), [4h,1d), [1d,3d),
     // [3d,7d), [7d,14d), [14d,30d), [30d, +inf). Last bin has bin_end_seconds=null.
     const resp: PatchesTimeToMergeResponse = {
       median_seconds: BigInt(18000),

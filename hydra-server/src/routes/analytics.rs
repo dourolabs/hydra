@@ -2,18 +2,18 @@
 //!
 //! Each handler validates the time window, fetches matching patches
 //! and their histories via the store primitives, then delegates to the
-//! pure aggregator in [`crate::domain::analytics`]. The aggregator
+//! pure aggregator in [`crate::analytics`]. The aggregator
 //! holds the entire business logic; the handlers are a thin IO shim
 //! plus error mapping.
 
-use crate::app::AppState;
-use crate::app::projects::{ResolveStatusError, project_cached};
-use crate::domain::analytics::{
+use crate::analytics::{
     compute_issues_cycle_time, compute_issues_over_time, compute_issues_per_status_distribution,
     compute_issues_time_in_status_breakdown, compute_patches_in_flight_over_time,
     compute_patches_over_time, compute_patches_terminal_mix, compute_patches_time_to_merge,
     fetch_issue_histories, fetch_patch_histories, resolve_projects_for_histories,
 };
+use crate::app::AppState;
+use crate::app::projects::{ResolveStatusError, project_cached};
 use crate::store::StoreError;
 use anyhow::anyhow;
 use axum::{

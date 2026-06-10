@@ -1,7 +1,7 @@
 //! Wire types for the `/v1/analytics` endpoints.
 //!
 //! See [`super::patches`] / [`super::issues`] for the underlying entity
-//! shapes and `hydra-server/src/domain/analytics.rs` for the in-process
+//! shapes and `hydra-server/src/analytics/` for the in-process
 //! aggregation that drives these responses.
 //!
 //! ## "Terminal" — issues
