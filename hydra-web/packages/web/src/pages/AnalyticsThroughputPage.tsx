@@ -11,17 +11,17 @@ import {
   type SlicerState,
 } from "../features/analytics/slicerState";
 import {
-  useThroughputPatchesOverTime,
-  useThroughputPatchesTerminalMix,
-  useThroughputPatchesTimeToMerge,
-  useThroughputPatchesInFlightOverTime,
-} from "../features/analytics/useThroughputPatches";
-import {
   useThroughputIssuesCycleTime,
   useThroughputIssuesTimeInStatusBreakdown,
   useThroughputIssuesPerStatusDistribution,
   useThroughputIssuesOverTime,
 } from "../features/analytics/useThroughputIssues";
+import {
+  PatchesOverTimeChart,
+  PatchesTerminalMixChart,
+  PatchesTimeToMergeChart,
+  PatchesInFlightChart,
+} from "../features/analytics/charts";
 import styles from "./AnalyticsThroughputPage.module.css";
 
 export function AnalyticsThroughputPage() {
@@ -60,10 +60,14 @@ export function AnalyticsThroughputPage() {
     [baseQuery, state.projectId, state.issueTypes, state.assignee, state.statusKeys],
   );
 
-  const patchesOverTime = useThroughputPatchesOverTime({ ...baseQuery, bucket: "day" });
-  const patchesTerminalMix = useThroughputPatchesTerminalMix(baseQuery);
-  const patchesTimeToMerge = useThroughputPatchesTimeToMerge(baseQuery);
-  const patchesInFlight = useThroughputPatchesInFlightOverTime({ ...baseQuery, bucket: "day" });
+  const patchesOverTimeQuery = useMemo(
+    () => ({ ...baseQuery, bucket: "day" as const }),
+    [baseQuery],
+  );
+  const patchesInFlightQuery = useMemo(
+    () => ({ ...baseQuery, bucket: "day" as const }),
+    [baseQuery],
+  );
 
   const issuesOverTime = useThroughputIssuesOverTime({ ...baseIssuesQuery, bucket: "day" });
   const issuesCycleTime = useThroughputIssuesCycleTime(baseIssuesQuery);
@@ -97,38 +101,10 @@ export function AnalyticsThroughputPage() {
           >
             <h2 className={styles.sectionTitle}>Patches</h2>
             <div className={styles.grid}>
-              <ChartCard
-                title="Patches over time"
-                testId="chart-patches-over-time"
-                isLoading={patchesOverTime.isLoading}
-                error={patchesOverTime.error}
-              >
-                Chart coming soon
-              </ChartCard>
-              <ChartCard
-                title="Terminal mix"
-                testId="chart-patches-terminal-mix"
-                isLoading={patchesTerminalMix.isLoading}
-                error={patchesTerminalMix.error}
-              >
-                Chart coming soon
-              </ChartCard>
-              <ChartCard
-                title="Time to merge"
-                testId="chart-patches-time-to-merge"
-                isLoading={patchesTimeToMerge.isLoading}
-                error={patchesTimeToMerge.error}
-              >
-                Chart coming soon
-              </ChartCard>
-              <ChartCard
-                title="In-flight over time"
-                testId="chart-patches-in-flight"
-                isLoading={patchesInFlight.isLoading}
-                error={patchesInFlight.error}
-              >
-                Chart coming soon
-              </ChartCard>
+              <PatchesOverTimeChart query={patchesOverTimeQuery} />
+              <PatchesTerminalMixChart query={baseQuery} />
+              <PatchesTimeToMergeChart query={baseQuery} />
+              <PatchesInFlightChart query={patchesInFlightQuery} />
             </div>
           </section>
 

@@ -55,7 +55,8 @@ export interface PatchesTerminalMixResponse {
 
 export interface HistogramBin {
   bin_start_seconds: number;
-  bin_end_seconds: number;
+  /** `null` for the open-ended last bin (e.g. "30d+"). */
+  bin_end_seconds: number | null;
   count: number;
 }
 
@@ -64,8 +65,10 @@ export interface PatchesTimeToMergeQuery extends BaseThroughputQuery {
 }
 
 export interface PatchesTimeToMergeResponse {
-  median_seconds: number;
-  p95_seconds: number;
+  /** `null` when `count` is zero. */
+  median_seconds: number | null;
+  /** `null` when `count` is zero. */
+  p95_seconds: number | null;
   count: number;
   histogram: HistogramBin[];
 }
@@ -106,8 +109,8 @@ export interface IssuesCycleTimeQuery extends BaseIssuesThroughputQuery {
 }
 
 export interface IssuesCycleTimeResponse {
-  median_seconds: number;
-  p95_seconds: number;
+  median_seconds: number | null;
+  p95_seconds: number | null;
   count: number;
   histogram: HistogramBin[];
 }
