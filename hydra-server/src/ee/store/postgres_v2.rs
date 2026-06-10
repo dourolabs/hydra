@@ -5889,15 +5889,15 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("invalid version number stored for project '{id}'"))
         })?;
 
-        let existing: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM metis.statuses WHERE project_id = $1 AND key = $2 LIMIT 1",
+        let existing: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM metis.statuses WHERE project_id = $1 AND key = $2)",
         )
         .bind(id.as_ref())
         .bind(status.key.as_str())
-        .fetch_optional(&mut *tx)
+        .fetch_one(&mut *tx)
         .await
         .map_err(map_sqlx_error)?;
-        if existing.is_some() {
+        if existing {
             return Err(StoreError::InvalidIssueStatus(format!(
                 "status '{}' already exists on project '{id}'",
                 status.key.as_str()
@@ -5954,15 +5954,15 @@ impl Store for PostgresStoreV2 {
         })?;
 
         if &status.key != status_key {
-            let collides: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM metis.statuses WHERE project_id = $1 AND key = $2 LIMIT 1",
+            let collides: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM metis.statuses WHERE project_id = $1 AND key = $2)",
             )
             .bind(id.as_ref())
             .bind(status.key.as_str())
-            .fetch_optional(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(map_sqlx_error)?;
-            if collides.is_some() {
+            if collides {
                 return Err(StoreError::InvalidIssueStatus(format!(
                     "status '{}' already exists on project '{id}'",
                     status.key.as_str()
