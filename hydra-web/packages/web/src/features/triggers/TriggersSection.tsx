@@ -1,15 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Chip } from "@hydra/ui";
+import { Button, Chip, EmptyState, ErrorState, LoadingState } from "@hydra/ui";
 import type { ListTriggersResponse, TriggerVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useTriggers } from "./useTriggers";
 import { useAuth } from "../auth/useAuth";
 import { actorDisplayName } from "../../api/auth";
-import { LoadingState } from "../../components/LoadingState/LoadingState";
-import { ErrorState } from "../../components/ErrorState/ErrorState";
-import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import { useToast } from "../toast/useToast";
 import { TriggerCreateModal } from "./TriggerCreateModal";

@@ -1,13 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Icons } from "@hydra/ui";
+import { Button, EmptyState, ErrorState, Icons, LoadingState } from "@hydra/ui";
 import type { RepositoryRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useRepositories } from "../../hooks/useRepositories";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { LoadingState } from "../../components/LoadingState/LoadingState";
-import { ErrorState } from "../../components/ErrorState/ErrorState";
-import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { useToast } from "../toast/useToast";
 import { RepositoryRailRow } from "../related/RailRow";
 import { RepositoryCreateModal } from "./RepositoryCreateModal";

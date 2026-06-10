@@ -1,7 +1,7 @@
-import { Button } from "@hydra/ui";
+import { Button } from "../Button";
 import styles from "./ErrorState.module.css";
 
-interface ErrorStateProps {
+export interface ErrorStateProps {
   message: string;
   onRetry?: () => void;
 }

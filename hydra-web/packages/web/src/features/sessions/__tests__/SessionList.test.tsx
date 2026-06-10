@@ -38,6 +38,10 @@ vi.mock("@hydra/ui", () => ({
     <span data-testid="badge">{status}</span>
   ),
   Spinner: () => <span data-testid="spinner" />,
+  LoadingState: () => <div data-testid="loading" />,
+  ErrorState: ({ message }: { message: string }) => (
+    <div data-testid="error-state">{message}</div>
+  ),
 }));
 
 vi.mock("../../../utils/badgeStatus", () => ({
@@ -53,14 +57,6 @@ vi.mock("../SessionList.module.css", () => ({
 }));
 
 vi.mock("../TokensCell.module.css", () => ({
-  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
-}));
-
-vi.mock("../../../components/LoadingState/LoadingState.module.css", () => ({
-  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
-}));
-
-vi.mock("../../../components/ErrorState/ErrorState.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 

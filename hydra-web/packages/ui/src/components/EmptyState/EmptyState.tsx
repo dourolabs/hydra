@@ -1,7 +1,7 @@
-import { Button } from "@hydra/ui";
+import { Button } from "../Button";
 import styles from "./EmptyState.module.css";
 
-interface EmptyStateProps {
+export interface EmptyStateProps {
   message: string;
   action?: { label: string; onClick: () => void };
 }
