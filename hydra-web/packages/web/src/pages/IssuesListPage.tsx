@@ -368,17 +368,17 @@ export function IssuesListPage() {
     [filters, searchQuery, hasActiveRelationFilter, relationIds],
   );
 
-  // Board mode still consumes the legacy URL-derived shape; keep the
-  // historical mapping so chip navigation between table → board carries
-  // forward (status / assignee / creator chips, modelled the old way).
+  // Board mode shares the FilterBar + search input with the table view; thread
+  // the same `searchQuery` through so typing in the search box narrows board
+  // columns the same way it narrows the table.
   const boardBaseFilters = useMemo<IssueFilters>(() => {
     const f = filtersToIssuesQuery({
       filters,
-      q: "",
+      q: searchQuery,
       extraIds: null,
     });
     return f;
-  }, [filters]);
+  }, [filters, searchQuery]);
 
   const tableEnabled = isFlatList && !relationsLoading && !projectResolutionPending;
 
