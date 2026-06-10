@@ -81,6 +81,17 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn list_stale_issues_for_status(
+        &self,
+        _project_id: &ProjectId,
+        _status_key: &StatusKey,
+        _threshold_seconds: i64,
+        _now: DateTime<Utc>,
+        _limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError> {
+        fail()
+    }
+
     async fn get_issue_children(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         fail()
     }

@@ -709,6 +709,8 @@ pub struct SchedulerSection {
     pub cleanup_branches: WorkerSchedulerConfig,
     #[serde(default = "default_scheduled_triggers_scheduler")]
     pub scheduled_triggers: WorkerSchedulerConfig,
+    #[serde(default)]
+    pub auto_archive: AutoArchiveSchedulerConfig,
 }
 
 impl Default for SchedulerSection {
@@ -718,6 +720,7 @@ impl Default for SchedulerSection {
             github_poller: default_github_poller_scheduler(),
             cleanup_branches: default_cleanup_branches_scheduler(),
             scheduled_triggers: default_scheduled_triggers_scheduler(),
+            auto_archive: AutoArchiveSchedulerConfig::default(),
         }
     }
 }
@@ -738,6 +741,45 @@ impl Default for WorkerSchedulerConfig {
             interval_secs: default_scheduler_interval_secs(),
             initial_backoff_secs: default_scheduler_initial_backoff_secs(),
             max_backoff_secs: default_scheduler_max_backoff_secs(),
+        }
+    }
+}
+
+/// Scheduler config for the auto-archive worker. Mirrors
+/// [`WorkerSchedulerConfig`] (interval + backoff) and adds a
+/// per-tick batch cap: when an operator lowers a status's
+/// `auto_archive_after_seconds` and a large backlog of stale issues
+/// suddenly qualifies, the worker drains at most `batch_size` rows
+/// per status per tick so tick latency stays bounded.
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct AutoArchiveSchedulerConfig {
+    #[serde(default = "default_auto_archive_interval_secs")]
+    pub interval_secs: u64,
+    #[serde(default = "default_scheduler_initial_backoff_secs")]
+    pub initial_backoff_secs: u64,
+    #[serde(default = "default_scheduler_max_backoff_secs")]
+    pub max_backoff_secs: u64,
+    #[serde(default = "default_auto_archive_batch_size")]
+    pub batch_size: u32,
+}
+
+impl AutoArchiveSchedulerConfig {
+    pub fn scheduler(&self) -> WorkerSchedulerConfig {
+        WorkerSchedulerConfig {
+            interval_secs: self.interval_secs,
+            initial_backoff_secs: self.initial_backoff_secs,
+            max_backoff_secs: self.max_backoff_secs,
+        }
+    }
+}
+
+impl Default for AutoArchiveSchedulerConfig {
+    fn default() -> Self {
+        Self {
+            interval_secs: default_auto_archive_interval_secs(),
+            initial_backoff_secs: default_scheduler_initial_backoff_secs(),
+            max_backoff_secs: default_scheduler_max_backoff_secs(),
+            batch_size: default_auto_archive_batch_size(),
         }
     }
 }
@@ -850,6 +892,14 @@ fn default_scheduled_triggers_scheduler() -> WorkerSchedulerConfig {
     }
 }
 
+const fn default_auto_archive_interval_secs() -> u64 {
+    60
+}
+
+const fn default_auto_archive_batch_size() -> u32 {
+    500
+}
+
 fn default_cpu_limit() -> String {
     "500m".to_string()
 }
@@ -891,6 +941,8 @@ mod tests {
             default_github_poll_interval_secs()
         );
         assert_eq!(scheduler.cleanup_branches.interval_secs, 300);
+        assert_eq!(scheduler.auto_archive.interval_secs, 60);
+        assert_eq!(scheduler.auto_archive.batch_size, 500);
 
         assert_eq!(scheduler.monitor_running_sessions.initial_backoff_secs, 1);
         assert_eq!(scheduler.monitor_running_sessions.max_backoff_secs, 30);
@@ -898,6 +950,8 @@ mod tests {
         assert_eq!(scheduler.github_poller.max_backoff_secs, 30);
         assert_eq!(scheduler.cleanup_branches.initial_backoff_secs, 1);
         assert_eq!(scheduler.cleanup_branches.max_backoff_secs, 30);
+        assert_eq!(scheduler.auto_archive.initial_backoff_secs, 1);
+        assert_eq!(scheduler.auto_archive.max_backoff_secs, 30);
     }
 
     #[test]

@@ -2758,6 +2758,44 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(count as u64)
     }
 
+    async fn list_stale_issues_for_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+        threshold_seconds: i64,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let cutoff = now - chrono::Duration::seconds(threshold_seconds);
+        let sql = format!(
+            "SELECT i.id FROM {TABLE_ISSUES_V2} i \
+             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE i.is_latest = true AND i.deleted = false \
+               AND i.project_id = $1 AND s.key = $2 AND i.updated_at < $3 \
+             LIMIT $4"
+        );
+        let rows = sqlx::query_scalar::<_, String>(&sql)
+            .bind(project_id.as_ref())
+            .bind(status_key.as_str())
+            .bind(cutoff)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        rows.into_iter()
+            .map(|id| {
+                id.parse::<IssueId>().map_err(|err| {
+                    StoreError::Internal(format!(
+                        "invalid issue id stored in {TABLE_ISSUES_V2}: {err}"
+                    ))
+                })
+            })
+            .collect()
+    }
+
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.ensure_issue_exists(issue_id).await?;
         let sql = format!(
@@ -8562,6 +8600,62 @@ mod tests {
         // Count only closed
         let query = SearchIssuesQuery::new(None, vec![status("closed")], None, None, None);
         assert_eq!(store.count_issues(&query).await.unwrap(), 1);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_stale_issues_for_status_filters_correctly_v2(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+        let project_id = crate::domain::projects::default_project_id();
+
+        // Three issues spaced ~50ms apart so their updated_at values
+        // are distinguishable.
+        let (oldest, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (mid, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let (newest, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+
+        let mid_at = store.get_issue(&mid, false).await.unwrap().timestamp;
+        let now = mid_at + chrono::Duration::seconds(1);
+        let key = status("open");
+
+        let mut ids = store
+            .list_stale_issues_for_status(&project_id, &key, 1, now, 10)
+            .await
+            .unwrap();
+        ids.sort();
+        let mut expected = vec![oldest.clone()];
+        expected.sort();
+        assert_eq!(ids, expected, "only the strictly oldest row qualifies");
+
+        // Soft-deleted rows are filtered.
+        store.delete_issue(&oldest, &actor).await.unwrap();
+        let ids = store
+            .list_stale_issues_for_status(&project_id, &key, 1, now, 10)
+            .await
+            .unwrap();
+        assert!(ids.is_empty());
+
+        // Bump `now` so even the newest qualifies; the limit caps the
+        // result set.
+        let now_far = chrono::Utc::now() + chrono::Duration::days(1);
+        let ids = store
+            .list_stale_issues_for_status(&project_id, &key, 1, now_far, 1)
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 1, "limit must cap the result set");
+
+        // Other-status query is independent.
+        let closed_ids = store
+            .list_stale_issues_for_status(&project_id, &status("closed"), 1, now_far, 10)
+            .await
+            .unwrap();
+        assert!(closed_ids.is_empty());
+
+        // Drop a warning about `newest`/`mid` being unused.
+        let _ = (mid, newest);
     }
 
     #[sqlx::test(migrations = "./migrations")]

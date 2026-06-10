@@ -159,6 +159,16 @@ background:
       interval_secs: 60
       initial_backoff_secs: 1
       max_backoff_secs: 30
+    auto_archive:
+      # Optional scheduler settings for the worker that soft-deletes
+      # issues whose status has `auto_archive_after_seconds` set and
+      # whose `updated_at` is older than the threshold. `batch_size`
+      # caps how many stale issues are archived per status per tick;
+      # the remainder drains over subsequent ticks.
+      interval_secs: 60
+      initial_backoff_secs: 1
+      max_backoff_secs: 30
+      batch_size: 500
 
 # ------------------------------------------------------------------
 # Policy Engine Configuration

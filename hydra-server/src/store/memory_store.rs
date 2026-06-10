@@ -1005,6 +1005,65 @@ impl ReadOnlyStore for MemoryStore {
         Ok(self.filter_issues(query).count() as u64)
     }
 
+    async fn list_stale_issues_for_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+        threshold_seconds: i64,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<IssueId>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(sequence) = self
+            .statuses_indexes
+            .get(project_id)
+            .map(|idx_mutex| {
+                idx_mutex
+                    .lock()
+                    .expect("statuses index mutex poisoned")
+                    .sequence_for_key(status_key)
+            })
+            .unwrap_or_default()
+        else {
+            return Ok(Vec::new());
+        };
+        let cutoff = now - chrono::Duration::seconds(threshold_seconds);
+        let limit = limit as usize;
+
+        let mut matches: Vec<IssueId> = Vec::new();
+        for entry in self.issues.iter() {
+            let Some(latest) = Self::latest_versioned(entry.value()) else {
+                continue;
+            };
+            if latest.item.deleted {
+                continue;
+            }
+            if &latest.item.project_id != project_id {
+                continue;
+            }
+            let Ok(version) = i64::try_from(latest.version) else {
+                continue;
+            };
+            let stored_sequence = self
+                .issue_status_sequences
+                .get(&(entry.key().clone(), version))
+                .map(|e| *e.value());
+            if stored_sequence != Some(sequence) {
+                continue;
+            }
+            if latest.timestamp >= cutoff {
+                continue;
+            }
+            matches.push(entry.key().clone());
+            if matches.len() >= limit {
+                break;
+            }
+        }
+        Ok(matches)
+    }
+
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         if !self.issues.contains_key(issue_id) {
             return Err(StoreError::IssueNotFound(issue_id.clone()));

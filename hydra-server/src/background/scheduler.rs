@@ -3,7 +3,7 @@
 use crate::{
     app::AppState,
     background::{
-        cleanup_branches::CleanupBranchesWorker,
+        auto_archive::AutoArchiveWorker, cleanup_branches::CleanupBranchesWorker,
         monitor_running_sessions::MonitorRunningSessionsWorker,
         scheduled_triggers::ScheduledTriggerWorker,
     },
@@ -106,6 +106,8 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         .max(1);
     let cleanup_branches_interval_secs = scheduler_config.cleanup_branches.interval_secs.max(1);
     let scheduled_triggers_interval_secs = scheduler_config.scheduled_triggers.interval_secs.max(1);
+    let auto_archive_scheduler = scheduler_config.auto_archive.scheduler();
+    let auto_archive_interval_secs = auto_archive_scheduler.interval_secs.max(1);
     log_worker_config(
         "monitor_running_sessions",
         monitor_interval_secs,
@@ -125,6 +127,11 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
         crate::background::scheduled_triggers::WORKER_NAME,
         scheduled_triggers_interval_secs,
         &scheduler_config.scheduled_triggers,
+    );
+    log_worker_config(
+        crate::background::auto_archive::WORKER_NAME,
+        auto_archive_interval_secs,
+        &auto_archive_scheduler,
     );
 
     let workers = vec![
@@ -158,7 +165,18 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
                 scheduled_triggers_interval_secs,
                 &scheduler_config.scheduled_triggers,
             ),
-            Arc::new(ScheduledTriggerWorker::new(state)),
+            Arc::new(ScheduledTriggerWorker::new(state.clone())),
+        ),
+        WorkerHandle::new(
+            worker_settings_from_config(
+                crate::background::auto_archive::WORKER_NAME,
+                auto_archive_interval_secs,
+                &auto_archive_scheduler,
+            ),
+            Arc::new(AutoArchiveWorker::new(
+                state,
+                scheduler_config.auto_archive.batch_size,
+            )),
         ),
     ];
 
