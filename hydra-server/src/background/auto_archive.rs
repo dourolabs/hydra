@@ -165,14 +165,6 @@ async fn archive_stale_for_status(
     let mut archived = 0usize;
     let mut failed = 0usize;
     for issue_id in stale_ids {
-        // Re-read the issue's updated_at so the audit log carries
-        // the exact value the worker used to make the archive
-        // decision. A failure here is non-fatal: the archive call
-        // below still gets a chance.
-        let updated_at = match store.get_issue(&issue_id, false).await {
-            Ok(versioned) => Some(versioned.timestamp),
-            Err(_) => None,
-        };
         match store
             .delete_issue_with_actor(&issue_id, actor.clone())
             .await
@@ -184,7 +176,6 @@ async fn archive_stale_for_status(
                     project_id = %project_id,
                     status_key = %status_key,
                     threshold_seconds,
-                    updated_at = ?updated_at,
                     "auto-archived stale issue"
                 );
                 archived += 1;
