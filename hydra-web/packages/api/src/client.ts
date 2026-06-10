@@ -81,24 +81,16 @@ import type {
   ProjectStatusesResponse,
 } from "./projects";
 import type { StatusDefinition } from "./generated/StatusDefinition";
-import type {
-  PatchesOverTimeQuery,
-  PatchesOverTimeResponse,
-  PatchesTerminalMixQuery,
-  PatchesTerminalMixResponse,
-  PatchesTimeToMergeQuery,
-  PatchesTimeToMergeResponse,
-  PatchesInFlightOverTimeQuery,
-  PatchesInFlightOverTimeResponse,
-  IssuesCycleTimeQuery,
-  IssuesCycleTimeResponse,
-  IssuesTimeInStatusBreakdownQuery,
-  IssuesTimeInStatusBreakdownResponse,
-  IssuesPerStatusDistributionQuery,
-  IssuesPerStatusDistributionResponse,
-  IssuesOverTimeQuery,
-  IssuesOverTimeResponse,
-} from "./analytics";
+import type { PatchesThroughputQuery } from "./generated/PatchesThroughputQuery";
+import type { PatchesOverTimeResponse } from "./generated/PatchesOverTimeResponse";
+import type { PatchesTerminalMixResponse } from "./generated/PatchesTerminalMixResponse";
+import type { PatchesTimeToMergeResponse } from "./generated/PatchesTimeToMergeResponse";
+import type { PatchesInFlightOverTimeResponse } from "./generated/PatchesInFlightOverTimeResponse";
+import type { IssuesThroughputQuery } from "./generated/IssuesThroughputQuery";
+import type { IssuesCycleTimeResponse } from "./generated/IssuesCycleTimeResponse";
+import type { IssuesTimeInStatusBreakdownResponse } from "./generated/IssuesTimeInStatusBreakdownResponse";
+import type { IssuesPerStatusDistributionResponse } from "./generated/IssuesPerStatusDistributionResponse";
+import type { IssuesOverTimeResponse } from "./generated/IssuesOverTimeResponse";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -820,15 +812,11 @@ export class HydraApiClient {
 
   // ---------------------------------------------------------------------------
   // Analytics — Throughput
-  //
-  // TODO: response types are inline placeholders in `./analytics`. Swap to
-  // ts-rs-generated types when Analytics PR 1 (i-hvaitdun) / PR 2 (i-lzxnkbfx)
-  // land in hydra-common.
   // ---------------------------------------------------------------------------
 
   /** GET /v1/analytics/throughput/patches/over_time */
   getPatchesThroughputOverTime(
-    query: PatchesOverTimeQuery,
+    query: PatchesThroughputQuery,
   ): Promise<PatchesOverTimeResponse> {
     return this.get(
       "/v1/analytics/throughput/patches/over_time",
@@ -838,7 +826,7 @@ export class HydraApiClient {
 
   /** GET /v1/analytics/throughput/patches/terminal_mix */
   getPatchesThroughputTerminalMix(
-    query: PatchesTerminalMixQuery,
+    query: PatchesThroughputQuery,
   ): Promise<PatchesTerminalMixResponse> {
     return this.get(
       "/v1/analytics/throughput/patches/terminal_mix",
@@ -848,7 +836,7 @@ export class HydraApiClient {
 
   /** GET /v1/analytics/throughput/patches/time_to_merge */
   getPatchesThroughputTimeToMerge(
-    query: PatchesTimeToMergeQuery,
+    query: PatchesThroughputQuery,
   ): Promise<PatchesTimeToMergeResponse> {
     return this.get(
       "/v1/analytics/throughput/patches/time_to_merge",
@@ -858,7 +846,7 @@ export class HydraApiClient {
 
   /** GET /v1/analytics/throughput/patches/in_flight_over_time */
   getPatchesThroughputInFlightOverTime(
-    query: PatchesInFlightOverTimeQuery,
+    query: PatchesThroughputQuery,
   ): Promise<PatchesInFlightOverTimeResponse> {
     return this.get(
       "/v1/analytics/throughput/patches/in_flight_over_time",
@@ -868,7 +856,7 @@ export class HydraApiClient {
 
   /** GET /v1/analytics/throughput/issues/cycle_time */
   getIssuesThroughputCycleTime(
-    query: IssuesCycleTimeQuery,
+    query: IssuesThroughputQuery,
   ): Promise<IssuesCycleTimeResponse> {
     return this.get(
       "/v1/analytics/throughput/issues/cycle_time",
@@ -878,7 +866,7 @@ export class HydraApiClient {
 
   /** GET /v1/analytics/throughput/issues/time_in_status_breakdown */
   getIssuesThroughputTimeInStatusBreakdown(
-    query: IssuesTimeInStatusBreakdownQuery,
+    query: IssuesThroughputQuery,
   ): Promise<IssuesTimeInStatusBreakdownResponse> {
     return this.get(
       "/v1/analytics/throughput/issues/time_in_status_breakdown",
@@ -888,7 +876,7 @@ export class HydraApiClient {
 
   /** GET /v1/analytics/throughput/issues/per_status_distribution */
   getIssuesThroughputPerStatusDistribution(
-    query: IssuesPerStatusDistributionQuery,
+    query: IssuesThroughputQuery,
   ): Promise<IssuesPerStatusDistributionResponse> {
     return this.get(
       "/v1/analytics/throughput/issues/per_status_distribution",
@@ -898,7 +886,7 @@ export class HydraApiClient {
 
   /** GET /v1/analytics/throughput/issues/over_time */
   getIssuesThroughputOverTime(
-    query: IssuesOverTimeQuery,
+    query: IssuesThroughputQuery,
   ): Promise<IssuesOverTimeResponse> {
     return this.get(
       "/v1/analytics/throughput/issues/over_time",

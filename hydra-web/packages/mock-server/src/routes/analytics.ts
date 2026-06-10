@@ -11,11 +11,9 @@ import type {
 } from "@hydra/api";
 
 /**
- * Stub handlers for `/v1/analytics/throughput/...` endpoints planned in
- * Analytics PRs 1+2. These return small synthetic fixtures sufficient to
- * exercise the slicer panel + time-range picker UX during dev / Playwright
- * tests. The chart implementations land in PRs 4+5; this PR only needs the
- * fixture to be a stable, parseable shape.
+ * Stub handlers for `/v1/analytics/throughput/...` endpoints. These return
+ * small synthetic fixtures sufficient to exercise the slicer panel +
+ * time-range picker UX during dev / Playwright tests.
  *
  * `from` / `to` are validated as ISO timestamps; everything else is
  * accepted permissively (we mirror filters at the wire-shape level, not
@@ -63,8 +61,8 @@ export function createAnalyticsRoutes(): Hono {
     const resp: PatchesOverTimeResponse = {
       buckets: buckets.map((b, i) => ({
         bucket_start: b.bucket_start,
-        created: 2 + i,
-        merged: 1 + i,
+        created: BigInt(2 + i),
+        merged: BigInt(1 + i),
       })),
     };
     return c.json(resp);
@@ -74,7 +72,7 @@ export function createAnalyticsRoutes(): Hono {
     const params = new URL(c.req.url).searchParams;
     const common = readCommon(params);
     if ("error" in common) return c.json(common, 400);
-    const resp: PatchesTerminalMixResponse = { merged: 27, closed: 4 };
+    const resp: PatchesTerminalMixResponse = { merged: BigInt(27), closed: BigInt(4) };
     return c.json(resp);
   });
 
@@ -86,18 +84,18 @@ export function createAnalyticsRoutes(): Hono {
     // hydra-server/src/domain/analytics.rs: [0,1h), [1h,4h), [4h,1d), [1d,3d),
     // [3d,7d), [7d,14d), [14d,30d), [30d, +inf). Last bin has bin_end_seconds=null.
     const resp: PatchesTimeToMergeResponse = {
-      median_seconds: 18000,
-      p95_seconds: 86400 * 3,
-      count: 8,
+      median_seconds: BigInt(18000),
+      p95_seconds: BigInt(86400 * 3),
+      count: BigInt(8),
       histogram: [
-        { bin_start_seconds: 0, bin_end_seconds: 3600, count: 1 },
-        { bin_start_seconds: 3600, bin_end_seconds: 14400, count: 2 },
-        { bin_start_seconds: 14400, bin_end_seconds: 86400, count: 2 },
-        { bin_start_seconds: 86400, bin_end_seconds: 86400 * 3, count: 1 },
-        { bin_start_seconds: 86400 * 3, bin_end_seconds: 86400 * 7, count: 1 },
-        { bin_start_seconds: 86400 * 7, bin_end_seconds: 86400 * 14, count: 0 },
-        { bin_start_seconds: 86400 * 14, bin_end_seconds: 86400 * 30, count: 0 },
-        { bin_start_seconds: 86400 * 30, bin_end_seconds: null, count: 1 },
+        { bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) },
+        { bin_start_seconds: BigInt(3600), bin_end_seconds: BigInt(14400), count: BigInt(2) },
+        { bin_start_seconds: BigInt(14400), bin_end_seconds: BigInt(86400), count: BigInt(2) },
+        { bin_start_seconds: BigInt(86400), bin_end_seconds: BigInt(86400 * 3), count: BigInt(1) },
+        { bin_start_seconds: BigInt(86400 * 3), bin_end_seconds: BigInt(86400 * 7), count: BigInt(1) },
+        { bin_start_seconds: BigInt(86400 * 7), bin_end_seconds: BigInt(86400 * 14), count: BigInt(0) },
+        { bin_start_seconds: BigInt(86400 * 14), bin_end_seconds: BigInt(86400 * 30), count: BigInt(0) },
+        { bin_start_seconds: BigInt(86400 * 30), bin_end_seconds: null, count: BigInt(1) },
       ],
     };
     return c.json(resp);
@@ -111,7 +109,7 @@ export function createAnalyticsRoutes(): Hono {
     const resp: PatchesInFlightOverTimeResponse = {
       buckets: buckets.map((b, i) => ({
         bucket_start: b.bucket_start,
-        in_flight: 5 + i,
+        in_flight: BigInt(5 + i),
       })),
     };
     return c.json(resp);
@@ -124,14 +122,14 @@ export function createAnalyticsRoutes(): Hono {
     const common = readCommon(params);
     if ("error" in common) return c.json(common, 400);
     const resp: IssuesCycleTimeResponse = {
-      median_seconds: 86400,
-      p95_seconds: 604800,
-      count: 9,
+      median_seconds: BigInt(86400),
+      p95_seconds: BigInt(604800),
+      count: BigInt(9),
       histogram: [
-        { bin_start_seconds: 0, bin_end_seconds: 3600, count: 1 },
-        { bin_start_seconds: 3600, bin_end_seconds: 86400, count: 4 },
-        { bin_start_seconds: 86400, bin_end_seconds: 604800, count: 3 },
-        { bin_start_seconds: 604800, bin_end_seconds: 2592000, count: 1 },
+        { bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) },
+        { bin_start_seconds: BigInt(3600), bin_end_seconds: BigInt(86400), count: BigInt(4) },
+        { bin_start_seconds: BigInt(86400), bin_end_seconds: BigInt(604800), count: BigInt(3) },
+        { bin_start_seconds: BigInt(604800), bin_end_seconds: BigInt(2592000), count: BigInt(1) },
       ],
     };
     return c.json(resp);
@@ -148,11 +146,11 @@ export function createAnalyticsRoutes(): Hono {
     const resp: IssuesTimeInStatusBreakdownResponse = {
       project_id: projectId,
       status_segments: [
-        { status_key: "open", label: "Open", color: "#3498db", mean_seconds: 1200 },
-        { status_key: "in-progress", label: "In progress", color: "#f1c40f", mean_seconds: 21600 },
-        { status_key: "closed", label: "Closed", color: "#2ecc71", mean_seconds: 0 },
+        { status_key: "open", label: "Open", color: "#3498db", mean_seconds: BigInt(1200) },
+        { status_key: "in-progress", label: "In progress", color: "#f1c40f", mean_seconds: BigInt(21600) },
+        { status_key: "closed", label: "Closed", color: "#2ecc71", mean_seconds: BigInt(0) },
       ],
-      issue_count: 12,
+      issue_count: BigInt(12),
     };
     return c.json(resp);
   });
@@ -172,17 +170,17 @@ export function createAnalyticsRoutes(): Hono {
           status_key: "open",
           label: "Open",
           color: "#3498db",
-          median_seconds: 1200,
-          p95_seconds: 7200,
-          sample_count: 10,
+          median_seconds: BigInt(1200),
+          p95_seconds: BigInt(7200),
+          sample_count: BigInt(10),
         },
         {
           status_key: "in-progress",
           label: "In progress",
           color: "#f1c40f",
-          median_seconds: 18000,
-          p95_seconds: 86400,
-          sample_count: 8,
+          median_seconds: BigInt(18000),
+          p95_seconds: BigInt(86400),
+          sample_count: BigInt(8),
         },
       ],
     };
@@ -197,8 +195,8 @@ export function createAnalyticsRoutes(): Hono {
     const resp: IssuesOverTimeResponse = {
       buckets: buckets.map((b, i) => ({
         bucket_start: b.bucket_start,
-        created: 4 + i,
-        reached_terminal: 2 + i,
+        created: BigInt(4 + i),
+        reached_terminal: BigInt(2 + i),
       })),
     };
     return c.json(resp);

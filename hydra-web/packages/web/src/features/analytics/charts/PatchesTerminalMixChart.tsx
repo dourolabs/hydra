@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import type {
-  PatchesTerminalMixQuery,
+  PatchesThroughputQuery,
   PatchesTerminalMixResponse,
 } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
@@ -10,7 +10,7 @@ import { CHART_COLORS } from "./colors";
 import styles from "./charts.module.css";
 
 export interface PatchesTerminalMixChartProps {
-  query: PatchesTerminalMixQuery;
+  query: PatchesThroughputQuery;
 }
 
 /** Donut: merged vs closed share of terminal-status patches in the window. */
@@ -33,8 +33,8 @@ function PatchesTerminalMixChartContent({
 }: {
   data: PatchesTerminalMixResponse | undefined;
 }) {
-  const merged = data?.merged ?? 0;
-  const closed = data?.closed ?? 0;
+  const merged = Number(data?.merged ?? 0);
+  const closed = Number(data?.closed ?? 0);
   const total = merged + closed;
 
   const slices = useMemo(

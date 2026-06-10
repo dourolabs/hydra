@@ -63,8 +63,15 @@ const {
   PatchesInFlightChart,
 } = await import("../index");
 
-type Q = { from: string; to: string; bucket?: "day" | "week" };
-const baseQuery: Q = { from: "2026-05-10T00:00:00Z", to: "2026-06-10T00:00:00Z" };
+import type { PatchesThroughputQuery } from "@hydra/api";
+
+const baseQuery: PatchesThroughputQuery = {
+  from: "2026-05-10T00:00:00Z",
+  to: "2026-06-10T00:00:00Z",
+  bucket: "day",
+  repo_name: null,
+  creator: null,
+};
 
 function mkResult<T>(partial: Partial<UseQueryResult<T>>): UseQueryResult<T> {
   return {
@@ -90,7 +97,7 @@ describe("PatchesOverTimeChart", () => {
     hookMocks.useThroughputPatchesOverTime.mockReturnValue(
       mkResult<PatchesOverTimeResponse>({ data: { buckets: [] } }),
     );
-    render(<PatchesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<PatchesOverTimeChart query={baseQuery} />);
     expect(screen.getByText("No data in this window")).toBeDefined();
     expect(screen.queryByTestId("patches-over-time-content")).toBeNull();
   });
@@ -100,13 +107,13 @@ describe("PatchesOverTimeChart", () => {
       mkResult<PatchesOverTimeResponse>({
         data: {
           buckets: [
-            { bucket_start: "2026-05-10T00:00:00Z", created: 3, merged: 2 },
-            { bucket_start: "2026-05-11T00:00:00Z", created: 5, merged: 4 },
+            { bucket_start: "2026-05-10T00:00:00Z", created: BigInt(3), merged: BigInt(2) },
+            { bucket_start: "2026-05-11T00:00:00Z", created: BigInt(5), merged: BigInt(4) },
           ],
         },
       }),
     );
-    render(<PatchesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<PatchesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("patches-over-time-content")).toBeDefined();
     expect(screen.getByText("Created")).toBeDefined();
     expect(screen.getByText("Merged")).toBeDefined();
@@ -121,7 +128,7 @@ describe("PatchesOverTimeChart", () => {
         status: "error",
       }),
     );
-    render(<PatchesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<PatchesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("chart-card-error").textContent).toContain("boom");
   });
 
@@ -135,7 +142,7 @@ describe("PatchesOverTimeChart", () => {
         fetchStatus: "fetching",
       }),
     );
-    render(<PatchesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<PatchesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("chart-card-loading")).toBeDefined();
   });
 });
@@ -143,7 +150,7 @@ describe("PatchesOverTimeChart", () => {
 describe("PatchesTerminalMixChart", () => {
   it("renders the empty state when both counts are zero", () => {
     hookMocks.useThroughputPatchesTerminalMix.mockReturnValue(
-      mkResult<PatchesTerminalMixResponse>({ data: { merged: 0, closed: 0 } }),
+      mkResult<PatchesTerminalMixResponse>({ data: { merged: BigInt(0), closed: BigInt(0) } }),
     );
     render(<PatchesTerminalMixChart query={baseQuery} />);
     expect(screen.getByText("No data in this window")).toBeDefined();
@@ -151,7 +158,7 @@ describe("PatchesTerminalMixChart", () => {
 
   it("renders the donut total + percentages with data", () => {
     hookMocks.useThroughputPatchesTerminalMix.mockReturnValue(
-      mkResult<PatchesTerminalMixResponse>({ data: { merged: 27, closed: 4 } }),
+      mkResult<PatchesTerminalMixResponse>({ data: { merged: BigInt(27), closed: BigInt(4) } }),
     );
     render(<PatchesTerminalMixChart query={baseQuery} />);
     expect(screen.getByTestId("patches-terminal-mix-total").textContent).toBe("31");
@@ -161,7 +168,7 @@ describe("PatchesTerminalMixChart", () => {
 
   it("renders a total even when one side is 0", () => {
     hookMocks.useThroughputPatchesTerminalMix.mockReturnValue(
-      mkResult<PatchesTerminalMixResponse>({ data: { merged: 5, closed: 0 } }),
+      mkResult<PatchesTerminalMixResponse>({ data: { merged: BigInt(5), closed: BigInt(0) } }),
     );
     render(<PatchesTerminalMixChart query={baseQuery} />);
     expect(screen.getByTestId("patches-terminal-mix-total").textContent).toBe("5");
@@ -190,7 +197,7 @@ describe("PatchesTimeToMergeChart", () => {
         data: {
           median_seconds: null,
           p95_seconds: null,
-          count: 0,
+          count: BigInt(0),
           histogram: [],
         },
       }),
@@ -203,12 +210,12 @@ describe("PatchesTimeToMergeChart", () => {
     hookMocks.useThroughputPatchesTimeToMerge.mockReturnValue(
       mkResult<PatchesTimeToMergeResponse>({
         data: {
-          median_seconds: 18000,
-          p95_seconds: 86400,
-          count: 7,
+          median_seconds: BigInt(18000),
+          p95_seconds: BigInt(86400),
+          count: BigInt(7),
           histogram: [
-            { bin_start_seconds: 0, bin_end_seconds: 3600, count: 1 },
-            { bin_start_seconds: 86400 * 30, bin_end_seconds: null, count: 1 },
+            { bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) },
+            { bin_start_seconds: BigInt(86400 * 30), bin_end_seconds: null, count: BigInt(1) },
           ],
         },
       }),
@@ -228,8 +235,8 @@ describe("PatchesTimeToMergeChart", () => {
         data: {
           median_seconds: null,
           p95_seconds: null,
-          count: 1,
-          histogram: [{ bin_start_seconds: 0, bin_end_seconds: 3600, count: 1 }],
+          count: BigInt(1),
+          histogram: [{ bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) }],
         },
       }),
     );
@@ -257,7 +264,7 @@ describe("PatchesInFlightChart", () => {
     hookMocks.useThroughputPatchesInFlightOverTime.mockReturnValue(
       mkResult<PatchesInFlightOverTimeResponse>({ data: { buckets: [] } }),
     );
-    render(<PatchesInFlightChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<PatchesInFlightChart query={baseQuery} />);
     expect(screen.getByText("No data in this window")).toBeDefined();
   });
 
@@ -266,13 +273,13 @@ describe("PatchesInFlightChart", () => {
       mkResult<PatchesInFlightOverTimeResponse>({
         data: {
           buckets: [
-            { bucket_start: "2026-05-10T00:00:00Z", in_flight: 12 },
-            { bucket_start: "2026-05-11T00:00:00Z", in_flight: 14 },
+            { bucket_start: "2026-05-10T00:00:00Z", in_flight: BigInt(12) },
+            { bucket_start: "2026-05-11T00:00:00Z", in_flight: BigInt(14) },
           ],
         },
       }),
     );
-    render(<PatchesInFlightChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<PatchesInFlightChart query={baseQuery} />);
     expect(screen.getByTestId("patches-in-flight-content")).toBeDefined();
   });
 
@@ -285,7 +292,7 @@ describe("PatchesInFlightChart", () => {
         status: "error",
       }),
     );
-    render(<PatchesInFlightChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<PatchesInFlightChart query={baseQuery} />);
     expect(screen.getByTestId("chart-card-error").textContent).toContain("kaboom");
   });
 });

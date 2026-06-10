@@ -1,12 +1,9 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import type {
-  IssuesCycleTimeQuery,
+  IssuesThroughputQuery,
   IssuesCycleTimeResponse,
-  IssuesTimeInStatusBreakdownQuery,
   IssuesTimeInStatusBreakdownResponse,
-  IssuesPerStatusDistributionQuery,
   IssuesPerStatusDistributionResponse,
-  IssuesOverTimeQuery,
   IssuesOverTimeResponse,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -19,7 +16,7 @@ import { apiClient } from "../../api/client";
  */
 
 export function useThroughputIssuesCycleTime(
-  query: IssuesCycleTimeQuery,
+  query: IssuesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<IssuesCycleTimeResponse> {
   return useQuery({
@@ -30,7 +27,7 @@ export function useThroughputIssuesCycleTime(
 }
 
 export function useThroughputIssuesTimeInStatusBreakdown(
-  query: IssuesTimeInStatusBreakdownQuery,
+  query: IssuesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<IssuesTimeInStatusBreakdownResponse> {
   return useQuery({
@@ -41,7 +38,7 @@ export function useThroughputIssuesTimeInStatusBreakdown(
 }
 
 export function useThroughputIssuesPerStatusDistribution(
-  query: IssuesPerStatusDistributionQuery,
+  query: IssuesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<IssuesPerStatusDistributionResponse> {
   return useQuery({
@@ -52,7 +49,7 @@ export function useThroughputIssuesPerStatusDistribution(
 }
 
 export function useThroughputIssuesOverTime(
-  query: IssuesOverTimeQuery,
+  query: IssuesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<IssuesOverTimeResponse> {
   return useQuery({

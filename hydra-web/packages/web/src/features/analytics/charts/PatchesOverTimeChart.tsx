@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { PatchesOverTimeQuery, PatchesOverTimeResponse } from "@hydra/api";
+import type { PatchesThroughputQuery, PatchesOverTimeResponse } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
 import { useThroughputPatchesOverTime } from "../useThroughputPatches";
 import { CHART_COLORS } from "./colors";
@@ -16,7 +16,7 @@ import { formatBucketLabel } from "../duration";
 import styles from "./charts.module.css";
 
 export interface PatchesOverTimeChartProps {
-  query: PatchesOverTimeQuery;
+  query: PatchesThroughputQuery;
 }
 
 /**
@@ -49,8 +49,8 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
       (data?.buckets ?? []).map((b) => ({
         bucket_start: b.bucket_start,
         label: formatBucketLabel(b.bucket_start),
-        created: b.created,
-        merged: b.merged,
+        created: Number(b.created),
+        merged: Number(b.merged),
       })),
     [data],
   );

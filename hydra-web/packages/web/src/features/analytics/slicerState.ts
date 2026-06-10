@@ -1,4 +1,4 @@
-import type { IssueTypeKey } from "@hydra/api";
+import type { IssueType } from "@hydra/api";
 
 /**
  * URL-backed slicer state for the Throughput analytics page. The page reads
@@ -17,7 +17,7 @@ export const TIME_RANGE_OPTIONS: readonly TimeRange[] = [
 
 export const DEFAULT_TIME_RANGE: TimeRange = "30d";
 
-export const ISSUE_TYPE_OPTIONS: readonly IssueTypeKey[] = [
+export const ISSUE_TYPE_OPTIONS: readonly IssueType[] = [
   "feature",
   "bug",
   "chore",
@@ -31,7 +31,7 @@ export interface SlicerState {
   projectId: string | null;
   statusKeys: string[];
   repoName: string | null;
-  issueTypes: IssueTypeKey[];
+  issueType: IssueType | null;
   assignee: string | null;
   creator: string | null;
 }
@@ -41,7 +41,7 @@ export const URL_PARAMS = {
   projectId: "project_id",
   statusKeys: "status_keys",
   repoName: "repo_name",
-  issueTypes: "issue_type",
+  issueType: "issue_type",
   assignee: "assignee",
   creator: "creator",
 } as const;
@@ -50,7 +50,7 @@ function isTimeRange(value: string): value is TimeRange {
   return (TIME_RANGE_OPTIONS as readonly string[]).includes(value);
 }
 
-function isIssueTypeKey(value: string): value is IssueTypeKey {
+function isIssueType(value: string): value is IssueType {
   return (ISSUE_TYPE_OPTIONS as readonly string[]).includes(value);
 }
 
@@ -64,17 +64,16 @@ export function readSlicerState(params: URLSearchParams): SlicerState {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const issueTypes = (params.get(URL_PARAMS.issueTypes) ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(isIssueTypeKey);
+  const rawIssueType = params.get(URL_PARAMS.issueType);
+  const issueType: IssueType | null =
+    rawIssueType && isIssueType(rawIssueType) ? rawIssueType : null;
 
   return {
     range,
     projectId: params.get(URL_PARAMS.projectId),
     statusKeys,
     repoName: params.get(URL_PARAMS.repoName),
-    issueTypes,
+    issueType,
     assignee: params.get(URL_PARAMS.assignee),
     creator: params.get(URL_PARAMS.creator),
   };
@@ -109,9 +108,9 @@ export function writeSlicerState(
     else next.delete(URL_PARAMS.repoName);
   }
 
-  if (patch.issueTypes !== undefined) {
-    if (patch.issueTypes.length > 0) next.set(URL_PARAMS.issueTypes, patch.issueTypes.join(","));
-    else next.delete(URL_PARAMS.issueTypes);
+  if (patch.issueType !== undefined) {
+    if (patch.issueType) next.set(URL_PARAMS.issueType, patch.issueType);
+    else next.delete(URL_PARAMS.issueType);
   }
 
   if (patch.assignee !== undefined) {

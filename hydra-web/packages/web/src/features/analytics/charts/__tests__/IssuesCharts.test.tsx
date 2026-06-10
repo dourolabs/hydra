@@ -63,13 +63,20 @@ const {
   IssuesPerStatusDistributionChart,
 } = await import("../index");
 
-type Q = {
-  from: string;
-  to: string;
-  bucket?: "day" | "week";
-  project_id?: string;
+import type { IssuesThroughputQuery } from "@hydra/api";
+
+const baseQuery: IssuesThroughputQuery = {
+  from: "2026-05-10T00:00:00Z",
+  to: "2026-06-10T00:00:00Z",
+  bucket: "day",
+  project_id: null,
+  repo_name: null,
+  issue_type: null,
+  assignee: null,
+  creator: null,
 };
-const baseQuery: Q = { from: "2026-05-10T00:00:00Z", to: "2026-06-10T00:00:00Z" };
+
+const scopedQuery: IssuesThroughputQuery = { ...baseQuery, project_id: "j-defaul" };
 
 function mkResult<T>(partial: Partial<UseQueryResult<T>>): UseQueryResult<T> {
   return {
@@ -95,7 +102,7 @@ describe("IssuesOverTimeChart", () => {
     hookMocks.useThroughputIssuesOverTime.mockReturnValue(
       mkResult<IssuesOverTimeResponse>({ data: { buckets: [] } }),
     );
-    render(<IssuesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<IssuesOverTimeChart query={baseQuery} />);
     expect(screen.getByText("No data in this window")).toBeDefined();
     expect(screen.queryByTestId("issues-over-time-content")).toBeNull();
   });
@@ -105,13 +112,13 @@ describe("IssuesOverTimeChart", () => {
       mkResult<IssuesOverTimeResponse>({
         data: {
           buckets: [
-            { bucket_start: "2026-05-10T00:00:00Z", created: 4, reached_terminal: 2 },
-            { bucket_start: "2026-05-11T00:00:00Z", created: 5, reached_terminal: 3 },
+            { bucket_start: "2026-05-10T00:00:00Z", created: BigInt(4), reached_terminal: BigInt(2) },
+            { bucket_start: "2026-05-11T00:00:00Z", created: BigInt(5), reached_terminal: BigInt(3) },
           ],
         },
       }),
     );
-    render(<IssuesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<IssuesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("issues-over-time-content")).toBeDefined();
     expect(screen.getByText("Created")).toBeDefined();
     expect(screen.getByText("Reached terminal")).toBeDefined();
@@ -126,7 +133,7 @@ describe("IssuesOverTimeChart", () => {
         status: "error",
       }),
     );
-    render(<IssuesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<IssuesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("chart-card-error").textContent).toContain("boom");
   });
 
@@ -140,7 +147,7 @@ describe("IssuesOverTimeChart", () => {
         fetchStatus: "fetching",
       }),
     );
-    render(<IssuesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<IssuesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("chart-card-loading")).toBeDefined();
   });
 
@@ -148,7 +155,7 @@ describe("IssuesOverTimeChart", () => {
     hookMocks.useThroughputIssuesOverTime.mockReturnValue(
       mkResult<IssuesOverTimeResponse>({ data: { buckets: [] } }),
     );
-    render(<IssuesOverTimeChart query={{ ...baseQuery, bucket: "day" }} />);
+    render(<IssuesOverTimeChart query={baseQuery} />);
     const card = screen.getByTestId("chart-issues-over-time");
     expect(card.getAttribute("role")).toBe("region");
     expect(card.getAttribute("aria-label")).toBe("Issues over time");
@@ -162,7 +169,7 @@ describe("IssuesCycleTimeChart", () => {
         data: {
           median_seconds: null,
           p95_seconds: null,
-          count: 0,
+          count: BigInt(0),
           histogram: [],
         },
       }),
@@ -175,12 +182,12 @@ describe("IssuesCycleTimeChart", () => {
     hookMocks.useThroughputIssuesCycleTime.mockReturnValue(
       mkResult<IssuesCycleTimeResponse>({
         data: {
-          median_seconds: 86400,
-          p95_seconds: 604800,
-          count: 9,
+          median_seconds: BigInt(86400),
+          p95_seconds: BigInt(604800),
+          count: BigInt(9),
           histogram: [
-            { bin_start_seconds: 0, bin_end_seconds: 3600, count: 1 },
-            { bin_start_seconds: 86400 * 30, bin_end_seconds: null, count: 1 },
+            { bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) },
+            { bin_start_seconds: BigInt(86400 * 30), bin_end_seconds: null, count: BigInt(1) },
           ],
         },
       }),
@@ -200,8 +207,8 @@ describe("IssuesCycleTimeChart", () => {
         data: {
           median_seconds: null,
           p95_seconds: null,
-          count: 1,
-          histogram: [{ bin_start_seconds: 0, bin_end_seconds: 3600, count: 1 }],
+          count: BigInt(1),
+          histogram: [{ bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) }],
         },
       }),
     );
@@ -231,7 +238,7 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
     );
     render(
       <IssuesTimeInStatusBreakdownChart
-        query={{ ...baseQuery, project_id: "" }}
+        query={baseQuery}
         hasProject={false}
       />,
     );
@@ -250,23 +257,23 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
       mkResult<IssuesTimeInStatusBreakdownResponse>({
         data: {
           project_id: "j-defaul",
-          issue_count: 12,
+          issue_count: BigInt(12),
           status_segments: [
-            { status_key: "open", label: "Open", color: "#3498db", mean_seconds: 1200 },
+            { status_key: "open", label: "Open", color: "#3498db", mean_seconds: BigInt(1200) },
             {
               status_key: "in-progress",
               label: "In progress",
               color: "#f1c40f",
-              mean_seconds: 21600,
+              mean_seconds: BigInt(21600),
             },
-            { status_key: "closed", label: "Closed", color: "#2ecc71", mean_seconds: 0 },
+            { status_key: "closed", label: "Closed", color: "#2ecc71", mean_seconds: BigInt(0) },
           ],
         },
       }),
     );
     render(
       <IssuesTimeInStatusBreakdownChart
-        query={{ ...baseQuery, project_id: "j-defaul" }}
+        query={scopedQuery}
         hasProject={true}
       />,
     );
@@ -288,16 +295,16 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
       mkResult<IssuesTimeInStatusBreakdownResponse>({
         data: {
           project_id: "j-defaul",
-          issue_count: 1,
+          issue_count: BigInt(1),
           status_segments: [
-            { status_key: "open", label: "Open", color: "#abcdef", mean_seconds: 60 },
+            { status_key: "open", label: "Open", color: "#abcdef", mean_seconds: BigInt(60) },
           ],
         },
       }),
     );
     render(
       <IssuesTimeInStatusBreakdownChart
-        query={{ ...baseQuery, project_id: "j-defaul" }}
+        query={scopedQuery}
         hasProject={true}
       />,
     );
@@ -310,12 +317,12 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
   it("renders the empty state when issue_count is zero", () => {
     hookMocks.useThroughputIssuesTimeInStatusBreakdown.mockReturnValue(
       mkResult<IssuesTimeInStatusBreakdownResponse>({
-        data: { project_id: "j-defaul", issue_count: 0, status_segments: [] },
+        data: { project_id: "j-defaul", issue_count: BigInt(0), status_segments: [] },
       }),
     );
     render(
       <IssuesTimeInStatusBreakdownChart
-        query={{ ...baseQuery, project_id: "j-defaul" }}
+        query={scopedQuery}
         hasProject={true}
       />,
     );
@@ -333,7 +340,7 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
     );
     render(
       <IssuesTimeInStatusBreakdownChart
-        query={{ ...baseQuery, project_id: "j-defaul" }}
+        query={scopedQuery}
         hasProject={true}
       />,
     );
@@ -348,7 +355,7 @@ describe("IssuesPerStatusDistributionChart", () => {
     );
     render(
       <IssuesPerStatusDistributionChart
-        query={{ ...baseQuery, project_id: "" }}
+        query={baseQuery}
         hasProject={false}
       />,
     );
@@ -371,9 +378,9 @@ describe("IssuesPerStatusDistributionChart", () => {
               status_key: "in-progress",
               label: "In progress",
               color: "#f1c40f",
-              median_seconds: 18000,
-              p95_seconds: 86400,
-              sample_count: 8,
+              median_seconds: BigInt(18000),
+              p95_seconds: BigInt(86400),
+              sample_count: BigInt(8),
             },
             {
               status_key: "closed",
@@ -381,7 +388,7 @@ describe("IssuesPerStatusDistributionChart", () => {
               color: "#2ecc71",
               median_seconds: null,
               p95_seconds: null,
-              sample_count: 0,
+              sample_count: BigInt(0),
             },
           ],
         },
@@ -389,7 +396,7 @@ describe("IssuesPerStatusDistributionChart", () => {
     );
     render(
       <IssuesPerStatusDistributionChart
-        query={{ ...baseQuery, project_id: "j-defaul" }}
+        query={scopedQuery}
         hasProject={true}
       />,
     );
@@ -412,7 +419,7 @@ describe("IssuesPerStatusDistributionChart", () => {
     );
     render(
       <IssuesPerStatusDistributionChart
-        query={{ ...baseQuery, project_id: "j-defaul" }}
+        query={scopedQuery}
         hasProject={true}
       />,
     );
@@ -430,7 +437,7 @@ describe("IssuesPerStatusDistributionChart", () => {
     );
     render(
       <IssuesPerStatusDistributionChart
-        query={{ ...baseQuery, project_id: "j-defaul" }}
+        query={scopedQuery}
         hasProject={true}
       />,
     );

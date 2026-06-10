@@ -161,6 +161,39 @@ test.describe("Analytics throughput @analytics:throughput", () => {
     ).toBeVisible();
   });
 
+  test("issue-type slicer is single-select and writes issue_type to the URL", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/analytics/throughput");
+
+    // Wait for initial fetches to settle so we only capture refetches.
+    await expect(
+      page.getByTestId("chart-issues-cycle-time").getByTestId("issues-cycle-time-content"),
+    ).toBeVisible();
+
+    const requests: string[] = [];
+    page.on("request", (req) => {
+      if (req.url().includes("/v1/analytics/throughput/issues/cycle_time")) {
+        requests.push(req.url());
+      }
+    });
+
+    await page.getByTestId("slicer-issue-type").selectOption("feature");
+    await expect(page).toHaveURL(/issue_type=feature/);
+    // The legacy multi-select comma-joined param must no longer be written.
+    await expect(page).not.toHaveURL(/issue_types=/);
+
+    await expect
+      .poll(() => requests.some((u) => u.includes("issue_type=feature")), {
+        timeout: 5_000,
+      })
+      .toBe(true);
+
+    // Clearing the selection drops the URL param.
+    await page.getByTestId("slicer-issue-type").selectOption("");
+    await expect(page).not.toHaveURL(/issue_type=/);
+  });
+
   test("changing the repo slicer triggers a chart refetch", async ({
     authenticatedPage: page,
   }) => {

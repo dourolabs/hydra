@@ -1,12 +1,9 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import type {
-  PatchesOverTimeQuery,
+  PatchesThroughputQuery,
   PatchesOverTimeResponse,
-  PatchesTerminalMixQuery,
   PatchesTerminalMixResponse,
-  PatchesTimeToMergeQuery,
   PatchesTimeToMergeResponse,
-  PatchesInFlightOverTimeQuery,
   PatchesInFlightOverTimeResponse,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -18,7 +15,7 @@ import { apiClient } from "../../api/client";
  */
 
 export function useThroughputPatchesOverTime(
-  query: PatchesOverTimeQuery,
+  query: PatchesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<PatchesOverTimeResponse> {
   return useQuery({
@@ -29,7 +26,7 @@ export function useThroughputPatchesOverTime(
 }
 
 export function useThroughputPatchesTerminalMix(
-  query: PatchesTerminalMixQuery,
+  query: PatchesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<PatchesTerminalMixResponse> {
   return useQuery({
@@ -40,7 +37,7 @@ export function useThroughputPatchesTerminalMix(
 }
 
 export function useThroughputPatchesTimeToMerge(
-  query: PatchesTimeToMergeQuery,
+  query: PatchesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<PatchesTimeToMergeResponse> {
   return useQuery({
@@ -51,7 +48,7 @@ export function useThroughputPatchesTimeToMerge(
 }
 
 export function useThroughputPatchesInFlightOverTime(
-  query: PatchesInFlightOverTimeQuery,
+  query: PatchesThroughputQuery,
   enabled: boolean = true,
 ): UseQueryResult<PatchesInFlightOverTimeResponse> {
   return useQuery({
