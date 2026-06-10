@@ -242,8 +242,21 @@ pub struct IssuesThroughputQuery {
     pub project_id: Option<ProjectId>,
     #[serde(default)]
     pub repo_name: Option<String>,
+    /// Single-select form, retained for backward compat. When
+    /// [`Self::issue_types`] is non-empty, this field is ignored.
     #[serde(default)]
     pub issue_type: Option<IssueType>,
+    /// Multi-select include-set. When non-empty, an issue passes the
+    /// type filter iff its `issue_type` is in this set. When empty,
+    /// falls back to the singular [`Self::issue_type`] filter.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub issue_types: Vec<IssueType>,
     /// Principal path form (`users/<name>` / `agents/<name>` /
     /// `external/<sys>/<name>`). Filtered as a string match against the
     /// issue's `assignee` path representation so URL-encoded query
@@ -271,6 +284,7 @@ impl IssuesThroughputQuery {
             project_id: None,
             repo_name: None,
             issue_type: None,
+            issue_types: Vec::new(),
             assignee: None,
             creator: None,
             status_keys: Vec::new(),

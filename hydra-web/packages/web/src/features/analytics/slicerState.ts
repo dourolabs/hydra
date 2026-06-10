@@ -31,7 +31,7 @@ export interface SlicerState {
   projectId: string | null;
   statusKeys: string[];
   repoName: string | null;
-  issueType: IssueType | null;
+  issueTypes: IssueType[];
   assignee: string | null;
   creator: string | null;
 }
@@ -41,7 +41,12 @@ export const URL_PARAMS = {
   projectId: "project_id",
   statusKeys: "status_keys",
   repoName: "repo_name",
-  issueType: "issue_type",
+  issueTypes: "issue_types",
+  /**
+   * Legacy singular form. Read-only — new writes always emit
+   * [`URL_PARAMS.issueTypes`]. Kept so old bookmarks round-trip.
+   */
+  issueTypeLegacy: "issue_type",
   assignee: "assignee",
   creator: "creator",
 } as const;
@@ -64,16 +69,26 @@ export function readSlicerState(params: URLSearchParams): SlicerState {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const rawIssueType = params.get(URL_PARAMS.issueType);
-  const issueType: IssueType | null =
-    rawIssueType && isIssueType(rawIssueType) ? rawIssueType : null;
+  const rawIssueTypes = params.get(URL_PARAMS.issueTypes);
+  let issueTypes: IssueType[];
+  if (rawIssueTypes !== null) {
+    issueTypes = rawIssueTypes
+      .split(",")
+      .map((s) => s.trim())
+      .filter(isIssueType);
+  } else {
+    // Legacy single-form fallback so old bookmarks (`?issue_type=feature`)
+    // round-trip into the new shape.
+    const legacy = params.get(URL_PARAMS.issueTypeLegacy);
+    issueTypes = legacy && isIssueType(legacy) ? [legacy] : [];
+  }
 
   return {
     range,
     projectId: params.get(URL_PARAMS.projectId),
     statusKeys,
     repoName: params.get(URL_PARAMS.repoName),
-    issueType,
+    issueTypes,
     assignee: params.get(URL_PARAMS.assignee),
     creator: params.get(URL_PARAMS.creator),
   };
@@ -108,9 +123,12 @@ export function writeSlicerState(
     else next.delete(URL_PARAMS.repoName);
   }
 
-  if (patch.issueType !== undefined) {
-    if (patch.issueType) next.set(URL_PARAMS.issueType, patch.issueType);
-    else next.delete(URL_PARAMS.issueType);
+  if (patch.issueTypes !== undefined) {
+    if (patch.issueTypes.length > 0) next.set(URL_PARAMS.issueTypes, patch.issueTypes.join(","));
+    else next.delete(URL_PARAMS.issueTypes);
+    // Any write to the new param clears the legacy singular form so it
+    // doesn't linger across edits.
+    next.delete(URL_PARAMS.issueTypeLegacy);
   }
 
   if (patch.assignee !== undefined) {
