@@ -89,8 +89,17 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let job_logs_path = format!("/v1/sessions/{job_id}/logs");
     let job_status_path = format!("/v1/sessions/{job_id}/status");
     let job_context_path = format!("/v1/sessions/{job_id}/context");
+    let session_versions_path = format!("{job_path}/versions");
+    let session_version_path = format!("{session_versions_path}/1");
     let issue_path = format!("/v1/issues/{issue_id}");
+    let issue_versions_path = format!("{issue_path}/versions");
+    let issue_version_path = format!("{issue_versions_path}/1");
     let patch_path = format!("/v1/patches/{patch_id}");
+    let patch_versions_path = format!("{patch_path}/versions");
+    let patch_version_path = format!("{patch_versions_path}/1");
+    let trigger_path = format!("/v1/triggers/{trigger_id}");
+    let trigger_versions_path = format!("{trigger_path}/versions");
+    let trigger_version_path = format!("{trigger_versions_path}/1");
     let document_path = format!("/v1/documents/{document_id}");
     let document_versions_path = format!("{document_path}/versions");
     let document_version_path = format!("{document_versions_path}/2");
@@ -109,7 +118,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let trigger_record_for_get = trigger_record_body.clone();
     let trigger_record_for_list = trigger_record_body.clone();
     let trigger_record_for_delete = trigger_record_body.clone();
-    let trigger_path = format!("/v1/triggers/{trigger_id}");
     let trigger_id_for_create = trigger_id.clone();
     let trigger_id_for_update = trigger_id.clone();
     let merge_queue_path = format!(
@@ -182,6 +190,24 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             "notes": "note",
             "status_log": job_record_body_for_get_clone["status_log"].clone()
         }));
+    });
+
+    let session_versions_path_clone = session_versions_path.clone();
+    let job_record_body_for_list_versions = job_record_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(session_versions_path_clone.as_str());
+        then.status(200).json_body(json!({
+            "versions": [job_record_body_for_list_versions.clone()],
+            "future": "session-versions"
+        }));
+    });
+
+    let session_version_path_clone = session_version_path.clone();
+    let job_record_body_for_get_version = job_record_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(session_version_path_clone.as_str());
+        then.status(200)
+            .json_body(job_record_body_for_get_version.clone());
     });
 
     let kill_session_path = job_path.clone();
@@ -259,6 +285,24 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
+    let issue_versions_path_clone = issue_versions_path.clone();
+    let issue_record_for_list_versions = issue_record_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(issue_versions_path_clone.as_str());
+        then.status(200).json_body(json!({
+            "versions": [issue_record_for_list_versions.clone()],
+            "future": "issue-versions"
+        }));
+    });
+
+    let issue_version_path_clone = issue_version_path.clone();
+    let issue_record_for_get_version = issue_record_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(issue_version_path_clone.as_str());
+        then.status(200)
+            .json_body(issue_record_for_get_version.clone());
+    });
+
     let patch_id_for_create_clone = patch_id_for_create.clone();
     server.mock(move |when, then| {
         when.method(POST).path("/v1/patches");
@@ -288,6 +332,42 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         when.method(GET).path("/v1/patches");
         then.status(200)
             .json_body(json!({ "patches": [patch_summary_record_clone], "extra": "list" }));
+    });
+
+    let patch_versions_path_clone = patch_versions_path.clone();
+    let patch_record_for_list_versions = patch_record_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(patch_versions_path_clone.as_str());
+        then.status(200).json_body(json!({
+            "versions": [patch_record_for_list_versions.clone()],
+            "future": "patch-versions"
+        }));
+    });
+
+    let patch_version_path_clone = patch_version_path.clone();
+    let patch_record_for_get_version = patch_record_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(patch_version_path_clone.as_str());
+        then.status(200)
+            .json_body(patch_record_for_get_version.clone());
+    });
+
+    let trigger_versions_path_clone = trigger_versions_path.clone();
+    let trigger_record_for_list_clone = trigger_record_for_list.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(trigger_versions_path_clone.as_str());
+        then.status(200).json_body(json!({
+            "versions": [trigger_record_for_list_clone.clone()],
+            "future": "trigger-versions"
+        }));
+    });
+
+    let trigger_version_path_clone = trigger_version_path.clone();
+    let trigger_record_for_get_version = trigger_record_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(trigger_version_path_clone.as_str());
+        then.status(200)
+            .json_body(trigger_record_for_get_version.clone());
     });
 
     let document_id_for_create_clone = document_id_for_create.clone();
@@ -1163,6 +1243,55 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let delayed_status: SessionStatusUpdate =
         serde_json::from_value(json!({ "status": "delayed" }))?;
     assert!(matches!(delayed_status, SessionStatusUpdate::Unknown));
+
+    // Version-history methods. SessionVersionRecord has no `Unknown`
+    // variant of its own; the existing get_session/get_issue/get_patch
+    // assertions already cover the embedded-enum case, so here we just
+    // verify the version-list/get pair decodes without error and that
+    // the embedded payloads still collapse unknown variants to `Unknown`
+    // where applicable.
+    let session_versions = client.list_session_versions(&job_id).await?;
+    assert_eq!(session_versions.versions.len(), 1);
+    assert_eq!(session_versions.versions[0].session_id, job_id);
+    let session_version = client
+        .get_session_version(&job_id, RelativeVersionNumber::new(1))
+        .await?;
+    assert_eq!(session_version.session_id, job_id);
+
+    let issue_versions = client.list_issue_versions(&issue_id).await?;
+    assert_eq!(issue_versions.versions.len(), 1);
+    assert!(matches!(
+        issue_versions.versions[0].issue.issue_type,
+        IssueType::Unknown
+    ));
+    let issue_version = client
+        .get_issue_version(&issue_id, RelativeVersionNumber::new(1))
+        .await?;
+    assert_eq!(issue_version.issue_id, issue_id);
+    assert!(matches!(issue_version.issue.issue_type, IssueType::Unknown));
+
+    let patch_versions = client.list_patch_versions(&patch_id).await?;
+    assert_eq!(patch_versions.versions.len(), 1);
+    assert!(matches!(
+        patch_versions.versions[0].patch.status,
+        PatchStatus::Unknown
+    ));
+    let patch_version = client
+        .get_patch_version(&patch_id, RelativeVersionNumber::new(1))
+        .await?;
+    assert_eq!(patch_version.patch_id, patch_id);
+    assert!(matches!(patch_version.patch.status, PatchStatus::Unknown));
+
+    let trigger_versions = client.list_trigger_versions(&trigger_id).await?;
+    assert_eq!(trigger_versions.versions.len(), 1);
+    let TriggerAction::CreateIssue(create) = &trigger_versions.versions[0].trigger.actions[0];
+    assert!(matches!(create.issue_type, IssueType::Unknown));
+    let trigger_version = client
+        .get_trigger_version(&trigger_id, RelativeVersionNumber::new(1))
+        .await?;
+    assert_eq!(trigger_version.trigger_id, trigger_id);
+    let TriggerAction::CreateIssue(create) = &trigger_version.trigger.actions[0];
+    assert!(matches!(create.issue_type, IssueType::Unknown));
 
     Ok(())
 }
