@@ -80,16 +80,22 @@ export function AnalyticsTokenUsagePage() {
           </div>
         </section>
 
-        <section
-          data-testid="analytics-cost-section"
-          className={styles.section}
-          aria-label="Token usage cost breakdown"
-        >
-          <div className={styles.grid}>
+        <div className={styles.grid}>
+          <section
+            data-testid="analytics-cost-per-agent-section"
+            className={styles.section}
+            aria-label="Cost per agent"
+          >
             <CostPerAgentChart query={costQuery} />
+          </section>
+          <section
+            data-testid="analytics-per-session-cost-section"
+            className={styles.section}
+            aria-label="Per-session cost distribution"
+          >
             <PerSessionCostScatterChart query={costQuery} />
-          </div>
-        </section>
+          </section>
+        </div>
 
         <section
           data-testid="analytics-top-issues-section"

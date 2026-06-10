@@ -121,7 +121,7 @@ test.describe("Analytics token usage @analytics:token-usage", () => {
     await expect(firstLink).toHaveAttribute("href", "/issues/i-abcd1234");
   });
 
-  test("time-range picker re-issues all four token-usage requests", async ({
+  test("time-range picker re-issues all three new token-usage endpoints", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/analytics/token-usage");
