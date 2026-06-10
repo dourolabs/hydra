@@ -28,7 +28,14 @@ import {
   PROJECTS_QUERY_KEY,
   applyOptimisticUpsert,
 } from "./projectCache";
-import { blankStatus, slugifyStatusKey } from "./statusDefaults";
+import {
+  AUTO_ARCHIVE_UNIT_SECONDS,
+  blankStatus,
+  deriveAutoArchiveDisplay,
+  readAutoArchiveSeconds,
+  slugifyStatusKey,
+  type AutoArchiveUnit,
+} from "./statusDefaults";
 import { upsertPromptDoc, usePromptDocumentBody } from "./promptDocument";
 import styles from "./StatusSettingsModal.module.css";
 
@@ -598,7 +605,55 @@ function StatusForm({
   const attachForm = onEnter?.attach_form ?? "";
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
 
+  // Local display state for the Auto-archive control. Initialized from the
+  // draft's persisted seconds via inverse-rendering (largest whole-unit
+  // divisor); thereafter the unit selector preserves the displayed value and
+  // recomputes seconds, so toggling between days/weeks doesn't surprise the
+  // user with a recomputed magnitude.
+  const initialAutoSeconds = readAutoArchiveSeconds(draft);
+  const [autoArchiveValue, setAutoArchiveValue] = useState<string>(() => {
+    if (initialAutoSeconds == null) return "";
+    return String(deriveAutoArchiveDisplay(initialAutoSeconds).value);
+  });
+  const [autoArchiveUnit, setAutoArchiveUnit] = useState<AutoArchiveUnit>(() => {
+    if (initialAutoSeconds == null) return "days";
+    return deriveAutoArchiveDisplay(initialAutoSeconds).unit;
+  });
+
   const patch = (p: Partial<StatusDefinition>) => setDraft({ ...draft, ...p });
+
+  // ts-rs types `auto_archive_after_seconds` as bigint, but the wire is a
+  // plain JSON number; writing a number through satisfies the runtime
+  // (JSON.stringify) while we coerce the static type at the boundary.
+  const patchAutoArchiveSeconds = (raw: string, unit: AutoArchiveUnit) => {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      patch({
+        auto_archive_after_seconds: null as unknown as bigint | null,
+      });
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0) {
+      patch({
+        auto_archive_after_seconds: null as unknown as bigint | null,
+      });
+      return;
+    }
+    const seconds = Math.round(n * AUTO_ARCHIVE_UNIT_SECONDS[unit]);
+    patch({
+      auto_archive_after_seconds: seconds as unknown as bigint | null,
+    });
+  };
+
+  const onAutoArchiveValueChange = (raw: string) => {
+    setAutoArchiveValue(raw);
+    patchAutoArchiveSeconds(raw, autoArchiveUnit);
+  };
+  const onAutoArchiveUnitChange = (unit: AutoArchiveUnit) => {
+    setAutoArchiveUnit(unit);
+    patchAutoArchiveSeconds(autoArchiveValue, unit);
+  };
 
   // The new flat picker doesn't model External, so legacy External
   // assignments render as "Unassigned" in the trigger pill until the user
@@ -685,6 +740,41 @@ function StatusForm({
           />
           Interactive
         </label>
+      </div>
+
+      <div className={styles.autoArchive} data-testid="status-settings-auto-archive">
+        <label className={styles.label} htmlFor="status-settings-auto-archive-value">
+          Auto-archive after
+        </label>
+        <div className={styles.autoArchiveInputs}>
+          <Input
+            id="status-settings-auto-archive-value"
+            type="number"
+            min={0}
+            value={autoArchiveValue}
+            onChange={(e) => onAutoArchiveValueChange(e.target.value)}
+            placeholder="Off"
+            aria-label="Auto-archive duration value"
+            data-testid="status-settings-auto-archive-value"
+          />
+          <Select
+            options={[
+              { value: "hours", label: "hours" },
+              { value: "days", label: "days" },
+              { value: "weeks", label: "weeks" },
+            ]}
+            value={autoArchiveUnit}
+            onChange={(e) =>
+              onAutoArchiveUnitChange(e.target.value as AutoArchiveUnit)
+            }
+            aria-label="Auto-archive duration unit"
+            data-testid="status-settings-auto-archive-unit"
+          />
+        </div>
+        <span className={styles.helpText}>
+          Issues in this status untouched for longer than this duration are
+          archived automatically (by inactivity, not by completion).
+        </span>
       </div>
 
       <div className={styles.onEnter}>
