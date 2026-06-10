@@ -34,7 +34,6 @@ CONFIG_TEMPLATE="${SCRIPT_DIR}/config/test-config.yaml"
 CONFIG_PATH="/tmp/hydra-e2e/test-config.yaml"
 MERGE_POLICY_FILE="${SCRIPT_DIR}/config/merge-policy.yaml"
 ENGINEERING_V2_FIXTURES_DIR="${SCRIPT_DIR}/fixtures/projects/engineering-v2"
-ENGINEERING_V2_STATUS_FIXTURES_DIR="${ENGINEERING_V2_FIXTURES_DIR}/statuses"
 REVIEW_FORM_FIXTURE="${SCRIPT_DIR}/fixtures/forms/review.yaml"
 # MUST match `server_hostname` in test-config.yaml so the CLI's saved-token lookup hits.
 SERVER_URL="http://127.0.0.1:8080"
@@ -212,10 +211,10 @@ echo "    Merge policy applied."
 # --------------------------------------------------------------------------
 # 6c. Seed the `engineering-v2` Project. `projects create` writes the
 #     project shell (key, name, prompt_path); statuses are added one at a
-#     time via `projects status create --body-file <single-status>`.
-#     Iterate the status fixtures in pipeline order — row `sequence`
-#     reflects insertion order, and `position` defaults to 0.0 across
-#     the board, so display order falls back to `ORDER BY sequence`.
+#     time via `projects status create` with direct flags. Insertion
+#     order matches the pipeline order below — row `sequence` reflects
+#     insertion order, and `position` defaults to 0.0 across the board,
+#     so display order falls back to `ORDER BY sequence`.
 #
 #     Used by the `per-project-status-pipeline` e2e scenario; other
 #     scenarios ignore it.
@@ -228,27 +227,57 @@ env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
     --prompt-path "/projects/engineering-v2/prompt.md" >/dev/null
 echo "    Project created."
 
-ENGINEERING_V2_STATUS_ORDER=(
-  inbox
-  backlog
-  pending
-  in-development
-  pair-development
-  in-review
-  pending-release
-)
 echo "==> Seeding engineering-v2 statuses..."
-for status_key in "${ENGINEERING_V2_STATUS_ORDER[@]}"; do
-  fixture="${ENGINEERING_V2_STATUS_FIXTURES_DIR}/${status_key}.yaml"
-  if [[ ! -f "${fixture}" ]]; then
-    echo "ERROR: engineering-v2 status fixture not found at ${fixture}" >&2
-    exit 1
-  fi
-  env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
-    projects status create engineering-v2 \
-      --body-file "${fixture}" >/dev/null
-done
-echo "    Seeded ${#ENGINEERING_V2_STATUS_ORDER[@]} statuses."
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects status create engineering-v2 \
+    --key inbox \
+    --label Inbox \
+    --color "#607d8b" >/dev/null
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects status create engineering-v2 \
+    --key backlog \
+    --label Backlog \
+    --color "#9b59b6" \
+    --prompt-path /projects/engineering-v2/statuses/backlog.md \
+    --on-enter-assign-to agents/pm >/dev/null
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects status create engineering-v2 \
+    --key pending \
+    --label Pending \
+    --color "#f39c12" >/dev/null
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects status create engineering-v2 \
+    --key in-development \
+    --label "In development" \
+    --color "#3498db" \
+    --prompt-path /projects/engineering-v2/statuses/in-development.md \
+    --on-enter-assign-to agents/swe >/dev/null
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects status create engineering-v2 \
+    --key pair-development \
+    --label "Pair development" \
+    --color "#1abc9c" \
+    --interactive \
+    --prompt-path /projects/engineering-v2/statuses/pair-development.md \
+    --on-enter-assign-to agents/swe >/dev/null
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects status create engineering-v2 \
+    --key in-review \
+    --label "In review" \
+    --color "#f1c40f" \
+    --prompt-path /projects/engineering-v2/statuses/in-review.md \
+    --on-enter-assign-to agents/reviewer \
+    --on-enter-attach-form /forms/review.yaml >/dev/null
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+  projects status create engineering-v2 \
+    --key pending-release \
+    --label "Pending release" \
+    --color "#2ecc71" \
+    --unblocks-parents \
+    --unblocks-dependents \
+    --on-enter-clear-assignee \
+    --on-enter-teardown-work >/dev/null
+echo "    Seeded 7 statuses."
 
 # --------------------------------------------------------------------------
 # 6d. Push the engineering-v2 prompt fixtures to the doc store. The project
