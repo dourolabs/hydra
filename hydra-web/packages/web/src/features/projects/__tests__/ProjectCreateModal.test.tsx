@@ -326,7 +326,7 @@ describe("ProjectCreateModal", () => {
     expect(createProjectSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the modal and navigates to the project page on success", async () => {
+  it("closes the modal on success without navigating away from the originating page", async () => {
     const onClose = vi.fn();
     render(<ProjectCreateModal open={true} onClose={onClose} />);
     fireEvent.change(screen.getByTestId("project-form-name"), {
@@ -338,7 +338,7 @@ describe("ProjectCreateModal", () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(navigateSpy).toHaveBeenCalledWith("/projects/engineering");
+    expect(navigateSpy).not.toHaveBeenCalled();
   });
 
   it("slugifies multi-word names to a kebab-case project key", async () => {

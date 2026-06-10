@@ -45,10 +45,10 @@ that maps to one or more Playwright tests via `@tag` annotations. Run a subset w
 
 ## Projects
 
-- `@projects:create` — User can create a project with custom statuses from `/projects`; the new project lands in the list and is reachable at `/projects/<key>`.
+- `@projects:create` — User can create a project from the `+ New project` modal on `/projects`; on submit the modal closes, the user stays on the originating page, and the new project's section appears in the board.
 - `@projects:badge` — Status badge on the issue list reflects the project's `StatusDefinition` (label, color) by reading `issue.resolved_status` straight from the API; the frontend performs no per-status resolution.
 - `@projects:status-modal-options` — Status-update modal shows project-defined options for a project-scoped issue (fetched from `/v1/projects/:id/statuses`); every issue carries a real `project_id`, so the seeded default project (`j-defaul`) is fetched through the same route as any other project.
-- `@projects:interactive-status` — Project editor exposes an "Interactive" checkbox alongside the existing status flags (`unblocks_parents`, `unblocks_dependents`, `cascades_to_children`). Toggling it on round-trips through the upsert request, and statuses with `interactive: true` render a small "interactive" annotation chip next to the status label in any `<StatusChip>` view.
+- `@projects:interactive-status` — The board's `StatusSettingsModal` (gear icon on a status column) exposes an "Interactive" checkbox alongside the existing status flags (`unblocks_parents`, `unblocks_dependents`, `cascades_to_children`). Toggling it on round-trips through the upsert request, and statuses with `interactive: true` render a small "interactive" annotation chip next to the status label in any `<StatusChip>` view.
 - `@projects:details-rail-project-block` — The issue detail right-rail Details tab includes a Project row between Status and Assignee. The row renders a `<ProjectChip>` with the issue's resolved project key + name. Issues created without an explicit `project_id` are persisted against the seeded default project (`j-defaul`), and the chip renders that project.
 - `@issues:blocked-tag` — The Details rail's Status row shows a mono "BLOCKED" tag next to the StatusChip when the issue has at least one `blocked-on` dependency target whose status is not `closed`. The tag is absent for issues with no open blockers.
 

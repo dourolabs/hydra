@@ -72,18 +72,16 @@ test.describe("Interactive conversation surfacing @issues:interactive-conversati
   });
 });
 
-test.describe("Project editor interactive flag @projects:interactive-status", () => {
-  test("editor exposes an Interactive checkbox alongside existing status flags @projects:interactive-status", async ({
+test.describe("Status settings interactive flag @projects:interactive-status", () => {
+  test("status settings modal exposes an Interactive checkbox alongside existing status flags @projects:interactive-status", async ({
     authenticatedPage: page,
   }) => {
-    // The board's per-project Settings modal is the simplified `ProjectForm`
-    // (name + prompt body only). The full status editor — with the
-    // Interactive checkbox alongside the other status flags — lives on the
-    // project detail page.
-    await page.goto("/projects/engineering-v2");
-    await expect(page.getByTestId("project-editor")).toBeVisible();
+    // Per-status flags (including Interactive) are edited through the board's
+    // gear-icon `StatusSettingsModal`, opened from a status column header.
+    await page.goto("/projects");
+    await page.getByTestId("board-col-gear-engineering-v2-in-development").click();
 
-    const interactive = page.getByTestId("status-editor-interactive-0");
+    const interactive = page.getByTestId("status-settings-interactive");
     await expect(interactive).toBeVisible();
     const initiallyChecked = await interactive.isChecked();
 
