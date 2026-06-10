@@ -1,26 +1,13 @@
 import {
-  createContext,
   useCallback,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import type { StatusKey } from "@hydra/api";
-
-export interface IssueCreateModalInitial {
-  projectId?: string;
-  status?: StatusKey;
-}
-
-export interface IssueCreateModalContextValue {
-  isOpen: boolean;
-  initial: IssueCreateModalInitial | null;
-  open: (initial?: IssueCreateModalInitial) => void;
-  close: () => void;
-}
-
-export const IssueCreateModalContext =
-  createContext<IssueCreateModalContextValue | null>(null);
+import {
+  IssueCreateModalContext,
+  type IssueCreateModalInitial,
+} from "./useIssueCreateModal";
 
 export function IssueCreateModalProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);

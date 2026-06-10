@@ -6,7 +6,7 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import type { IssueCreateModalInitial } from "./IssueCreateModalProvider";
+import type { IssueCreateModalInitial } from "./useIssueCreateModal";
 import { Avatar, Button, Icons, Kbd, Picker, PickerRow, TypeChip } from "@hydra/ui";
 import { DEFAULT_PROJECT_ID } from "@hydra/api";
 import type { IssueType, LabelRecord, Principal, StatusKey } from "@hydra/api";
