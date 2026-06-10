@@ -222,17 +222,6 @@ export const router = createBrowserRouter([
             ),
           })),
       },
-      {
-        path: "projects/:projectKey",
-        lazy: () =>
-          import("./pages/ProjectDetailPage").then((m) => ({
-            element: (
-              <ErrorBoundary>
-                <m.ProjectDetailPage />
-              </ErrorBoundary>
-            ),
-          })),
-      },
     ],
   },
 ]);

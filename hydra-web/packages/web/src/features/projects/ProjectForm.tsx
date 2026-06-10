@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Textarea } from "@hydra/ui";
 import type {
@@ -43,7 +42,6 @@ export function ProjectForm({
   initial,
 }: ProjectFormProps) {
   const isEdit = !!projectId;
-  const navigate = useNavigate();
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const { data: existingProjects } = useProjects();
@@ -160,8 +158,6 @@ export function ProjectForm({
       queryClient.invalidateQueries({ queryKey: ["documentsAtPath"] });
       addToast(isEdit ? "Project updated" : "Project created", "success");
       onClose();
-      // Create lands the user on the new project; edit stays on the board.
-      if (!isEdit) navigate(`/projects/${key}`);
     },
   });
 

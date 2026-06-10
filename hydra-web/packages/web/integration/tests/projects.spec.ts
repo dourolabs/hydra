@@ -28,10 +28,12 @@ test.describe("Projects @projects:create", () => {
 
     await page.getByTestId("project-form-save").click();
 
-    // Key is slugified from name and the page routes to the detail page.
-    await page.waitForURL("**/projects/e2e-engineering");
+    // The modal closes and the user stays on the originating page; the new
+    // project's section appears in the board below.
+    await expect(modal).toBeHidden();
+    await expect(page).toHaveURL(/\/projects$/);
     await expect(
-      page.getByRole("heading", { name: "E2E Engineering" }),
+      page.getByTestId("board-project-chip-e2e-engineering"),
     ).toBeVisible();
   });
 });
