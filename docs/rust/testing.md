@@ -31,6 +31,9 @@ async fn test_logs() { ... }
 async fn logs_returns_latest_chunks() { ... }
 ```
 
+The same rule applies to sync `#[test]` fns — a name like `test_logs` reads as
+poorly in a failure report regardless of whether the test is async.
+
 ## Regression test per bug fix
 
 Every bug fix lands with a test that fails before the fix and passes after.
@@ -56,6 +59,9 @@ Useful coverage at the *same* boundary:
 - **`ts-rs` export tests** — they verify *our* type-export pipeline.
 - **Integration tests** that drive the type through a real codepath (HTTP
   route, WS frame, DB write/read).
+- **View-projection round-trip tests** (`view_lN(...) → from_value(...) == self`)
+  where the projection method IS our contract for that detail level — these
+  test our view pipeline, not serde.
 
 ## Integration tests use `worker_run` + the hydra CLI
 
@@ -72,6 +78,21 @@ When you add a method to `HydraClient`, add forward-compatibility coverage in
 `hydra/tests/hydra_client_forward_compat.rs`. The test asserts that the
 client tolerates new enum variants and extra fields in server responses, so
 an older client doesn't crash against a newer server.
+
+For streaming methods (e.g. `subscribe_events`, `get_session_logs`) that
+return a `Stream<Item = ...>` rather than a single decoded payload,
+forward-compat coverage asserts:
+
+- Each item the stream yields tolerates unknown enum variants and extra
+  fields (same rule, applied per-item).
+- An unknown variant mid-stream does not terminate the stream early — the
+  consumer continues to see subsequent items.
+
+Methods that return a connection handle (e.g. `connect_relay_websocket`)
+rather than a decoded JSON payload are exempt from the
+`hydra_client_forward_compat.rs` requirement — the forward-compat assertions
+for the wire frames flowing over the connection live with the connection's
+own test surface, not in the client-method inventory.
 
 See [style.md](style.md) for naming and [errors-and-logging.md](errors-and-logging.md)
 for what tests should assert about error paths.
