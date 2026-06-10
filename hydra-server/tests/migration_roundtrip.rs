@@ -300,6 +300,17 @@ async fn migration_roundtrip() -> Result<()> {
             "backfill_assignee_null_on_terminal_default_issues: verbatim body replay leaves nulled rows unchanged",
         )?;
 
+    add_statuses_suppress_sessions_schema_invariants(&pool)
+        .await
+        .context(
+            "add_statuses_suppress_sessions: column is BOOLEAN NOT NULL DEFAULT FALSE on metis.statuses",
+        )?;
+    add_statuses_suppress_sessions_defaults_to_false(&pool)
+        .await
+        .context(
+            "add_statuses_suppress_sessions: existing rows backfill to FALSE via column default",
+        )?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -325,6 +336,9 @@ async fn migration_roundtrip() -> Result<()> {
     drop_is_assignment_agent_preserves_rows(&pool)
         .await
         .context("drop_is_assignment_agent: idempotent rerun preserves baseline rows")?;
+    add_statuses_suppress_sessions_defaults_to_false(&pool)
+        .await
+        .context("add_statuses_suppress_sessions: idempotent rerun keeps existing FALSE values")?;
 
     Ok(())
 }
@@ -1009,6 +1023,66 @@ async fn backfill_assignee_null_on_terminal_default_issues_is_idempotent(
                 "issues_v2.{before_id} changed across backfill_assignee rerun: \
                  ({before_assignee:?}, {before_principal:?}) -> \
                  ({after_assignee:?}, {after_principal:?})"
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260623000000_add_statuses_suppress_sessions. Adds
+// `suppress_sessions BOOLEAN NOT NULL DEFAULT FALSE` to `metis.statuses` —
+// the schema-only prerequisite (PR-A) for the per-status
+// session-suppression feature. No Rust code reads or writes the column
+// yet (lands in PR-B); existing rows backfill to FALSE via the column
+// default.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_suppress_sessions_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "statuses", "suppress_sessions").await? {
+        bail!("expected `metis.statuses.suppress_sessions` column to exist post-rollforward");
+    }
+    if column_is_nullable(pool, "statuses", "suppress_sessions").await? {
+        bail!("expected `metis.statuses.suppress_sessions` to be NOT NULL");
+    }
+    // Verify the declared DEFAULT is FALSE — backs the no-backfill
+    // rollout. Postgres normalizes `FALSE` to `false` in
+    // information_schema.column_default.
+    let row = sqlx::query(
+        "SELECT column_default FROM information_schema.columns \
+         WHERE table_schema = 'metis' AND table_name = 'statuses' \
+           AND column_name = 'suppress_sessions'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up column_default for metis.statuses.suppress_sessions")?;
+    let default_text: Option<String> = row.try_get("column_default")?;
+    let default_text = default_text.ok_or_else(|| {
+        anyhow::anyhow!("metis.statuses.suppress_sessions has no declared default")
+    })?;
+    if !default_text.eq_ignore_ascii_case("false") {
+        bail!("expected metis.statuses.suppress_sessions DEFAULT false; got {default_text:?}");
+    }
+    Ok(())
+}
+
+async fn add_statuses_suppress_sessions_defaults_to_false(pool: &PgPool) -> Result<()> {
+    // The migration has no backfill body: every existing row must come
+    // out with the column FALSE via the column default.
+    let rows = sqlx::query("SELECT project_id, sequence, suppress_sessions FROM metis.statuses")
+        .fetch_all(pool)
+        .await
+        .context("read metis.statuses for suppress_sessions default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one metis.statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: bool = row.try_get("suppress_sessions")?;
+        if value {
+            bail!(
+                "metis.statuses({project_id}, sequence={sequence}): expected suppress_sessions=false (no backfill); got true"
             );
         }
     }
