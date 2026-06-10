@@ -148,6 +148,8 @@ vi.mock("@hydra/ui", () => ({
     onChange,
     placeholder,
     disabled,
+    type,
+    "aria-label": ariaLabel,
     "data-testid": testId,
   }: {
     label?: string;
@@ -156,17 +158,23 @@ vi.mock("@hydra/ui", () => ({
     placeholder?: string;
     required?: boolean;
     disabled?: boolean;
+    type?: string;
+    min?: number;
+    id?: string;
+    "aria-label"?: string;
     "data-testid"?: string;
   }) => (
     <label>
       {label}
       <input
+        type={type}
         value={value}
         disabled={disabled}
         onChange={(e) =>
           onChange?.({ target: { value: e.target.value } })
         }
         placeholder={placeholder}
+        aria-label={ariaLabel}
         data-testid={testId}
       />
     </label>
@@ -192,12 +200,14 @@ vi.mock("@hydra/ui", () => ({
     options,
     value,
     onChange,
+    "aria-label": ariaLabel,
     "data-testid": testId,
   }: {
     label?: string;
     options: { value: string; label: string }[];
     value: string;
     onChange: (e: { target: { value: string } }) => void;
+    "aria-label"?: string;
     "data-testid"?: string;
   }) => (
     <label>
@@ -207,6 +217,7 @@ vi.mock("@hydra/ui", () => ({
         onChange={(e) =>
           onChange({ target: { value: e.target.value } })
         }
+        aria-label={ariaLabel}
         data-testid={testId}
       >
         {options.map((o) => (
@@ -1290,6 +1301,167 @@ describe("StatusSettingsModal", () => {
       expect(payload.nextStatuses[1].prompt_path).toBe(
         "/projects/engineering/statuses/in-progress.md",
       );
+    });
+  });
+
+  describe("auto-archive after", () => {
+    it("renders empty value + days unit when auto_archive_after_seconds is null", () => {
+      const project = makeProject([
+        makeStatus("open"),
+        makeStatus("in-progress"),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      const value = screen.getByTestId(
+        "status-settings-auto-archive-value",
+      ) as HTMLInputElement;
+      const unit = screen.getByTestId(
+        "status-settings-auto-archive-unit",
+      ) as HTMLSelectElement;
+      expect(value.value).toBe("");
+      expect(unit.value).toBe("days");
+    });
+
+    // The inverse-rendering rule prefers the largest whole-unit divisor —
+    // weeks > days > hours. 1209600 is both 14 days and 2 weeks; the rule
+    // picks weeks so a round-tripped value doesn't bloat into "336 hours".
+    it.each([
+      ["weeks", 604800, "1"],
+      ["weeks", 1209600, "2"],
+      ["days", 1036800, "12"],
+      ["hours", 3600, "1"],
+    ])(
+      "renders %s when seconds is %i",
+      (expectedUnit, seconds, expectedValue) => {
+        const project = makeProject([
+          makeStatus("in-progress", {
+            auto_archive_after_seconds: seconds as unknown as bigint,
+          }),
+        ]);
+        render(
+          <StatusSettingsModal
+            open={true}
+            onClose={() => {}}
+            projectRecord={project}
+            statusKey="in-progress"
+            issueCount={0}
+          />,
+        );
+        const value = screen.getByTestId(
+          "status-settings-auto-archive-value",
+        ) as HTMLInputElement;
+        const unit = screen.getByTestId(
+          "status-settings-auto-archive-unit",
+        ) as HTMLSelectElement;
+        expect(value.value).toBe(expectedValue);
+        expect(unit.value).toBe(expectedUnit);
+      },
+    );
+
+    it("Save persists the new value × unit in seconds", () => {
+      const project = makeProject([
+        makeStatus("in-progress", { label: "In progress" }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-auto-archive-unit"), {
+        target: { value: "weeks" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-auto-archive-value"), {
+        target: { value: "2" },
+      });
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(
+        Number(payload.nextStatuses[0].auto_archive_after_seconds),
+      ).toBe(1209600);
+    });
+
+    it("changing the unit preserves the displayed value and recomputes seconds", () => {
+      const project = makeProject([
+        makeStatus("in-progress", {
+          // 12 days — not a whole number of weeks so inverse render lands
+          // on "12 days", not "weeks".
+          auto_archive_after_seconds: 1036800 as unknown as bigint,
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+
+      const value = screen.getByTestId(
+        "status-settings-auto-archive-value",
+      ) as HTMLInputElement;
+      expect(value.value).toBe("12");
+
+      // Switching the unit keeps the display value (12) and re-bases the
+      // seconds against the new unit (12 weeks = 7257600s), rather than
+      // recomputing the displayed number off the persisted seconds.
+      fireEvent.change(screen.getByTestId("status-settings-auto-archive-unit"), {
+        target: { value: "weeks" },
+      });
+      expect(value.value).toBe("12");
+
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(
+        Number(payload.nextStatuses[0].auto_archive_after_seconds),
+      ).toBe(12 * 7 * 86400);
+    });
+
+    it("Clearing the value persists auto_archive_after_seconds: null", () => {
+      const project = makeProject([
+        makeStatus("in-progress", {
+          auto_archive_after_seconds: 3600 as unknown as bigint,
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("status-settings-auto-archive-value"), {
+        target: { value: "" },
+      });
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(
+        payload.nextStatuses[0].auto_archive_after_seconds ?? null,
+      ).toBeNull();
     });
   });
 
