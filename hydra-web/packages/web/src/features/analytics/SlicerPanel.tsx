@@ -145,9 +145,11 @@ export function SlicerPanel({ state, onChange }: SlicerPanelProps) {
           </div>
 
           <div className={styles.field}>
+            <label className={styles.label} htmlFor="slicer-creator">
+              Creator
+            </label>
             <Input
               id="slicer-creator"
-              label="Creator"
               type="text"
               placeholder="username"
               value={state.creator ?? ""}
