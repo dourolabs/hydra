@@ -24,6 +24,7 @@ import { createSecretRoutes, resetSecrets } from "./routes/secrets.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { createTriggerRoutes } from "./routes/triggers.js";
 import { createProjectRoutes } from "./routes/projects.js";
+import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { loadSeedData } from "./seed.js";
 import {
   startSyntheticEvents,
@@ -162,6 +163,7 @@ app.route("", createSecretRoutes());
 app.route("", createConversationRoutes(store));
 app.route("", createTriggerRoutes(store));
 app.route("", createProjectRoutes(store));
+app.route("", createAnalyticsRoutes());
 
 export interface MockServerHandle {
   port: number;
