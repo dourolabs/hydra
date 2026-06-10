@@ -170,6 +170,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Test
+        run: pnpm test
+
   integration:
     runs-on: ubuntu-latest
     defaults:
