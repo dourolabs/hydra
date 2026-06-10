@@ -262,6 +262,14 @@ describe("Sidebar", () => {
     expect(link.getAttribute("href")).toBe("/?includeArchived=1");
   });
 
+  it("renders the Views section before the Analytics section", () => {
+    renderSidebar();
+    const viewsAnchor = screen.getByTestId("sidebar-issues-your-issues");
+    const analyticsAnchor = screen.getByTestId("sidebar-analytics-throughput");
+    const relation = viewsAnchor.compareDocumentPosition(analyticsAnchor);
+    expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("places the Archive view as the last item in the Views section", () => {
     renderSidebar();
     const viewIds = [
