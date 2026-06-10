@@ -1,5 +1,11 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import type { TokenUsageOverTimeQuery, TokenUsageOverTimeResponse } from "@hydra/api";
+import type {
+  TokenUsageCostPerAgentResponse,
+  TokenUsageOverTimeQuery,
+  TokenUsageOverTimeResponse,
+  TokenUsageQuery,
+  TokenUsageTopIssuesByCostResponse,
+} from "@hydra/api";
 import { apiClient } from "../../api/client";
 
 /**
@@ -15,6 +21,28 @@ export function useTokenUsageOverTime(
   return useQuery({
     queryKey: ["analytics", "token_usage", "over_time", query],
     queryFn: () => apiClient.getTokenUsageOverTime(query),
+    enabled,
+  });
+}
+
+export function useTokenUsageCostPerAgent(
+  query: TokenUsageQuery,
+  enabled: boolean = true,
+): UseQueryResult<TokenUsageCostPerAgentResponse> {
+  return useQuery({
+    queryKey: ["analytics", "token_usage", "cost_per_agent", query],
+    queryFn: () => apiClient.getTokenUsageCostPerAgent(query),
+    enabled,
+  });
+}
+
+export function useTokenUsageTopIssuesByCost(
+  query: TokenUsageQuery,
+  enabled: boolean = true,
+): UseQueryResult<TokenUsageTopIssuesByCostResponse> {
+  return useQuery({
+    queryKey: ["analytics", "token_usage", "top_issues_by_cost", query],
+    queryFn: () => apiClient.getTokenUsageTopIssuesByCost(query),
     enabled,
   });
 }

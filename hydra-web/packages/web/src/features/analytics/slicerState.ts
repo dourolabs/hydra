@@ -52,7 +52,7 @@ export const URL_PARAMS = {
   creator: "creator",
 } as const;
 
-function isTimeRange(value: string): value is TimeRange {
+export function isTimeRange(value: string): value is TimeRange {
   return (TIME_RANGE_OPTIONS as readonly string[]).includes(value);
 }
 

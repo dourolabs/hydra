@@ -7,3 +7,6 @@ export { IssuesCycleTimeChart } from "./IssuesCycleTimeChart";
 export { IssuesTimeInStatusBreakdownChart } from "./IssuesTimeInStatusBreakdownChart";
 export { IssuesPerStatusDistributionChart } from "./IssuesPerStatusDistributionChart";
 export { TokensOverTimeChart } from "./TokensOverTimeChart";
+export { CostPerAgentChart } from "./CostPerAgentChart";
+export { PerSessionCostScatterChart } from "./PerSessionCostScatterChart";
+export { TopIssuesByCostList } from "./TopIssuesByCostList";
