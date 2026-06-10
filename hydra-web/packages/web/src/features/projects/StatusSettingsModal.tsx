@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Avatar,
   Button,
+  ColorPicker,
   Input,
   Modal,
   Picker,
@@ -23,7 +24,7 @@ import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { useAgents } from "../../hooks/useAgents";
 import { useUsers } from "../../hooks/useUsers";
-import { ColorPicker, LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
+import { LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
 import {
   PROJECTS_QUERY_KEY,
   applyOptimisticUpsert,
