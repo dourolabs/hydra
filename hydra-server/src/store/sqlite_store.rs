@@ -7531,10 +7531,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_issues_sorted_by_update_time() {
+    async fn list_issues_sorted_by_creation_time() {
+        // The store orders by `created_at` (see [[p-kzbakldw]] / [[d-vxrcyor]]).
+        // This test exercises the sqlite-specific quirk that `update_issue`
+        // inserts a fresh `is_latest = 1` row whose `created_at` defaults to
+        // `now()`, so updating A makes its latest-version row's `created_at`
+        // exceed B's — and A reorders ahead of B under the `created_at` sort.
         let store = create_test_store().await;
 
-        // Create issue A, then issue B (B has a later creation time).
+        // Insert A, then B (B's `created_at` is later than A's).
         let (id_a, _) = store
             .add_issue(sample_issue(vec![]), &ActorRef::test())
             .await
@@ -7544,10 +7549,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Sleep to ensure the update gets a distinct timestamp (SQLite has ms precision).
+        // Sleep so the next INSERT's `created_at` is strictly after B's
+        // (SQLite's strftime('now') has ms precision).
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
-        // Update issue A so its updated_at becomes the most recent.
+        // Update A: sqlite's `update_issue` writes a new `is_latest = 1`
+        // row, and the schema defaults `created_at` to `now()` on that
+        // INSERT — so A's latest-version `created_at` is now after B's.
         let mut updated_a = sample_issue(vec![]);
         updated_a.description = "updated A".to_string();
         store
@@ -7555,7 +7563,8 @@ mod tests {
             .await
             .unwrap();
 
-        // List should return A first (most recently updated), then B.
+        // List should return A first (latest-version `created_at` is now
+        // the greatest), then B.
         let results = store
             .list_issues(&SearchIssuesQuery::default())
             .await
