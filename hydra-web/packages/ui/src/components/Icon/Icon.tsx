@@ -233,3 +233,11 @@ export const IconChart = (p: IconProps) => (
     <path d="M13 13.5V3.5" />
   </IconBase>
 );
+
+export const IconCoin = (p: IconProps) => (
+  <IconBase {...p}>
+    <circle cx="8" cy="8" r="5.5" />
+    <path d="M8 4.5v7" />
+    <path d="M9.75 6.25H7a1.25 1.25 0 0 0 0 2.5h2a1.25 1.25 0 0 1 0 2.5H6" />
+  </IconBase>
+);

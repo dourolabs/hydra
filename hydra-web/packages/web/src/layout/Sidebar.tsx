@@ -395,7 +395,7 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
             data-testid="sidebar-analytics-token-usage"
           >
             <span className={styles.itemIcon}>
-              <Icons.IconChart />
+              <Icons.IconCoin />
             </span>
             <span className={styles.itemLabel}>Token Usage</span>
           </NavLink>

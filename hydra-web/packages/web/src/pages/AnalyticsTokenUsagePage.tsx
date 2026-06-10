@@ -10,6 +10,7 @@ import {
   type TimeRange,
 } from "../features/analytics/slicerState";
 import {
+  CostOverTimeChart,
   CostPerAgentChart,
   PerSessionCostScatterChart,
   TokensOverTimeChart,
@@ -77,6 +78,7 @@ export function AnalyticsTokenUsagePage() {
         >
           <div className={styles.grid}>
             <TokensOverTimeChart query={overTimeQuery} />
+            <CostOverTimeChart query={overTimeQuery} />
           </div>
         </section>
 

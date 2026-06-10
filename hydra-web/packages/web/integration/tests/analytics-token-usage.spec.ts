@@ -31,6 +31,21 @@ test.describe("Analytics token usage @analytics:token-usage", () => {
     }
   });
 
+  test("renders the cost-over-time chart with stub data", async ({ authenticatedPage: page }) => {
+    await page.goto("/analytics/token-usage");
+    const chart = page.getByTestId("chart-cost-over-time");
+    await expect(chart).toBeVisible();
+    await expect(chart.getByTestId("cost-over-time-content")).toBeVisible();
+    for (const key of [
+      "input_tokens",
+      "output_tokens",
+      "cache_read_input_tokens",
+      "cache_creation_input_tokens",
+    ]) {
+      await expect(chart.getByTestId(`cost-over-time-legend-${key}`)).toBeVisible();
+    }
+  });
+
   test("time-range buttons update the URL and re-issue the request with new from/to", async ({
     authenticatedPage: page,
   }) => {
@@ -102,6 +117,11 @@ test.describe("Analytics token usage @analytics:token-usage", () => {
     // Stub has 3 + 2 + 3 + 2 = 10 sessions across the four agents.
     const points = chart.locator(".recharts-scatter-symbol");
     await expect(points).toHaveCount(10);
+    // Agent labels render on the Y axis (axes were swapped vs. the original
+    // orientation) so the chart reads top-to-bottom like the bar to its left.
+    for (const label of ["swe", "pm", "reviewer", "Ad-hoc"]) {
+      await expect(chart.locator("text", { hasText: new RegExp(`^${label}$`) })).toBeVisible();
+    }
   });
 
   test("renders top-issues list in stub order with working issue links", async ({
