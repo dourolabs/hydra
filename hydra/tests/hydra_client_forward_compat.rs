@@ -7,8 +7,13 @@ use httpmock::prelude::*;
 use httpmock::Method::PATCH;
 use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
+    api::v1::events::EventsQuery,
     api::v1::projects::{
         ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
+    },
+    api::v1::triggers::{
+        Action as TriggerAction, CreateIssueAction, Schedule as TriggerSchedule,
+        SearchTriggersQuery, UpsertTriggerRequest,
     },
     conversations::{
         ConversationStatus, CreateConversationRequest, SearchConversationsQuery,
@@ -29,7 +34,7 @@ use hydra_common::{
     users::Username,
     whoami::ActorIdentity,
     ConversationId, DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
-    SessionId,
+    SessionId, TriggerId,
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -51,6 +56,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let patch_id = PatchId::new();
     let project_id = ProjectId::new();
     let conversation_id = ConversationId::new();
+    let trigger_id = TriggerId::new();
     let repo_name = RepoName::new("dourolabs", "hydra")?;
     let username: Username = "future-user".into();
 
@@ -99,6 +105,13 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let project_record_body = forward_project_json(&project_id);
     let project_record_for_get = project_record_body.clone();
     let project_record_for_list = project_record_body.clone();
+    let trigger_record_body = forward_trigger_json(&trigger_id, &project_id, now);
+    let trigger_record_for_get = trigger_record_body.clone();
+    let trigger_record_for_list = trigger_record_body.clone();
+    let trigger_record_for_delete = trigger_record_body.clone();
+    let trigger_path = format!("/v1/triggers/{trigger_id}");
+    let trigger_id_for_create = trigger_id.clone();
+    let trigger_id_for_update = trigger_id.clone();
     let merge_queue_path = format!(
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
@@ -597,6 +610,76 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         then.status(200).json_body(conversation_record_for_close);
     });
 
+    // POST /v1/triggers
+    let trigger_id_for_create_clone = trigger_id_for_create.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path("/v1/triggers");
+        then.status(200).json_body(json!({
+            "trigger_id": trigger_id_for_create_clone,
+            "version": 1,
+            "extra": "create-trigger"
+        }));
+    });
+
+    // PUT /v1/triggers/:trigger_id
+    let trigger_update_path = trigger_path.clone();
+    let trigger_id_for_update_clone = trigger_id_for_update.clone();
+    server.mock(move |when, then| {
+        when.method(PUT).path(trigger_update_path.as_str());
+        then.status(200).json_body(json!({
+            "trigger_id": trigger_id_for_update_clone,
+            "version": 2,
+            "extra": "update-trigger"
+        }));
+    });
+
+    // GET /v1/triggers/:trigger_id
+    let trigger_get_path = trigger_path.clone();
+    let trigger_record_for_get_clone = trigger_record_for_get.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(trigger_get_path.as_str());
+        then.status(200)
+            .json_body(trigger_record_for_get_clone.clone());
+    });
+
+    // GET /v1/triggers
+    let trigger_record_for_list_clone = trigger_record_for_list.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path("/v1/triggers");
+        then.status(200).json_body(json!({
+            "triggers": [trigger_record_for_list_clone.clone()],
+            "extra": "list-triggers"
+        }));
+    });
+
+    // DELETE /v1/triggers/:trigger_id
+    let trigger_delete_path = trigger_path.clone();
+    let trigger_record_for_delete_clone = trigger_record_for_delete.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(trigger_delete_path.as_str());
+        then.status(200)
+            .json_body(trigger_record_for_delete_clone.clone());
+    });
+
+    // GET /v1/events — SSE stream. Includes one event with an unknown event
+    // type (skipped by the SSE parser without erroring) plus a known
+    // `heartbeat` event whose payload carries extra unknown fields.
+    server.mock(|when, then| {
+        when.method(GET).path("/v1/events");
+        then.status(200)
+            .header("content-type", "text/event-stream")
+            .body(concat!(
+                "event: future_event_type\n",
+                "id: 1\n",
+                "data: {\"entity_type\":\"trigger\",\"entity_id\":\"t-abc\",\"version\":1,\"timestamp\":\"2026-01-01T00:00:00Z\",\"future\":\"field\"}\n",
+                "\n",
+                "event: heartbeat\n",
+                "id: 2\n",
+                "data: {\"server_time\":\"2026-01-01T00:00:00Z\",\"future\":\"field\"}\n",
+                "\n",
+            ));
+    });
+
     let login_request = LoginRequest::new(
         "gho_forward_compat".to_string(),
         "ghr_forward_compat".to_string(),
@@ -998,6 +1081,84 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let github_client = unauth_client.get_github_app_client_id().await?;
     assert_eq!(github_client.client_id, "abc123");
 
+    // Triggers
+    let trigger_request = UpsertTriggerRequest::new(
+        true,
+        TriggerSchedule::Cron {
+            expression: "0 9 * * MON".to_string(),
+            timezone: Some("UTC".to_string()),
+        },
+        vec![TriggerAction::CreateIssue(CreateIssueAction::new(
+            IssueType::Task,
+            "Daily triage".to_string(),
+            "Run triage for {{ now.date }}".to_string(),
+            None,
+            project_id.clone(),
+            StatusKey::try_new("open").unwrap(),
+            Default::default(),
+        ))],
+        Username::from("test-creator"),
+    );
+
+    let created_trigger = client.create_trigger(&trigger_request).await?;
+    assert_eq!(created_trigger.trigger_id, trigger_id);
+
+    let updated_trigger = client.update_trigger(&trigger_id, &trigger_request).await?;
+    assert_eq!(updated_trigger.trigger_id, trigger_id);
+
+    let fetched_trigger = client.get_trigger(&trigger_id, false).await?;
+    assert_eq!(fetched_trigger.trigger_id, trigger_id);
+    let fetched_action = fetched_trigger
+        .trigger
+        .actions
+        .first()
+        .expect("fetched trigger has at least one action");
+    let TriggerAction::CreateIssue(fetched_create_issue) = fetched_action;
+    assert!(matches!(
+        fetched_create_issue.issue_type,
+        IssueType::Unknown
+    ));
+
+    let listed_triggers = client
+        .list_triggers(&SearchTriggersQuery::default())
+        .await?;
+    assert_eq!(listed_triggers.triggers.len(), 1);
+    let listed_action = listed_triggers.triggers[0]
+        .trigger
+        .actions
+        .first()
+        .expect("listed trigger has at least one action");
+    let TriggerAction::CreateIssue(listed_create_issue) = listed_action;
+    assert!(matches!(listed_create_issue.issue_type, IssueType::Unknown));
+
+    let deleted_trigger = client.delete_trigger(&trigger_id).await?;
+    assert_eq!(deleted_trigger.trigger_id, trigger_id);
+
+    // Events (SSE). The mock emits one block with an unknown event type
+    // (the SSE parser skips it without erroring) and one `heartbeat` block
+    // whose payload carries an extra unknown field. Driving the stream to
+    // completion verifies that an older client can decode at least one
+    // forward-compat event payload from a newer server.
+    let mut events = client
+        .subscribe_events(&EventsQuery::default(), None)
+        .await?;
+    let mut collected_events = Vec::new();
+    while let Some(item) = events.next().await {
+        collected_events.push(item?);
+    }
+    assert!(!collected_events.is_empty());
+    let heartbeat = collected_events
+        .iter()
+        .find(|e| {
+            matches!(
+                e.event_type,
+                hydra_common::api::v1::events::SseEventType::Heartbeat
+            )
+        })
+        .expect("heartbeat event survives forward-compat payload");
+    // The extra `future` field is silently ignored by serde.
+    heartbeat.as_heartbeat()?;
+
     // Ensure unknown job status variants remain deserializable.
     let delayed_status: SessionStatusUpdate =
         serde_json::from_value(json!({ "status": "delayed" }))?;
@@ -1306,5 +1467,50 @@ fn forward_worker_context_json() -> Value {
         "resolved_env": { "foo": "bar" },
         "github_token": null,
         "note": "context"
+    })
+}
+
+fn forward_trigger_json(
+    trigger_id: &TriggerId,
+    project_id: &ProjectId,
+    now: DateTime<Utc>,
+) -> Value {
+    json!({
+        "trigger_id": trigger_id,
+        "version": 1,
+        "timestamp": now,
+        "trigger": {
+            "enabled": true,
+            "schedule": {
+                "Cron": {
+                    "expression": "0 9 * * MON",
+                    "timezone": "UTC",
+                    "future": "schedule-field"
+                }
+            },
+            "actions": [
+                {
+                    "CreateIssue": {
+                        // Unknown `IssueType` tag — older clients must decode
+                        // this as `IssueType::Unknown`, not error.
+                        "type": "future-issue-type",
+                        "title": "Daily triage",
+                        "description": "Run triage for {{ now.date }}",
+                        "assignee": "users/alice",
+                        "project_id": project_id,
+                        "status": "open",
+                        "session_settings": {},
+                        "future": "action-field"
+                    }
+                }
+            ],
+            "creator": "test-creator",
+            "last_fired_at": null,
+            "deleted": false,
+            "future": "trigger-field"
+        },
+        "actor": null,
+        "creation_time": now,
+        "extra": "trigger-version-record"
     })
 }
