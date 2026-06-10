@@ -30,6 +30,10 @@ vi.mock("../FeedbackModal", () => ({
   FeedbackModal: () => null,
 }));
 
+vi.mock("../ArchiveIssueButton", () => ({
+  ArchiveIssueButton: () => <button data-testid="archive-button-stub">Archive</button>,
+}));
+
 vi.mock("../../sessions/SessionList", () => ({
   SessionList: () => <div data-testid="session-list-stub" />,
 }));

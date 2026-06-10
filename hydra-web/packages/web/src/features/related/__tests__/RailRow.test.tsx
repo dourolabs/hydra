@@ -8,6 +8,20 @@ vi.mock("../../projects/useProjects", () => ({
   useProjects: () => useProjectsMock(),
 }));
 
+// Stub the row-action buttons; both require a QueryClientProvider / Toast
+// context that this layout-focused suite doesn't otherwise need.
+vi.mock("../../issues/ArchiveIssueButton", () => ({
+  ArchiveIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
+    <button data-testid={testId}>Archive</button>
+  ),
+}));
+
+vi.mock("../../issues/RestoreIssueButton", () => ({
+  RestoreIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
+    <button data-testid={testId}>Restore</button>
+  ),
+}));
+
 const { IssueRailRow } = await import("../RailRow");
 
 const SEEDED_PROJECTS: ProjectRecord[] = [
