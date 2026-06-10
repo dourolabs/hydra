@@ -9,6 +9,7 @@ use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
     agents::UpsertAgentRequest,
     api::v1::events::EventsQuery,
+    api::v1::merge_check::MergeCheckResponse,
     api::v1::projects::{
         ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
     },
@@ -21,7 +22,10 @@ use hydra_common::{
         SendMessageRequest, UpdateConversationRequest,
     },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
-    issues::{IssueDependencyType, IssueInput, IssueType, SearchIssuesQuery, UpsertIssueRequest},
+    issues::{
+        IssueDependencyType, IssueInput, IssueType, SearchIssuesQuery, SubmitFormRequest,
+        UpsertIssueRequest,
+    },
     login::LoginRequest,
     logs::LogsQuery,
     patches::{GithubCiState, Patch, PatchStatus, SearchPatchesQuery, UpsertPatchRequest},
@@ -39,6 +43,7 @@ use hydra_common::{
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
+use tempfile::NamedTempFile;
 
 const TEST_HYDRA_TOKEN: &str = "test-hydra-token";
 
@@ -135,6 +140,13 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let agent_record_for_create = agent_record_body.clone();
     let agent_record_for_update = agent_record_body.clone();
     let agent_record_for_delete = agent_record_body.clone();
+    let issue_record_for_delete = issue_record_body.clone();
+    let patch_record_for_delete = patch_record_body.clone();
+    let document_version_body_for_delete = document_version_body.clone();
+    let repository_body_for_delete = repository_body.clone();
+    let issue_id_for_submit_form = issue_id.clone();
+    let patch_id_for_merge_check = patch_id.clone();
+    let patch_id_for_asset = patch_id.clone();
     let merge_queue_path = format!(
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
@@ -835,6 +847,87 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             .json_body(agent_record_for_delete_clone.clone());
     });
 
+    // DELETE /v1/repositories/:org/:repo
+    let delete_repo_path = repo_path.clone();
+    let repository_body_for_delete_clone = repository_body_for_delete.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(delete_repo_path.as_str());
+        then.status(200).json_body(json!({
+            "repository": repository_body_for_delete_clone.clone(),
+            "future": "delete-repo"
+        }));
+    });
+
+    // DELETE /v1/issues/:issue_id
+    let delete_issue_path = issue_path.clone();
+    let issue_record_for_delete_clone = issue_record_for_delete.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(delete_issue_path.as_str());
+        then.status(200)
+            .json_body(issue_record_for_delete_clone.clone());
+    });
+
+    // DELETE /v1/patches/:patch_id
+    let delete_patch_path = patch_path.clone();
+    let patch_record_for_delete_clone = patch_record_for_delete.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(delete_patch_path.as_str());
+        then.status(200)
+            .json_body(patch_record_for_delete_clone.clone());
+    });
+
+    // DELETE /v1/documents/:document_id
+    let delete_document_path = document_path.clone();
+    let document_version_body_for_delete_clone = document_version_body_for_delete.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(delete_document_path.as_str());
+        then.status(200)
+            .json_body(document_version_body_for_delete_clone.clone());
+    });
+
+    // POST /v1/patches/:patch_id/merge_check — success body. `MergeCheckOk`
+    // has no enum fields to test forward-compat on, so only the top-level
+    // unknown field exercises serde's tolerance here.
+    let merge_check_path = format!("/v1/patches/{patch_id_for_merge_check}/merge_check");
+    server.mock(move |when, then| {
+        when.method(POST).path(merge_check_path.as_str());
+        then.status(200)
+            .json_body(json!({ "ok": true, "future": "merge-check" }));
+    });
+
+    // POST /v1/patches/:patch_id/assets — server returns a JSON envelope with
+    // the uploaded asset URL plus unknown extras.
+    let patch_asset_path = format!("/v1/patches/{patch_id_for_asset}/assets");
+    server.mock(move |when, then| {
+        when.method(POST).path(patch_asset_path.as_str());
+        then.status(200).json_body(json!({
+            "asset_url": "https://example.com/assets/forward-compat",
+            "future": "asset"
+        }));
+    });
+
+    // POST /v1/issues/:issue_id/actions — submit form response envelope.
+    // `FormResponse` has no `Unknown`-style enum variants of its own;
+    // forward-compat tolerance is exercised via unknown extras at the
+    // top level and on the embedded `form_response`.
+    let submit_form_path = format!("/v1/issues/{issue_id_for_submit_form}/actions");
+    let issue_id_for_submit_form_response = issue_id_for_submit_form.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path(submit_form_path.as_str());
+        then.status(200).json_body(json!({
+            "issue_id": issue_id_for_submit_form_response,
+            "version": 7,
+            "form_response": {
+                "action_id": "future-action",
+                "actor": { "User": { "name": "future-user" } },
+                "values": {},
+                "submitted_at": Utc::now(),
+                "future": "form-response-field"
+            },
+            "future": "submit-form"
+        }));
+    });
+
     // GET /v1/events — SSE stream. Includes one event with an unknown event
     // type (skipped by the SSE parser without erroring) plus a known
     // `heartbeat` event whose payload carries extra unknown fields.
@@ -981,6 +1074,22 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let list_issues = client.list_issues(&SearchIssuesQuery::default()).await?;
     assert_eq!(list_issues.issues.len(), 1);
 
+    let submit_form_response = client
+        .submit_form(
+            &issue_id,
+            &SubmitFormRequest::new("future-action".to_string(), HashMap::new()),
+        )
+        .await?;
+    assert_eq!(submit_form_response.issue_id, issue_id);
+    assert_eq!(
+        submit_form_response.form_response.action_id,
+        "future-action"
+    );
+
+    let deleted_issue = client.delete_issue(&issue_id).await?;
+    assert_eq!(deleted_issue.issue_id, issue_id);
+    assert!(matches!(deleted_issue.issue.issue_type, IssueType::Unknown));
+
     // Patches
     let patch = Patch::new(
         "title".to_string(),
@@ -1013,6 +1122,19 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let patches = client.list_patches(&SearchPatchesQuery::default()).await?;
     assert_eq!(patches.patches.len(), 1);
+
+    let merge_check_response = client.merge_check(&patch_id).await?;
+    assert!(matches!(merge_check_response, MergeCheckResponse::Ok(_)));
+
+    let asset_file = NamedTempFile::new()?;
+    let asset_url = client
+        .create_patch_asset(&patch_id, asset_file.path())
+        .await?;
+    assert!(!asset_url.is_empty());
+
+    let deleted_patch = client.delete_patch(&patch_id).await?;
+    assert_eq!(deleted_patch.patch_id, patch_id);
+    assert!(matches!(deleted_patch.patch.status, PatchStatus::Unknown));
 
     // Projects
     let upsert_project = UpsertProjectRequest::new(
@@ -1119,6 +1241,14 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .await?;
     assert_eq!(document_version.version, version_number);
 
+    let document_by_path = client
+        .get_document_by_path("docs/runbook.md", false)
+        .await?;
+    assert_eq!(document_by_path.document_id, document_id);
+
+    let deleted_document = client.delete_document(&document_id).await?;
+    assert_eq!(deleted_document.document_id, document_id);
+
     // Repositories
     let repo_config = Repository::new(
         "https://example.com/repo.git".to_string(),
@@ -1138,6 +1268,9 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .list_repositories(&SearchRepositoriesQuery::default())
         .await?;
     assert_eq!(repos.repositories.len(), 1);
+
+    let deleted_repo = client.delete_repository(&repo_name).await?;
+    assert_eq!(deleted_repo.name, repo_name);
 
     let github_token = client.get_github_token().await?;
     assert_eq!(github_token, "gho_forward_compat");
