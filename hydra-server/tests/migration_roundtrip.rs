@@ -260,6 +260,17 @@ async fn migration_roundtrip() -> Result<()> {
             "add_statuses_auto_archive_after_seconds: Store::get_project reads field as None",
         )?;
 
+    add_clear_assignee_to_default_terminal_statuses_post_migration_state(&pool)
+        .await
+        .context(
+            "add_clear_assignee_to_default_terminal_statuses: terminal rows carry clear_assignee=true, non-terminal rows untouched",
+        )?;
+    add_clear_assignee_to_default_terminal_statuses_is_idempotent(&pool)
+        .await
+        .context(
+            "add_clear_assignee_to_default_terminal_statuses: verbatim body replay preserves on_enter",
+        )?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -502,6 +513,119 @@ async fn add_statuses_auto_archive_after_seconds_domain_roundtrip(pool: &PgPool)
                 "j-defaul.statuses[{idx}] ({key:?}): expected auto_archive_after_seconds=None; got {got:?}",
                 key = status.key,
                 got = status.auto_archive_after_seconds,
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260618000000_add_clear_assignee_to_default_terminal_statuses. Seeds
+// `on_enter.clear_assignee = true` on the three terminal default-project
+// statuses (`closed`, `dropped`, `failed`) without disturbing
+// `on_enter` on any other row. Idempotent under rerun.
+// ---------------------------------------------------------------------------
+
+async fn add_clear_assignee_to_default_terminal_statuses_post_migration_state(
+    pool: &PgPool,
+) -> Result<()> {
+    for key in ["closed", "dropped", "failed"] {
+        let row = sqlx::query(
+            "SELECT on_enter::text AS on_enter_text \
+             FROM metis.statuses \
+             WHERE project_id = 'j-defaul' AND key = $1",
+        )
+        .bind(key)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read on_enter for j-defaul.{key}"))?;
+        let on_enter_text: Option<String> = row.try_get("on_enter_text")?;
+        let on_enter_text = on_enter_text
+            .ok_or_else(|| anyhow::anyhow!("j-defaul.{key}: expected on_enter NOT NULL"))?;
+        let parsed: serde_json::Value = serde_json::from_str(&on_enter_text)
+            .with_context(|| format!("decode on_enter JSON for j-defaul.{key}"))?;
+        if parsed.get("clear_assignee") != Some(&serde_json::json!(true)) {
+            bail!("j-defaul.{key}: expected on_enter.clear_assignee=true; got {parsed}");
+        }
+    }
+
+    // The non-terminal default-project statuses (`open`, `in-progress`)
+    // must NOT carry an `on_enter` block — the migration is scoped to
+    // the three terminal rows and must not touch any other row.
+    for key in ["open", "in-progress"] {
+        let row = sqlx::query(
+            "SELECT on_enter::text AS on_enter_text \
+             FROM metis.statuses \
+             WHERE project_id = 'j-defaul' AND key = $1",
+        )
+        .bind(key)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("read on_enter for j-defaul.{key}"))?;
+        let on_enter_text: Option<String> = row.try_get("on_enter_text")?;
+        if on_enter_text.is_some() {
+            bail!("j-defaul.{key}: expected on_enter=NULL post-migration; got {on_enter_text:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn add_clear_assignee_to_default_terminal_statuses_is_idempotent(
+    pool: &PgPool,
+) -> Result<()> {
+    // Snapshot the on_enter blobs, replay the migration body verbatim
+    // (the migration is an UPDATE; sqlx's tracking table won't rerun
+    // it, but a verbatim replay catches any "the second run drops a
+    // pre-existing key" regression).
+    let snapshot_before = sqlx::query(
+        "SELECT key, on_enter::text AS on_enter_text \
+         FROM metis.statuses WHERE project_id = 'j-defaul' \
+         ORDER BY key",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot j-defaul on_enter before clear_assignee idempotency rerun")?;
+
+    sqlx::raw_sql(
+        "UPDATE metis.statuses \
+         SET on_enter = jsonb_set( \
+             COALESCE(on_enter, '{}'::jsonb), \
+             '{clear_assignee}', \
+             'true'::jsonb, \
+             true \
+         ) \
+         WHERE project_id = 'j-defaul' \
+           AND key IN ('closed', 'dropped', 'failed')",
+    )
+    .execute(pool)
+    .await
+    .context("re-apply clear_assignee seed migration body verbatim")?;
+
+    let snapshot_after = sqlx::query(
+        "SELECT key, on_enter::text AS on_enter_text \
+         FROM metis.statuses WHERE project_id = 'j-defaul' \
+         ORDER BY key",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot j-defaul on_enter after clear_assignee idempotency rerun")?;
+
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across clear_assignee rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_key: String = before.try_get("key")?;
+        let after_key: String = after.try_get("key")?;
+        let before_on_enter: Option<String> = before.try_get("on_enter_text")?;
+        let after_on_enter: Option<String> = after.try_get("on_enter_text")?;
+        if before_key != after_key || before_on_enter != after_on_enter {
+            bail!(
+                "j-defaul.{before_key} changed across clear_assignee rerun: \
+                 {before_on_enter:?} -> {after_on_enter:?}"
             );
         }
     }
@@ -2872,10 +2996,24 @@ async fn create_statuses_migration_backfills_default_seed(pool: &PgPool) -> Resu
                 expected.interactive
             );
         }
-        // The default seed has no on_enter on any status.
-        if on_enter_text.is_some() {
+        // The HEAD-state of `on_enter` reflects the
+        // 20260618000000_add_clear_assignee_to_default_terminal_statuses
+        // seed migration: terminal rows carry `{ clear_assignee: true }`;
+        // non-terminal rows stay NULL. Compare against the expected
+        // `default_project_seed()` shape rather than asserting NULL
+        // outright.
+        let expected_on_enter_json = expected
+            .on_enter
+            .as_ref()
+            .map(|o| serde_json::to_value(o).expect("serialize StatusOnEnter"));
+        let actual_on_enter_json = on_enter_text
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .with_context(|| format!("decode metis.statuses(j-defaul)[{i}].on_enter JSON"))?;
+        if expected_on_enter_json != actual_on_enter_json {
             bail!(
-                "metis.statuses(j-defaul)[{i}].on_enter: expected NULL (default seed has none); got {on_enter_text:?}"
+                "metis.statuses(j-defaul)[{i}].on_enter: expected {expected_on_enter_json:?}; got {actual_on_enter_json:?}"
             );
         }
     }

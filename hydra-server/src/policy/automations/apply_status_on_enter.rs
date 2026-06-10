@@ -96,6 +96,7 @@ impl Automation for ApplyStatusOnEnterAutomation {
         let StatusOnEnter {
             assign_to,
             attach_form,
+            clear_assignee,
             ..
         } = on_enter;
 
@@ -146,9 +147,19 @@ impl Automation for ApplyStatusOnEnterAutomation {
         // change. Comparing the *resulting* state to the *current* state
         // makes a no-op the natural outcome of re-entering the same key
         // with the same assignee/form already in place.
-        let assignee_changes = assign_to
-            .as_ref()
-            .is_some_and(|p| Some(p) != new.assignee.as_ref());
+        //
+        // `assign_to` and `clear_assignee` are mutually exclusive at the
+        // wire layer (rejected by [`StatusOnEnter::validate`]); the
+        // server may still encounter a contradictory row if one slipped
+        // in pre-validation, in which case `assign_to` wins by virtue
+        // of running first below.
+        let assignee_changes = if let Some(principal) = assign_to.as_ref() {
+            Some(principal) != new.assignee.as_ref()
+        } else if clear_assignee {
+            new.assignee.is_some()
+        } else {
+            false
+        };
         let form_changes = target_form
             .as_ref()
             .is_some_and(|f| Some(f) != new.form.as_ref());
@@ -159,6 +170,8 @@ impl Automation for ApplyStatusOnEnterAutomation {
         let mut updated = new.clone();
         if let Some(principal) = assign_to {
             updated.assignee = Some(principal);
+        } else if clear_assignee {
+            updated.assignee = None;
         }
         if let Some(form) = target_form {
             updated.form = Some(form);
@@ -416,6 +429,116 @@ mod tests {
             Some(Principal::Agent { ref name }) => assert_eq!(name.as_str(), "reviewer"),
             other => panic!("expected reviewer assignee; got {other:?}"),
         }
+    }
+
+    /// Mirror of `assign_to_reassigns_issue` for the `clear_assignee`
+    /// flag: a status whose `on_enter.clear_assignee = true` must drop
+    /// the issue's existing assignee on transition.
+    #[tokio::test]
+    async fn clear_assignee_unsets_existing_assignee() {
+        let handles = test_utils::test_state_handles();
+        let agent = hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        test_utils::add_agent_with_name(&handles, "reviewer").await;
+
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.clear_assignee = true;
+        let project_id = build_engineering_project(&handles, on_enter).await;
+
+        let mut issue = make_issue(status("open"));
+        issue.project_id = project_id;
+        // Pre-assign the issue so we can observe the on_enter unset it.
+        issue.assignee = Some(Principal::Agent { name: agent });
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut transitioned = issue.clone();
+        transitioned.status = StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&issue_id, transitioned.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = issue_updated_event(issue_id.clone(), issue, transitioned);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let stored = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .item;
+        assert!(
+            stored.assignee.is_none(),
+            "clear_assignee should drop the existing assignee; got {:?}",
+            stored.assignee
+        );
+    }
+
+    /// Re-entering a status with `clear_assignee = true` when the issue
+    /// already has no assignee must NOT bump the version. Mirrors
+    /// `reentry_with_matching_assignee_is_noop` for the assign-to path.
+    #[tokio::test]
+    async fn reentry_after_clear_assignee_is_noop() {
+        let handles = test_utils::test_state_handles();
+
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.clear_assignee = true;
+        let project_id = build_engineering_project(&handles, on_enter).await;
+
+        let mut issue = make_issue(status("open"));
+        issue.project_id = project_id;
+        // Issue starts unassigned, so re-entering the `clear_assignee`
+        // status produces no state change.
+        issue.assignee = None;
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut transitioned = issue.clone();
+        transitioned.status = StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&issue_id, transitioned.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let version_before_automation = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .version;
+
+        let event = issue_updated_event(issue_id.clone(), issue, transitioned);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let version_after = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .version;
+        assert_eq!(
+            version_after, version_before_automation,
+            "re-entry with already-empty assignee should be idempotent under clear_assignee"
+        );
     }
 
     #[tokio::test]

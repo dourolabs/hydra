@@ -6,19 +6,24 @@
 //!
 //! Flag table for the seeded statuses:
 //!
-//! | key           | unblocks_parents | unblocks_dependents | cascades_to_children |
-//! |---------------|------------------|---------------------|----------------------|
-//! | `open`        | false            | false               | false                |
-//! | `in-progress` | false            | false               | false                |
-//! | `closed`      | true             | true                | false                |
-//! | `dropped`     | true             | false               | true                 |
-//! | `failed`      | true             | false               | true                 |
+//! | key           | unblocks_parents | unblocks_dependents | cascades_to_children | on_enter            |
+//! |---------------|------------------|---------------------|----------------------|---------------------|
+//! | `open`        | false            | false               | false                | none                |
+//! | `in-progress` | false            | false               | false                | none                |
+//! | `closed`      | true             | true                | false                | clear_assignee=true |
+//! | `dropped`     | true             | false               | true                 | clear_assignee=true |
+//! | `failed`      | true             | false               | true                 | clear_assignee=true |
 //!
-//! Default status key is `open`; no status has `on_enter` automation.
+//! Default status key is `open`. The terminal statuses
+//! (`closed`/`dropped`/`failed`) carry `on_enter.clear_assignee = true`
+//! so their `apply_status_on_enter` automation unsets the issue's
+//! assignee.
 
 use hydra_common::ProjectId;
 use hydra_common::Rgb;
-use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
+use hydra_common::api::v1::projects::{
+    Project, ProjectKey, StatusDefinition, StatusKey, StatusOnEnter,
+};
 use hydra_common::api::v1::users::Username;
 
 /// Wire string for the default project's slug. Stable: leaked to clients,
@@ -90,7 +95,7 @@ pub fn default_project_seed() -> Project {
             true,
             true,
             false,
-            None,
+            Some(clear_assignee_on_enter()),
         ),
         StatusDefinition::new(
             status_key("dropped"),
@@ -99,7 +104,7 @@ pub fn default_project_seed() -> Project {
             true,
             false,
             true,
-            None,
+            Some(clear_assignee_on_enter()),
         ),
         StatusDefinition::new(
             status_key("failed"),
@@ -108,7 +113,7 @@ pub fn default_project_seed() -> Project {
             true,
             false,
             true,
-            None,
+            Some(clear_assignee_on_enter()),
         ),
     ];
 
@@ -160,6 +165,17 @@ fn rgb(value: &str) -> Rgb {
     value.parse().expect("default project colors are valid hex")
 }
 
+/// Build a `StatusOnEnter` whose only effect is to unset the issue's
+/// assignee. Used to seed the default project's terminal statuses
+/// (`closed`, `dropped`, `failed`) so terminal-state issues stop
+/// carrying an assignee that the spawn dispatcher would otherwise pick
+/// back up.
+fn clear_assignee_on_enter() -> StatusOnEnter {
+    let mut on_enter = StatusOnEnter::new(None, None);
+    on_enter.clear_assignee = true;
+    on_enter
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,15 +224,17 @@ mod tests {
     #[test]
     fn default_project_seed_flags_match_design_table() {
         let project = default_project_seed();
-        let cases: &[(&str, bool, bool, bool)] = &[
-            // (key, unblocks_parents, unblocks_dependents, cascades_to_children)
-            ("open", false, false, false),
-            ("in-progress", false, false, false),
-            ("closed", true, true, false),
-            ("dropped", true, false, true),
-            ("failed", true, false, true),
+        // (key, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter_clear_assignee)
+        // `on_enter_clear_assignee = None` means `on_enter` must be `None`;
+        // `Some(true)` means `on_enter` must be `Some` with `clear_assignee = true`.
+        let cases: &[(&str, bool, bool, bool, Option<bool>)] = &[
+            ("open", false, false, false, None),
+            ("in-progress", false, false, false, None),
+            ("closed", true, true, false, Some(true)),
+            ("dropped", true, false, true, Some(true)),
+            ("failed", true, false, true, Some(true)),
         ];
-        for (k, ub_p, ub_d, casc) in cases {
+        for (k, ub_p, ub_d, casc, on_enter_expect) in cases {
             let key = StatusKey::try_new(*k).unwrap();
             let def = project
                 .find_status(&key)
@@ -230,7 +248,27 @@ mod tests {
                 def.cascades_to_children, *casc,
                 "cascades_to_children for {k}"
             );
-            assert!(def.on_enter.is_none(), "on_enter must be None for {k}");
+            match on_enter_expect {
+                None => assert!(def.on_enter.is_none(), "on_enter must be None for {k}"),
+                Some(want_clear) => {
+                    let on_enter = def
+                        .on_enter
+                        .as_ref()
+                        .unwrap_or_else(|| panic!("on_enter must be Some for {k}"));
+                    assert!(
+                        on_enter.assign_to.is_none(),
+                        "on_enter.assign_to must be None for {k}"
+                    );
+                    assert!(
+                        on_enter.attach_form.is_none(),
+                        "on_enter.attach_form must be None for {k}"
+                    );
+                    assert_eq!(
+                        on_enter.clear_assignee, *want_clear,
+                        "on_enter.clear_assignee for {k}"
+                    );
+                }
+            }
         }
     }
 
