@@ -4,6 +4,11 @@ Central catalog of user scenarios for integration validation. Each scenario has 
 that maps to one or more Playwright tests via `@tag` annotations. Run a subset with
 `pnpm integration -- --grep @auth` (or any tag).
 
+CI's `check-scenarios` enforces one direction: every non-`(planned)` entry below must have a
+matching `@tag` annotation in a spec under `tests/`. The reverse is not enforced — a new spec
+`@tag` without a catalog entry will pass CI, but you should add the entry in the same PR so
+the catalog stays in sync.
+
 ## Authentication
 
 - `@auth:login` — User can log in with a valid API token

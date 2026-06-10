@@ -40,7 +40,7 @@ pnpm integration
 
 ## Reset and error injection
 
-The mock server exposes two dev-only knobs:
+The mock server exposes three dev-only knobs:
 
 ```bash
 # Reset store to seed data — call between tests for a clean slate
@@ -48,6 +48,12 @@ curl -X POST http://localhost:8080/v1/dev/reset
 
 # Force any request to return a specific HTTP status — for testing error paths
 curl -H "X-Mock-Error: 503" http://localhost:8080/v1/issues
+
+# Append a SessionEvent to a running session and broadcast its SSE notification
+# — for seeding deterministic event tails without running a full agent loop
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"kind":"ToolUse","name":"Read","input":{}}' \
+  http://localhost:8080/v1/dev/sessions/<id>/events
 ```
 
 ## Visual audit
