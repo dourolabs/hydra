@@ -8814,6 +8814,16 @@ mod tests {
         let store = PostgresStoreV2::new(pool);
         let actor = ActorRef::test();
 
+        // Seed `inbox` on j-defaul so the fixture's per-project status
+        // key resolves against `metis.statuses`. `open` is already
+        // present from the default project seed migration.
+        seed_status_keys_for_project_pg(
+            &store,
+            &crate::domain::projects::default_project_id(),
+            &["inbox"],
+        )
+        .await;
+
         let mut inbox_issue = sample_issue(vec![]);
         inbox_issue.status = StatusKey::try_new("inbox").unwrap();
         let (inbox_id, _) = store.add_issue(inbox_issue, &actor).await.unwrap();
@@ -8836,6 +8846,8 @@ mod tests {
 
         let project_a = ProjectId::new();
         let project_b = ProjectId::new();
+        seed_status_keys_for_project_pg(&store, &project_a, &["open"]).await;
+        seed_status_keys_for_project_pg(&store, &project_b, &["open"]).await;
 
         let mut issue_a = sample_issue(vec![]);
         issue_a.project_id = project_a.clone();
@@ -8865,6 +8877,8 @@ mod tests {
 
         let project = ProjectId::new();
         let other_project = ProjectId::new();
+        seed_status_keys_for_project_pg(&store, &project, &["inbox", "triage"]).await;
+        seed_status_keys_for_project_pg(&store, &other_project, &["inbox"]).await;
 
         let mut target = sample_issue(vec![]);
         target.project_id = project.clone();
@@ -10645,6 +10659,41 @@ mod tests {
             version = v;
         }
         (id, version)
+    }
+
+    /// Insert raw `metis.statuses` rows for a synthetic project id.
+    /// Tests that fabricate a `ProjectId::new()` (or use a status key
+    /// not present on the seeded `j-defaul` project) and then
+    /// `add_issue` against it would otherwise fail
+    /// `resolve_status_sequence` because no matching `(project_id, key)`
+    /// row exists. Sequence numbers continue from the highest existing
+    /// sequence for that project, mirroring what successive `add_status`
+    /// calls would assign.
+    async fn seed_status_keys_for_project_pg(
+        store: &PostgresStoreV2,
+        project_id: &hydra_common::ProjectId,
+        keys: &[&str],
+    ) {
+        let max_seq: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(sequence) FROM metis.statuses WHERE project_id = $1")
+                .bind(project_id.as_ref())
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        let mut next_seq = max_seq.unwrap_or(0) + 1;
+        for key in keys {
+            sqlx::query(
+                "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position) \
+                 VALUES ($1, $2, $3, $3, '#cccccc', FALSE, FALSE, FALSE, NULL, NULL, FALSE, 0)",
+            )
+            .bind(project_id.as_ref())
+            .bind(next_seq)
+            .bind(*key)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+            next_seq += 1;
+        }
     }
 
     #[sqlx::test(migrations = "./migrations")]
