@@ -153,9 +153,6 @@ pub fn build_default_registry() -> PolicyRegistry {
     let mut registry = PolicyRegistry::new();
 
     // Restrictions
-    registry.register_restriction("issue_lifecycle_validation", |_params| {
-        Ok(Box::new(IssueLifecycleRestriction::new()))
-    });
     registry.register_restriction("task_state_machine", |_params| {
         Ok(Box::new(TaskStateMachineRestriction::new()))
     });
