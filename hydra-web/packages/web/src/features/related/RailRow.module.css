@@ -22,6 +22,13 @@
    * mobile viewports. */
   min-width: 0;
   overflow: hidden;
+  /* Rail rows live inside flex column containers (mobile list pages, detail
+   * page rails). With overflow:hidden above, min-height: auto resolves to 0,
+   * which lets the flex algorithm squish rows below their content height
+   * when the unfiltered list exceeds the container — clipping each row to a
+   * sliver so titles visually overlap. Pin the row to its natural height so
+   * the container scrolls instead. */
+  flex-shrink: 0;
 }
 
 .row:hover {
