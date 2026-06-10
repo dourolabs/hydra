@@ -2,3 +2,7 @@ export { PatchesOverTimeChart } from "./PatchesOverTimeChart";
 export { PatchesTerminalMixChart } from "./PatchesTerminalMixChart";
 export { PatchesTimeToMergeChart } from "./PatchesTimeToMergeChart";
 export { PatchesInFlightChart } from "./PatchesInFlightChart";
+export { IssuesOverTimeChart } from "./IssuesOverTimeChart";
+export { IssuesCycleTimeChart } from "./IssuesCycleTimeChart";
+export { IssuesTimeInStatusBreakdownChart } from "./IssuesTimeInStatusBreakdownChart";
+export { IssuesPerStatusDistributionChart } from "./IssuesPerStatusDistributionChart";

@@ -31,3 +31,14 @@ export function formatBinRange(startSeconds: number, endSeconds: number | null):
   if (endSeconds === null) return `${formatDurationSeconds(startSeconds)}+`;
   return `${formatDurationSeconds(startSeconds)}–${formatDurationSeconds(endSeconds)}`;
 }
+
+/**
+ * Format a bucket-start ISO timestamp for chart X-axis labels. Falls back
+ * to the raw input when the timestamp can't be parsed. Shared between the
+ * over-time and in-flight charts so they stay visually consistent.
+ */
+export function formatBucketLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}

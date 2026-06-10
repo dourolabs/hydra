@@ -15,6 +15,7 @@ import type {
 import { ChartCard } from "../ChartCard";
 import { useThroughputPatchesInFlightOverTime } from "../useThroughputPatches";
 import { CHART_COLORS } from "./colors";
+import { formatBucketLabel } from "../duration";
 import styles from "./charts.module.css";
 
 export interface PatchesInFlightChartProps {
@@ -78,10 +79,4 @@ function PatchesInFlightChartContent({
       </div>
     </div>
   );
-}
-
-function formatBucketLabel(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

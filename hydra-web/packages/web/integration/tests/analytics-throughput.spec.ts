@@ -35,9 +35,12 @@ test.describe("Analytics throughput @analytics:throughput", () => {
   }) => {
     await page.goto("/analytics/throughput");
 
-    // Initially the project-scoped issue cards advertise that a project is required.
+    // Initially both project-scoped issue cards advertise that a project is required.
     await expect(
       page.getByTestId("chart-issues-time-in-status").getByTestId("chart-card-disabled"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("chart-issues-per-status").getByTestId("chart-card-disabled"),
     ).toBeVisible();
 
     await page.getByTestId("slicer-project").selectOption({ index: 1 });
@@ -46,6 +49,90 @@ test.describe("Analytics throughput @analytics:throughput", () => {
     await expect(
       page.getByTestId("chart-issues-time-in-status").getByTestId("chart-card-disabled"),
     ).toHaveCount(0);
+    await expect(
+      page.getByTestId("chart-issues-per-status").getByTestId("chart-card-disabled"),
+    ).toHaveCount(0);
+  });
+
+  test("renders the 4 issues chart cards with content (project-scoped after slicer)", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/analytics/throughput");
+
+    // The two cross-project issues charts render right away.
+    await expect(
+      page.getByTestId("chart-issues-over-time").getByTestId("issues-over-time-content"),
+    ).toBeVisible();
+
+    const cycleCard = page.getByTestId("chart-issues-cycle-time");
+    await expect(cycleCard.getByTestId("issues-cycle-time-content")).toBeVisible();
+    // Mock server returns median 86400s (1d), p95 604800s (7d), count 9.
+    const cycleCallouts = cycleCard.getByTestId("issues-cycle-time-callouts");
+    await expect(cycleCallouts).toContainText("1d");
+    await expect(cycleCallouts).toContainText("7d");
+    await expect(cycleCallouts).toContainText("9");
+
+    // Pick a project to unlock the per-project issue charts.
+    await page.getByTestId("slicer-project").selectOption({ index: 1 });
+
+    const breakdownCard = page.getByTestId("chart-issues-time-in-status");
+    await expect(breakdownCard.getByTestId("issues-time-in-status-content")).toBeVisible();
+    // Mock server returns three statuses; the open + in-progress segments
+    // render (the closed segment has 0% width and is skipped from the bar).
+    await expect(
+      breakdownCard.getByTestId("issues-time-in-status-segment-open"),
+    ).toBeVisible();
+    await expect(
+      breakdownCard.getByTestId("issues-time-in-status-segment-in-progress"),
+    ).toBeVisible();
+    // Legend keeps every status, including the 0-time terminal.
+    await expect(
+      breakdownCard.getByTestId("issues-time-in-status-legend-closed"),
+    ).toBeVisible();
+
+    const perStatusCard = page.getByTestId("chart-issues-per-status");
+    await expect(perStatusCard.getByTestId("issues-per-status-content")).toBeVisible();
+    await expect(
+      perStatusCard.getByTestId("issues-per-status-card-open"),
+    ).toBeVisible();
+    await expect(
+      perStatusCard.getByTestId("issues-per-status-card-in-progress"),
+    ).toBeVisible();
+  });
+
+  test("each chart card is a labeled region for screen readers", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.goto("/analytics/throughput");
+
+    for (const testId of [
+      "chart-patches-over-time",
+      "chart-patches-terminal-mix",
+      "chart-patches-time-to-merge",
+      "chart-patches-in-flight",
+      "chart-issues-over-time",
+      "chart-issues-cycle-time",
+      "chart-issues-time-in-status",
+      "chart-issues-per-status",
+    ]) {
+      const card = page.getByTestId(testId);
+      await expect(card).toHaveAttribute("role", "region");
+      await expect(card).toHaveAttribute("aria-label", /.+/);
+    }
+  });
+
+  test("mobile viewport renders without horizontal scroll", async ({
+    authenticatedPage: page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto("/analytics/throughput");
+    await expect(page.getByTestId("analytics-throughput-page")).toBeVisible();
+
+    const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
   });
 
   test("renders the 4 patches chart cards with content", async ({

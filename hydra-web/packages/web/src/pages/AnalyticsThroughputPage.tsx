@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { SlicerPanel } from "../features/analytics/SlicerPanel";
 import { TimeRangePicker } from "../features/analytics/TimeRangePicker";
-import { ChartCard } from "../features/analytics/ChartCard";
 import {
   readSlicerState,
   writeSlicerState,
@@ -11,16 +10,14 @@ import {
   type SlicerState,
 } from "../features/analytics/slicerState";
 import {
-  useThroughputIssuesCycleTime,
-  useThroughputIssuesTimeInStatusBreakdown,
-  useThroughputIssuesPerStatusDistribution,
-  useThroughputIssuesOverTime,
-} from "../features/analytics/useThroughputIssues";
-import {
   PatchesOverTimeChart,
   PatchesTerminalMixChart,
   PatchesTimeToMergeChart,
   PatchesInFlightChart,
+  IssuesOverTimeChart,
+  IssuesCycleTimeChart,
+  IssuesTimeInStatusBreakdownChart,
+  IssuesPerStatusDistributionChart,
 } from "../features/analytics/charts";
 import styles from "./AnalyticsThroughputPage.module.css";
 
@@ -69,16 +66,16 @@ export function AnalyticsThroughputPage() {
     [baseQuery],
   );
 
-  const issuesOverTime = useThroughputIssuesOverTime({ ...baseIssuesQuery, bucket: "day" });
-  const issuesCycleTime = useThroughputIssuesCycleTime(baseIssuesQuery);
-  const issuesTimeInStatus = useThroughputIssuesTimeInStatusBreakdown({
-    ...baseIssuesQuery,
-    project_id: state.projectId ?? "",
-  });
-  const issuesPerStatus = useThroughputIssuesPerStatusDistribution({
-    ...baseIssuesQuery,
-    project_id: state.projectId ?? "",
-  });
+  const issuesOverTimeQuery = useMemo(
+    () => ({ ...baseIssuesQuery, bucket: "day" as const }),
+    [baseIssuesQuery],
+  );
+  const issuesProjectScopedQuery = useMemo(
+    () => ({ ...baseIssuesQuery, project_id: state.projectId ?? "" }),
+    [baseIssuesQuery, state.projectId],
+  );
+
+  const hasProject = !!state.projectId;
 
   return (
     <div className={styles.page} data-testid="analytics-throughput-page">
@@ -98,6 +95,7 @@ export function AnalyticsThroughputPage() {
           <section
             data-testid="analytics-patches-section"
             className={styles.section}
+            aria-label="Patches throughput"
           >
             <h2 className={styles.sectionTitle}>Patches</h2>
             <div className={styles.grid}>
@@ -111,45 +109,20 @@ export function AnalyticsThroughputPage() {
           <section
             data-testid="analytics-issues-section"
             className={styles.section}
+            aria-label="Issues throughput"
           >
             <h2 className={styles.sectionTitle}>Issues</h2>
             <div className={styles.grid}>
-              <ChartCard
-                title="Issues over time"
-                testId="chart-issues-over-time"
-                isLoading={issuesOverTime.isLoading}
-                error={issuesOverTime.error}
-              >
-                Chart coming soon
-              </ChartCard>
-              <ChartCard
-                title="Cycle time"
-                testId="chart-issues-cycle-time"
-                isLoading={issuesCycleTime.isLoading}
-                error={issuesCycleTime.error}
-              >
-                Chart coming soon
-              </ChartCard>
-              <ChartCard
-                title="Time in status"
-                testId="chart-issues-time-in-status"
-                disabled={!state.projectId}
-                disabledHint="Select a project"
-                isLoading={issuesTimeInStatus.isLoading}
-                error={issuesTimeInStatus.error}
-              >
-                Chart coming soon
-              </ChartCard>
-              <ChartCard
-                title="Per-status distribution"
-                testId="chart-issues-per-status"
-                disabled={!state.projectId}
-                disabledHint="Select a project"
-                isLoading={issuesPerStatus.isLoading}
-                error={issuesPerStatus.error}
-              >
-                Chart coming soon
-              </ChartCard>
+              <IssuesOverTimeChart query={issuesOverTimeQuery} />
+              <IssuesCycleTimeChart query={baseIssuesQuery} />
+              <IssuesTimeInStatusBreakdownChart
+                query={issuesProjectScopedQuery}
+                hasProject={hasProject}
+              />
+              <IssuesPerStatusDistributionChart
+                query={issuesProjectScopedQuery}
+                hasProject={hasProject}
+              />
             </div>
           </section>
         </div>

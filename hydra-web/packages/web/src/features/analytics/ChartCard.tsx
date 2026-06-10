@@ -5,6 +5,8 @@ import styles from "./ChartCard.module.css";
 export interface ChartCardProps {
   title: string;
   testId?: string;
+  /** Falls back to `title` when omitted. */
+  ariaLabel?: string;
   isLoading?: boolean;
   error?: unknown;
   disabled?: boolean;
@@ -14,13 +16,14 @@ export interface ChartCardProps {
 
 /**
  * Wraps a single analytics chart with title + loading / error / empty
- * states. The chart implementations (PR 4 / PR 5) render `children`
- * once their data hook resolves; this PR ships only the placeholder
- * shell, so children render the "coming soon" copy directly.
+ * states. Children render the chart body once the data hook resolves.
+ * Marked as a labeled landmark region so the page is keyboard-navigable
+ * card-by-card.
  */
 export function ChartCard({
   title,
   testId,
+  ariaLabel,
   isLoading,
   error,
   disabled,
@@ -28,7 +31,12 @@ export function ChartCard({
   children,
 }: ChartCardProps) {
   return (
-    <section className={styles.card} data-testid={testId}>
+    <section
+      className={styles.card}
+      data-testid={testId}
+      role="region"
+      aria-label={ariaLabel ?? title}
+    >
       <header className={styles.head}>{title}</header>
       <div className={styles.body}>
         {disabled && (
