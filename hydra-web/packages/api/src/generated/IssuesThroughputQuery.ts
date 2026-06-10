@@ -20,7 +20,17 @@ export type IssuesThroughputQuery = {
   bucket: BucketGranularity | null;
   project_id: ProjectId | null;
   repo_name: string | null;
+  /**
+   * Single-select form, retained for backward compat. When
+   * [`Self::issue_types`] is non-empty, this field is ignored.
+   */
   issue_type: IssueType | null;
+  /**
+   * Multi-select include-set. When non-empty, an issue passes the
+   * type filter iff its `issue_type` is in this set. When empty,
+   * falls back to the singular [`Self::issue_type`] filter.
+   */
+  issue_types?: string;
   /**
    * Principal path form (`users/<name>` / `agents/<name>` /
    * `external/<sys>/<name>`). Filtered as a string match against the
