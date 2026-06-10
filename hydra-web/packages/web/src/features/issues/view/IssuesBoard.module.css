@@ -452,9 +452,9 @@
 .colAddIssue {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   width: 100%;
-  margin-top: auto;
   padding: 6px 10px;
   background: transparent;
   border: 1px dashed var(--line);
@@ -462,7 +462,6 @@
   color: var(--fg-2);
   font-family: var(--f-sans);
   font-size: var(--t-sm);
-  text-align: left;
   cursor: pointer;
   /* Space is permanently reserved (visibility, not display) so the column
      height stays stable when the button toggles in/out on hover. */
