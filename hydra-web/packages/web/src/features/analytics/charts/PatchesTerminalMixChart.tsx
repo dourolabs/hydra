@@ -90,14 +90,14 @@ function PatchesTerminalMixChartContent({
         <li className={styles.legendItem}>
           <span
             className={styles.legendSwatch}
-            style={{ background: CHART_COLORS.merged }}
+            style={{ "--swatch": CHART_COLORS.merged } as React.CSSProperties}
           />
           Merged: {merged} ({mergedPct}%)
         </li>
         <li className={styles.legendItem}>
           <span
             className={styles.legendSwatch}
-            style={{ background: CHART_COLORS.closed }}
+            style={{ "--swatch": CHART_COLORS.closed } as React.CSSProperties}
           />
           Closed: {closed} ({closedPct}%)
         </li>
