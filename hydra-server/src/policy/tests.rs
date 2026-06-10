@@ -773,7 +773,7 @@ fn default_config_enables_all_builtin_policies() {
             automations: vec![
                 PolicyEntry::Name("apply_status_on_enter".to_string()),
                 PolicyEntry::Name("cascade_issue_status".to_string()),
-                PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                PolicyEntry::Name("kill_sessions_on_enter".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
                 PolicyEntry::Name("link_artifacts_to_issue".to_string()),
                 PolicyEntry::Name("link_conversation_to_artifacts".to_string()),
@@ -838,7 +838,7 @@ async fn disabling_restriction_allows_blocked_operation() {
             ],
             automations: vec![
                 PolicyEntry::Name("cascade_issue_status".to_string()),
-                PolicyEntry::Name("kill_tasks_on_issue_failure".to_string()),
+                PolicyEntry::Name("kill_sessions_on_enter".to_string()),
                 PolicyEntry::Name("github_pr_sync".to_string()),
             ],
         },

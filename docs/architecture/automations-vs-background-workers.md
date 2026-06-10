@@ -22,7 +22,7 @@ Wiring a new one takes three steps; skipping any of them leaves it silently iner
 2. Register a factory under that name in [`build_default_registry`](../../hydra-server/src/policy/registry.rs).
 3. Add the name to [`default_policy_config`](../../hydra-server/src/app/app_state.rs) or to the operator's `policies.automations` config. Registration alone does **not** activate; activation comes from the `PolicyList`.
 
-Current defaults: `cascade_issue_status`, `kill_tasks_on_issue_failure`, `github_pr_sync`, `link_artifacts_to_issue`, `link_conversation_to_artifacts`, `spawn_sessions`, `spawn_conversation_sessions`, `start_created_sessions`.
+Current defaults: `cascade_issue_status`, `kill_sessions_on_enter`, `github_pr_sync`, `link_artifacts_to_issue`, `link_conversation_to_artifacts`, `spawn_sessions`, `spawn_conversation_sessions`, `start_created_sessions`.
 
 ### Self-event filter (avoiding infinite loops)
 
@@ -53,7 +53,7 @@ Use this table to decide whether the self-filter rule applies before reading an 
 | Automation | Subscribes to | Emits same class? | Self-filter strategy |
 |---|---|---|---|
 | `cascade_issue_status` | `IssueUpdated` | Yes (via `upsert_issue`) | Canonical actor-name check |
-| `kill_tasks_on_issue_failure` | `IssueUpdated` | No (kills sessions → `SessionUpdated`) | N/A |
+| `kill_sessions_on_enter` | `IssueUpdated` | No (kills sessions → `SessionUpdated`) | N/A |
 | `link_artifacts_to_issue` | `Patch*` / `Document*` | No (only adds relationships) | N/A — early-returns on automation-actor events |
 | `link_conversation_to_artifacts` | `Issue*` / `Patch*` / `Document*` | No (only adds relationships) | N/A — intentionally unwraps via `on_behalf_of()` |
 | `spawn_sessions` | `Issue*` / `Session*` | Yes | Canonical actor-name check |

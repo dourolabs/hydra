@@ -139,10 +139,13 @@ define_key_newtype!(
 /// then flow through the existing assignee-driven spawn dispatcher); when
 /// `attach_form` is set, `issue.form` is replaced wholesale with that
 /// form (an issue holds at most one form at a time); when
-/// `clear_assignee` is `true`, `issue.assignee` is unset. `assign_to` and
-/// `clear_assignee` are mutually exclusive — set both and
-/// [`StatusOnEnter::validate`] rejects the config. `None` (or `false`) on
-/// a field leaves the corresponding field untouched.
+/// `clear_assignee` is `true`, `issue.assignee` is unset; when
+/// `kill_sessions` is `true`, any `Created`/`Pending`/`Running` sessions
+/// attached to the issue are killed. `assign_to` and `clear_assignee`
+/// are mutually exclusive — set both and [`StatusOnEnter::validate`]
+/// rejects the config; `kill_sessions` is independent of either.
+/// `None` (or `false`) on a field leaves the corresponding field
+/// untouched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -154,6 +157,8 @@ pub struct StatusOnEnter {
     pub attach_form: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clear_assignee: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kill_sessions: bool,
 }
 
 impl StatusOnEnter {
@@ -162,6 +167,7 @@ impl StatusOnEnter {
             assign_to,
             attach_form,
             clear_assignee: false,
+            kill_sessions: false,
         }
     }
 
@@ -709,6 +715,64 @@ mod tests {
         let legacy = serde_json::json!({});
         let parsed: StatusOnEnter = serde_json::from_value(legacy).unwrap();
         assert!(!parsed.clear_assignee);
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_kill_sessions_alone() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.kill_sessions = true;
+        assert!(on_enter.validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_kill_sessions_with_assign_to() {
+        let agent = crate::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        let mut on_enter = StatusOnEnter::new(Some(Principal::Agent { name: agent }), None);
+        on_enter.kill_sessions = true;
+        assert!(on_enter.validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_kill_sessions_with_clear_assignee() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.clear_assignee = true;
+        on_enter.kill_sessions = true;
+        assert!(on_enter.validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_kill_sessions_with_attach_form() {
+        let form: DocumentPath = "/projects/default/forms/triage".parse().unwrap();
+        let mut on_enter = StatusOnEnter::new(None, Some(form));
+        on_enter.kill_sessions = true;
+        assert!(on_enter.validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_omits_kill_sessions_when_false() {
+        let on_enter = StatusOnEnter::new(None, None);
+        let json = serde_json::to_string(&on_enter).unwrap();
+        assert!(
+            !json.contains("kill_sessions"),
+            "kill_sessions should be skipped when false; got {json}"
+        );
+    }
+
+    #[test]
+    fn status_on_enter_round_trips_kill_sessions_true() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.kill_sessions = true;
+        let json = serde_json::to_string(&on_enter).unwrap();
+        assert!(json.contains("\"kill_sessions\":true"));
+        let parsed: StatusOnEnter = serde_json::from_str(&json).unwrap();
+        assert!(parsed.kill_sessions);
+    }
+
+    #[test]
+    fn status_on_enter_defaults_kill_sessions_when_field_absent() {
+        let legacy = serde_json::json!({});
+        let parsed: StatusOnEnter = serde_json::from_value(legacy).unwrap();
+        assert!(!parsed.kill_sessions);
     }
 
     #[test]

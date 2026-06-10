@@ -46,7 +46,7 @@ The subtree walk uses a `visited` set for cycle protection; a cycle resolves to 
 When an issue transitions to a terminal failure status, two automations fire (see [`automations-vs-background-workers.md`](./automations-vs-background-workers.md)):
 
 - [`cascade_issue_status`](../../hydra-server/src/policy/automations/cascade_issue_status.rs) — on transition into a status whose definition sets `cascades_to_children=true` (default project: `dropped` and `failed`; configurable via `trigger_statuses`), walks descendants via BFS and sets every non-terminal child to `dropped`.
-- [`kill_tasks_on_issue_failure`](../../hydra-server/src/policy/automations/kill_tasks_on_failure.rs) — on any transition into an `unblocks_parents=true` status, kills any `Created`/`Pending`/`Running` sessions attached to the issue.
+- [`kill_sessions_on_enter`](../../hydra-server/src/policy/automations/kill_sessions_on_enter.rs) — on any transition into a status whose `on_enter.kill_sessions = true`, kills any `Created`/`Pending`/`Running` sessions attached to the issue.
 
 Note the asymmetry between the two terminal flags: a `failed` issue cascades down `child-of` (because `cascades_to_children=true`) but **not** down `blocked-on` (because `unblocks_dependents=false`). A `blocked-on` dependent of a `failed` issue stays open but is not ready — only a status with `unblocks_dependents=true` (legacy: `closed`) clears the edge. This is what enables parent re-planning — see below.
 

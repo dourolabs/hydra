@@ -2,7 +2,7 @@
 //!
 //! Verifies that when a parent issue is dropped:
 //! - All children (A, B, C) and grandchildren (D) are recursively Dropped
-//! - Active tasks are killed via the job engine (kill_tasks_on_issue_failure)
+//! - Active tasks are killed via the job engine (kill_sessions_on_enter)
 //! - Blocked issues (C blocked-on B) are also dropped
 //! - `step_monitor_jobs()` reconciles task statuses to Failed
 
@@ -170,8 +170,8 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         "grandchild D should be Dropped (recursive cascade)"
     );
 
-    // ── Step 7: Verify kill_tasks killed jobs in the engine ───────
-    // kill_tasks_on_issue_failure calls job_engine.kill_job() which marks
+    // ── Step 7: Verify kill_sessions_on_enter killed jobs in the engine ───────
+    // kill_sessions_on_enter calls job_engine.kill_job() which marks
     // engine jobs as Failed. Check the engine directly.
     use hydra_server::job_engine::JobEngine;
     let engine_job_a = harness
