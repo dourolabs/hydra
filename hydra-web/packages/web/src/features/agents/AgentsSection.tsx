@@ -1,12 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Avatar, Button } from "@hydra/ui";
+import { Avatar, Button, EmptyState, ErrorState, LoadingState } from "@hydra/ui";
 import type { AgentRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useAgents } from "../../hooks/useAgents";
-import { LoadingState } from "../../components/LoadingState/LoadingState";
-import { ErrorState } from "../../components/ErrorState/ErrorState";
-import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { useToast } from "../toast/useToast";
 import { AgentCreateModal } from "./AgentCreateModal";
 import { AgentEditModal } from "./AgentEditModal";

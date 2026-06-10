@@ -1,7 +1,7 @@
-import { Spinner } from "@hydra/ui";
+import { Spinner } from "../Spinner";
 import styles from "./LoadingState.module.css";
 
-interface LoadingStateProps {
+export interface LoadingStateProps {
   message?: string;
   size?: "sm" | "md" | "lg";
 }

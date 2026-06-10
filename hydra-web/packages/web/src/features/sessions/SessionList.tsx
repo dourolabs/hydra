@@ -1,9 +1,7 @@
 import { Link } from "react-router-dom";
-import { Badge } from "@hydra/ui";
+import { Badge, ErrorState, LoadingState } from "@hydra/ui";
 import { normalizeSessionStatus } from "../../utils/badgeStatus";
 import { getRuntime } from "../../utils/time";
-import { LoadingState } from "../../components/LoadingState/LoadingState";
-import { ErrorState } from "../../components/ErrorState/ErrorState";
 import { TokensCell } from "./TokensCell";
 import { useSessionsByIssue } from "./useSessionsByIssue";
 import styles from "./SessionList.module.css";

@@ -177,22 +177,6 @@ vi.mock("@hydra/ui", () => ({
   ),
 }));
 
-vi.mock("../../components/LoadingState/LoadingState", () => ({
-  LoadingState: () => <div data-testid="loading" />,
-}));
-
-vi.mock("../../components/ErrorState/ErrorState", () => ({
-  ErrorState: ({ message }: { message: string }) => (
-    <div data-testid="error-state">{message}</div>
-  ),
-}));
-
-vi.mock("../../components/EmptyState/EmptyState", () => ({
-  EmptyState: ({ message }: { message: string }) => (
-    <div data-testid="empty-state">{message}</div>
-  ),
-}));
-
 vi.mock("../../utils/time", () => ({
   formatRelativeTime: (s: string) => s,
   shortRelativeTime: (s: string) => s,
