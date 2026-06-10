@@ -4,21 +4,21 @@
 }
 
 .empty {
-  font-size: 12px;
-  color: var(--muted-text-color, #888);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .callouts {
   display: flex;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--muted-text-color, #888);
-  margin-bottom: 8px;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
 }
 
 .callout {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   align-items: baseline;
 }
 
@@ -27,7 +27,7 @@
 }
 
 .calloutValue {
-  color: var(--text-color, #d0d0d0);
+  color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -53,15 +53,15 @@
 }
 
 .donutCenterValue {
-  font-size: 22px;
+  font-size: var(--font-size-xl);
   font-weight: 600;
-  color: var(--text-color, #d0d0d0);
+  color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .donutCenterLabel {
-  font-size: 11px;
-  color: var(--muted-text-color, #888);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -69,22 +69,22 @@
 .legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--muted-text-color, #888);
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .legendItem {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1);
   align-items: center;
 }
 
 .legendSwatch {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .chartContent {
@@ -97,7 +97,7 @@
 }
 
 .legendValue {
-  color: var(--text-color, #d0d0d0);
+  color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -105,10 +105,10 @@
   display: flex;
   width: 100%;
   height: 28px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
-  background: var(--border-color, #2a2a2a);
-  margin-bottom: 8px;
+  background: var(--color-border);
+  margin-bottom: var(--space-2);
 }
 
 .stackedBarSegment {
@@ -120,7 +120,7 @@
 .statusCardGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
   list-style: none;
   padding: 0;
   margin: 0;
@@ -130,21 +130,21 @@
 .statusCard {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px;
-  border: 1px solid var(--border-color, #2a2a2a);
-  border-radius: 6px;
-  background: var(--bg-color, #050505);
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-input);
 }
 
 .statusCardHead {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-color, #d0d0d0);
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
   font-weight: 500;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
 
 .statusCardLabel {
@@ -158,8 +158,8 @@
 .statusCardStat {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
-  color: var(--muted-text-color, #888);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
 }
 
 .statusCardStatLabel {
@@ -168,6 +168,6 @@
 }
 
 .statusCardStatValue {
-  color: var(--text-color, #d0d0d0);
+  color: var(--color-text-primary);
   font-variant-numeric: tabular-nums;
 }

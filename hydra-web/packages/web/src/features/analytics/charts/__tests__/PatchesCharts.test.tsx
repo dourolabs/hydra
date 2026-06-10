@@ -37,6 +37,12 @@ vi.mock("recharts", () => {
 
 vi.mock("@hydra/ui", () => ({
   Spinner: () => <span data-testid="spinner" />,
+  Panel: ({ children, header }: { children: ReactNode; header?: ReactNode }) => (
+    <div data-testid="panel">
+      {header !== undefined && <div data-testid="panel-header">{header}</div>}
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock("../charts.module.css", () => ({
@@ -236,7 +242,9 @@ describe("PatchesTimeToMergeChart", () => {
           median_seconds: null,
           p95_seconds: null,
           count: BigInt(1),
-          histogram: [{ bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) }],
+          histogram: [
+            { bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) },
+          ],
         },
       }),
     );

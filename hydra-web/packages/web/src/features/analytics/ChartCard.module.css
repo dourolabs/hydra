@@ -1,39 +1,20 @@
 .card {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border-color, #2a2a2a);
-  border-radius: 8px;
-  background: var(--surface-color, #0e0e0e);
-  min-height: 160px;
 }
 
-.head {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-color, #d0d0d0);
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color, #2a2a2a);
-}
-
-.body {
-  flex: 1;
+.placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
-  color: var(--muted-text-color, #888);
-  font-size: 12px;
+  min-height: 96px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
   text-align: center;
 }
 
-.loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .error {
-  color: var(--error-color, #ff7474);
+  color: var(--color-status-failed);
 }
 
 .disabled {

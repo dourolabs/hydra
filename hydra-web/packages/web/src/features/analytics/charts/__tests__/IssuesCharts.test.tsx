@@ -37,6 +37,12 @@ vi.mock("recharts", () => {
 
 vi.mock("@hydra/ui", () => ({
   Spinner: () => <span data-testid="spinner" />,
+  Panel: ({ children, header }: { children: ReactNode; header?: ReactNode }) => (
+    <div data-testid="panel">
+      {header !== undefined && <div data-testid="panel-header">{header}</div>}
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock("../charts.module.css", () => ({
@@ -112,8 +118,16 @@ describe("IssuesOverTimeChart", () => {
       mkResult<IssuesOverTimeResponse>({
         data: {
           buckets: [
-            { bucket_start: "2026-05-10T00:00:00Z", created: BigInt(4), reached_terminal: BigInt(2) },
-            { bucket_start: "2026-05-11T00:00:00Z", created: BigInt(5), reached_terminal: BigInt(3) },
+            {
+              bucket_start: "2026-05-10T00:00:00Z",
+              created: BigInt(4),
+              reached_terminal: BigInt(2),
+            },
+            {
+              bucket_start: "2026-05-11T00:00:00Z",
+              created: BigInt(5),
+              reached_terminal: BigInt(3),
+            },
           ],
         },
       }),
@@ -208,7 +222,9 @@ describe("IssuesCycleTimeChart", () => {
           median_seconds: null,
           p95_seconds: null,
           count: BigInt(1),
-          histogram: [{ bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) }],
+          histogram: [
+            { bin_start_seconds: BigInt(0), bin_end_seconds: BigInt(3600), count: BigInt(1) },
+          ],
         },
       }),
     );
@@ -236,15 +252,8 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
     hookMocks.useThroughputIssuesTimeInStatusBreakdown.mockReturnValue(
       mkResult<IssuesTimeInStatusBreakdownResponse>({}),
     );
-    render(
-      <IssuesTimeInStatusBreakdownChart
-        query={baseQuery}
-        hasProject={false}
-      />,
-    );
-    expect(screen.getByTestId("chart-card-disabled").textContent).toContain(
-      "Select a project",
-    );
+    render(<IssuesTimeInStatusBreakdownChart query={baseQuery} hasProject={false} />);
+    expect(screen.getByTestId("chart-card-disabled").textContent).toContain("Select a project");
     // The hook is passed `enabled: hasProject = false`.
     expect(hookMocks.useThroughputIssuesTimeInStatusBreakdown).toHaveBeenCalledWith(
       expect.any(Object),
@@ -271,19 +280,12 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
         },
       }),
     );
-    render(
-      <IssuesTimeInStatusBreakdownChart
-        query={scopedQuery}
-        hasProject={true}
-      />,
-    );
+    render(<IssuesTimeInStatusBreakdownChart query={scopedQuery} hasProject={true} />);
     expect(screen.getByTestId("issues-time-in-status-content")).toBeDefined();
     // The first two render; the third has 0% width and is skipped from the bar.
     expect(screen.getByTestId("issues-time-in-status-segment-open")).toBeDefined();
     expect(screen.getByTestId("issues-time-in-status-segment-in-progress")).toBeDefined();
-    expect(
-      screen.queryByTestId("issues-time-in-status-segment-closed"),
-    ).toBeNull();
+    expect(screen.queryByTestId("issues-time-in-status-segment-closed")).toBeNull();
     // Legend keeps all statuses, including the 0-time terminal.
     expect(screen.getByTestId("issues-time-in-status-legend-open")).toBeDefined();
     expect(screen.getByTestId("issues-time-in-status-legend-in-progress")).toBeDefined();
@@ -302,12 +304,7 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
         },
       }),
     );
-    render(
-      <IssuesTimeInStatusBreakdownChart
-        query={scopedQuery}
-        hasProject={true}
-      />,
-    );
+    render(<IssuesTimeInStatusBreakdownChart query={scopedQuery} hasProject={true} />);
     const seg = screen.getByTestId("issues-time-in-status-segment-open") as HTMLElement;
     // jsdom may keep the literal hex or normalize to rgb(); accept both.
     const bg = seg.style.background.toLowerCase();
@@ -320,12 +317,7 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
         data: { project_id: "j-defaul", issue_count: BigInt(0), status_segments: [] },
       }),
     );
-    render(
-      <IssuesTimeInStatusBreakdownChart
-        query={scopedQuery}
-        hasProject={true}
-      />,
-    );
+    render(<IssuesTimeInStatusBreakdownChart query={scopedQuery} hasProject={true} />);
     expect(screen.getByText("No data in this window")).toBeDefined();
   });
 
@@ -338,12 +330,7 @@ describe("IssuesTimeInStatusBreakdownChart", () => {
         status: "error",
       }),
     );
-    render(
-      <IssuesTimeInStatusBreakdownChart
-        query={scopedQuery}
-        hasProject={true}
-      />,
-    );
+    render(<IssuesTimeInStatusBreakdownChart query={scopedQuery} hasProject={true} />);
     expect(screen.getByTestId("chart-card-error").textContent).toContain("kaboom");
   });
 });
@@ -353,15 +340,8 @@ describe("IssuesPerStatusDistributionChart", () => {
     hookMocks.useThroughputIssuesPerStatusDistribution.mockReturnValue(
       mkResult<IssuesPerStatusDistributionResponse>({}),
     );
-    render(
-      <IssuesPerStatusDistributionChart
-        query={baseQuery}
-        hasProject={false}
-      />,
-    );
-    expect(screen.getByTestId("chart-card-disabled").textContent).toContain(
-      "Select a project",
-    );
+    render(<IssuesPerStatusDistributionChart query={baseQuery} hasProject={false} />);
+    expect(screen.getByTestId("chart-card-disabled").textContent).toContain("Select a project");
     expect(hookMocks.useThroughputIssuesPerStatusDistribution).toHaveBeenCalledWith(
       expect.any(Object),
       false,
@@ -394,12 +374,7 @@ describe("IssuesPerStatusDistributionChart", () => {
         },
       }),
     );
-    render(
-      <IssuesPerStatusDistributionChart
-        query={scopedQuery}
-        hasProject={true}
-      />,
-    );
+    render(<IssuesPerStatusDistributionChart query={scopedQuery} hasProject={true} />);
     expect(screen.getByTestId("issues-per-status-content")).toBeDefined();
     const inProgress = screen.getByTestId("issues-per-status-card-in-progress");
     // 18000s = 5h, 86400s = 1d
@@ -417,12 +392,7 @@ describe("IssuesPerStatusDistributionChart", () => {
         data: { project_id: "j-defaul", statuses: [] },
       }),
     );
-    render(
-      <IssuesPerStatusDistributionChart
-        query={scopedQuery}
-        hasProject={true}
-      />,
-    );
+    render(<IssuesPerStatusDistributionChart query={scopedQuery} hasProject={true} />);
     expect(screen.getByText("No data in this window")).toBeDefined();
   });
 
@@ -435,12 +405,7 @@ describe("IssuesPerStatusDistributionChart", () => {
         status: "error",
       }),
     );
-    render(
-      <IssuesPerStatusDistributionChart
-        query={scopedQuery}
-        hasProject={true}
-      />,
-    );
+    render(<IssuesPerStatusDistributionChart query={scopedQuery} hasProject={true} />);
     expect(screen.getByTestId("chart-card-error").textContent).toContain("nope");
   });
 });
