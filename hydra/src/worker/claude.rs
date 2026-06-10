@@ -680,7 +680,7 @@ pub(crate) fn build_claude_args(
         "--print".to_string(),
         "--dangerously-skip-permissions".to_string(),
         "--disallowed-tools".to_string(),
-        "AskUserQuestion".to_string(),
+        "AskUserQuestion,ScheduleWakeup,Monitor,TaskOutput,TaskStop".to_string(),
         "--verbose".to_string(),
         "--output-format".to_string(),
         "stream-json".to_string(),
@@ -713,6 +713,8 @@ pub(crate) fn build_interactive_claude_args(
         "--input-format".to_string(),
         "stream-json".to_string(),
         "--dangerously-skip-permissions".to_string(),
+        "--disallowed-tools".to_string(),
+        "AskUserQuestion,ScheduleWakeup,Monitor,TaskOutput,TaskStop".to_string(),
         "--verbose".to_string(),
     ];
     if let Some(model) = model {
@@ -1048,7 +1050,7 @@ mod tests {
                 "--print",
                 "--dangerously-skip-permissions",
                 "--disallowed-tools",
-                "AskUserQuestion",
+                "AskUserQuestion,ScheduleWakeup,Monitor,TaskOutput,TaskStop",
                 "--verbose",
                 "--output-format",
                 "stream-json",
@@ -1073,7 +1075,7 @@ mod tests {
                 "--print",
                 "--dangerously-skip-permissions",
                 "--disallowed-tools",
-                "AskUserQuestion",
+                "AskUserQuestion,ScheduleWakeup,Monitor,TaskOutput,TaskStop",
                 "--verbose",
                 "--output-format",
                 "stream-json",
@@ -1125,6 +1127,19 @@ mod tests {
         let args = build_interactive_claude_args(Some("opus"), None);
         assert!(args.iter().any(|a| a == "--model"));
         assert!(args.iter().any(|a| a == "opus"));
+    }
+
+    #[test]
+    fn build_interactive_claude_args_disallows_harness_reinvocation_tools() {
+        let args = build_interactive_claude_args(None, None);
+        let idx = args
+            .iter()
+            .position(|a| a == "--disallowed-tools")
+            .expect("--disallowed-tools must be present");
+        assert_eq!(
+            args[idx + 1],
+            "AskUserQuestion,ScheduleWakeup,Monitor,TaskOutput,TaskStop"
+        );
     }
 
     #[test]
