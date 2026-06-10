@@ -43,8 +43,9 @@ export const URL_PARAMS = {
   repoName: "repo_name",
   issueTypes: "issue_types",
   /**
-   * Legacy singular form. Read-only — new writes always emit
-   * [`URL_PARAMS.issueTypes`]. Kept so old bookmarks round-trip.
+   * Singular form. Written when exactly one issue type is selected so the
+   * URL stays backwards-compatible with `?issue_type=feature` bookmarks; the
+   * plural [`URL_PARAMS.issueTypes`] is used for two or more.
    */
   issueTypeLegacy: "issue_type",
   assignee: "assignee",
@@ -124,11 +125,18 @@ export function writeSlicerState(
   }
 
   if (patch.issueTypes !== undefined) {
-    if (patch.issueTypes.length > 0) next.set(URL_PARAMS.issueTypes, patch.issueTypes.join(","));
-    else next.delete(URL_PARAMS.issueTypes);
-    // Any write to the new param clears the legacy singular form so it
-    // doesn't linger across edits.
-    next.delete(URL_PARAMS.issueTypeLegacy);
+    // Singular `issue_type=` for one, plural `issue_types=a,b` for two or
+    // more — the unused key is deleted so we never leave both set.
+    if (patch.issueTypes.length === 1) {
+      next.set(URL_PARAMS.issueTypeLegacy, patch.issueTypes[0]);
+      next.delete(URL_PARAMS.issueTypes);
+    } else if (patch.issueTypes.length > 1) {
+      next.set(URL_PARAMS.issueTypes, patch.issueTypes.join(","));
+      next.delete(URL_PARAMS.issueTypeLegacy);
+    } else {
+      next.delete(URL_PARAMS.issueTypes);
+      next.delete(URL_PARAMS.issueTypeLegacy);
+    }
   }
 
   if (patch.assignee !== undefined) {

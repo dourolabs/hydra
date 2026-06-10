@@ -85,27 +85,48 @@ describe("slicerState.writeSlicerState", () => {
     expect(p.get("status_keys")).toBe("open,in-progress");
   });
 
-  it("writes issue_types as a comma-joined multi-select and drops empty arrays", () => {
-    const set = writeSlicerState(new URLSearchParams(), { issueTypes: ["feature", "bug"] });
-    expect(set.get("issue_types")).toBe("feature,bug");
-    const clear = writeSlicerState(new URLSearchParams("issue_types=feature,bug"), {
-      issueTypes: [],
-    });
-    expect(clear.has("issue_types")).toBe(false);
+  it("writes singular `issue_type` when exactly one is selected", () => {
+    const p = writeSlicerState(new URLSearchParams(), { issueTypes: ["feature"] });
+    expect(p.get("issue_type")).toBe("feature");
+    expect(p.has("issue_types")).toBe(false);
   });
 
-  it("clears the legacy issue_type param on any issueTypes write", () => {
-    const set = writeSlicerState(new URLSearchParams("issue_type=feature"), {
-      issueTypes: ["bug"],
+  it("writes plural `issue_types` when more than one is selected", () => {
+    const p = writeSlicerState(new URLSearchParams(), {
+      issueTypes: ["feature", "bug"],
     });
-    expect(set.has("issue_type")).toBe(false);
-    expect(set.get("issue_types")).toBe("bug");
+    expect(p.get("issue_types")).toBe("feature,bug");
+    expect(p.has("issue_type")).toBe(false);
+  });
 
-    const empty = writeSlicerState(new URLSearchParams("issue_type=feature"), {
+  it("clears both issue-type keys when the selection becomes empty", () => {
+    const fromPlural = writeSlicerState(new URLSearchParams("issue_types=feature,bug"), {
       issueTypes: [],
     });
-    expect(empty.has("issue_type")).toBe(false);
-    expect(empty.has("issue_types")).toBe(false);
+    expect(fromPlural.has("issue_types")).toBe(false);
+    expect(fromPlural.has("issue_type")).toBe(false);
+
+    const fromSingular = writeSlicerState(new URLSearchParams("issue_type=feature"), {
+      issueTypes: [],
+    });
+    expect(fromSingular.has("issue_types")).toBe(false);
+    expect(fromSingular.has("issue_type")).toBe(false);
+  });
+
+  it("collapses plural `issue_types` to singular `issue_type` when narrowing to one", () => {
+    const p = writeSlicerState(new URLSearchParams("issue_types=feature,bug"), {
+      issueTypes: ["bug"],
+    });
+    expect(p.has("issue_types")).toBe(false);
+    expect(p.get("issue_type")).toBe("bug");
+  });
+
+  it("grows singular `issue_type` to plural `issue_types` when adding a second", () => {
+    const p = writeSlicerState(new URLSearchParams("issue_type=feature"), {
+      issueTypes: ["feature", "bug"],
+    });
+    expect(p.has("issue_type")).toBe(false);
+    expect(p.get("issue_types")).toBe("feature,bug");
   });
 
   it("always writes the range key when patched", () => {
