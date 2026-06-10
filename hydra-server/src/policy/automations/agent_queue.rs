@@ -771,16 +771,14 @@ mod tests {
             )
             .await?;
 
+        // Closed issues carry no assignee under the default-project
+        // invariant (`apply_status_on_enter.clear_assignee` runs on
+        // every transition into `closed`), and a None-assignee issue
+        // is in no agent queue.
         handles
             .store
             .add_issue(
-                issue(
-                    "Ignore closed",
-                    status("closed"),
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ),
+                issue("Ignore closed", status("closed"), None, vec![], &repo_name),
                 &ActorRef::test(),
             )
             .await?;
@@ -1806,19 +1804,16 @@ mod tests {
         assert_eq!(queue.agent.max_simultaneous, 10);
     }
 
+    // Dropped/failed default-project issues carry no assignee under
+    // the `apply_status_on_enter.clear_assignee` invariant — a
+    // None-assignee issue is in no agent queue.
     #[tokio::test]
     async fn does_not_spawn_for_dropped_issues() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
             .store
             .add_issue(
-                issue(
-                    "Dropped issue",
-                    status("dropped"),
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ),
+                issue("Dropped issue", status("dropped"), None, vec![], &repo_name),
                 &ActorRef::test(),
             )
             .await?;
@@ -1840,13 +1835,7 @@ mod tests {
         let (issue_id, _) = handles
             .store
             .add_issue(
-                issue(
-                    "Failed issue",
-                    status("failed"),
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ),
+                issue("Failed issue", status("failed"), None, vec![], &repo_name),
                 &ActorRef::test(),
             )
             .await?;

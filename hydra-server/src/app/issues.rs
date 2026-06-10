@@ -455,38 +455,21 @@ impl AppState {
     ///
     /// ```text
     /// ready ⇔
-    ///     !resolve_status(issue).unblocks_parents
-    ///   ∧ every blocked_on dep    has resolve_status(dep).unblocks_dependents = true
+    ///     every blocked_on dep    has resolve_status(dep).unblocks_dependents = true
     ///   ∧ every direct child      has resolve_status(child).unblocks_parents  = true
     /// ```
     ///
-    /// Status resolution failures (unknown project, malformed key) are
-    /// treated as "not ready" and logged — upstream validation should have
-    /// prevented these, so the warn flags a real misconfiguration rather
-    /// than a routine signal.
+    /// The issue's own status does not appear in the rule: dispatch is
+    /// gated by `assignee` instead, and `on_enter.clear_assignee` keeps
+    /// terminal-status issues out of every agent queue.
+    ///
+    /// Status resolution failures (unknown project, malformed key) on
+    /// blockers or children are treated as "not ready" and logged —
+    /// upstream validation should have prevented these, so the warn
+    /// flags a real misconfiguration rather than a routine signal.
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(issue_id, false).await?.item;
-
-        let resolved = match self.resolve_status(&issue).await {
-            Ok(def) => def,
-            Err(err) => {
-                tracing::warn!(
-                    issue_id = %issue_id,
-                    status = %issue.status,
-                    error = %err,
-                    "is_issue_ready: failed to resolve status; treating as not ready"
-                );
-                return Ok(false);
-            }
-        };
-        // TODO: drop this clause once agents can be configured per-status —
-        // then the way you opt a status out of dispatch is to leave its
-        // agent slot empty, not to ask readiness whether the parent has
-        // already unblocked.
-        if resolved.unblocks_parents {
-            return Ok(false);
-        }
 
         for dependency in &issue.dependencies {
             if dependency.dependency_type != IssueDependencyType::BlockedOn {
@@ -1033,24 +1016,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dropped_issue_is_not_ready() {
-        let state = test_state();
-
-        let (issue_id, _) = {
-            let store = state.store.as_ref();
-            store
-                .add_issue_with_actor(
-                    issue_with_status("dropped", status("dropped"), vec![]),
-                    ActorRef::test(),
-                )
-                .await
-                .unwrap()
-        };
-
-        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
-    }
-
-    #[tokio::test]
     async fn dropped_blocker_keeps_issue_blocked() {
         let state = test_state();
 
@@ -1210,24 +1175,6 @@ mod tests {
                 username: "anyone".to_string(),
             })
         );
-    }
-
-    #[tokio::test]
-    async fn closed_issue_is_not_ready() {
-        let state = test_state();
-
-        let (issue_id, _) = {
-            let store = state.store.as_ref();
-            store
-                .add_issue_with_actor(
-                    issue_with_status("closed", status("closed"), vec![]),
-                    ActorRef::test(),
-                )
-                .await
-                .unwrap()
-        };
-
-        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -1489,7 +1436,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_issue_is_not_ready() {
+    async fn terminal_status_issue_with_no_children_is_ready() {
+        // The readiness rule is now about ancestors/descendants only: the
+        // issue's own status does not appear in it. A failed issue with
+        // no blockers and no children satisfies the rule trivially.
+        // Dispatch is still gated, but at a different layer — the issue's
+        // assignee is cleared by `apply_status_on_enter` on transition
+        // into a `clear_assignee` status, and the per-agent queue iterates
+        // by assignee, so a None-assignee issue is in no queue.
         let state = test_state();
 
         let (issue_id, _) = {
@@ -1503,7 +1457,7 @@ mod tests {
                 .unwrap()
         };
 
-        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
+        assert!(state.is_issue_ready(&issue_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -1587,13 +1541,10 @@ mod tests {
 
     #[tokio::test]
     async fn in_progress_parent_not_ready_when_child_open_even_if_blocked() {
-        // Documented behavior shift #2 (subtree-deeply-stuck): under the
-        // unified rule, "every direct child has unblocks_parents = true"
-        // — a child being blocked-on-failed does NOT satisfy the parent
-        // gate, even though the child itself is not ready.
-        //
-        // The old "re-plan on stuck subtree" path is intentionally lost
-        // to keep one readiness rule for every status.
+        // The readiness rule requires every direct child to have
+        // `unblocks_parents = true`. An Open child blocked on a Failed
+        // sibling has `unblocks_parents = false`, so the parent is not
+        // ready even though the child itself is not ready either.
         let state = test_state();
 
         let store = state.store.as_ref();
@@ -1752,11 +1703,10 @@ mod tests {
 
     #[tokio::test]
     async fn neither_parent_nor_grandparent_ready_when_only_child_is_blocked_open() {
-        // Documented behavior shift #2 (subtree-deeply-stuck) at depth 3.
-        // Old behavior: parent was ready because no ready issue existed
-        // anywhere in its subtree. New behavior: parent NOT ready because
-        // the only direct child has `unblocks_parents = false`. Grandparent
-        // NOT ready by the same rule applied one level up.
+        // The "every direct child has `unblocks_parents = true`" gate
+        // at depth 3: a blocked-open child fails the gate for its
+        // parent, and the parent failing it propagates to the
+        // grandparent by the same rule applied one level up.
         let state = test_state();
 
         let store = state.store.as_ref();
@@ -1799,11 +1749,10 @@ mod tests {
 
     #[tokio::test]
     async fn open_issue_not_ready_when_child_non_terminal() {
-        // Documented behavior shift #1: an Open issue with non-terminal
-        // children is no longer Ready, even when its blockers are
-        // satisfied. Open issues with children are rare but the unified
-        // rule treats every direct child the same way regardless of the
-        // parent's own status.
+        // The readiness rule treats every direct child the same way
+        // regardless of the parent's own status: an Open parent with a
+        // non-terminal child is not ready because the child has
+        // `unblocks_parents = false`.
         let state = test_state();
         let store = state.store.as_ref();
 
