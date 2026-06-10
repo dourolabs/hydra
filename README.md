@@ -11,7 +11,7 @@ Hydra ships a single-player mode that bundles the CLI, server, and web dashboard
 ### Prerequisites
 
 - **Rust** (stable toolchain) — install via [rustup](https://rustup.rs/).
-- **pnpm** - installation instructions [here](https://pnpm.io/installation).
+- **pnpm** — installation instructions [here](https://pnpm.io/installation).
 - **Docker** (recommended) — needed for the Docker job engine. See <https://docs.docker.com/get-docker/>.
 - **Linux build deps:** `pkg-config` and OpenSSL headers (e.g. `apt install pkg-config libssl-dev`).
 
@@ -96,29 +96,29 @@ If you'd rather skip the dashboard and chat from a terminal, `hydra chat` opens 
 
 All work in Hydra is represented by issues. Issues can be assigned to either agents or users. If assigned to agents, the system will automatically spawn sessions to work on the issue. Issues have a progress field that agents automatically update with the current status of the work.
 
-Issues have child-of / blocked-on relationships between them. Hydra uses these to track which issues are ready to be worked on. 
+Issues have child-of / blocked-on relationships between them. Hydra uses these to track which issues are ready to be worked on.
 
 ### Agents
 
 Hydra comes with four default agents, created automatically during `hydra server init`:
 
-- **`chat`** -- Conversational interface. Your default point of contact; translates intent into issue actions.
-- **`swe`** -- Software engineering agent. Implements code changes, submits patches, and responds to review feedback.
-- **`pm`** -- Product manager agent. Breaks down complex features into smaller subtasks and assigns them.
-- **`reviewer`** -- Code review agent. Reviews patches and provides feedback.
+- **`chat`** — Conversational interface. Your default point of contact; translates intent into issue actions.
+- **`swe`** — Software engineering agent. Implements code changes, submits patches, and responds to review feedback.
+- **`pm`** — Product manager agent. Breaks down complex features into smaller subtasks and assigns them.
+- **`reviewer`** — Code review agent. Reviews patches and provides feedback.
 
 Agents are configured on the server settings page, and their prompts and memory are stored in the document store.
 
 ### Documents
 
-The document store is a shared space for markdown artifacts -- design docs, runbooks, agent prompts / memory, and other reference material.
+The document store is a shared space for markdown artifacts — design docs, runbooks, agent prompts / memory, and other reference material.
 Check out the documents tab of the frontend to see what's in the store and edit any documents.
 
 ### Git Repositories and Branch Management
 
 Repositories are registered with Hydra so agents know where to work. Each issue gets a tracking branch pushed to the remote:
 
-- `hydra/<issue-id>/head` -- the current head of work for the issue
+- `hydra/<issue-id>/head` — the current head of work for the issue
 
 This allows sequential agents working on the same issue to pick up where the previous one left off. You can check out this branch to inspect the state of work at any point.
 
