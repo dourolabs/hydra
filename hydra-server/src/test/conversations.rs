@@ -113,7 +113,6 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
         None,
         None,
         false,
-        false,
         vec![],
     );
     let agent_response = client

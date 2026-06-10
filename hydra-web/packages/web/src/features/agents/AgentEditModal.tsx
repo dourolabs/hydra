@@ -26,9 +26,6 @@ export function AgentEditModal({
   const [maxSimultaneous, setMaxSimultaneous] = useState(
     String(agent.max_simultaneous),
   );
-  const [isAssignmentAgent, setIsAssignmentAgent] = useState(
-    agent.is_assignment_agent,
-  );
   const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(
     agent.is_default_conversation_agent,
   );
@@ -45,12 +42,6 @@ export function AgentEditModal({
     },
   });
 
-  const existingAssignmentAgent = agents.find(
-    (a) => a.is_assignment_agent && a.name !== agent.name,
-  );
-  const assignmentConflict =
-    isAssignmentAgent && existingAssignmentAgent != null;
-
   const existingDefaultConversationAgent = agents.find(
     (a) => a.is_default_conversation_agent && a.name !== agent.name,
   );
@@ -58,7 +49,7 @@ export function AgentEditModal({
     isDefaultConversationAgent && existingDefaultConversationAgent != null;
 
   const isValid =
-    prompt.trim().length > 0 && !assignmentConflict && !defaultConversationConflict;
+    prompt.trim().length > 0 && !defaultConversationConflict;
 
   const handleSubmit = useCallback(() => {
     if (!isValid) return;
@@ -70,11 +61,10 @@ export function AgentEditModal({
       mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,
       max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
-      is_assignment_agent: isAssignmentAgent,
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
     });
-  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isAssignmentAgent, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${agent.name}`}>
@@ -107,20 +97,6 @@ export function AgentEditModal({
           onChange={(e) => setMaxSimultaneous(e.target.value)}
           type="number"
         />
-        <label className={styles.checkboxLabel}>
-          <input
-            type="checkbox"
-            checked={isAssignmentAgent}
-            onChange={(e) => setIsAssignmentAgent(e.target.checked)}
-          />
-          Assignment Agent
-        </label>
-        {assignmentConflict && (
-          <p className={styles.fieldError}>
-            &quot;{existingAssignmentAgent.name}&quot; is already the assignment
-            agent. Only one agent can be the assignment agent at a time.
-          </p>
-        )}
         <label className={styles.checkboxLabel}>
           <input
             type="checkbox"

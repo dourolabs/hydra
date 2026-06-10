@@ -274,9 +274,9 @@ impl AgentQueue {
         // `Principal::Agent { name }` — bare-string matching is gone.
         // Issues assigned to a `Principal::User { name == agent.name }`
         // (the typo direction) are deliberately NOT picked up.
-        // Unassigned issues are NOT picked up here; the `spawn_sessions`
-        // automation auto-assigns them to the configured assignment agent
-        // and persists the update before this method is called.
+        // Unassigned issues are NOT picked up here. Issues that should be
+        // routed somewhere must be assigned explicitly (or via a per-status
+        // `on_enter.assign_to` automation; see `apply_status_on_enter`).
         let is_assignment_match = matches!(
             issue.assignee.as_ref(),
             Some(hydra_common::principal::Principal::Agent { name })
@@ -502,7 +502,6 @@ mod tests {
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
-            false,
             Vec::new(),
         )
     }
@@ -524,7 +523,6 @@ mod tests {
                 None,
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
-                false,
                 false,
                 secrets,
             ),
@@ -561,7 +559,6 @@ mod tests {
                 None,
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
-                false,
                 false,
                 secrets,
             ),
@@ -985,48 +982,6 @@ mod tests {
         let task_state = agent_task_state(&handles.state, "agent-b").await?;
         let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
         let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(!result.is_spawned());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn assignment_agent_queue_skips_unassigned_issue() -> anyhow::Result<()> {
-        // The queue no longer special-cases the assignment agent.
-        // Auto-assignment is the `spawn_sessions` automation's job; once
-        // that runs, the issue is explicitly assigned and reaches the
-        // queue via the normal `is_assignment_match` path.
-        let handles = test_state_handles();
-        seed_agent_prompt(&handles, "assignment", "Assign unowned issues").await?;
-        let (issue_id, _) = handles
-            .store
-            .add_issue(
-                issue_without_repo("Needs assignment", status("open"), None),
-                &ActorRef::test(),
-            )
-            .await?;
-
-        let q = {
-            use crate::domain::agents::Agent;
-            AgentQueue::new(
-                Agent::new(
-                    "assignment".to_string(),
-                    "/agents/assignment/prompt.md".to_string(),
-                    None,
-                    DEFAULT_AGENT_MAX_TRIES,
-                    DEFAULT_AGENT_MAX_SIMULTANEOUS,
-                    true,
-                    false,
-                    Vec::new(),
-                ),
-                shared_attempts(),
-            )
-        };
-        let task_state = agent_task_state(&handles.state, "assignment").await?;
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = q
             .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
@@ -1839,7 +1794,6 @@ mod tests {
             None,
             5,
             10,
-            true,
             false,
             Vec::new(),
         );
@@ -1850,7 +1804,6 @@ mod tests {
         assert_eq!(queue.agent.prompt_path, "/agents/test-agent/prompt.md");
         assert_eq!(queue.agent.max_tries, 5);
         assert_eq!(queue.agent.max_simultaneous, 10);
-        assert!(queue.agent.is_assignment_agent);
     }
 
     #[tokio::test]
@@ -2308,7 +2261,6 @@ mod tests {
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 false,
-                false,
                 Vec::new(),
             ),
             shared_attempts(),
@@ -2346,7 +2298,6 @@ mod tests {
             Some(mcp_config_path.to_string()),
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
-            false,
             false,
             Vec::new(),
         );

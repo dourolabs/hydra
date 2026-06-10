@@ -29,9 +29,6 @@ done
 # Create or update each agent via the CLI
 for agent in "${AGENTS[@]}"; do
   EXTRA_FLAGS=()
-  if [[ "$agent" == "pm" ]]; then
-    EXTRA_FLAGS+=("--is-assignment-agent")
-  fi
   if [[ "$agent" == "chat" ]]; then
     EXTRA_FLAGS+=("--is-default-conversation-agent")
   fi

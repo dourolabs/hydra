@@ -222,7 +222,6 @@ mod tests {
                 3,
                 4,
                 false,
-                false,
                 Vec::new(),
             ))
             .await

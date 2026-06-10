@@ -61,9 +61,6 @@ export function AgentsSection({ createOpen, onCreateOpenChange }: AgentsSectionP
                   <Avatar name={agent.name} kind="agent" size="md" />
                   <span className={styles.cardName}>{agent.name}</span>
                   <span className={styles.cardHeadSpacer} />
-                  {agent.is_assignment_agent && (
-                    <span className={styles.tagChip}>assignment</span>
-                  )}
                   {agent.is_default_conversation_agent && (
                     <span className={styles.tagChip}>default chat</span>
                   )}

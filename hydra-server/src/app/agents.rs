@@ -317,7 +317,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         )
     }
@@ -471,39 +470,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_agent_assignment_uniqueness_blocked_by_restriction() {
-        let state = test_state();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        state.create_agent(pm, ActorRef::test()).await.unwrap();
-
-        let mut pm2 = sample_agent("pm2");
-        pm2.is_assignment_agent = true;
-        let err = state.create_agent(pm2, ActorRef::test()).await.unwrap_err();
-        assert!(matches!(err, AgentError::PolicyViolation(_)));
-    }
-
-    #[tokio::test]
-    async fn update_agent_assignment_uniqueness_blocked_by_restriction() {
-        let state = test_state();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        state.create_agent(pm, ActorRef::test()).await.unwrap();
-        state
-            .create_agent(sample_agent("swe"), ActorRef::test())
-            .await
-            .unwrap();
-
-        let mut swe_updated = sample_agent("swe");
-        swe_updated.is_assignment_agent = true;
-        let err = state
-            .update_agent("swe", swe_updated, ActorRef::test())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, AgentError::PolicyViolation(_)));
-    }
-
-    #[tokio::test]
     async fn create_agent_default_conversation_uniqueness_blocked_by_restriction() {
         let state = test_state();
         let mut chat = sample_agent("chat");
@@ -537,38 +503,5 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AgentError::PolicyViolation(_)));
-    }
-
-    #[tokio::test]
-    async fn deleted_assignment_agent_allows_new_one() {
-        let state = test_state();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        state.create_agent(pm, ActorRef::test()).await.unwrap();
-        state.delete_agent("pm").await.unwrap();
-
-        let mut pm2 = sample_agent("pm2");
-        pm2.is_assignment_agent = true;
-        state.create_agent(pm2, ActorRef::test()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn assignment_agent_can_update_itself() {
-        let state = test_state();
-        let mut pm = sample_agent("pm");
-        pm.is_assignment_agent = true;
-        state.create_agent(pm, ActorRef::test()).await.unwrap();
-
-        let mut pm_updated = sample_agent("pm");
-        pm_updated.is_assignment_agent = true;
-        pm_updated.max_tries = 10;
-        state
-            .update_agent("pm", pm_updated, ActorRef::test())
-            .await
-            .unwrap();
-
-        let fetched = state.get_agent("pm").await.unwrap();
-        assert_eq!(fetched.max_tries, 10);
-        assert!(fetched.is_assignment_agent);
     }
 }

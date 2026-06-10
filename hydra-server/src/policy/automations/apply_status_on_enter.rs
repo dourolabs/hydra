@@ -752,7 +752,7 @@ mod tests {
             .expect("spawn_sessions registered");
         assert!(
             on_enter_idx < spawn_idx,
-            "apply_status_on_enter must run before spawn_sessions (so newly-created issues are reassigned per on_enter before the assignment-agent fallback)"
+            "apply_status_on_enter must run before spawn_sessions (so newly-created issues are reassigned per on_enter before the per-agent queue dispatcher runs)"
         );
     }
 

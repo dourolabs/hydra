@@ -132,8 +132,6 @@ github_app:
   private_key: "${SERVER_GITHUB_APP_PRIVATE_KEY}"
 
 background:
-  assignment_agent: "pm"
-
   agent_queues:
     - name: "swe"
       prompt: |

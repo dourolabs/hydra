@@ -71,10 +71,6 @@ pub struct CreateAgentArgs {
     )]
     pub max_simultaneous: i32,
 
-    /// Mark this agent as the assignment agent (at most one allowed).
-    #[arg(long = "is-assignment-agent")]
-    pub is_assignment_agent: bool,
-
     /// Mark this agent as the default conversation agent (at most one allowed).
     #[arg(long = "is-default-conversation-agent")]
     pub is_default_conversation_agent: bool,
@@ -121,17 +117,6 @@ pub struct UpdateAgentArgs {
     /// Updated max simultaneous tasks for the agent.
     #[arg(long = "max-simultaneous", value_name = "MAX_SIMULTANEOUS")]
     pub max_simultaneous: Option<i32>,
-
-    /// Mark this agent as the assignment agent (at most one allowed).
-    #[arg(long = "is-assignment-agent")]
-    pub is_assignment_agent: bool,
-
-    /// Remove the assignment agent designation from this agent.
-    #[arg(
-        long = "no-is-assignment-agent",
-        conflicts_with = "is_assignment_agent"
-    )]
-    pub no_is_assignment_agent: bool,
 
     /// Mark this agent as the default conversation agent (at most one allowed).
     #[arg(long = "is-default-conversation-agent")]
@@ -255,7 +240,6 @@ async fn create_agent(
             args.max_simultaneous,
             None,
             mcp_config,
-            args.is_assignment_agent,
             args.is_default_conversation_agent,
             parse_secrets(args.secrets.as_deref()),
         )
@@ -268,7 +252,6 @@ async fn create_agent(
             args.max_simultaneous,
             None,
             mcp_config,
-            args.is_assignment_agent,
             args.is_default_conversation_agent,
             parse_secrets(args.secrets.as_deref()),
         );
@@ -319,11 +302,6 @@ async fn update_agent(
     }
     if let Some(max_simultaneous) = args.max_simultaneous {
         request.max_simultaneous = max_simultaneous;
-    }
-    if args.is_assignment_agent {
-        request.is_assignment_agent = true;
-    } else if args.no_is_assignment_agent {
-        request.is_assignment_agent = false;
     }
     if args.is_default_conversation_agent {
         request.is_default_conversation_agent = true;
@@ -388,30 +366,8 @@ mod tests {
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
         let list_agents_response = ListAgentsResponse::new(vec![
-            AgentRecord::new(
-                "alpha",
-                "",
-                "",
-                None,
-                None,
-                3,
-                i32::MAX,
-                false,
-                false,
-                Vec::new(),
-            ),
-            AgentRecord::new(
-                "beta",
-                "",
-                "",
-                None,
-                None,
-                3,
-                i32::MAX,
-                false,
-                false,
-                Vec::new(),
-            ),
+            AgentRecord::new("alpha", "", "", None, None, 3, i32::MAX, false, Vec::new()),
+            AgentRecord::new("beta", "", "", None, None, 3, i32::MAX, false, Vec::new()),
         ]);
 
         let mock = server.mock(|when, then| {
@@ -448,7 +404,6 @@ mod tests {
             None,
             2,
             5,
-            true,
             false,
             Vec::new(),
         )];
@@ -465,7 +420,6 @@ mod tests {
         assert!(output.contains("/agents/alpha/prompt.md"));
         assert!(output.contains("max_tries: 2"));
         assert!(output.contains("max_simultaneous: 5"));
-        assert!(output.contains("is_assignment_agent: true"));
         assert!(output.contains("is_default_conversation_agent: false"));
 
         Ok(())
@@ -484,7 +438,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         ));
@@ -518,7 +471,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: 2,
             max_simultaneous: 4,
-            is_assignment_agent: false,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -531,7 +483,6 @@ mod tests {
             2,
             4,
             false,
-            false,
             Vec::new(),
         ));
         let mock = server.mock(|when, then| {
@@ -543,7 +494,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 2,
                 "max_simultaneous": 4,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -556,63 +506,6 @@ mod tests {
         assert_eq!(agent.name, "writer");
         assert_eq!(agent.max_tries, 2);
         assert_eq!(agent.max_simultaneous, 4);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn create_agent_with_assignment_flag() -> Result<()> {
-        let server = MockServer::start();
-        let client =
-            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-
-        let prompt_file = write_prompt_file("assign issues");
-
-        let args = CreateAgentArgs {
-            name: "pm".to_string(),
-            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
-            prompt_path: None,
-            mcp_config_path: None,
-            mcp_config_file: None,
-            max_tries: 3,
-            max_simultaneous: i32::MAX,
-            is_assignment_agent: true,
-            is_default_conversation_agent: false,
-            secrets: None,
-        };
-        let response = AgentResponse::new(AgentRecord::new(
-            "pm",
-            "assign issues",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            true,
-            false,
-            Vec::new(),
-        ));
-        let mock = server.mock(|when, then| {
-            when.method(POST).path("/v1/agents").json_body(json!({
-                "name": "pm",
-                "prompt": "assign issues",
-                "prompt_path": "",
-                "mcp_config_path": null,
-                "mcp_config": null,
-                "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": true,
-                "is_default_conversation_agent": false,
-                "secrets": []
-            }));
-            then.status(200).json_body_obj(&response);
-        });
-
-        let agent = create_agent(&client, args).await?;
-        mock.assert();
-
-        assert_eq!(agent.name, "pm");
-        assert!(agent.is_assignment_agent);
 
         Ok(())
     }
@@ -633,7 +526,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
-            is_assignment_agent: false,
             is_default_conversation_agent: true,
             secrets: None,
         };
@@ -645,7 +537,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             true,
             Vec::new(),
         ));
@@ -658,7 +549,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": true,
                 "secrets": []
             }));
@@ -688,7 +578,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -699,7 +588,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             true,
             Vec::new(),
         ));
@@ -717,7 +605,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": true,
                 "secrets": []
             }));
@@ -732,8 +619,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: true,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -760,7 +645,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             true,
             Vec::new(),
         ));
@@ -772,7 +656,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         ));
@@ -790,7 +673,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -805,8 +687,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: true,
             secrets: None,
@@ -858,7 +738,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -869,7 +748,6 @@ mod tests {
             None,
             3,
             10,
-            false,
             false,
             Vec::new(),
         ));
@@ -889,7 +767,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 10,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -904,8 +781,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: Some(10),
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -922,265 +797,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_agent_sets_is_assignment_agent_true() -> Result<()> {
-        let server = MockServer::start();
-        let client =
-            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-        let existing = AgentResponse::new(AgentRecord::new(
-            "writer",
-            "draft",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            false,
-            false,
-            Vec::new(),
-        ));
-        let updated = AgentResponse::new(AgentRecord::new(
-            "writer",
-            "draft",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            true,
-            false,
-            Vec::new(),
-        ));
-
-        let get_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/agents/writer");
-            then.status(200).json_body_obj(&existing);
-        });
-        let put_mock = server.mock(|when, then| {
-            when.method(PUT).path("/v1/agents/writer").json_body(json!({
-                "name": "writer",
-                "prompt": "draft",
-                "prompt_path": "",
-                "mcp_config_path": null,
-                "mcp_config": null,
-                "max_tries": 3,
-                "max_simultaneous": 2147483647,
-                "is_assignment_agent": true,
-                "is_default_conversation_agent": false,
-                "secrets": []
-            }));
-            then.status(200).json_body_obj(&updated);
-        });
-
-        let args = UpdateAgentArgs {
-            name: "writer".to_string(),
-            prompt_file: None,
-            prompt_path: None,
-            mcp_config_path: None,
-            mcp_config_file: None,
-            max_tries: None,
-            max_simultaneous: None,
-            is_assignment_agent: true,
-            no_is_assignment_agent: false,
-            is_default_conversation_agent: false,
-            no_is_default_conversation_agent: false,
-            secrets: None,
-        };
-
-        let response = update_agent(&client, args).await?;
-        get_mock.assert();
-        put_mock.assert();
-        assert!(response.is_assignment_agent);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn update_agent_unsets_is_assignment_agent() -> Result<()> {
-        let server = MockServer::start();
-        let client =
-            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-        let existing = AgentResponse::new(AgentRecord::new(
-            "writer",
-            "draft",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            true,
-            false,
-            Vec::new(),
-        ));
-        let updated = AgentResponse::new(AgentRecord::new(
-            "writer",
-            "draft",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            false,
-            false,
-            Vec::new(),
-        ));
-
-        let get_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/agents/writer");
-            then.status(200).json_body_obj(&existing);
-        });
-        let put_mock = server.mock(|when, then| {
-            when.method(PUT).path("/v1/agents/writer").json_body(json!({
-                "name": "writer",
-                "prompt": "draft",
-                "prompt_path": "",
-                "mcp_config_path": null,
-                "mcp_config": null,
-                "max_tries": 3,
-                "max_simultaneous": 2147483647,
-                "is_assignment_agent": false,
-                "is_default_conversation_agent": false,
-                "secrets": []
-            }));
-            then.status(200).json_body_obj(&updated);
-        });
-
-        let args = UpdateAgentArgs {
-            name: "writer".to_string(),
-            prompt_file: None,
-            prompt_path: None,
-            mcp_config_path: None,
-            mcp_config_file: None,
-            max_tries: None,
-            max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: true,
-            is_default_conversation_agent: false,
-            no_is_default_conversation_agent: false,
-            secrets: None,
-        };
-
-        let response = update_agent(&client, args).await?;
-        get_mock.assert();
-        put_mock.assert();
-        assert!(!response.is_assignment_agent);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn update_agent_preserves_is_assignment_agent_when_neither_flag() -> Result<()> {
-        let server = MockServer::start();
-        let client =
-            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-        let existing = AgentResponse::new(AgentRecord::new(
-            "writer",
-            "draft",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            true,
-            false,
-            Vec::new(),
-        ));
-        let updated = AgentResponse::new(AgentRecord::new(
-            "writer",
-            "draft",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            true,
-            false,
-            Vec::new(),
-        ));
-
-        let get_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/agents/writer");
-            then.status(200).json_body_obj(&existing);
-        });
-        let put_mock = server.mock(|when, then| {
-            when.method(PUT).path("/v1/agents/writer").json_body(json!({
-                "name": "writer",
-                "prompt": "draft",
-                "prompt_path": "",
-                "mcp_config_path": null,
-                "mcp_config": null,
-                "max_tries": 3,
-                "max_simultaneous": 2147483647,
-                "is_assignment_agent": true,
-                "is_default_conversation_agent": false,
-                "secrets": []
-            }));
-            then.status(200).json_body_obj(&updated);
-        });
-
-        let args = UpdateAgentArgs {
-            name: "writer".to_string(),
-            prompt_file: None,
-            prompt_path: None,
-            mcp_config_path: None,
-            mcp_config_file: None,
-            max_tries: None,
-            max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
-            is_default_conversation_agent: false,
-            no_is_default_conversation_agent: false,
-            secrets: None,
-        };
-
-        let response = update_agent(&client, args).await?;
-        get_mock.assert();
-        put_mock.assert();
-        assert!(response.is_assignment_agent);
-
-        Ok(())
-    }
-
-    #[test]
-    fn update_agent_rejects_both_assignment_flags() {
-        use clap::Parser;
-
-        #[derive(Debug, Parser)]
-        struct Cli {
-            #[command(flatten)]
-            args: UpdateAgentArgs,
-        }
-
-        let result = Cli::try_parse_from([
-            "cli",
-            "writer",
-            "--is-assignment-agent",
-            "--no-is-assignment-agent",
-        ]);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("cannot be used with"),
-            "expected conflict error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
     async fn delete_agent_trims_name() -> Result<()> {
         let server = MockServer::start();
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-        let deleted = AgentRecord::new(
-            "writer",
-            "",
-            "",
-            None,
-            None,
-            3,
-            i32::MAX,
-            false,
-            false,
-            Vec::new(),
-        );
+        let deleted =
+            AgentRecord::new("writer", "", "", None, None, 3, i32::MAX, false, Vec::new());
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)
@@ -1210,7 +832,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
-            is_assignment_agent: false,
             is_default_conversation_agent: false,
             secrets: Some("OPENAI_API_KEY,GH_TOKEN".to_string()),
         };
@@ -1223,7 +844,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             vec!["OPENAI_API_KEY".to_string(), "GH_TOKEN".to_string()],
         ));
         let mock = server.mock(|when, then| {
@@ -1235,7 +855,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": ["OPENAI_API_KEY", "GH_TOKEN"]
             }));
@@ -1265,7 +884,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -1276,7 +894,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             vec!["ANTHROPIC_API_KEY".to_string()],
         ));
@@ -1294,7 +911,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": ["ANTHROPIC_API_KEY"]
             }));
@@ -1309,8 +925,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: Some("ANTHROPIC_API_KEY".to_string()),
@@ -1338,7 +952,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             vec!["EXISTING_SECRET".to_string()],
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -1349,7 +962,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             vec!["EXISTING_SECRET".to_string()],
         ));
@@ -1367,7 +979,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": ["EXISTING_SECRET"]
             }));
@@ -1382,8 +993,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1407,7 +1016,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             vec!["OPENAI_API_KEY".to_string(), "GH_TOKEN".to_string()],
         )];
@@ -1495,7 +1103,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
-            is_assignment_agent: false,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -1508,7 +1115,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let mock = server.mock(|when, then| {
@@ -1520,7 +1126,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1555,7 +1160,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: 3,
             max_simultaneous: i32::MAX,
-            is_assignment_agent: false,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -1611,7 +1215,6 @@ mod tests {
             mcp_config_file: Some(mcp_file.path().to_str().unwrap().to_string()),
             max_tries: 3,
             max_simultaneous: i32::MAX,
-            is_assignment_agent: false,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -1624,7 +1227,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let mock = server.mock(|when, then| {
@@ -1636,7 +1238,6 @@ mod tests {
                 "mcp_config": "{\"mcpServers\": {\"test\": {}}}",
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1668,7 +1269,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -1679,7 +1279,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         ));
@@ -1697,7 +1296,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1712,8 +1310,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1742,7 +1338,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -1753,7 +1348,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         ));
@@ -1771,7 +1365,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1786,8 +1379,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1818,7 +1409,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let mcp_file = write_mcp_config_tempfile(r#"{"mcpServers": {}}"#);
@@ -1830,7 +1420,6 @@ mod tests {
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         ));
@@ -1848,7 +1437,6 @@ mod tests {
                 "mcp_config": "{\"mcpServers\": {}}",
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1863,8 +1451,6 @@ mod tests {
             mcp_config_file: Some(mcp_file.path().to_str().unwrap().to_string()),
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1895,7 +1481,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -1906,7 +1491,6 @@ mod tests {
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         ));
@@ -1924,7 +1508,6 @@ mod tests {
                 "mcp_config": "{\"mcpServers\": {}}",
                 "max_tries": 3,
                 "max_simultaneous": 2147483647i64,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1939,8 +1522,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1971,7 +1552,6 @@ mod tests {
             3,
             i32::MAX,
             false,
-            false,
             Vec::new(),
         ));
         let updated = AgentResponse::new(AgentRecord::new(
@@ -1982,7 +1562,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         ));
@@ -2002,7 +1581,6 @@ mod tests {
                 "mcp_config": null,
                 "max_tries": 3,
                 "max_simultaneous": 2147483647,
-                "is_assignment_agent": false,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -2017,8 +1595,6 @@ mod tests {
             mcp_config_file: None,
             max_tries: None,
             max_simultaneous: None,
-            is_assignment_agent: false,
-            no_is_assignment_agent: false,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -2043,7 +1619,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             Vec::new(),
         )];

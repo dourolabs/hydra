@@ -165,6 +165,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_clear_assignee_to_default_terminal_statuses_post_migration_state(&pool).await?;
     add_clear_assignee_to_default_terminal_statuses_is_idempotent(&pool).await?;
 
+    drop_is_assignment_agent_schema_invariants(&pool).await?;
+    drop_is_assignment_agent_preserves_rows(&pool).await?;
+    drop_is_assignment_agent_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -610,6 +614,131 @@ async fn add_clear_assignee_to_default_terminal_statuses_is_idempotent(
                  {before_on_enter:?} -> {after_on_enter:?}"
             );
         }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260619000000_drop_is_assignment_agent. The assignment-agent concept has
+// been removed; per-status `on_enter.assign_to` is now the canonical routing
+// mechanism. SQLite uses the rebuild-and-rename recipe (no native DROP COLUMN
+// here), so these assertions verify the column is gone, the rows seeded by
+// the 20260618000000 baseline survived the rebuild verbatim, and the boot
+// path's idempotent rerun does not reapply the rebuild.
+// ---------------------------------------------------------------------------
+
+async fn drop_is_assignment_agent_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if column_exists(pool, "agents", "is_assignment_agent").await? {
+        bail!("expected `agents.is_assignment_agent` column to be dropped post-rollforward");
+    }
+    // Sibling columns the migration is supposed to leave alone.
+    for required in [
+        "name",
+        "prompt_path",
+        "max_tries",
+        "max_simultaneous",
+        "deleted",
+        "created_at",
+        "updated_at",
+        "secrets",
+        "mcp_config_path",
+        "is_default_conversation_agent",
+    ] {
+        if !column_exists(pool, "agents", required).await? {
+            bail!(
+                "expected `agents.{required}` to remain present post-drop-is-assignment-agent; \
+                 the rebuild lost it"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT name, prompt_path, max_tries, max_simultaneous, deleted, \
+                secrets, mcp_config_path, is_default_conversation_agent \
+         FROM agents \
+         WHERE name IN ('pm-baseline', 'chat-baseline', 'deleted-baseline') \
+         ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read agents rows seeded by the pre-drop-is-assignment-agent baseline")?;
+    if rows.len() != 3 {
+        bail!(
+            "expected 3 baseline agents rows post-rebuild; got {}",
+            rows.len()
+        );
+    }
+    // Rows ordered by name: chat-baseline, deleted-baseline, pm-baseline.
+    let chat = &rows[0];
+    assert_eq!(chat.try_get::<String, _>("name")?, "chat-baseline");
+    assert_eq!(chat.try_get::<i64, _>("max_tries")?, 5);
+    assert_eq!(chat.try_get::<i64, _>("max_simultaneous")?, 10);
+    assert_eq!(chat.try_get::<i64, _>("deleted")?, 0);
+    assert_eq!(
+        chat.try_get::<String, _>("secrets")?,
+        "[\"OPENAI_API_KEY\"]"
+    );
+    assert_eq!(
+        chat.try_get::<Option<String>, _>("mcp_config_path")?,
+        Some("/agents/chat-baseline/mcp.json".to_string())
+    );
+    assert_eq!(chat.try_get::<i64, _>("is_default_conversation_agent")?, 1);
+
+    let deleted = &rows[1];
+    assert_eq!(deleted.try_get::<String, _>("name")?, "deleted-baseline");
+    assert_eq!(deleted.try_get::<i64, _>("deleted")?, 1);
+
+    let pm = &rows[2];
+    assert_eq!(pm.try_get::<String, _>("name")?, "pm-baseline");
+    assert_eq!(pm.try_get::<i64, _>("max_tries")?, 3);
+    assert_eq!(pm.try_get::<i64, _>("deleted")?, 0);
+    assert_eq!(pm.try_get::<i64, _>("is_default_conversation_agent")?, 0);
+
+    Ok(())
+}
+
+async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT name, prompt_path, max_tries, max_simultaneous, deleted, \
+                secrets, mcp_config_path, is_default_conversation_agent \
+         FROM agents ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot agents before drop-is-assignment-agent idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm drop-is-assignment-agent idempotency")?;
+    let snapshot_after = sqlx::query(
+        "SELECT name, prompt_path, max_tries, max_simultaneous, deleted, \
+                secrets, mcp_config_path, is_default_conversation_agent \
+         FROM agents ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot agents after drop-is-assignment-agent idempotency rerun")?;
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across drop-is-assignment-agent idempotency rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_name: String = before.try_get("name")?;
+        let after_name: String = after.try_get("name")?;
+        if before_name != after_name {
+            bail!("agents.name changed across rerun: {before_name} -> {after_name}");
+        }
+    }
+    if column_exists(pool, "agents", "is_assignment_agent").await? {
+        bail!(
+            "`agents.is_assignment_agent` re-appeared after drop-is-assignment-agent \
+             idempotency rerun; the rebuild reapplied"
+        );
     }
     Ok(())
 }

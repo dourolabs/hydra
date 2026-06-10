@@ -271,6 +271,13 @@ async fn migration_roundtrip() -> Result<()> {
             "add_clear_assignee_to_default_terminal_statuses: verbatim body replay preserves on_enter",
         )?;
 
+    drop_is_assignment_agent_schema_invariants(&pool)
+        .await
+        .context("drop_is_assignment_agent: column is dropped from metis.agents")?;
+    drop_is_assignment_agent_preserves_rows(&pool)
+        .await
+        .context("drop_is_assignment_agent: baseline agents rows survive the column drop")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -288,6 +295,14 @@ async fn migration_roundtrip() -> Result<()> {
         .context(
             "add_statuses_auto_archive_after_seconds: idempotent rerun keeps existing NULLs",
         )?;
+    drop_is_assignment_agent_schema_invariants(&pool)
+        .await
+        .context(
+            "drop_is_assignment_agent: idempotent rerun keeps `is_assignment_agent` dropped",
+        )?;
+    drop_is_assignment_agent_preserves_rows(&pool)
+        .await
+        .context("drop_is_assignment_agent: idempotent rerun preserves baseline rows")?;
 
     Ok(())
 }
@@ -629,6 +644,85 @@ async fn add_clear_assignee_to_default_terminal_statuses_is_idempotent(
             );
         }
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260619000000_drop_is_assignment_agent. Drops the `is_assignment_agent`
+// column from `metis.agents` after the runtime concept was removed in favor
+// of per-status `on_enter.assign_to`. Postgres uses native
+// `ALTER TABLE ... DROP COLUMN`, so these assertions verify the column is
+// gone and that the baseline-seeded rows survive verbatim.
+// ---------------------------------------------------------------------------
+
+async fn drop_is_assignment_agent_schema_invariants(pool: &PgPool) -> Result<()> {
+    if column_exists(pool, "agents", "is_assignment_agent").await? {
+        bail!("expected `metis.agents.is_assignment_agent` column to be dropped post-rollforward");
+    }
+    for required in [
+        "name",
+        "prompt_path",
+        "max_tries",
+        "max_simultaneous",
+        "deleted",
+        "created_at",
+        "updated_at",
+        "secrets",
+        "mcp_config_path",
+        "is_default_conversation_agent",
+    ] {
+        if !column_exists(pool, "agents", required).await? {
+            bail!(
+                "expected `metis.agents.{required}` to remain present post-drop-is-assignment-agent"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT name, max_tries, max_simultaneous, deleted, \
+                secrets::text AS secrets, mcp_config_path, is_default_conversation_agent \
+         FROM metis.agents \
+         WHERE name IN ('pm-baseline', 'chat-baseline', 'deleted-baseline') \
+         ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read metis.agents rows seeded by the pre-drop-is-assignment-agent baseline")?;
+    if rows.len() != 3 {
+        bail!(
+            "expected 3 baseline agents rows post-drop-column; got {}",
+            rows.len()
+        );
+    }
+    // Rows ordered by name: chat-baseline, deleted-baseline, pm-baseline.
+    let chat = &rows[0];
+    assert_eq!(chat.try_get::<String, _>("name")?, "chat-baseline");
+    assert_eq!(chat.try_get::<i32, _>("max_tries")?, 5);
+    assert_eq!(chat.try_get::<i32, _>("max_simultaneous")?, 10);
+    assert!(!chat.try_get::<bool, _>("deleted")?);
+    assert_eq!(
+        chat.try_get::<String, _>("secrets")?,
+        "[\"OPENAI_API_KEY\"]"
+    );
+    assert_eq!(
+        chat.try_get::<Option<String>, _>("mcp_config_path")?,
+        Some("/agents/chat-baseline/mcp.json".to_string())
+    );
+    assert!(chat.try_get::<bool, _>("is_default_conversation_agent")?);
+
+    let deleted = &rows[1];
+    assert_eq!(deleted.try_get::<String, _>("name")?, "deleted-baseline");
+    assert!(deleted.try_get::<bool, _>("deleted")?);
+
+    let pm = &rows[2];
+    assert_eq!(pm.try_get::<String, _>("name")?, "pm-baseline");
+    assert_eq!(pm.try_get::<i32, _>("max_tries")?, 3);
+    assert!(!pm.try_get::<bool, _>("deleted")?);
+    assert!(!pm.try_get::<bool, _>("is_default_conversation_agent")?);
+
     Ok(())
 }
 

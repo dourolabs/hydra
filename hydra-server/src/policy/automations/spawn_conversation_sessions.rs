@@ -410,7 +410,6 @@ mod tests {
             None,
             1,
             1,
-            false,
             is_default,
             vec![],
         );

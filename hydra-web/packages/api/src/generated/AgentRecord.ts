@@ -8,7 +8,6 @@ export type AgentRecord = {
   mcp_config: string | null;
   max_tries: number;
   max_simultaneous: number;
-  is_assignment_agent: boolean;
   is_default_conversation_agent: boolean;
   secrets: Array<string>;
 };

@@ -194,7 +194,6 @@ pub async fn add_agent_with_name(handles: &TestStateHandles, name: &str) {
         1,
         1,
         false,
-        false,
         vec![],
     );
     if let Err(err) = handles.store.add_agent(agent).await {
@@ -359,7 +358,6 @@ async fn seed_default_conversation_agent(store: &dyn Store) -> anyhow::Result<()
         None,
         1,
         1,
-        false,
         true,
         vec![],
     );

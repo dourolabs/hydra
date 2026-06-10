@@ -1979,7 +1979,6 @@ struct AgentRow {
     mcp_config_path: Option<String>,
     max_tries: i32,
     max_simultaneous: i32,
-    is_assignment_agent: bool,
     #[sqlx(default)]
     is_default_conversation_agent: bool,
     secrets: serde_json::Value,
@@ -3616,7 +3615,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, deleted, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = $1"
         );
@@ -3636,7 +3635,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_assignment_agent, is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, deleted, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE deleted = false ORDER BY name"
         );
@@ -5250,16 +5249,15 @@ impl Store for PostgresStoreV2 {
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, max_simultaneous = $4, \
-                         is_assignment_agent = $5, is_default_conversation_agent = $6, secrets = $7, \
-                         deleted = false, created_at = $8, updated_at = $9 \
-                     WHERE name = $10"
+                         is_default_conversation_agent = $5, secrets = $6, \
+                         deleted = false, created_at = $7, updated_at = $8 \
+                     WHERE name = $9"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
-                    .bind(agent.is_assignment_agent)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(now)
@@ -5278,9 +5276,9 @@ impl Store for PostgresStoreV2 {
                 })?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
-                     (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, is_assignment_agent, \
+                     (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
                       is_default_conversation_agent, secrets, deleted, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
@@ -5288,7 +5286,6 @@ impl Store for PostgresStoreV2 {
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
                     .bind(agent.max_simultaneous)
-                    .bind(agent.is_assignment_agent)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(agent.deleted)
@@ -5312,16 +5309,15 @@ impl Store for PostgresStoreV2 {
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, max_simultaneous = $4, \
-                 is_assignment_agent = $5, is_default_conversation_agent = $6, secrets = $7, \
-                 updated_at = $8 \
-             WHERE name = $9"
+                 is_default_conversation_agent = $5, secrets = $6, \
+                 updated_at = $7 \
+             WHERE name = $8"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
             .bind(agent.mcp_config_path.as_deref())
             .bind(agent.max_tries)
             .bind(agent.max_simultaneous)
-            .bind(agent.is_assignment_agent)
             .bind(agent.is_default_conversation_agent)
             .bind(&secrets_json)
             .bind(Utc::now())
@@ -6128,7 +6124,6 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         mcp_config_path: row.mcp_config_path,
         max_tries: row.max_tries,
         max_simultaneous: row.max_simultaneous,
-        is_assignment_agent: row.is_assignment_agent,
         is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
         deleted: row.deleted,
@@ -7809,7 +7804,6 @@ mod tests {
             3,
             5,
             false,
-            false,
             Vec::new(),
         )
     }
@@ -7829,7 +7823,6 @@ mod tests {
         assert_eq!(fetched.prompt_path, "/agents/test-agent/prompt.md");
         assert_eq!(fetched.max_tries, 3);
         assert_eq!(fetched.max_simultaneous, 5);
-        assert!(!fetched.is_assignment_agent);
         assert!(!fetched.is_default_conversation_agent);
         assert!(!fetched.deleted);
 
@@ -7840,7 +7833,6 @@ mod tests {
             None,
             5,
             10,
-            false,
             false,
             Vec::new(),
         );
@@ -7890,11 +7882,11 @@ mod tests {
         );
     }
 
-    // Role-flag uniqueness (`is_assignment_agent`,
-    // `is_default_conversation_agent`) is workflow state and is enforced by
-    // the `agent_role_uniqueness` `Restriction` in `AppState`, not at the
-    // store layer. This test exists to keep that boundary explicit: a direct
-    // store insert of a second role-flagged agent must succeed.
+    // Role-flag uniqueness (`is_default_conversation_agent`) is workflow
+    // state and is enforced by the `agent_role_uniqueness` `Restriction` in
+    // `AppState`, not at the store layer. This test exists to keep that
+    // boundary explicit: a direct store insert of a second role-flagged
+    // agent must succeed.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn store_does_not_enforce_role_uniqueness_v2(pool: PgStorePool) {
@@ -7907,7 +7899,6 @@ mod tests {
             3,
             5,
             true,
-            true,
             Vec::new(),
         );
         store.add_agent(agent_a).await.unwrap();
@@ -7918,7 +7909,6 @@ mod tests {
             None,
             3,
             5,
-            true,
             true,
             Vec::new(),
         );
@@ -7951,7 +7941,6 @@ mod tests {
             7,
             12,
             false,
-            false,
             Vec::new(),
         );
         store.add_agent(reactivated).await.unwrap();
@@ -7962,7 +7951,6 @@ mod tests {
         assert_eq!(fetched.prompt_path, "/agents/test-agent/prompt_new.md");
         assert_eq!(fetched.max_tries, 7);
         assert_eq!(fetched.max_simultaneous, 12);
-        assert!(!fetched.is_assignment_agent);
         assert!(!fetched.is_default_conversation_agent);
         assert!(!fetched.deleted);
     }
@@ -7979,7 +7967,6 @@ mod tests {
             None,
             3,
             i32::MAX,
-            false,
             false,
             vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()],
         );
