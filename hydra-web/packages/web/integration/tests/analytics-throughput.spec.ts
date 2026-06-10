@@ -161,7 +161,7 @@ test.describe("Analytics throughput @analytics:throughput", () => {
     ).toBeVisible();
   });
 
-  test("issue-type slicer is single-select and writes issue_type to the URL", async ({
+  test("issue-type slicer is multi-select and writes issue_types to the URL", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/analytics/throughput");
@@ -178,19 +178,39 @@ test.describe("Analytics throughput @analytics:throughput", () => {
       }
     });
 
-    await page.getByTestId("slicer-issue-type").selectOption("feature");
-    await expect(page).toHaveURL(/issue_type=feature/);
-    // The legacy multi-select comma-joined param must no longer be written.
-    await expect(page).not.toHaveURL(/issue_types=/);
-
+    // Single-checkbox subcase: one tick → `issue_types=feature`.
+    await page.getByTestId("slicer-issue-type-feature").click();
+    await expect(page).toHaveURL(/issue_types=feature(?!%2C|,)/);
     await expect
-      .poll(() => requests.some((u) => u.includes("issue_type=feature")), {
+      .poll(() => requests.some((u) => /issue_types=feature(?!%2C|,)/.test(u)), {
         timeout: 5_000,
       })
       .toBe(true);
 
-    // Clearing the selection drops the URL param.
-    await page.getByTestId("slicer-issue-type").selectOption("");
+    // Tick a second checkbox: URL carries both values, comma-joined
+    // (order-insensitive — the URL-encoded comma is `%2C`).
+    await page.getByTestId("slicer-issue-type-bug").click();
+    await expect(page).toHaveURL(
+      /issue_types=(feature%2Cbug|bug%2Cfeature|feature,bug|bug,feature)/,
+    );
+    await expect
+      .poll(
+        () => {
+          return requests.some((u) => {
+            const match = u.match(/issue_types=([^&]+)/);
+            if (!match) return false;
+            const decoded = decodeURIComponent(match[1]).split(",").sort();
+            return decoded.length === 2 && decoded[0] === "bug" && decoded[1] === "feature";
+          });
+        },
+        { timeout: 5_000 },
+      )
+      .toBe(true);
+
+    // Unchecking both clears the param.
+    await page.getByTestId("slicer-issue-type-feature").click();
+    await page.getByTestId("slicer-issue-type-bug").click();
+    await expect(page).not.toHaveURL(/issue_types=/);
     await expect(page).not.toHaveURL(/issue_type=/);
   });
 

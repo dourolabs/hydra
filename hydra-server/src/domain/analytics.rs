@@ -424,9 +424,11 @@ impl IssueHistory {
 /// Apply the in-process filters that don't map cleanly to
 /// [`SearchIssuesQuery`]: `repo_name` (lives in `session_settings`),
 /// `assignee` (compared as the canonical Principal path string), and
-/// `issue_type`. The store-side filters (`creator`, `project_id`) are
-/// pushed down through [`SearchIssuesQuery`] in
-/// [`fetch_issue_histories`]; this is the leftover sieve.
+/// the issue-type filter (`issue_types` plural include-set with
+/// fallback to the singular `issue_type`). The store-side filters
+/// (`creator`, `project_id`) are pushed down through
+/// [`SearchIssuesQuery`] in [`fetch_issue_histories`]; this is the
+/// leftover sieve.
 fn issue_passes_inprocess_filters(issue: &Issue, query: &IssuesThroughputQuery) -> bool {
     if let Some(expected_repo) = query.repo_name.as_deref() {
         let repo_matches = issue
@@ -439,7 +441,21 @@ fn issue_passes_inprocess_filters(issue: &Issue, query: &IssuesThroughputQuery) 
             return false;
         }
     }
-    if let Some(expected_type) = query.issue_type {
+    if !query.issue_types.is_empty() {
+        let issue_domain_type = &issue.issue_type;
+        let matches = query.issue_types.iter().any(|wire_type| {
+            // Unknown is a forward-compat sentinel with no domain
+            // mapping; skip it so it never matches a real issue.
+            if matches!(wire_type, hydra_common::api::v1::issues::IssueType::Unknown) {
+                return false;
+            }
+            let dt: crate::domain::issues::IssueType = (*wire_type).into();
+            &dt == issue_domain_type
+        });
+        if !matches {
+            return false;
+        }
+    } else if let Some(expected_type) = query.issue_type {
         let domain_type: crate::domain::issues::IssueType = expected_type.into();
         if issue.issue_type != domain_type {
             return false;
@@ -2025,6 +2041,129 @@ mod tests {
             .expect("fetch");
         let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
         assert_eq!(ids, vec![normal_id]);
+    }
+
+    fn issue_in_default_project_typed(
+        issue_type: DomainIssueType,
+        status: &str,
+        creator: &str,
+    ) -> DomainIssue {
+        DomainIssue::new(
+            issue_type,
+            "title".to_string(),
+            "desc".to_string(),
+            Username::from(creator),
+            String::new(),
+            skey(status),
+            default_project_id(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn fetch_issue_histories_issue_types_returns_union() {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::api::v1::issues::IssueType as ApiIssueType;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let feature = issue_in_default_project_typed(DomainIssueType::Feature, "open", "alice");
+        let (feature_id, _) = store.add_issue(feature, &actor).await.expect("add feature");
+        let bug = issue_in_default_project_typed(DomainIssueType::Bug, "open", "alice");
+        let (bug_id, _) = store.add_issue(bug, &actor).await.expect("add bug");
+        let task = issue_in_default_project_typed(DomainIssueType::Task, "open", "alice");
+        let (_, _) = store.add_issue(task, &actor).await.expect("add task");
+
+        let mut query =
+            IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        query.issue_types = vec![ApiIssueType::Feature, ApiIssueType::Bug];
+        let histories = fetch_issue_histories(store.as_ref(), &query)
+            .await
+            .expect("fetch");
+        let mut ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
+        ids.sort();
+        let mut expected = vec![feature_id, bug_id];
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
+
+    #[tokio::test]
+    async fn fetch_issue_histories_issue_type_singular_fallback() {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::api::v1::issues::IssueType as ApiIssueType;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let feature = issue_in_default_project_typed(DomainIssueType::Feature, "open", "alice");
+        let (feature_id, _) = store.add_issue(feature, &actor).await.expect("add feature");
+        let bug = issue_in_default_project_typed(DomainIssueType::Bug, "open", "alice");
+        let (_, _) = store.add_issue(bug, &actor).await.expect("add bug");
+
+        let mut query =
+            IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        query.issue_type = Some(ApiIssueType::Feature);
+        // issue_types empty → singular field applies.
+        let histories = fetch_issue_histories(store.as_ref(), &query)
+            .await
+            .expect("fetch");
+        let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
+        assert_eq!(ids, vec![feature_id]);
+    }
+
+    #[tokio::test]
+    async fn fetch_issue_histories_no_type_filter_returns_all() {
+        use crate::test_utils::test_state_handles;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let feature = issue_in_default_project_typed(DomainIssueType::Feature, "open", "alice");
+        store.add_issue(feature, &actor).await.expect("add feature");
+        let bug = issue_in_default_project_typed(DomainIssueType::Bug, "open", "alice");
+        store.add_issue(bug, &actor).await.expect("add bug");
+        let task = issue_in_default_project_typed(DomainIssueType::Task, "open", "alice");
+        store.add_issue(task, &actor).await.expect("add task");
+
+        let query =
+            IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        // Both issue_type and issue_types unset.
+        let histories = fetch_issue_histories(store.as_ref(), &query)
+            .await
+            .expect("fetch");
+        assert_eq!(histories.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn fetch_issue_histories_issue_types_supersedes_singular() {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::api::v1::issues::IssueType as ApiIssueType;
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let feature = issue_in_default_project_typed(DomainIssueType::Feature, "open", "alice");
+        let (feature_id, _) = store.add_issue(feature, &actor).await.expect("add feature");
+        let bug = issue_in_default_project_typed(DomainIssueType::Bug, "open", "alice");
+        let (_, _) = store.add_issue(bug, &actor).await.expect("add bug");
+
+        let mut query =
+            IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        // Non-empty issue_types wins; singular issue_type is ignored.
+        query.issue_types = vec![ApiIssueType::Feature];
+        query.issue_type = Some(ApiIssueType::Bug);
+        let histories = fetch_issue_histories(store.as_ref(), &query)
+            .await
+            .expect("fetch");
+        let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
+        assert_eq!(ids, vec![feature_id]);
     }
 
     #[tokio::test]

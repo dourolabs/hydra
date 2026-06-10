@@ -14,7 +14,7 @@ describe("slicerState.readSlicerState", () => {
       projectId: null,
       statusKeys: [],
       repoName: null,
-      issueType: null,
+      issueTypes: [],
       assignee: null,
       creator: null,
     });
@@ -26,7 +26,7 @@ describe("slicerState.readSlicerState", () => {
       project_id: "j-abc",
       status_keys: "open,in-progress",
       repo_name: "dourolabs/hydra",
-      issue_type: "feature",
+      issue_types: "feature,bug",
       assignee: "agents/swe",
       creator: "alice",
     });
@@ -36,17 +36,35 @@ describe("slicerState.readSlicerState", () => {
       projectId: "j-abc",
       statusKeys: ["open", "in-progress"],
       repoName: "dourolabs/hydra",
-      issueType: "feature",
+      issueTypes: ["feature", "bug"],
       assignee: "agents/swe",
       creator: "alice",
     });
   });
 
-  it("drops invalid range and issue_type values", () => {
-    const params = new URLSearchParams({ range: "junk", issue_type: "nope" });
+  it("drops invalid range and issue_types values", () => {
+    const params = new URLSearchParams({ range: "junk", issue_types: "feature,bogus,bug" });
     const s = readSlicerState(params);
     expect(s.range).toBe(DEFAULT_TIME_RANGE);
-    expect(s.issueType).toBeNull();
+    expect(s.issueTypes).toEqual(["feature", "bug"]);
+  });
+
+  it("falls back to the legacy issue_type singular param when issue_types is absent", () => {
+    const params = new URLSearchParams({ issue_type: "feature" });
+    const s = readSlicerState(params);
+    expect(s.issueTypes).toEqual(["feature"]);
+  });
+
+  it("ignores the legacy issue_type when issue_types is present (even if empty)", () => {
+    const params = new URLSearchParams("issue_types=&issue_type=feature");
+    const s = readSlicerState(params);
+    expect(s.issueTypes).toEqual([]);
+  });
+
+  it("drops an invalid legacy issue_type", () => {
+    const params = new URLSearchParams({ issue_type: "nope" });
+    const s = readSlicerState(params);
+    expect(s.issueTypes).toEqual([]);
   });
 });
 
@@ -67,13 +85,27 @@ describe("slicerState.writeSlicerState", () => {
     expect(p.get("status_keys")).toBe("open,in-progress");
   });
 
-  it("sets and clears issue_type as a single-select", () => {
-    const set = writeSlicerState(new URLSearchParams(), { issueType: "feature" });
-    expect(set.get("issue_type")).toBe("feature");
-    const clear = writeSlicerState(new URLSearchParams("issue_type=feature"), {
-      issueType: null,
+  it("writes issue_types as a comma-joined multi-select and drops empty arrays", () => {
+    const set = writeSlicerState(new URLSearchParams(), { issueTypes: ["feature", "bug"] });
+    expect(set.get("issue_types")).toBe("feature,bug");
+    const clear = writeSlicerState(new URLSearchParams("issue_types=feature,bug"), {
+      issueTypes: [],
     });
-    expect(clear.has("issue_type")).toBe(false);
+    expect(clear.has("issue_types")).toBe(false);
+  });
+
+  it("clears the legacy issue_type param on any issueTypes write", () => {
+    const set = writeSlicerState(new URLSearchParams("issue_type=feature"), {
+      issueTypes: ["bug"],
+    });
+    expect(set.has("issue_type")).toBe(false);
+    expect(set.get("issue_types")).toBe("bug");
+
+    const empty = writeSlicerState(new URLSearchParams("issue_type=feature"), {
+      issueTypes: [],
+    });
+    expect(empty.has("issue_type")).toBe(false);
+    expect(empty.has("issue_types")).toBe(false);
   });
 
   it("always writes the range key when patched", () => {
