@@ -10628,19 +10628,37 @@ mod tests {
         )
     }
 
+    /// Test helper: add a project plus every inline status on it via
+    /// the new per-status API. Returns the assigned project id and
+    /// the project version after the last `add_status` call.
+    async fn add_project_with_statuses_pg(
+        store: &PostgresStoreV2,
+        project: Project,
+        actor: &ActorRef,
+    ) -> (ProjectId, VersionNumber) {
+        let statuses = project.statuses.clone();
+        let mut bare = project;
+        bare.statuses = Vec::new();
+        let (id, mut version) = store.add_project(bare, actor).await.unwrap();
+        for status in statuses {
+            let (_, v) = store.add_status(&id, status, actor).await.unwrap();
+            version = v;
+        }
+        (id, version)
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn project_round_trip_pg(pool: PgStorePool) {
         use crate::domain::projects::default_project_id;
         let store = PostgresStoreV2::new(pool);
-        let (id, version) = store
-            .add_project(sample_project_pg(), &ActorRef::test())
-            .await
-            .unwrap();
-        assert_eq!(version, 1);
+        let (id, version) =
+            add_project_with_statuses_pg(&store, sample_project_pg(), &ActorRef::test()).await;
+        // 1 add_project + 2 add_status = version 3.
+        assert_eq!(version, 3);
 
         let fetched = store.get_project(&id, false).await.unwrap();
-        assert_eq!(fetched.version, 1);
+        assert_eq!(fetched.version, 3);
         assert_eq!(fetched.item.name, "Engineering");
         assert_eq!(fetched.item.statuses.len(), 2);
         // `on_enter` must round-trip through the JSONB column unchanged.
@@ -10661,14 +10679,14 @@ mod tests {
             .update_project(&id, updated, &ActorRef::test())
             .await
             .unwrap();
-        assert_eq!(v2, 2);
+        assert_eq!(v2, 4);
         assert_eq!(
             store.get_project(&id, false).await.unwrap().item.name,
             "Engineering Renamed"
         );
 
         let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
-        assert_eq!(v3, 3);
+        assert_eq!(v3, 5);
         let after_delete = store.list_projects(false).await.unwrap();
         assert_eq!(after_delete.len(), 1);
         assert_eq!(after_delete[0].0, default_id);
@@ -10692,10 +10710,8 @@ mod tests {
     async fn get_project_by_key_round_trip_pg(pool: PgStorePool) {
         use hydra_common::api::v1::projects::ProjectKey;
         let store = PostgresStoreV2::new(pool);
-        let (id, _) = store
-            .add_project(sample_project_pg(), &ActorRef::test())
-            .await
-            .unwrap();
+        let (id, _) =
+            add_project_with_statuses_pg(&store, sample_project_pg(), &ActorRef::test()).await;
 
         let key = ProjectKey::try_new("engineering").unwrap();
         let (resolved_id, versioned) = store
@@ -10924,10 +10940,8 @@ mod tests {
     #[ignore]
     async fn project_bound_issue_project_id_round_trips_pg(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
-        let (project_id, _) = store
-            .add_project(sample_project_pg(), &ActorRef::test())
-            .await
-            .unwrap();
+        let (project_id, _) =
+            add_project_with_statuses_pg(&store, sample_project_pg(), &ActorRef::test()).await;
 
         let mut issue = sample_issue(Vec::new());
         issue.project_id = project_id.clone();
