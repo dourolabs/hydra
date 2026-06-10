@@ -3012,7 +3012,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT i.id FROM {TABLE_ISSUES_V2} i \
              INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
              WHERE i.is_latest = 1 AND i.deleted = 0 \
-               AND i.project_id = ?1 AND s.key = ?2 AND i.updated_at < ?3 \
+               AND i.project_id = ?1 AND s.key = ?2 AND i.created_at < ?3 \
              LIMIT ?4"
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
@@ -7571,7 +7571,7 @@ mod tests {
         let project_id = crate::domain::projects::default_project_id();
 
         // Add three issues spaced ~50ms apart so they have distinct
-        // updated_at values (SQLite stores ms-precision timestamps).
+        // created_at values (SQLite stores ms-precision timestamps).
         let (oldest, _) = store
             .add_issue(sample_issue(vec![]), &ActorRef::test())
             .await
