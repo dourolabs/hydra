@@ -169,8 +169,8 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     drop_is_assignment_agent_preserves_rows(&pool).await?;
     drop_is_assignment_agent_migration_is_idempotent(&pool).await?;
 
-    add_kill_sessions_to_default_terminal_statuses_post_migration_state(&pool).await?;
-    add_kill_sessions_to_default_terminal_statuses_is_idempotent(&pool).await?;
+    teardown_work_on_default_terminal_statuses_post_migration_state(&pool).await?;
+    rename_kill_sessions_to_teardown_work_is_idempotent(&pool).await?;
 
     backfill_assignee_null_on_terminal_default_issues_nulls_targeted_rows(&pool).await?;
     backfill_assignee_null_on_terminal_default_issues_is_idempotent(&pool).await?;
@@ -665,14 +665,18 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &SqlitePool) -> Result
 }
 
 // ---------------------------------------------------------------------------
-// 20260620000000_add_kill_sessions_to_default_terminal_statuses. Seeds
+// 20260620000000_add_kill_sessions_to_default_terminal_statuses (seeds
 // `on_enter.kill_sessions = true` on the three terminal default-project
-// statuses (`closed`, `dropped`, `failed`) without disturbing
-// `on_enter` on any other row, and preserves the `clear_assignee = true`
-// key seeded by the prior 20260618 migration. Idempotent under rerun.
+// statuses) followed by
+// 20260710000000_rename_kill_sessions_to_teardown_work (renames that
+// JSON key to `teardown_work`). The post-state checks the end result of
+// the pair: terminal rows carry `teardown_work=true` alongside the
+// `clear_assignee=true` key seeded by the prior 20260618 migration, with
+// no legacy `kill_sessions` key remaining. The rename migration is
+// idempotent under rerun.
 // ---------------------------------------------------------------------------
 
-async fn add_kill_sessions_to_default_terminal_statuses_post_migration_state(
+async fn teardown_work_on_default_terminal_statuses_post_migration_state(
     pool: &SqlitePool,
 ) -> Result<()> {
     for key in ["closed", "dropped", "failed"] {
@@ -689,11 +693,16 @@ async fn add_kill_sessions_to_default_terminal_statuses_post_migration_state(
             .ok_or_else(|| anyhow::anyhow!("j-defaul.{key}: expected on_enter NOT NULL"))?;
         let parsed: serde_json::Value = serde_json::from_str(&on_enter_text)
             .with_context(|| format!("decode on_enter JSON for j-defaul.{key}"))?;
-        if parsed.get("kill_sessions") != Some(&serde_json::json!(true)) {
-            bail!("j-defaul.{key}: expected on_enter.kill_sessions=true; got {parsed}");
+        if parsed.get("teardown_work") != Some(&serde_json::json!(true)) {
+            bail!("j-defaul.{key}: expected on_enter.teardown_work=true; got {parsed}");
+        }
+        if parsed.get("kill_sessions").is_some() {
+            bail!(
+                "j-defaul.{key}: expected legacy on_enter.kill_sessions key to be stripped; got {parsed}"
+            );
         }
         // The prior 20260618 migration also sets clear_assignee=true on
-        // these rows — the kill_sessions migration must preserve it.
+        // these rows — the seed + rename pair must preserve it.
         if parsed.get("clear_assignee") != Some(&serde_json::json!(true)) {
             bail!(
                 "j-defaul.{key}: expected on_enter.clear_assignee=true to be preserved; got {parsed}"
@@ -718,30 +727,27 @@ async fn add_kill_sessions_to_default_terminal_statuses_post_migration_state(
     Ok(())
 }
 
-async fn add_kill_sessions_to_default_terminal_statuses_is_idempotent(
-    pool: &SqlitePool,
-) -> Result<()> {
+async fn rename_kill_sessions_to_teardown_work_is_idempotent(pool: &SqlitePool) -> Result<()> {
     let snapshot_before = sqlx::query(
         "SELECT key, on_enter FROM statuses WHERE project_id = 'j-defaul' \
          ORDER BY key",
     )
     .fetch_all(pool)
     .await
-    .context("snapshot j-defaul on_enter before kill_sessions idempotency rerun")?;
+    .context("snapshot j-defaul on_enter before rename idempotency rerun")?;
 
     sqlx::raw_sql(
         "UPDATE statuses \
-         SET on_enter = json_set( \
-             COALESCE(on_enter, '{}'), \
-             '$.kill_sessions', \
-             json('true') \
+         SET on_enter = json_remove( \
+             json_set(on_enter, '$.teardown_work', json('true')), \
+             '$.kill_sessions' \
          ) \
-         WHERE project_id = 'j-defaul' \
-           AND key IN ('closed', 'dropped', 'failed')",
+         WHERE on_enter IS NOT NULL \
+           AND json_extract(on_enter, '$.kill_sessions') IS NOT NULL",
     )
     .execute(pool)
     .await
-    .context("re-apply kill_sessions seed migration body verbatim")?;
+    .context("re-apply rename migration body verbatim")?;
 
     let snapshot_after = sqlx::query(
         "SELECT key, on_enter FROM statuses WHERE project_id = 'j-defaul' \
@@ -749,11 +755,11 @@ async fn add_kill_sessions_to_default_terminal_statuses_is_idempotent(
     )
     .fetch_all(pool)
     .await
-    .context("snapshot j-defaul on_enter after kill_sessions idempotency rerun")?;
+    .context("snapshot j-defaul on_enter after rename idempotency rerun")?;
 
     if snapshot_before.len() != snapshot_after.len() {
         bail!(
-            "row count changed across kill_sessions rerun: {} -> {}",
+            "row count changed across rename rerun: {} -> {}",
             snapshot_before.len(),
             snapshot_after.len()
         );
@@ -765,7 +771,7 @@ async fn add_kill_sessions_to_default_terminal_statuses_is_idempotent(
         let after_on_enter: Option<String> = after.try_get("on_enter")?;
         if before_key != after_key || before_on_enter != after_on_enter {
             bail!(
-                "j-defaul.{before_key} changed across kill_sessions rerun: \
+                "j-defaul.{before_key} changed across rename rerun: \
                  {before_on_enter:?} -> {after_on_enter:?}"
             );
         }
@@ -2816,10 +2822,11 @@ async fn create_statuses_migration_backfills_default_seed(pool: &SqlitePool) -> 
             );
         }
         // The HEAD-state of `on_enter` reflects the
-        // 20260618000000_add_clear_assignee_to_default_terminal_statuses
-        // and 20260620000000_add_kill_sessions_to_default_terminal_statuses
-        // seed migrations: terminal rows carry
-        // `{ clear_assignee: true, kill_sessions: true }`; non-terminal
+        // 20260618000000_add_clear_assignee_to_default_terminal_statuses,
+        // 20260620000000_add_kill_sessions_to_default_terminal_statuses,
+        // and 20260710000000_rename_kill_sessions_to_teardown_work
+        // migrations: terminal rows carry
+        // `{ clear_assignee: true, teardown_work: true }`; non-terminal
         // rows stay NULL. Compare against the expected
         // `default_project_seed()` shape rather than asserting NULL
         // outright.

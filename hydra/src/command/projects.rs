@@ -137,7 +137,7 @@ const CREATE_DIRECT_FLAG_IDS: &[&str] = &[
     "on_enter_assign_to",
     "on_enter_attach_form",
     "on_enter_clear_assignee",
-    "on_enter_kill_sessions",
+    "on_enter_teardown_work",
 ];
 
 /// Names of every direct flag on [`UpdateStatusArgs`].
@@ -156,7 +156,7 @@ const UPDATE_DIRECT_FLAG_IDS: &[&str] = &[
     "on_enter_assign_to",
     "on_enter_attach_form",
     "on_enter_clear_assignee",
-    "on_enter_kill_sessions",
+    "on_enter_teardown_work",
     "clear_on_enter",
 ];
 
@@ -238,10 +238,11 @@ pub struct CreateStatusArgs {
     #[arg(long = "on-enter-clear-assignee")]
     pub on_enter_clear_assignee: bool,
 
-    /// On-enter: kill any `Created`/`Pending`/`Running` sessions attached
-    /// to the issue.
-    #[arg(long = "on-enter-kill-sessions")]
-    pub on_enter_kill_sessions: bool,
+    /// On-enter: tear down agent work attached to the issue — kill any
+    /// `Created`/`Pending`/`Running` sessions and close any non-`Closed`
+    /// conversations spawned from the issue.
+    #[arg(long = "on-enter-teardown-work")]
+    pub on_enter_teardown_work: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -360,10 +361,11 @@ pub struct UpdateStatusArgs {
     #[arg(long = "on-enter-clear-assignee", conflicts_with = "clear_on_enter")]
     pub on_enter_clear_assignee: bool,
 
-    /// On-enter: kill any `Created`/`Pending`/`Running` sessions attached
-    /// to the issue.
-    #[arg(long = "on-enter-kill-sessions", conflicts_with = "clear_on_enter")]
-    pub on_enter_kill_sessions: bool,
+    /// On-enter: tear down agent work attached to the issue — kill any
+    /// `Created`/`Pending`/`Running` sessions and close any non-`Closed`
+    /// conversations spawned from the issue.
+    #[arg(long = "on-enter-teardown-work", conflicts_with = "clear_on_enter")]
+    pub on_enter_teardown_work: bool,
 
     /// Clear the entire `on_enter` automation. Mutually exclusive with
     /// any `--on-enter-*` setter.
@@ -640,7 +642,7 @@ fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefin
         args.on_enter_assign_to.clone(),
         args.on_enter_attach_form.clone(),
         args.on_enter_clear_assignee,
-        args.on_enter_kill_sessions,
+        args.on_enter_teardown_work,
     )?;
     let mut def = StatusDefinition::new(
         key,
@@ -719,7 +721,7 @@ fn update_has_any_direct_flag(args: &UpdateStatusArgs) -> bool {
         || args.on_enter_assign_to.is_some()
         || args.on_enter_attach_form.is_some()
         || args.on_enter_clear_assignee
-        || args.on_enter_kill_sessions
+        || args.on_enter_teardown_work
         || args.clear_on_enter
 }
 
@@ -773,14 +775,14 @@ fn build_on_enter_from_flags(
     assign_to: Option<Principal>,
     attach_form: Option<DocumentPath>,
     clear_assignee: bool,
-    kill_sessions: bool,
+    teardown_work: bool,
 ) -> Result<Option<StatusOnEnter>> {
-    if assign_to.is_none() && attach_form.is_none() && !clear_assignee && !kill_sessions {
+    if assign_to.is_none() && attach_form.is_none() && !clear_assignee && !teardown_work {
         return Ok(None);
     }
     let mut on_enter = StatusOnEnter::new(assign_to, attach_form);
     on_enter.clear_assignee = clear_assignee;
-    on_enter.kill_sessions = kill_sessions;
+    on_enter.teardown_work = teardown_work;
     on_enter
         .validate()
         .map_err(|e| anyhow!("invalid on_enter configuration: {e}"))?;
@@ -801,7 +803,7 @@ fn overlay_on_enter(
     let any_setter = args.on_enter_assign_to.is_some()
         || args.on_enter_attach_form.is_some()
         || args.on_enter_clear_assignee
-        || args.on_enter_kill_sessions;
+        || args.on_enter_teardown_work;
     if !any_setter {
         return Ok(current);
     }
@@ -809,7 +811,7 @@ fn overlay_on_enter(
         args.on_enter_assign_to.clone(),
         args.on_enter_attach_form.clone(),
         args.on_enter_clear_assignee,
-        args.on_enter_kill_sessions,
+        args.on_enter_teardown_work,
     )
 }
 
@@ -1194,7 +1196,7 @@ mod tests {
             "#aabbcc",
             "--on-enter-assign-to",
             "agents/swe",
-            "--on-enter-kill-sessions",
+            "--on-enter-teardown-work",
         ])
         .unwrap();
         let def = build_create_status_definition(&args).unwrap();
@@ -1203,7 +1205,7 @@ mod tests {
             Principal::Agent { name } => assert_eq!(name.as_str(), "swe"),
             other => panic!("expected agent principal, got {other:?}"),
         }
-        assert!(on_enter.kill_sessions);
+        assert!(on_enter.teardown_work);
         assert!(!on_enter.clear_assignee);
     }
 
@@ -1316,7 +1318,7 @@ mod tests {
             &["--clear-on-enter", "--on-enter-assign-to", "agents/swe"],
             &["--clear-on-enter", "--on-enter-attach-form", "/forms/x.md"],
             &["--clear-on-enter", "--on-enter-clear-assignee"],
-            &["--clear-on-enter", "--on-enter-kill-sessions"],
+            &["--clear-on-enter", "--on-enter-teardown-work"],
         ];
         for argv in cases {
             let err = parse_update_failure(argv);
@@ -1436,14 +1438,14 @@ mod tests {
 
     #[test]
     fn update_overlay_on_enter_rebuilt_wholesale() {
-        // Current on_enter has assign_to=agents/pm. After --on-enter-kill-sessions
+        // Current on_enter has assign_to=agents/pm. After --on-enter-teardown-work
         // (and nothing else), the on_enter is rebuilt from scratch so
-        // assign_to is None and kill_sessions=true.
-        let args = parse_update(&["--on-enter-kill-sessions"]).unwrap();
+        // assign_to is None and teardown_work=true.
+        let args = parse_update(&["--on-enter-teardown-work"]).unwrap();
         let def = build_update_status_definition_sync(&args).unwrap();
         let on_enter = def.on_enter.expect("on_enter present");
         assert!(on_enter.assign_to.is_none());
-        assert!(on_enter.kill_sessions);
+        assert!(on_enter.teardown_work);
         assert!(!on_enter.clear_assignee);
     }
 

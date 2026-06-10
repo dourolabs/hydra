@@ -176,7 +176,7 @@ async fn cli_projects_status_create_with_direct_flags() -> Result<()> {
         "/projects/engineering/statuses/review.md",
         "--on-enter-assign-to",
         "agents/swe",
-        "--on-enter-kill-sessions",
+        "--on-enter-teardown-work",
     ])
     .await?;
 
@@ -209,7 +209,7 @@ async fn cli_projects_status_create_with_direct_flags() -> Result<()> {
         }
         other => panic!("expected agents/swe, got {other:?}"),
     }
-    assert!(on_enter.kill_sessions);
+    assert!(on_enter.teardown_work);
     assert!(!on_enter.clear_assignee);
 
     // Update only the label via direct flags — other fields must

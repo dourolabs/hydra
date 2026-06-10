@@ -10,15 +10,15 @@
 //! |---------------|------------------|---------------------|----------------------|-----------------------------------------|
 //! | `open`        | false            | false               | false                | none                                    |
 //! | `in-progress` | false            | false               | false                | none                                    |
-//! | `closed`      | true             | true                | false                | clear_assignee=true, kill_sessions=true |
-//! | `dropped`     | true             | false               | true                 | clear_assignee=true, kill_sessions=true |
-//! | `failed`      | true             | false               | true                 | clear_assignee=true, kill_sessions=true |
+//! | `closed`      | true             | true                | false                | clear_assignee=true, teardown_work=true |
+//! | `dropped`     | true             | false               | true                 | clear_assignee=true, teardown_work=true |
+//! | `failed`      | true             | false               | true                 | clear_assignee=true, teardown_work=true |
 //!
 //! Default status key is `open`. The terminal statuses
 //! (`closed`/`dropped`/`failed`) carry `on_enter.clear_assignee = true`
 //! so their `apply_status_on_enter` automation unsets the issue's
-//! assignee, and `on_enter.kill_sessions = true` so the
-//! `kill_sessions_on_enter` automation tears down any active sessions
+//! assignee, and `on_enter.teardown_work = true` so the
+//! `teardown_issue_work` automation tears down any active sessions
 //! attached to the issue.
 
 use hydra_common::ProjectId;
@@ -174,7 +174,7 @@ fn rgb(value: &str) -> Rgb {
 fn terminal_on_enter() -> StatusOnEnter {
     let mut on_enter = StatusOnEnter::new(None, None);
     on_enter.clear_assignee = true;
-    on_enter.kill_sessions = true;
+    on_enter.teardown_work = true;
     on_enter
 }
 
@@ -293,7 +293,7 @@ mod tests {
             );
             match case.on_enter {
                 None => assert!(def.on_enter.is_none(), "on_enter must be None for {k}"),
-                Some((want_clear, want_kill)) => {
+                Some((want_clear, want_teardown)) => {
                     let on_enter = def
                         .on_enter
                         .as_ref()
@@ -311,8 +311,8 @@ mod tests {
                         "on_enter.clear_assignee for {k}"
                     );
                     assert_eq!(
-                        on_enter.kill_sessions, want_kill,
-                        "on_enter.kill_sessions for {k}"
+                        on_enter.teardown_work, want_teardown,
+                        "on_enter.teardown_work for {k}"
                     );
                 }
             }
