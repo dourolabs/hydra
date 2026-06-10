@@ -2773,7 +2773,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT i.id FROM {TABLE_ISSUES_V2} i \
              INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
              WHERE i.is_latest = true AND i.deleted = false \
-               AND i.project_id = $1 AND s.key = $2 AND i.updated_at < $3 \
+               AND i.project_id = $1 AND s.key = $2 AND i.created_at < $3 \
              LIMIT $4"
         );
         let rows = sqlx::query_scalar::<_, String>(&sql)
@@ -8596,7 +8596,7 @@ mod tests {
         let actor = ActorRef::test();
         let project_id = crate::domain::projects::default_project_id();
 
-        // Three issues spaced ~50ms apart so their updated_at values
+        // Three issues spaced ~50ms apart so their created_at values
         // are distinguishable.
         let (oldest, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
