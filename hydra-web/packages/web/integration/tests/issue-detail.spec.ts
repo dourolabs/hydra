@@ -129,4 +129,28 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
       page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00005")
     ).toBeVisible();
   });
+
+  test("can reassign via the inline assignee dropdown in the meta row", async ({
+    authenticatedPage: page,
+  }) => {
+    // i-seed00002 starts assigned to agent "swe".
+    await page.goto("/issues/i-seed00002");
+
+    const picker = page.getByTestId("issue-assignee-picker");
+    await expect(picker).toBeVisible();
+
+    // The bare dropdown is rendered without a visible "ASSIGNEE" caption.
+    await expect(picker.getByText("ASSIGNEE", { exact: true })).toHaveCount(0);
+
+    const trigger = picker.getByRole("button", { name: "Assignee" });
+    await expect(trigger).toContainText("swe");
+
+    await trigger.click();
+    // Pick a human user from the (portaled) popover. The row carries a stable
+    // testid so we sidestep accessible-name collisions with related-rail rows.
+    await page.getByTestId("issue-assignee-option-user-alice").click();
+
+    // After reassignment the trigger reflects the new principal.
+    await expect(trigger).toContainText("alice");
+  });
 });

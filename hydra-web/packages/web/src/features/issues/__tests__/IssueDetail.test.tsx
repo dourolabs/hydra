@@ -34,6 +34,43 @@ vi.mock("../ArchiveIssueButton", () => ({
   ArchiveIssueButton: () => <button data-testid="archive-button-stub">Archive</button>,
 }));
 
+vi.mock("../IssueAssigneePicker", () => ({
+  IssueAssigneePicker: ({
+    issue,
+    hideLabel,
+  }: {
+    issue: { assignee: Principal | null };
+    hideLabel?: boolean;
+  }) => {
+    const assignee = issue.assignee;
+    let label: string | null = null;
+    let kind: "human" | "agent" | null = null;
+    if (assignee) {
+      if ("User" in assignee) {
+        label = assignee.User.name;
+        kind = "human";
+      } else if ("Agent" in assignee) {
+        label = assignee.Agent.name;
+        kind = "agent";
+      }
+    }
+    return (
+      <div
+        data-testid="issue-assignee-picker-stub"
+        data-hide-label={hideLabel ? "true" : "false"}
+      >
+        {label ? (
+          <span data-testid="avatar" data-kind={kind ?? undefined}>
+            {label}
+          </span>
+        ) : (
+          <span>Unassigned</span>
+        )}
+      </div>
+    );
+  },
+}));
+
 vi.mock("../../sessions/SessionList", () => ({
   SessionList: () => <div data-testid="session-list-stub" />,
 }));

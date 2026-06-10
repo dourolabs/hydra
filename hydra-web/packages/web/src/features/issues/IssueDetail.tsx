@@ -1,12 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Avatar, Badge, Button, TypeChip } from "@hydra/ui";
+import { Badge, Button, TypeChip } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { IssueVersionRecord } from "@hydra/api";
-import { principalAvatarKind, principalDisplayName } from "../principal/formatPrincipal";
 import { StatusChip } from "../projects/StatusChip";
 import { useConversations } from "../chat/useConversations";
 import { useIssue } from "./useIssue";
+import { IssueAssigneePicker } from "./IssueAssigneePicker";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { FeedbackModal } from "./FeedbackModal";
@@ -148,18 +148,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <h1 className={styles.title}>{issue.title || issueId}</h1>
 
           <div className={styles.metaRow}>
-            {issue.assignee ? (
-              <span>
-                <Avatar
-                  name={principalDisplayName(issue.assignee)}
-                  kind={principalAvatarKind(issue.assignee)}
-                  size="sm"
-                />
-                {principalDisplayName(issue.assignee)}
-              </span>
-            ) : (
-              <span className={styles.assigneeEmpty}>Unassigned</span>
-            )}
+            <IssueAssigneePicker issueId={issueId} issue={issue} hideLabel />
             <span className={styles.metaSep}>·</span>
             <AgoTime iso={record.creation_time} />
             {settings?.repo_name && (
