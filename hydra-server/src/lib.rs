@@ -292,6 +292,22 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::analytics::patches_in_flight_over_time),
         )
         .route(
+            "/v1/analytics/throughput/issues/cycle_time",
+            get(routes::analytics::issues_cycle_time),
+        )
+        .route(
+            "/v1/analytics/throughput/issues/over_time",
+            get(routes::analytics::issues_over_time),
+        )
+        .route(
+            "/v1/analytics/throughput/issues/time_in_status_breakdown",
+            get(routes::analytics::issues_time_in_status_breakdown),
+        )
+        .route(
+            "/v1/analytics/throughput/issues/per_status_distribution",
+            get(routes::analytics::issues_per_status_distribution),
+        )
+        .route(
             "/v1/documents",
             get(routes::documents::list_documents).post(routes::documents::create_document),
         )
