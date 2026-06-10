@@ -1007,16 +1007,18 @@ async fn backfill_assignee_null_on_terminal_default_issues_is_idempotent(
 }
 
 // ---------------------------------------------------------------------------
-// Schema-invariants: pagination indexes on the four list-* tables. `issues_v2`
-// paginates by `updated_at` (so it gets `(updated_at DESC, id DESC)`); the
-// other three paginate by `created_at` (so they get `(created_at DESC, id
-// DESC)`). Mirrors postgres migrations 20260315000000, 20260317000000, and
-// 20260605000000; ported to SQLite by 20260604010000 and 20260605000000.
+// Schema-invariants: pagination indexes on the four list-* tables. All four
+// paginate by `created_at DESC, id DESC`. `issues_v2` is covered by the
+// partial `issues_v2_latest_pagination_idx (WHERE is_latest = true)` from
+// 20260318000000; the other three are covered by full `(created_at DESC, id
+// DESC)` indexes. Mirrors postgres migrations 20260315000000, 20260317000000,
+// 20260318000000, 20260605000000, and 20260622000000; ported to SQLite by
+// the matching sqlite-migrations entries.
 // ---------------------------------------------------------------------------
 
 async fn assert_pagination_indexes_exist(pool: &SqlitePool) -> Result<()> {
     for name in [
-        "issues_v2_updated_at_id_idx",
+        "issues_v2_latest_pagination_idx",
         "patches_v2_created_at_id_idx",
         "tasks_v2_created_at_id_idx",
         "documents_v2_created_at_id_idx",
@@ -1030,9 +1032,10 @@ async fn assert_pagination_indexes_exist(pool: &SqlitePool) -> Result<()> {
             bail!("expected pagination index {name} to exist post-rollforward");
         }
     }
-    // The original `issues_v2_created_at_id_idx` was dropped by 20260605000000
-    // because `list_issues` orders by `updated_at`. Catch any future migration
-    // that re-creates it without thinking.
+    // The original `issues_v2_created_at_id_idx` (non-partial) was dropped by
+    // 20260605000000; the planner uses the partial
+    // `issues_v2_latest_pagination_idx` instead. Catch any future migration
+    // that re-creates the non-partial form without thinking.
     let stale = sqlx::query(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'issues_v2_created_at_id_idx'",
     )
@@ -1042,6 +1045,22 @@ async fn assert_pagination_indexes_exist(pool: &SqlitePool) -> Result<()> {
     if stale.is_some() {
         bail!(
             "issues_v2_created_at_id_idx should have been dropped by 20260605000000; \
+             a later migration re-created it"
+        );
+    }
+    // `issues_v2_updated_at_id_idx` was added by 20260605000000 when
+    // `list_issues` paginated on `updated_at`, then dropped by 20260622000000
+    // after the keyset was swung back to `created_at` (p-kzbakldw). Catch any
+    // future migration that re-creates this known-dead index.
+    let stale_updated_at = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'issues_v2_updated_at_id_idx'",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("query sqlite_master for dropped index issues_v2_updated_at_id_idx")?;
+    if stale_updated_at.is_some() {
+        bail!(
+            "issues_v2_updated_at_id_idx should have been dropped by 20260622000000; \
              a later migration re-created it"
         );
     }
@@ -2516,7 +2535,6 @@ async fn issues_v2_project_id_not_null_migration_is_idempotent(pool: &SqlitePool
         "issues_v2_latest_id_idx",
         "issues_v2_latest_pagination_idx",
         "issues_v2_project_id_idx",
-        "issues_v2_updated_at_id_idx",
         "issues_v2_project_status_sequence_idx",
     ] {
         if !index_exists(pool, index).await? {
