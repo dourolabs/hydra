@@ -80,6 +80,12 @@ export function createProjectRoutes(store: Store): Hono {
       version: entry.version,
       project: { ...entry.data, statuses: orderedStatuses(entry.data) },
     }));
+    // Mirror the real server's `ORDER BY priority ASC, created_at DESC`
+    // (see `hydra-server/src/store/memory_store.rs::list_projects`). Without
+    // this, the board's drag-to-reorder PUT lands correctly but the GET on
+    // reload returns insertion order, so the new order appears not to
+    // persist when dev-testing against this mock.
+    projects.sort((a, b) => a.project.priority - b.project.priority);
     const resp: ListProjectsResponse = { projects };
     return c.json(resp);
   });
