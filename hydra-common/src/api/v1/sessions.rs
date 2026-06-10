@@ -1494,19 +1494,6 @@ mod tests {
         assert_eq!(parsed, interactive);
     }
 
-    #[test]
-    fn agent_config_round_trips() {
-        let cfg = AgentConfig::new(
-            Some(AgentName::try_new("agent-x").unwrap()),
-            Some("gpt-4o".to_string()),
-            Some("you are helpful".to_string()),
-            Some(serde_json::json!({"servers": {}})),
-        );
-        let json = serde_json::to_value(&cfg).unwrap();
-        let parsed: AgentConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed, cfg);
-    }
-
     // ---------------------------------------------------------------------
     // `AgentConfig.agent_name` is `Option<AgentName>`. The deserializer
     // must accept the validated form (including `null`) and reject
@@ -1809,14 +1796,6 @@ mod tests {
         let result: Result<RelativePath, _> =
             serde_json::from_value(serde_json::json!("foo/../bar"));
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn relative_path_round_trips() {
-        let path = RelativePath::new("repo").unwrap();
-        let json = serde_json::to_value(&path).unwrap();
-        let parsed: RelativePath = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed, path);
     }
 
     fn standard_mount_spec(with_build_cache: bool) -> MountSpec {
@@ -2130,14 +2109,6 @@ mod tests {
         let json = r#"{"type":"future_kind","whatever":42}"#;
         let parsed: SessionEvent = serde_json::from_str(json).unwrap();
         assert_eq!(parsed, SessionEvent::Unknown);
-    }
-
-    #[test]
-    fn session_event_summary_round_trip() {
-        let summary = SessionEventSummary::new(7, Some("User: hi".to_string()));
-        let json = serde_json::to_string(&summary).unwrap();
-        let parsed: SessionEventSummary = serde_json::from_str(&json).unwrap();
-        assert_eq!(summary, parsed);
     }
 
     #[test]

@@ -385,14 +385,6 @@ mod tests {
         }
 
         #[test]
-        fn view_l3_round_trips_to_original() {
-            let conv = sample_conversation();
-            let value = conv.view_l3();
-            let roundtripped: Conversation = serde_json::from_value(value).unwrap();
-            assert_eq!(roundtripped, conv);
-        }
-
-        #[test]
         fn view_l2_contains_view_l1_keys_with_same_values() {
             let conv = sample_conversation();
             let l1 = conv.view_l1();

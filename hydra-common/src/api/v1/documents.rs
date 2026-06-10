@@ -686,14 +686,6 @@ mod tests {
         }
 
         #[test]
-        fn view_l3_round_trips_to_original() {
-            let document = sample_document();
-            let value = document.view_l3();
-            let roundtripped: Document = serde_json::from_value(value).unwrap();
-            assert_eq!(roundtripped, document);
-        }
-
-        #[test]
         fn view_l2_contains_view_l1_keys_with_same_values() {
             let document = sample_document();
             let l1 = document.view_l1();

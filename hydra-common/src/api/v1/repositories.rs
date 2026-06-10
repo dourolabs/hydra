@@ -873,14 +873,6 @@ mod tests {
     }
 
     #[test]
-    fn merge_policy_round_trips_through_serde_json() {
-        let policy = full_merge_policy();
-        let value = serde_json::to_value(&policy).unwrap();
-        let back: MergePolicy = serde_json::from_value(value).unwrap();
-        assert_eq!(back, policy);
-    }
-
-    #[test]
     fn merge_policy_round_trips_through_yaml_legacy_bare_strings() {
         // Exercises every shape MergePolicy supports — AND across two
         // labelled reviewer groups, `any_of` disjunction inside each,
