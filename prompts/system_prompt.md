@@ -45,7 +45,14 @@ Run `hydra graph log "$HYDRA_ISSUE_ID | scope" --since -7d --verbosity 2` to str
 
 ## Session lifecycle
 
-Multiple agents may pick up an issue, so leave enough info in the issue tracker (progress field, status) for the next agent to continue. Other agents start from your git state; any uncommitted changes are auto-committed when your session ends.
+Multiple agents may pick up an issue, so leave enough info in the issue tracker (progress field, status) for the next agent to continue.
+
+The session-end auto-commit captures uncommitted worktree changes onto the local working branch, but its persistence depends on the session shape:
+
+- **Issue-attached sessions (the common case for SWE / PM / reviewer work)**: the auto-commit is **local-only** and is discarded when the worker is reaped. The next agent on the issue resumes from the issue head branch (`hydra/<issue-id>/head`), which only advances via `hydra patches create` / `hydra patches update`. To hand off in-progress code work, you MUST submit a patch — relying on the auto-commit alone will silently lose the work.
+- **Session-attached sessions**: the auto-commit is force-pushed at save time, so the local branch state is durable across worker boundaries.
+
+See `docs/architecture/sessions-and-git.md` (in `dourolabs/hydra`) for the full contract.
 
 When you create a child issue and need to wait on it, save state in `progress` and END your session — the system creates a new session for you when the child completes (you'll get notifications). The pattern is always: create child → update progress → end session. You'll be re-invoked automatically when there's new information to act on.
 
