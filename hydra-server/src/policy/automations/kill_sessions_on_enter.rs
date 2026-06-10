@@ -239,6 +239,7 @@ mod tests {
     use crate::domain::documents::Document;
     use crate::domain::issues::{Issue, IssueType, SessionSettings};
     use crate::domain::users::Username;
+    use crate::job_engine::{JobEngine, JobStatus};
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
     use chrono::Utc;
@@ -525,6 +526,56 @@ mod tests {
             after.item.status,
             ConversationStatus::Closed,
             "conversation spawned from a deleted issue should be closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn kills_tasks_when_issue_deleted() {
+        let engine = Arc::new(test_utils::MockJobEngine::new());
+        let handles = test_utils::test_state_with_engine_handles(engine.clone());
+        let store = handles.store.clone();
+
+        let issue = make_issue(status("open"));
+        let (issue_id, _) = store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Seed a Created session attached to the issue and a matching
+        // Pending job in the engine so we can observe the kill.
+        let task = make_task(&issue_id);
+        let (task_id, _) = store
+            .add_session(task, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+        engine.insert_job(&task_id, JobStatus::Pending).await;
+
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(issue.clone()),
+            new: issue,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueDeleted {
+            seq: 1,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = KillSessionsOnEnterAutomation;
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let job = engine.find_job_by_hydra_id(&task_id).await.unwrap();
+        assert_eq!(
+            job.status,
+            JobStatus::Failed,
+            "session attached to a deleted issue should be killed",
         );
     }
 
