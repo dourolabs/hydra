@@ -1,5 +1,5 @@
 import type { ActorIdentity, WhoAmIResponse, DeviceStartResponse, DevicePollResponse } from "@hydra/api";
-import { apiFetch } from "./client";
+import { apiClient, apiFetch } from "./client";
 
 /** Extract a display name from any actor identity. */
 export function actorDisplayName(actor: ActorIdentity): string {
@@ -47,8 +47,8 @@ export function devicePoll(deviceSessionId: string): Promise<DevicePollResponse>
 /** Check if GitHub auth is available by checking for the client-id endpoint. */
 export async function isGithubAuthAvailable(): Promise<boolean> {
   try {
-    const resp = await fetch("/api/v1/github/app/client-id", { credentials: "include" });
-    return resp.ok;
+    await apiClient.getGithubAppClientId();
+    return true;
   } catch {
     return false;
   }

@@ -38,6 +38,7 @@ import type { UpdateRepositoryRequest } from "./generated/UpdateRepositoryReques
 import type { RepositoryRecord } from "./generated/RepositoryRecord";
 import type { WhoAmIResponse } from "./generated/WhoAmIResponse";
 import type { UserSummary } from "./generated/UserSummary";
+import type { GithubAppClientIdResponse } from "./generated/GithubAppClientIdResponse";
 import type { GithubTokenResponse } from "./generated/GithubTokenResponse";
 import type { ListAgentsResponse } from "./generated/ListAgentsResponse";
 import type { ListUsersResponse } from "./generated/ListUsersResponse";
@@ -540,6 +541,11 @@ export class HydraApiClient {
   async getGithubToken(): Promise<string> {
     const resp = await this.get<GithubTokenResponse>("/v1/github/token");
     return resp.github_token;
+  }
+
+  /** GET /v1/github/app/client-id */
+  getGithubAppClientId(): Promise<GithubAppClientIdResponse> {
+    return this.get("/v1/github/app/client-id");
   }
 
   // ---------------------------------------------------------------------------
