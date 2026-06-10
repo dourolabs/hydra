@@ -4,10 +4,15 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use httpmock::prelude::*;
+use httpmock::Method::PATCH;
 use hydra::client::{HydraClient, HydraClientUnauthenticated};
 use hydra_common::{
     api::v1::projects::{
         ProjectKey, ProjectRef, StatusDefinition, StatusKey, UpsertProjectRequest,
+    },
+    conversations::{
+        ConversationStatus, CreateConversationRequest, SearchConversationsQuery,
+        SendMessageRequest, UpdateConversationRequest,
     },
     documents::{Document, SearchDocumentsQuery, UpsertDocumentRequest},
     issues::{IssueDependencyType, IssueInput, IssueType, SearchIssuesQuery, UpsertIssueRequest},
@@ -23,7 +28,8 @@ use hydra_common::{
     test_utils::status::status,
     users::Username,
     whoami::ActorIdentity,
-    DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName, SessionId,
+    ConversationId, DocumentId, IssueId, PatchId, ProjectId, RelativeVersionNumber, RepoName,
+    SessionId,
 };
 use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
@@ -44,6 +50,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let dependency_id = IssueId::new();
     let patch_id = PatchId::new();
     let project_id = ProjectId::new();
+    let conversation_id = ConversationId::new();
     let repo_name = RepoName::new("dourolabs", "hydra")?;
     let username: Username = "future-user".into();
 
@@ -63,6 +70,14 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let document_record_for_list = document_record_body.clone();
     let document_version_body = forward_document_version_json(&document_id, 2, now, &job_id);
     let repository_body = forward_repo_info(&repo_name);
+    let conversation_record_body = forward_conversation_json(&conversation_id);
+    let conversation_record_for_get = conversation_record_body.clone();
+    let conversation_record_for_create = conversation_record_body.clone();
+    let conversation_record_for_close = conversation_record_body.clone();
+    let conversation_record_for_update = conversation_record_body.clone();
+    let conversation_record_for_delete = conversation_record_body.clone();
+    let conversation_summary_record = forward_conversation_summary_json(&conversation_id);
+    let conversation_version_body = forward_conversation_version_json(&conversation_id, 2, now);
 
     let job_path = format!("/v1/sessions/{job_id}");
     let job_logs_path = format!("/v1/sessions/{job_id}/logs");
@@ -88,6 +103,11 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "/v1/merge-queues/{}/{}/main/patches",
         repo_name.organization, repo_name.repo
     );
+    let conversation_path = format!("/v1/conversations/{conversation_id}");
+    let conversation_messages_path = format!("{conversation_path}/messages");
+    let conversation_close_path = format!("{conversation_path}/close");
+    let conversation_versions_path = format!("{conversation_path}/versions");
+    let conversation_version_path = format!("{conversation_versions_path}/2");
     let job_id_for_create = job_id.clone();
     let job_id_for_get = job_id.clone();
     let job_id_for_kill = job_id.clone();
@@ -510,6 +530,73 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             .json_body(json!({ "client_id": "abc123", "note": "github" }));
     });
 
+    // Conversations
+    server.mock(move |when, then| {
+        when.method(POST).path("/v1/conversations");
+        then.status(200).json_body(conversation_record_for_create);
+    });
+
+    let conversation_summary_for_list = conversation_summary_record.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path("/v1/conversations");
+        then.status(200)
+            .json_body(json!([conversation_summary_for_list]));
+    });
+
+    let conversation_get_path = conversation_path.clone();
+    server.mock(move |when, then| {
+        when.method(GET).path(conversation_get_path.as_str());
+        then.status(200).json_body(conversation_record_for_get);
+    });
+
+    let conversation_update_path = conversation_path.clone();
+    server.mock(move |when, then| {
+        when.method(PATCH).path(conversation_update_path.as_str());
+        then.status(200).json_body(conversation_record_for_update);
+    });
+
+    let conversation_delete_path = conversation_path.clone();
+    server.mock(move |when, then| {
+        when.method(DELETE).path(conversation_delete_path.as_str());
+        then.status(200).json_body(conversation_record_for_delete);
+    });
+
+    let conversation_versions_path_clone = conversation_versions_path.clone();
+    let conversation_version_body_for_list = conversation_version_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET)
+            .path(conversation_versions_path_clone.as_str());
+        then.status(200)
+            .json_body(json!([conversation_version_body_for_list]));
+    });
+
+    let conversation_version_path_clone = conversation_version_path.clone();
+    let conversation_version_body_for_get = conversation_version_body.clone();
+    server.mock(move |when, then| {
+        when.method(GET)
+            .path(conversation_version_path_clone.as_str());
+        then.status(200)
+            .json_body(conversation_version_body_for_get);
+    });
+
+    let conversation_messages_path_clone = conversation_messages_path.clone();
+    server.mock(move |when, then| {
+        when.method(POST)
+            .path(conversation_messages_path_clone.as_str());
+        then.status(200).json_body(json!({
+            "type": "future-event-kind",
+            "content": "from the future",
+            "extra": "send-message"
+        }));
+    });
+
+    let conversation_close_path_clone = conversation_close_path.clone();
+    server.mock(move |when, then| {
+        when.method(POST)
+            .path(conversation_close_path_clone.as_str());
+        then.status(200).json_body(conversation_record_for_close);
+    });
+
     let login_request = LoginRequest::new(
         "gho_forward_compat".to_string(),
         "ghr_forward_compat".to_string(),
@@ -804,6 +891,97 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         ActorIdentity::User { username: ref found } if found == &username
     ));
 
+    // Conversations
+    let create_conversation_request = CreateConversationRequest {
+        message: Some("hello future".to_string()),
+        agent_name: None,
+        session_settings: None,
+    };
+    let created_conversation = client
+        .create_conversation(&create_conversation_request)
+        .await?;
+    assert_eq!(created_conversation.conversation_id, conversation_id);
+    assert!(matches!(
+        created_conversation.status,
+        ConversationStatus::Unknown
+    ));
+
+    let listed_conversations = client
+        .list_conversations(&SearchConversationsQuery::default())
+        .await?;
+    assert_eq!(listed_conversations.len(), 1);
+    assert!(matches!(
+        listed_conversations[0].status,
+        ConversationStatus::Unknown
+    ));
+
+    let fetched_conversation = client.get_conversation(&conversation_id).await?;
+    assert_eq!(fetched_conversation.conversation_id, conversation_id);
+    assert!(matches!(
+        fetched_conversation.status,
+        ConversationStatus::Unknown
+    ));
+
+    let updated_conversation = client
+        .update_conversation(
+            &conversation_id,
+            &UpdateConversationRequest {
+                title: Some("future title".to_string()),
+            },
+        )
+        .await?;
+    assert_eq!(updated_conversation.conversation_id, conversation_id);
+    assert!(matches!(
+        updated_conversation.status,
+        ConversationStatus::Unknown
+    ));
+
+    let deleted_conversation = client.delete_conversation(&conversation_id).await?;
+    assert_eq!(deleted_conversation.conversation_id, conversation_id);
+    assert!(matches!(
+        deleted_conversation.status,
+        ConversationStatus::Unknown
+    ));
+
+    let conversation_versions = client.get_conversation_versions(&conversation_id).await?;
+    assert_eq!(conversation_versions.len(), 1);
+    assert!(matches!(
+        conversation_versions[0].item.status,
+        ConversationStatus::Unknown
+    ));
+
+    let single_conversation_version = client
+        .get_conversation_version(&conversation_id, RelativeVersionNumber::new(2))
+        .await?;
+    assert_eq!(
+        single_conversation_version.item.conversation_id,
+        conversation_id
+    );
+    assert!(matches!(
+        single_conversation_version.item.status,
+        ConversationStatus::Unknown
+    ));
+
+    let send_message_response = client
+        .send_message(
+            &conversation_id,
+            &SendMessageRequest {
+                content: "ping".to_string(),
+            },
+        )
+        .await?;
+    assert!(matches!(
+        send_message_response,
+        hydra_common::api::v1::sessions::SessionEvent::Unknown
+    ));
+
+    let closed_conversation = client.close_conversation(&conversation_id).await?;
+    assert_eq!(closed_conversation.conversation_id, conversation_id);
+    assert!(matches!(
+        closed_conversation.status,
+        ConversationStatus::Unknown
+    ));
+
     // Merge queue
     let merge_queue = client.get_merge_queue(&repo_name, "main").await?;
     assert_eq!(merge_queue.patches, vec![patch_id.clone()]);
@@ -1058,6 +1236,53 @@ fn forward_repo_info(repo_name: &RepoName) -> Value {
             "default_image": "ghcr.io/dourolabs/hydra:main"
         },
         "sync": "on"
+    })
+}
+
+fn forward_conversation_json(conversation_id: &ConversationId) -> Value {
+    json!({
+        "conversation_id": conversation_id,
+        "title": "future chat",
+        "agent_name": "claude",
+        "status": "archived",
+        "creator": "future-user",
+        "session_settings": {
+            "repo_name": "dourolabs/hydra",
+            "future": "settings-field"
+        },
+        "spawned_from": null,
+        "created_at": Utc::now(),
+        "updated_at": Utc::now(),
+        "extra": "conversation"
+    })
+}
+
+fn forward_conversation_summary_json(conversation_id: &ConversationId) -> Value {
+    json!({
+        "conversation_id": conversation_id,
+        "title": "future chat",
+        "agent_name": "claude",
+        "status": "archived",
+        "event_count": 7,
+        "last_event_preview": "future preview",
+        "creator": "future-user",
+        "created_at": Utc::now(),
+        "updated_at": Utc::now(),
+        "extra": "conversation-summary"
+    })
+}
+
+fn forward_conversation_version_json(
+    conversation_id: &ConversationId,
+    version: u64,
+    timestamp: DateTime<Utc>,
+) -> Value {
+    json!({
+        "item": forward_conversation_json(conversation_id),
+        "version": version,
+        "timestamp": timestamp,
+        "creation_time": timestamp,
+        "future": "version-field"
     })
 }
 
