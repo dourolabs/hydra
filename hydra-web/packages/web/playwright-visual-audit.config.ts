@@ -22,6 +22,9 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       cwd: "../..",
       timeout: 120000,
+      // Freeze synthetic-events loop so background emissions don't race
+      // visual-audit screenshots. See playwright.config.ts for full rationale.
+      env: { MOCK_SYNTHETIC_EVENTS: "0" },
     },
     {
       command:
