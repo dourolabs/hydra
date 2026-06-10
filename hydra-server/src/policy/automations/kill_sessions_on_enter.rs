@@ -1,87 +1,45 @@
 use async_trait::async_trait;
 
 use crate::app::event_bus::{EventType, MutationPayload, ServerEvent};
+use crate::domain::actors::ActorRef;
+use crate::domain::conversations::ConversationStatus;
 use crate::policy::context::AutomationContext;
 use crate::policy::{Automation, AutomationError, EventFilter};
 use crate::store::Status;
+use hydra_common::api::v1::conversations::SearchConversationsQuery;
+use hydra_common::{ConversationId, IssueId};
 
 const AUTOMATION_NAME: &str = "kill_sessions_on_enter";
 
-/// When an issue transitions into a status whose
-/// `on_enter.kill_sessions = true`, kill any `Created`/`Pending`/`Running`
-/// sessions attached to the issue.
+/// Tears down agent work attached to an issue when the issue either enters
+/// a "kill_sessions" status or is deleted (soft-delete / archive).
 ///
-/// This automation should run after `cascade_issue_status` so that cascaded
-/// child/dependent issues also get their sessions killed via their own update events.
+/// Trigger:
+/// - `IssueUpdated` where the new status's `on_enter.kill_sessions = true`
+///   (the canonical "issue went terminal" path on the default project).
+/// - `IssueDeleted` — always. Deleting an issue is itself the signal that
+///   any attached work should stop, regardless of the status it was in.
+///
+/// Effects (same in both cases):
+/// - Kill any `Created` / `Pending` / `Running` sessions attached to the
+///   issue.
+/// - Close any non-`Closed` conversations spawned from the issue (i.e.
+///   conversations with a `spawned_from` relation pointing at it).
+///
+/// This automation should run after `cascade_issue_status` so that
+/// cascaded child/dependent issues also get their sessions killed via
+/// their own update events.
 pub struct KillSessionsOnEnterAutomation;
 
 impl KillSessionsOnEnterAutomation {
     pub fn new(_params: Option<&serde_yaml_ng::Value>) -> Result<Self, String> {
         Ok(Self)
     }
-}
 
-#[async_trait]
-impl Automation for KillSessionsOnEnterAutomation {
-    fn name(&self) -> &str {
-        AUTOMATION_NAME
-    }
-
-    fn event_filter(&self) -> EventFilter {
-        EventFilter {
-            event_types: vec![EventType::IssueUpdated],
-            ..Default::default()
-        }
-    }
-
-    async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
-        let ServerEvent::IssueUpdated {
-            issue_id, payload, ..
-        } = ctx.event
-        else {
-            return Ok(());
-        };
-
-        let MutationPayload::Issue {
-            old: Some(old),
-            new,
-            ..
-        } = payload.as_ref()
-        else {
-            return Ok(());
-        };
-
-        tracing::info!(
-            automation = AUTOMATION_NAME,
-            issue_id = %issue_id,
-            "automation invoked",
-        );
-
-        // Only trigger when the status actually changes.
-        if old.status == new.status {
-            return Ok(());
-        }
-        let resolved = match ctx.app_state.resolve_status(new).await {
-            Ok(def) => def,
-            Err(err) => {
-                tracing::warn!(
-                    automation = AUTOMATION_NAME,
-                    issue_id = %issue_id,
-                    status = %new.status,
-                    error = %err,
-                    "kill_sessions_on_enter: failed to resolve new status; skipping"
-                );
-                return Ok(());
-            }
-        };
-        if !resolved
-            .on_enter
-            .as_ref()
-            .is_some_and(|oe| oe.kill_sessions)
-        {
-            return Ok(());
-        }
-
+    async fn kill_sessions_for_issue(
+        ctx: &AutomationContext<'_>,
+        issue_id: &IssueId,
+    ) -> Result<usize, AutomationError> {
         let store = ctx.store;
         let session_ids = store.get_sessions_for_issue(issue_id).await.map_err(|e| {
             AutomationError::Other(anyhow::anyhow!(
@@ -103,16 +61,18 @@ impl Automation for KillSessionsOnEnterAutomation {
                     Ok(()) => {
                         killed += 1;
                         tracing::info!(
+                            automation = AUTOMATION_NAME,
                             issue_id = %issue_id,
                             session_id = %session_id,
-                            "killed session on status entry"
+                            "killed session"
                         );
                     }
                     Err(crate::job_engine::JobEngineError::NotFound(_)) => {
                         tracing::info!(
+                            automation = AUTOMATION_NAME,
                             issue_id = %issue_id,
                             session_id = %session_id,
-                            "session already missing while killing on status entry"
+                            "session already missing while killing"
                         );
                     }
                     Err(e) => {
@@ -124,11 +84,143 @@ impl Automation for KillSessionsOnEnterAutomation {
             }
         }
 
-        if killed > 0 {
+        Ok(killed)
+    }
+
+    async fn close_conversations_for_issue(
+        ctx: &AutomationContext<'_>,
+        issue_id: &IssueId,
+        actor: ActorRef,
+    ) -> Result<usize, AutomationError> {
+        let query = SearchConversationsQuery {
+            spawned_from: Some(issue_id.clone()),
+            include_deleted: Some(false),
+            ..Default::default()
+        };
+        let conversations: Vec<(ConversationId, _)> =
+            ctx.store.list_conversations(&query).await.map_err(|e| {
+                AutomationError::Other(anyhow::anyhow!(
+                    "[{AUTOMATION_NAME}] failed to list conversations for issue {issue_id}: {e}"
+                ))
+            })?;
+
+        let mut closed = 0usize;
+        for (conversation_id, versioned) in conversations {
+            if versioned.item.status == ConversationStatus::Closed {
+                continue;
+            }
+            match ctx
+                .app_state
+                .close_conversation(&conversation_id, actor.clone())
+                .await
+            {
+                Ok(_) => {
+                    closed += 1;
+                    tracing::info!(
+                        automation = AUTOMATION_NAME,
+                        issue_id = %issue_id,
+                        conversation_id = %conversation_id,
+                        "closed conversation"
+                    );
+                }
+                Err(err) => {
+                    // Don't abort the whole automation on a single
+                    // conversation close failure — let the other
+                    // conversations attached to the same issue still
+                    // get a chance.
+                    tracing::warn!(
+                        automation = AUTOMATION_NAME,
+                        issue_id = %issue_id,
+                        conversation_id = %conversation_id,
+                        error = %err,
+                        "failed to close conversation"
+                    );
+                }
+            }
+        }
+
+        Ok(closed)
+    }
+}
+
+#[async_trait]
+impl Automation for KillSessionsOnEnterAutomation {
+    fn name(&self) -> &str {
+        AUTOMATION_NAME
+    }
+
+    fn event_filter(&self) -> EventFilter {
+        EventFilter {
+            event_types: vec![EventType::IssueUpdated, EventType::IssueDeleted],
+            ..Default::default()
+        }
+    }
+
+    async fn execute(&self, ctx: &AutomationContext<'_>) -> Result<(), AutomationError> {
+        let issue_id = match ctx.event {
+            ServerEvent::IssueDeleted { issue_id, .. } => issue_id,
+            ServerEvent::IssueUpdated {
+                issue_id, payload, ..
+            } => {
+                let MutationPayload::Issue {
+                    old: Some(old),
+                    new,
+                    ..
+                } = payload.as_ref()
+                else {
+                    return Ok(());
+                };
+
+                // Only trigger when the status actually changes.
+                if old.status == new.status {
+                    return Ok(());
+                }
+                let resolved = match ctx.app_state.resolve_status(new).await {
+                    Ok(def) => def,
+                    Err(err) => {
+                        tracing::warn!(
+                            automation = AUTOMATION_NAME,
+                            issue_id = %issue_id,
+                            status = %new.status,
+                            error = %err,
+                            "failed to resolve new status; skipping"
+                        );
+                        return Ok(());
+                    }
+                };
+                if !resolved
+                    .on_enter
+                    .as_ref()
+                    .is_some_and(|oe| oe.kill_sessions)
+                {
+                    return Ok(());
+                }
+                issue_id
+            }
+            _ => return Ok(()),
+        };
+
+        tracing::info!(
+            automation = AUTOMATION_NAME,
+            issue_id = %issue_id,
+            "automation invoked",
+        );
+
+        let actor = ActorRef::Automation {
+            automation_name: AUTOMATION_NAME.into(),
+            triggered_by: Some(Box::new(ctx.actor().clone())),
+        };
+
+        let killed = Self::kill_sessions_for_issue(ctx, issue_id).await?;
+        let closed = Self::close_conversations_for_issue(ctx, issue_id, actor).await?;
+
+        if killed > 0 || closed > 0 {
             tracing::info!(
+                automation = AUTOMATION_NAME,
                 issue_id = %issue_id,
                 killed,
-                "kill_sessions_on_enter completed"
+                closed,
+                "completed"
             );
         }
 
@@ -140,12 +232,17 @@ impl Automation for KillSessionsOnEnterAutomation {
 mod tests {
     use super::*;
     use crate::app::event_bus::MutationPayload;
+    use crate::app::test_helpers::{issue_with_status, state_with_default_model};
     use crate::domain::actors::ActorRef;
-    use crate::domain::issues::{Issue, IssueType};
+    use crate::domain::agents::Agent;
+    use crate::domain::conversations::{Conversation, ConversationStatus};
+    use crate::domain::documents::Document;
+    use crate::domain::issues::{Issue, IssueType, SessionSettings};
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::test_utils;
     use chrono::Utc;
+    use hydra_common::api::v1::agents::AgentName;
     use hydra_common::api::v1::projects::StatusKey;
     use hydra_common::test_utils::status::status;
     use std::collections::HashMap;
@@ -189,6 +286,53 @@ mod tests {
             None,
             None,
         )
+    }
+
+    async fn register_agent(state: &crate::app::AppState, name: &str) {
+        let prompt_path = format!("/agents/{name}/prompt.md");
+        let agent = Agent::new(
+            name.to_string(),
+            prompt_path.clone(),
+            None,
+            1,
+            1,
+            false,
+            vec![],
+        );
+        state.store.add_agent(agent).await.unwrap();
+        let doc = Document {
+            title: format!("{name} prompt"),
+            body_markdown: "agent prompt body".to_string(),
+            path: Some(prompt_path.parse().unwrap()),
+            deleted: false,
+        };
+        state
+            .store
+            .add_document_with_actor(doc, ActorRef::test())
+            .await
+            .unwrap();
+    }
+
+    async fn seed_linked_conversation(
+        state: &crate::app::AppState,
+        issue_id: &hydra_common::IssueId,
+        status: ConversationStatus,
+    ) -> hydra_common::ConversationId {
+        let conversation = Conversation {
+            title: None,
+            agent_name: Some(AgentName::try_new("swe").unwrap()),
+            status,
+            creator: Username::from("creator"),
+            session_settings: SessionSettings::default(),
+            spawned_from: Some(issue_id.clone()),
+            deleted: false,
+        };
+        let (id, _) = state
+            .store
+            .add_conversation_with_actor(conversation, ActorRef::test())
+            .await
+            .unwrap();
+        id
     }
 
     #[tokio::test]
@@ -282,5 +426,169 @@ mod tests {
         };
 
         automation.execute(&ctx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn closes_linked_conversation_on_kill_sessions_status_entry() {
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe").await;
+
+        let mut issue = issue_with_status("test", status("open"), vec![]);
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let conversation_id =
+            seed_linked_conversation(&state, &issue_id, ConversationStatus::Active).await;
+
+        // Flip to `dropped`, which is `kill_sessions=true` in the default
+        // project.
+        let mut updated = issue.clone();
+        updated.status = status("dropped");
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(issue.clone()),
+            new: updated.clone(),
+            actor: ActorRef::test(),
+        });
+        issue.status = status("dropped");
+        let event = ServerEvent::IssueUpdated {
+            seq: 1,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = KillSessionsOnEnterAutomation;
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let after = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(after.item.status, ConversationStatus::Closed);
+    }
+
+    #[tokio::test]
+    async fn fires_on_issue_deleted() {
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe").await;
+
+        let issue = issue_with_status("test", status("open"), vec![]);
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let conversation_id =
+            seed_linked_conversation(&state, &issue_id, ConversationStatus::Active).await;
+
+        // Build an IssueDeleted event. The payload carries the issue's
+        // pre-delete state as `old` and the (still-readable, now soft-
+        // deleted) state as `new`.
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(issue.clone()),
+            new: issue.clone(),
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueDeleted {
+            seq: 1,
+            issue_id: issue_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = KillSessionsOnEnterAutomation;
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let after = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            after.item.status,
+            ConversationStatus::Closed,
+            "conversation spawned from a deleted issue should be closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn issue_deleted_ignores_unrelated_conversations() {
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe").await;
+
+        let issue_a = issue_with_status("a", status("open"), vec![]);
+        let (issue_a_id, _) = state
+            .store
+            .add_issue_with_actor(issue_a.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let issue_b = issue_with_status("b", status("open"), vec![]);
+        let (issue_b_id, _) = state
+            .store
+            .add_issue_with_actor(issue_b, ActorRef::test())
+            .await
+            .unwrap();
+
+        let conv_a =
+            seed_linked_conversation(&state, &issue_a_id, ConversationStatus::Active).await;
+        let conv_b =
+            seed_linked_conversation(&state, &issue_b_id, ConversationStatus::Active).await;
+
+        // Only delete A.
+        let payload = Arc::new(MutationPayload::Issue {
+            old: Some(issue_a.clone()),
+            new: issue_a,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::IssueDeleted {
+            seq: 1,
+            issue_id: issue_a_id.clone(),
+            version: 2,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        let automation = KillSessionsOnEnterAutomation;
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let after_a = state
+            .store()
+            .get_conversation(&conv_a, false)
+            .await
+            .unwrap();
+        let after_b = state
+            .store()
+            .get_conversation(&conv_b, false)
+            .await
+            .unwrap();
+        assert_eq!(after_a.item.status, ConversationStatus::Closed);
+        assert_eq!(
+            after_b.item.status,
+            ConversationStatus::Active,
+            "conversation linked to a different issue should be untouched"
+        );
     }
 }

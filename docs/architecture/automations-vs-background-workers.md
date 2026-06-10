@@ -53,7 +53,7 @@ Use this table to decide whether the self-filter rule applies before reading an 
 | Automation | Subscribes to | Emits same class? | Self-filter strategy |
 |---|---|---|---|
 | `cascade_issue_status` | `IssueUpdated` | Yes (via `upsert_issue`) | Canonical actor-name check |
-| `kill_sessions_on_enter` | `IssueUpdated` | No (kills sessions → `SessionUpdated`) | N/A |
+| `kill_sessions_on_enter` | `IssueUpdated` / `IssueDeleted` | No (kills sessions → `SessionUpdated`; closes conversations → `ConversationUpdated`) | N/A |
 | `link_artifacts_to_issue` | `Patch*` / `Document*` | No (only adds relationships) | N/A — early-returns on automation-actor events |
 | `link_conversation_to_artifacts` | `Issue*` / `Patch*` / `Document*` | No (only adds relationships) | N/A — intentionally unwraps via `on_behalf_of()` |
 | `spawn_sessions` | `Issue*` / `Session*` | Yes | Canonical actor-name check |
