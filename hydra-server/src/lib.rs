@@ -309,6 +309,18 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             get(routes::analytics::issues_per_status_distribution),
         )
         .route(
+            "/v1/analytics/token_usage/over_time",
+            get(routes::analytics::token_usage_over_time),
+        )
+        .route(
+            "/v1/analytics/token_usage/cost_per_agent",
+            get(routes::analytics::token_usage_cost_per_agent),
+        )
+        .route(
+            "/v1/analytics/token_usage/top_issues_by_cost",
+            get(routes::analytics::token_usage_top_issues_by_cost),
+        )
+        .route(
             "/v1/documents",
             get(routes::documents::list_documents).post(routes::documents::create_document),
         )

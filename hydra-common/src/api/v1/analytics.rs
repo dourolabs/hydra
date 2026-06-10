@@ -14,12 +14,14 @@
 //! cycle-time and over-time charts; clients that want to exclude the
 //! cancellation lanes can pass `status_keys=closed`.
 
+use super::agents::AgentName;
 use super::issues::IssueType;
 use super::patches::PatchStatus;
 use super::projects::StatusKey;
 use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separated};
 use crate::ProjectId;
 use crate::Rgb;
+use crate::{IssueId, SessionId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -485,5 +487,222 @@ pub struct IssuesOverTimeResponse {
 impl IssuesOverTimeResponse {
     pub fn new(buckets: Vec<IssueOverTimeBucket>) -> Self {
         Self { buckets }
+    }
+}
+
+/// Common query parameters for `/v1/analytics/token_usage/over_time`.
+///
+/// Mirrors [`PatchesThroughputQuery`] with the patches-only `status`
+/// filter dropped. `bucket` defaults to [`BucketGranularity::Day`] when
+/// omitted; the time-series endpoint honors it, the non-time-series
+/// endpoints ([`TokenUsageQuery`]) do not carry it at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct TokenUsageOverTimeQuery {
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+    #[serde(default)]
+    pub bucket: Option<BucketGranularity>,
+    #[serde(default)]
+    pub repo_name: Option<String>,
+    #[serde(default)]
+    pub creator: Option<String>,
+}
+
+impl TokenUsageOverTimeQuery {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>) -> Self {
+        Self {
+            from,
+            to,
+            bucket: None,
+            repo_name: None,
+            creator: None,
+        }
+    }
+}
+
+/// Common query parameters for `/v1/analytics/token_usage/cost_per_agent`
+/// and `/v1/analytics/token_usage/top_issues_by_cost`. Same shape as
+/// [`TokenUsageOverTimeQuery`] without `bucket` (these endpoints are
+/// not time-bucketed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct TokenUsageQuery {
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+    #[serde(default)]
+    pub repo_name: Option<String>,
+    #[serde(default)]
+    pub creator: Option<String>,
+}
+
+impl TokenUsageQuery {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>) -> Self {
+        Self {
+            from,
+            to,
+            repo_name: None,
+            creator: None,
+        }
+    }
+}
+
+/// A single bucket on the `token_usage/over_time` series. Each field is
+/// the sum of the corresponding `TokenUsage` field across sessions whose
+/// `end_time` lands inside the bucket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct TokenUsageOverTimeBucket {
+    pub bucket_start: DateTime<Utc>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+}
+
+impl TokenUsageOverTimeBucket {
+    pub fn new(
+        bucket_start: DateTime<Utc>,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_input_tokens: u64,
+        cache_creation_input_tokens: u64,
+    ) -> Self {
+        Self {
+            bucket_start,
+            input_tokens,
+            output_tokens,
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
+        }
+    }
+}
+
+/// Response for `GET /v1/analytics/token_usage/over_time`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct TokenUsageOverTimeResponse {
+    pub buckets: Vec<TokenUsageOverTimeBucket>,
+}
+
+impl TokenUsageOverTimeResponse {
+    pub fn new(buckets: Vec<TokenUsageOverTimeBucket>) -> Self {
+        Self { buckets }
+    }
+}
+
+/// One session's cost contribution inside an agent's total. Used by the
+/// scatter overlay on the cost-per-agent chart, alongside the rolled-up
+/// per-agent total.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct AgentSessionCost {
+    pub session_id: SessionId,
+    pub cost_usd: f64,
+}
+
+impl AgentSessionCost {
+    pub fn new(session_id: SessionId, cost_usd: f64) -> Self {
+        Self {
+            session_id,
+            cost_usd,
+        }
+    }
+}
+
+/// One agent's blended-dollar cost over the window, with the per-session
+/// breakdown that fed it. `agent_name` is `None` for the ad-hoc bucket
+/// (sessions whose `agent_config.agent_name` is `None`); agent-spawned
+/// sessions carry their typed [`AgentName`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct AgentCost {
+    pub agent_name: Option<AgentName>,
+    pub total_cost_usd: f64,
+    pub sessions: Vec<AgentSessionCost>,
+}
+
+impl AgentCost {
+    pub fn new(
+        agent_name: Option<AgentName>,
+        total_cost_usd: f64,
+        sessions: Vec<AgentSessionCost>,
+    ) -> Self {
+        Self {
+            agent_name,
+            total_cost_usd,
+            sessions,
+        }
+    }
+}
+
+/// Response for `GET /v1/analytics/token_usage/cost_per_agent`. Agents
+/// are sorted by `total_cost_usd` descending. The single entry whose
+/// `agent_name` is `None` aggregates sessions without an `agent_name`
+/// so they aren't silently dropped.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct TokenUsageCostPerAgentResponse {
+    pub agents: Vec<AgentCost>,
+}
+
+impl TokenUsageCostPerAgentResponse {
+    pub fn new(agents: Vec<AgentCost>) -> Self {
+        Self { agents }
+    }
+}
+
+/// One issue's rolled-up cost — sum of cost across sessions that
+/// `spawned_from == issue_id` and ended inside the window. Attribution is
+/// single-hop; descendants via `child-of` are not rolled in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct IssueCost {
+    pub issue_id: IssueId,
+    pub title: String,
+    pub cost_usd: f64,
+    pub session_count: u64,
+}
+
+impl IssueCost {
+    pub fn new(issue_id: IssueId, title: String, cost_usd: f64, session_count: u64) -> Self {
+        Self {
+            issue_id,
+            title,
+            cost_usd,
+            session_count,
+        }
+    }
+}
+
+/// Response for `GET /v1/analytics/token_usage/top_issues_by_cost`.
+/// Length is bounded to 10, sorted by `cost_usd` descending.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct TokenUsageTopIssuesByCostResponse {
+    pub issues: Vec<IssueCost>,
+}
+
+impl TokenUsageTopIssuesByCostResponse {
+    pub fn new(issues: Vec<IssueCost>) -> Self {
+        Self { issues }
     }
 }

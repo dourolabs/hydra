@@ -22,6 +22,8 @@
 mod buckets;
 mod issues;
 mod patches;
+mod pricing;
+mod token_usage;
 
 pub use issues::{
     IssueHistory, compute_issues_cycle_time, compute_issues_over_time,
@@ -31,4 +33,8 @@ pub use issues::{
 pub use patches::{
     PatchHistory, compute_patches_in_flight_over_time, compute_patches_over_time,
     compute_patches_terminal_mix, compute_patches_time_to_merge, fetch_patch_histories,
+};
+pub use token_usage::{
+    SessionWithUsage, compute_cost_per_agent, compute_token_usage_over_time,
+    compute_top_issues_by_cost, fetch_sessions_with_usage, rank_top_issues_by_cost,
 };
