@@ -20,10 +20,9 @@ export interface PatchesOverTimeChartProps {
 }
 
 /**
- * Stacked area: patches created vs merged per bucket. Stacked area picked
- * over grouped bars because the headline question is "are we shipping at
- * the rate we're taking work on" — the combined area conveys that lens
- * better than discrete bars at small card widths.
+ * Stacked area: merged on the bottom, delta = created − merged on top.
+ * The stack height represents the total created in each bucket, so the
+ * green portion shows what shipped and the gray fills up to the total.
  */
 export function PatchesOverTimeChart({ query }: PatchesOverTimeChartProps) {
   const result = useThroughputPatchesOverTime(query);
@@ -46,12 +45,20 @@ interface ContentProps {
 function PatchesOverTimeChartContent({ data }: ContentProps) {
   const points = useMemo(
     () =>
-      (data?.buckets ?? []).map((b) => ({
-        bucket_start: b.bucket_start,
-        label: formatBucketLabel(b.bucket_start),
-        created: Number(b.created),
-        merged: Number(b.merged),
-      })),
+      (data?.buckets ?? []).map((b) => {
+        const total = Number(b.created);
+        const merged = Number(b.merged);
+        return {
+          bucket_start: b.bucket_start,
+          label: formatBucketLabel(b.bucket_start),
+          merged,
+          // Clamped: a bucket whose merged exceeds created (patches merged
+          // in this bucket but created earlier) would otherwise yield a
+          // negative slice.
+          delta: Math.max(0, total - merged),
+          total,
+        };
+      }),
     [data],
   );
 
@@ -67,15 +74,18 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
             <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
             <XAxis dataKey="label" tick={AXIS_TICK} />
             <YAxis allowDecimals={false} tick={AXIS_TICK} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} />
-            <Area
-              type="monotone"
-              dataKey="created"
-              stackId="1"
-              stroke={CHART_COLORS.created}
-              fill={CHART_COLORS.created}
-              fillOpacity={0.5}
-              name="Created"
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              formatter={(value, name, item) => {
+                // The "Total" series stacks the delta; surface the actual
+                // total (which is the stack's upper boundary) in the tooltip
+                // so the displayed number matches the legend label.
+                if (name === "Total") {
+                  const point = item.payload as { total: number };
+                  return [point.total, name];
+                }
+                return [value as number, name];
+              }}
             />
             <Area
               type="monotone"
@@ -86,6 +96,15 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
               fillOpacity={0.7}
               name="Merged"
             />
+            <Area
+              type="monotone"
+              dataKey="delta"
+              stackId="1"
+              stroke={CHART_COLORS.created}
+              fill={CHART_COLORS.created}
+              fillOpacity={0.5}
+              name="Total"
+            />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -93,16 +112,16 @@ function PatchesOverTimeChartContent({ data }: ContentProps) {
         <li className={styles.legendItem}>
           <span
             className={styles.legendSwatch}
-            style={{ "--swatch": CHART_COLORS.created } as React.CSSProperties}
+            style={{ "--swatch": CHART_COLORS.merged } as React.CSSProperties}
           />
-          Created
+          Merged
         </li>
         <li className={styles.legendItem}>
           <span
             className={styles.legendSwatch}
-            style={{ "--swatch": CHART_COLORS.merged } as React.CSSProperties}
+            style={{ "--swatch": CHART_COLORS.created } as React.CSSProperties}
           />
-          Merged
+          Total
         </li>
       </ul>
     </div>

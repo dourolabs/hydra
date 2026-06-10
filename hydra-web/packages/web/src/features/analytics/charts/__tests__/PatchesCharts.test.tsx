@@ -121,8 +121,8 @@ describe("PatchesOverTimeChart", () => {
     );
     render(<PatchesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("patches-over-time-content")).toBeDefined();
-    expect(screen.getByText("Created")).toBeDefined();
     expect(screen.getByText("Merged")).toBeDefined();
+    expect(screen.getByText("Total")).toBeDefined();
   });
 
   it("renders the error state via ChartCard", () => {

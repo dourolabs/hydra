@@ -134,8 +134,8 @@ describe("IssuesOverTimeChart", () => {
     );
     render(<IssuesOverTimeChart query={baseQuery} />);
     expect(screen.getByTestId("issues-over-time-content")).toBeDefined();
-    expect(screen.getByText("Created")).toBeDefined();
     expect(screen.getByText("Reached terminal")).toBeDefined();
+    expect(screen.getByText("Total")).toBeDefined();
   });
 
   it("renders the error state via ChartCard", () => {
