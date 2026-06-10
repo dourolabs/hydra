@@ -156,47 +156,19 @@ impl Automation for CloseConversationsOnInteractiveExitAutomation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::test_helpers::{issue_with_status, state_with_default_model};
+    use crate::app::test_helpers::{
+        issue_with_status, register_agent, seed_linked_conversation, state_with_default_model,
+    };
     use crate::domain::actors::ActorRef;
-    use crate::domain::agents::Agent;
-    use crate::domain::conversations::{Conversation, ConversationStatus};
-    use crate::domain::documents::Document;
-    use crate::domain::issues::SessionSettings;
-    use crate::domain::users::Username;
+    use crate::domain::conversations::ConversationStatus;
     use crate::policy::context::AutomationContext;
     use chrono::Utc;
-    use hydra_common::api::v1::agents::AgentName;
     use hydra_common::api::v1::projects::{
         Project as ApiProject, ProjectKey, StatusDefinition, StatusKey,
     };
     use hydra_common::api::v1::users::Username as ApiUsername;
     use hydra_common::test_utils::status::status;
     use std::sync::Arc;
-
-    async fn register_agent(state: &crate::app::AppState, name: &str) {
-        let prompt_path = format!("/agents/{name}/prompt.md");
-        let agent = Agent::new(
-            name.to_string(),
-            prompt_path.clone(),
-            None,
-            1,
-            1,
-            false,
-            vec![],
-        );
-        state.store.add_agent(agent).await.unwrap();
-        let doc = Document {
-            title: format!("{name} prompt"),
-            body_markdown: "agent prompt body".to_string(),
-            path: Some(prompt_path.parse().unwrap()),
-            deleted: false,
-        };
-        state
-            .store
-            .add_document_with_actor(doc, ActorRef::test())
-            .await
-            .unwrap();
-    }
 
     /// Seed a project with one interactive status and one non-interactive
     /// status. Returns the project id and the two status keys.
@@ -264,28 +236,6 @@ mod tests {
             timestamp: Utc::now(),
             payload,
         }
-    }
-
-    async fn seed_linked_conversation(
-        state: &crate::app::AppState,
-        issue_id: &hydra_common::IssueId,
-        status: ConversationStatus,
-    ) -> hydra_common::ConversationId {
-        let conversation = Conversation {
-            title: None,
-            agent_name: Some(AgentName::try_new("swe").unwrap()),
-            status,
-            creator: Username::from("creator"),
-            session_settings: SessionSettings::default(),
-            spawned_from: Some(issue_id.clone()),
-            deleted: false,
-        };
-        let (id, _) = state
-            .store
-            .add_conversation_with_actor(conversation, ActorRef::test())
-            .await
-            .unwrap();
-        id
     }
 
     #[tokio::test]
