@@ -23,6 +23,8 @@ export function useIssue(issueId: string) {
 Three things to keep consistent:
 
 - **`queryKey`** — tuple starting with the entity name, then identifying inputs. `["issue", id]`, `["issues", "batch", idsParam]`, `["paginatedIssues", filters]`. The SSE handler relies on these prefixes to invalidate the right caches; new keys should follow the same shape.
+  - Detail keys use the singular noun (`["issue", id]`); list, batch, and count keys use the plural (`["issues"]`, `["issues", "batch", ids]`, `["issueCount", filters]`). The SSE handler invalidates by singular detail key and plural list keys — mixing the convention silently breaks cache freshness.
+  - Multi-segment hierarchical namespaces are fine (e.g. `["analytics", "token_usage", "over_time", query]`) — the entity-first rule applies to the leading segment; subsequent segments scope the query within the namespace. Analytics and global-search keys are not invalidated by entity events, so depth doesn't affect SSE handler coverage.
 - **`queryFn`** — always calls a method on `apiClient`. No inline `fetch` (see [packages.md](./packages.md)).
 - **`enabled`** — guard on inputs being defined so the hook is safe to call unconditionally from the component.
 
@@ -33,8 +35,8 @@ Before adding a hook, check the relevant `features/<name>/` directory for an exi
 `packages/web/src/hooks/useSSE.ts` opens one EventSource at `/api/v1/events` for the whole app and translates server events into cache updates:
 
 - For `*_created` / `*_updated` events that carry the new entity body, it upserts directly into list caches (`["issues"]`, `["sessions"]`, batch keys, etc.) and invalidates the matching `["entity", id]` detail key.
-- For `*_deleted` events it removes from list caches and drops the detail key.
-- For page-level keys (`["paginatedIssues"]`, `["issueCount"]`, `["chatRelated"]`, …) it issues targeted invalidations.
+- For `*_deleted` events it removes from list caches and drops the detail key. The `*_deleted` rule applies only to entity types the backend can delete — for example, conversations have create / update events but no delete event today, so no delete handler is wired up. The handler inventory in `useSSE.ts` is the authoritative list of supported event variants.
+- For page-level keys (`["paginatedIssues"]`, `["issueCount"]`, `["chatRelated"]`, …) it issues targeted invalidations. Per-entity page-level keys (`sessionEvents`, `sessionState`, `proxyTargets`, etc.) follow the same singular/plural rule and are invalidated by the same SSE handler — see `useSSE.ts` for the full inventory.
 - On reconnect, visibility change, or `resync` events it runs `invalidatePageAndTreeCaches` — a debounced refetch of just the page/tree-level keys, not every query in the cache.
 
 ```tsx
@@ -57,6 +59,10 @@ features/<name>/
 ```
 
 Hooks and components live next to each other but in separate files — see the HMR rule in [style.md](./style.md).
+
+## Known asymmetries
+
+`@hydra/api` exports an `SSEClient` class (`packages/api/src/sse.ts`) that `useSSE.ts` does not currently consume — `useSSE.ts` builds its own `EventSource` directly. This asymmetry is acknowledged; whether to consolidate (use `SSEClient` from `useSSE.ts`) or delete `SSEClient` as dormant is a separate decision and is not gated by this doc.
 
 ## See also
 
