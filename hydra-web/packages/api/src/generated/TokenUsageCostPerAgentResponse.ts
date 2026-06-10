@@ -3,8 +3,8 @@ import type { AgentCost } from "./AgentCost";
 
 /**
  * Response for `GET /v1/analytics/token_usage/cost_per_agent`. Agents
- * are sorted by `total_cost_usd` descending. The sentinel `"adhoc"`
- * bucket aggregates sessions without an `agent_name` so they aren't
- * silently dropped.
+ * are sorted by `total_cost_usd` descending. The single entry whose
+ * `agent_name` is `None` aggregates sessions without an `agent_name`
+ * so they aren't silently dropped.
  */
 export type TokenUsageCostPerAgentResponse = { agents: Array<AgentCost> };

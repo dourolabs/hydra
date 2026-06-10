@@ -14,6 +14,7 @@
 //! cycle-time and over-time charts; clients that want to exclude the
 //! cancellation lanes can pass `status_keys=closed`.
 
+use super::agents::AgentName;
 use super::issues::IssueType;
 use super::patches::PatchStatus;
 use super::projects::StatusKey;
@@ -620,21 +621,25 @@ impl AgentSessionCost {
 }
 
 /// One agent's blended-dollar cost over the window, with the per-session
-/// breakdown that fed it. `agent_name` is the literal `"adhoc"` for the
-/// ad-hoc bucket (sessions whose `agent_config.agent_name` is `None`);
-/// agent-spawned sessions group by [`AgentName`] rendered as a string.
+/// breakdown that fed it. `agent_name` is `None` for the ad-hoc bucket
+/// (sessions whose `agent_config.agent_name` is `None`); agent-spawned
+/// sessions carry their typed [`AgentName`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
 pub struct AgentCost {
-    pub agent_name: String,
+    pub agent_name: Option<AgentName>,
     pub total_cost_usd: f64,
     pub sessions: Vec<AgentSessionCost>,
 }
 
 impl AgentCost {
-    pub fn new(agent_name: String, total_cost_usd: f64, sessions: Vec<AgentSessionCost>) -> Self {
+    pub fn new(
+        agent_name: Option<AgentName>,
+        total_cost_usd: f64,
+        sessions: Vec<AgentSessionCost>,
+    ) -> Self {
         Self {
             agent_name,
             total_cost_usd,
@@ -644,9 +649,9 @@ impl AgentCost {
 }
 
 /// Response for `GET /v1/analytics/token_usage/cost_per_agent`. Agents
-/// are sorted by `total_cost_usd` descending. The sentinel `"adhoc"`
-/// bucket aggregates sessions without an `agent_name` so they aren't
-/// silently dropped.
+/// are sorted by `total_cost_usd` descending. The single entry whose
+/// `agent_name` is `None` aggregates sessions without an `agent_name`
+/// so they aren't silently dropped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]

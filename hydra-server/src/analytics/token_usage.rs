@@ -13,6 +13,7 @@ use super::pricing::cost_usd;
 use crate::domain::sessions::Session;
 use crate::store::{ReadOnlyStore, StoreError};
 use chrono::{DateTime, Utc};
+use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::analytics::{
     AgentCost, AgentSessionCost, BucketGranularity, IssueCost, TokenUsageCostPerAgentResponse,
     TokenUsageOverTimeBucket, TokenUsageOverTimeResponse, TokenUsageTopIssuesByCostResponse,
@@ -21,11 +22,6 @@ use hydra_common::api::v1::sessions::{SearchSessionsQuery, TokenUsage};
 use hydra_common::{IssueId, SessionId};
 use std::collections::HashMap;
 use tracing::warn;
-
-/// Sentinel agent-name bucket for sessions whose `agent_config.agent_name`
-/// is `None` (ad-hoc sessions). Spelled out as a const so the wire
-/// string is the same everywhere it surfaces.
-pub const ADHOC_AGENT_KEY: &str = "adhoc";
 
 const TOP_ISSUES_LIMIT: usize = 10;
 
@@ -55,13 +51,8 @@ impl SessionWithUsage {
             .expect("SessionWithUsage requires Session.end_time = Some(_)")
     }
 
-    fn agent_key(&self) -> &str {
-        self.session
-            .agent_config
-            .agent_name
-            .as_ref()
-            .map(|n| n.as_str())
-            .unwrap_or(ADHOC_AGENT_KEY)
+    fn agent_key(&self) -> Option<&AgentName> {
+        self.session.agent_config.agent_name.as_ref()
     }
 }
 
@@ -199,12 +190,13 @@ pub fn compute_token_usage_over_time(
 /// blended-dollar total cost across the window plus the per-session
 /// breakdown. Sorted by `total_cost_usd` descending; the per-session
 /// list inside each agent is sorted by `cost_usd` descending too. Ad-hoc
-/// sessions are aggregated under [`ADHOC_AGENT_KEY`].
+/// sessions (`agent_config.agent_name == None`) are aggregated under a
+/// single `None` bucket.
 pub fn compute_cost_per_agent(sessions: &[SessionWithUsage]) -> TokenUsageCostPerAgentResponse {
-    let mut by_agent: HashMap<String, Vec<AgentSessionCost>> = HashMap::new();
+    let mut by_agent: HashMap<Option<AgentName>, Vec<AgentSessionCost>> = HashMap::new();
     for entry in sessions {
         let cost = cost_usd(entry.usage());
-        let key = entry.agent_key().to_string();
+        let key = entry.agent_key().cloned();
         by_agent
             .entry(key)
             .or_default()
@@ -427,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn cost_per_agent_sorts_by_total_desc_and_aggregates_adhoc_under_sentinel() {
+    fn cost_per_agent_sorts_by_total_desc_and_aggregates_adhoc_under_none() {
         // swe has two sessions, reviewer one, plus one adhoc.
         let sessions = vec![
             entry(
@@ -458,23 +450,29 @@ mod tests {
         ];
 
         let resp = compute_cost_per_agent(&sessions);
-        // Three buckets: swe, reviewer, adhoc.
+        // Three buckets: swe, reviewer, ad-hoc.
         assert_eq!(resp.agents.len(), 3);
 
         // Order is sorted desc by total_cost_usd.
         // swe: 3M input * $5/MTok = $15.00
         // reviewer: 500k * $5/MTok = $2.50
         // adhoc: 10k * $5/MTok = $0.05
-        assert_eq!(resp.agents[0].agent_name, "swe");
+        assert_eq!(
+            resp.agents[0].agent_name.as_ref().map(|n| n.as_str()),
+            Some("swe")
+        );
         assert!((resp.agents[0].total_cost_usd - 15.0).abs() < 1e-9);
         assert_eq!(resp.agents[0].sessions.len(), 2);
         // The two sessions inside swe are sorted by cost desc.
         assert!(resp.agents[0].sessions[0].cost_usd >= resp.agents[0].sessions[1].cost_usd);
 
-        assert_eq!(resp.agents[1].agent_name, "reviewer");
+        assert_eq!(
+            resp.agents[1].agent_name.as_ref().map(|n| n.as_str()),
+            Some("reviewer")
+        );
         assert!((resp.agents[1].total_cost_usd - 2.5).abs() < 1e-9);
 
-        assert_eq!(resp.agents[2].agent_name, ADHOC_AGENT_KEY);
+        assert!(resp.agents[2].agent_name.is_none());
         assert!((resp.agents[2].total_cost_usd - 0.05).abs() < 1e-9);
         assert_eq!(resp.agents[2].sessions.len(), 1);
     }
