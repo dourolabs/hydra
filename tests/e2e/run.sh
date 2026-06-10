@@ -34,7 +34,7 @@ CONFIG_TEMPLATE="${SCRIPT_DIR}/config/test-config.yaml"
 CONFIG_PATH="/tmp/hydra-e2e/test-config.yaml"
 MERGE_POLICY_FILE="${SCRIPT_DIR}/config/merge-policy.yaml"
 ENGINEERING_V2_FIXTURES_DIR="${SCRIPT_DIR}/fixtures/projects/engineering-v2"
-ENGINEERING_V2_PROJECT_FILE="${ENGINEERING_V2_FIXTURES_DIR}/project.yaml"
+ENGINEERING_V2_STATUS_FIXTURES_DIR="${ENGINEERING_V2_FIXTURES_DIR}/statuses"
 REVIEW_FORM_FIXTURE="${SCRIPT_DIR}/fixtures/forms/review.yaml"
 # MUST match `server_hostname` in test-config.yaml so the CLI's saved-token lookup hits.
 SERVER_URL="http://127.0.0.1:8080"
@@ -210,39 +210,45 @@ env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" repos update d
 echo "    Merge policy applied."
 
 # --------------------------------------------------------------------------
-# 6c. Seed the `engineering-v2` Project from the fixture YAML. The body file
-#     ships each non-terminal status's `prompt_path` inline; the project's
-#     own `prompt_path` is set in a follow-up `projects update` call below
-#     because `projects create` does not expose a `--prompt-path` flag.
+# 6c. Seed the `engineering-v2` Project. `projects create` writes the
+#     project shell (key, name, prompt_path); statuses are added one at a
+#     time via `projects status create --body-file <single-status>`.
+#     Iterate the status fixtures in pipeline order — row `sequence`
+#     reflects insertion order, and `position` defaults to 0.0 across
+#     the board, so display order falls back to `ORDER BY sequence`.
 #
 #     Used by the `per-project-status-pipeline` e2e scenario; other
 #     scenarios ignore it.
 # --------------------------------------------------------------------------
-if [[ ! -f "${ENGINEERING_V2_PROJECT_FILE}" ]]; then
-  echo "ERROR: engineering-v2 project fixture not found at ${ENGINEERING_V2_PROJECT_FILE}" >&2
-  exit 1
-fi
-echo "==> Seeding engineering-v2 project from ${ENGINEERING_V2_PROJECT_FILE}..."
-CREATE_OUTPUT="$(env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
-  --output-format jsonl \
+echo "==> Creating engineering-v2 project..."
+env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
   projects create \
     --key engineering-v2 \
     --name "Engineering v2" \
-    --body-file "${ENGINEERING_V2_PROJECT_FILE}")"
-ENGINEERING_V2_PROJECT_ID="$(printf '%s\n' "${CREATE_OUTPUT}" | sed -nE 's/.*"project_id":"([^"]+)".*/\1/p' | head -n1)"
-if [[ -z "${ENGINEERING_V2_PROJECT_ID}" ]]; then
-  echo "ERROR: failed to parse project_id from 'projects create' output:" >&2
-  printf '%s\n' "${CREATE_OUTPUT}" >&2
-  exit 1
-fi
-echo "    Project created with id ${ENGINEERING_V2_PROJECT_ID}."
-
-# Set the project-layer prompt_path. The four-level prompt resolver
-# concatenates this slice onto each spawned session's system_prompt.
-env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
-  projects update "${ENGINEERING_V2_PROJECT_ID}" \
     --prompt-path "/projects/engineering-v2/prompt.md" >/dev/null
-echo "    Project prompt_path set."
+echo "    Project created."
+
+ENGINEERING_V2_STATUS_ORDER=(
+  inbox
+  backlog
+  pending
+  in-development
+  pair-development
+  in-review
+  pending-release
+)
+echo "==> Seeding engineering-v2 statuses..."
+for status_key in "${ENGINEERING_V2_STATUS_ORDER[@]}"; do
+  fixture="${ENGINEERING_V2_STATUS_FIXTURES_DIR}/${status_key}.yaml"
+  if [[ ! -f "${fixture}" ]]; then
+    echo "ERROR: engineering-v2 status fixture not found at ${fixture}" >&2
+    exit 1
+  fi
+  env -u HYDRA_TOKEN HYDRA_SERVER_URL="${SERVER_URL}" "${HYDRA_SP}" \
+    projects status create engineering-v2 \
+      --body-file "${fixture}" >/dev/null
+done
+echo "    Seeded ${#ENGINEERING_V2_STATUS_ORDER[@]} statuses."
 
 # --------------------------------------------------------------------------
 # 6d. Push the engineering-v2 prompt fixtures to the doc store. The project
