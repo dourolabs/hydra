@@ -1,7 +1,11 @@
 use crate::{
     app::{AppState, ServiceState},
     domain::{
-        issues::{Issue, IssueDependency, IssueType},
+        actors::ActorRef,
+        agents::Agent,
+        conversations::{Conversation, ConversationStatus},
+        documents::Document,
+        issues::{Issue, IssueDependency, IssueType, SessionSettings},
         sessions::{AgentConfig, Session, SessionMode},
         task_status::Status,
         users::Username,
@@ -10,8 +14,9 @@ use crate::{
     store::MemoryStore,
     test_utils::{MockJobEngine, test_app_config},
 };
-use hydra_common::IssueId;
+use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::projects::StatusKey;
+use hydra_common::{ConversationId, IssueId};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 
@@ -113,6 +118,57 @@ pub fn issue_with_status(
         None,
         None,
     )
+}
+
+/// Register a minimal agent (`max_tries = max_simultaneous = 1`) with a
+/// prompt document at `/agents/<name>/prompt.md`.
+pub async fn register_agent(state: &AppState, name: &str) {
+    let prompt_path = format!("/agents/{name}/prompt.md");
+    let agent = Agent::new(
+        name.to_string(),
+        prompt_path.clone(),
+        None,
+        1,
+        1,
+        false,
+        vec![],
+    );
+    state.store.add_agent(agent).await.unwrap();
+    let doc = Document {
+        title: format!("{name} prompt"),
+        body_markdown: "agent prompt body".to_string(),
+        path: Some(prompt_path.parse().unwrap()),
+        deleted: false,
+    };
+    state
+        .store
+        .add_document_with_actor(doc, ActorRef::test())
+        .await
+        .unwrap();
+}
+
+/// Seed a conversation spawned from `issue_id` with the given status. The
+/// conversation is owned by an `swe` agent.
+pub async fn seed_linked_conversation(
+    state: &AppState,
+    issue_id: &IssueId,
+    status: ConversationStatus,
+) -> ConversationId {
+    let conversation = Conversation {
+        title: None,
+        agent_name: Some(AgentName::try_new("swe").unwrap()),
+        status,
+        creator: Username::from("creator"),
+        session_settings: SessionSettings::default(),
+        spawned_from: Some(issue_id.clone()),
+        deleted: false,
+    };
+    let (id, _) = state
+        .store
+        .add_conversation_with_actor(conversation, ActorRef::test())
+        .await
+        .unwrap();
+    id
 }
 
 /// Start the automation runner for a test, returning a guard that shuts
