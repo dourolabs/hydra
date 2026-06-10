@@ -125,4 +125,37 @@ prompt_path: /projects/engineering-v2/statuses/backlog.md
             Some("/projects/engineering-v2/statuses/backlog.md"),
         );
     }
+
+    #[test]
+    fn load_status_body_file_preserves_auto_archive_after_seconds() {
+        let file = write_body(
+            r##"
+key: done
+label: Done
+color: "#27ae60"
+unblocks_parents: false
+unblocks_dependents: false
+cascades_to_children: false
+auto_archive_after_seconds: 1209600
+"##,
+        );
+        let body = load_status_body_file(file.path()).unwrap();
+        assert_eq!(body.auto_archive_after_seconds, Some(1_209_600));
+    }
+
+    #[test]
+    fn load_status_body_file_defaults_auto_archive_after_seconds_when_absent() {
+        let file = write_body(
+            r##"
+key: done
+label: Done
+color: "#27ae60"
+unblocks_parents: false
+unblocks_dependents: false
+cascades_to_children: false
+"##,
+        );
+        let body = load_status_body_file(file.path()).unwrap();
+        assert_eq!(body.auto_archive_after_seconds, None);
+    }
 }

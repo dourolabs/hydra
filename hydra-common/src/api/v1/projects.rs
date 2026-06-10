@@ -186,6 +186,11 @@ pub struct StatusDefinition {
     /// conversation instead of a headless session.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interactive: bool,
+    /// When `Some(N)`, issues that have sat in this status for at least
+    /// `N` seconds get auto-archived by a periodic worker. `None` (the
+    /// default) leaves the feature off for the status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_archive_after_seconds: Option<i64>,
     /// Sort key for status ordering within a project. Smaller values
     /// appear earlier. Default 0.0; drag-and-drop UI sets explicit
     /// values to reorder. Mirrors the existing [`Project::priority`]
@@ -214,6 +219,7 @@ impl StatusDefinition {
             on_enter,
             prompt_path: None,
             interactive: false,
+            auto_archive_after_seconds: None,
             position: 0.0,
         }
     }
@@ -736,6 +742,42 @@ mod tests {
             !reserialized.contains("interactive"),
             "skip_serializing_if should drop `interactive: false`; got {reserialized}"
         );
+    }
+
+    #[test]
+    fn status_definition_omits_auto_archive_after_seconds_when_none() {
+        let def = status("open", "Open");
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(
+            !json.contains("auto_archive_after_seconds"),
+            "auto_archive_after_seconds should be skipped when None; got {json}"
+        );
+    }
+
+    #[test]
+    fn status_definition_round_trips_auto_archive_after_seconds() {
+        let mut def = status("open", "Open");
+        def.auto_archive_after_seconds = Some(1_209_600);
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"auto_archive_after_seconds\":1209600"));
+        let parsed: StatusDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.auto_archive_after_seconds, Some(1_209_600));
+    }
+
+    #[test]
+    fn status_definition_defaults_auto_archive_after_seconds_when_field_absent() {
+        // Legacy payload (pre-this-PR) has no `auto_archive_after_seconds`;
+        // it must deserialize to `None`.
+        let legacy = serde_json::json!({
+            "key": "open",
+            "label": "Open",
+            "color": "#abcdef",
+            "unblocks_parents": false,
+            "unblocks_dependents": false,
+            "cascades_to_children": false,
+        });
+        let parsed: StatusDefinition = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.auto_archive_after_seconds.is_none());
     }
 
     #[test]

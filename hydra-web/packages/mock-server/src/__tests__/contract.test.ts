@@ -1416,6 +1416,43 @@ describe("Seed data", () => {
       ]),
     );
   });
+
+  it("auto_archive_after_seconds round-trips through per-status CRUD", async () => {
+    await resetServer();
+    const window = BigInt(1209600);
+    // Add a status with the field set; the response must echo it.
+    const created = await client.createProjectStatus("j-engv2", {
+      key: "archive-trial",
+      label: "Archive trial",
+      color: "#abcdef",
+      unblocks_parents: false,
+      unblocks_dependents: false,
+      cascades_to_children: false,
+      position: 0,
+      auto_archive_after_seconds: window,
+    });
+    expect(Number(created.status.auto_archive_after_seconds)).toBe(1209600);
+
+    // GET /v1/projects/:id/statuses must include the field unchanged.
+    const after = await client.getProjectStatuses("j-engv2");
+    const fetched = after.statuses.find((s) => s.key === "archive-trial");
+    expect(Number(fetched?.auto_archive_after_seconds)).toBe(1209600);
+
+    // Clearing the field via PUT must round-trip back to null/undefined.
+    const cleared = await client.updateProjectStatus("j-engv2", "archive-trial", {
+      key: "archive-trial",
+      label: "Archive trial",
+      color: "#abcdef",
+      unblocks_parents: false,
+      unblocks_dependents: false,
+      cascades_to_children: false,
+      position: 0,
+    });
+    expect(cleared.status.auto_archive_after_seconds ?? null).toBeNull();
+    const afterClear = await client.getProjectStatuses("j-engv2");
+    const refetched = afterClear.statuses.find((s) => s.key === "archive-trial");
+    expect(refetched?.auto_archive_after_seconds ?? null).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

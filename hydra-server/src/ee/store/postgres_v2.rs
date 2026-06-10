@@ -1361,6 +1361,7 @@ impl PostgresStoreV2 {
         );
         def.prompt_path = row.prompt_path.clone();
         def.interactive = row.interactive;
+        def.auto_archive_after_seconds = row.auto_archive_after_seconds;
         def.position = row.position;
         Ok(def)
     }
@@ -1373,7 +1374,7 @@ impl PostgresStoreV2 {
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, position \
              FROM metis.statuses WHERE project_id = $1 ORDER BY position, sequence",
         )
         .bind(project_id)
@@ -1395,7 +1396,7 @@ impl PostgresStoreV2 {
             out.entry(id.clone()).or_default();
         }
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, position \
              FROM metis.statuses WHERE project_id = ANY($1) ORDER BY project_id, position, sequence",
         )
         .bind(project_ids)
@@ -1428,8 +1429,8 @@ impl PostgresStoreV2 {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, position) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, position) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(project_id)
         .bind(sequence)
@@ -1442,6 +1443,7 @@ impl PostgresStoreV2 {
         .bind(&on_enter_json)
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
+        .bind(status.auto_archive_after_seconds)
         .bind(status.position)
         .execute(&mut **tx)
         .await
@@ -1891,6 +1893,7 @@ struct StatusRow {
     on_enter: Option<Value>,
     prompt_path: Option<String>,
     interactive: bool,
+    auto_archive_after_seconds: Option<i64>,
     // No `#[sqlx(default)]`: forces every SELECT site on
     // `metis.statuses` to project `position`. A missing column should
     // fail loud at runtime instead of silently surfacing `0.0` in
@@ -5977,8 +5980,8 @@ impl Store for PostgresStoreV2 {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, position = $10 \
-             WHERE project_id = $11 AND sequence = $12",
+            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, position = $11 \
+             WHERE project_id = $12 AND sequence = $13",
         )
         .bind(status.key.as_str())
         .bind(&status.label)
@@ -5989,6 +5992,7 @@ impl Store for PostgresStoreV2 {
         .bind(&on_enter_json)
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
+        .bind(status.auto_archive_after_seconds)
         .bind(status.position)
         .bind(id.as_ref())
         .bind(sequence)
@@ -11491,5 +11495,84 @@ mod tests {
             )
             .await;
         assert!(matches!(res, Err(StoreError::ProjectNotFound(_))));
+    }
+
+    /// Postgres counterpart to `auto_archive_after_seconds_round_trips_sqlite`:
+    /// the field must round-trip through `add_status` / `update_status` /
+    /// `get_project`. The periodic archive worker (PR-2) reads this field
+    /// off the per-status row.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn auto_archive_after_seconds_round_trips_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("aa"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut with_window = cutover_status_def_pg("done");
+        with_window.auto_archive_after_seconds = Some(1_209_600);
+        store
+            .add_status(&project_id, with_window, &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .add_status(
+                &project_id,
+                cutover_status_def_pg("open"),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let fetched = store.get_project(&project_id, false).await.unwrap();
+        let done = fetched
+            .item
+            .find_status(&StatusKey::try_new("done").unwrap())
+            .unwrap();
+        assert_eq!(done.auto_archive_after_seconds, Some(1_209_600));
+        let open = fetched
+            .item
+            .find_status(&StatusKey::try_new("open").unwrap())
+            .unwrap();
+        assert_eq!(open.auto_archive_after_seconds, None);
+
+        let mut cleared = done.clone();
+        cleared.auto_archive_after_seconds = None;
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("done").unwrap(),
+                cleared,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let after = store.get_project(&project_id, false).await.unwrap();
+        let done_after = after
+            .item
+            .find_status(&StatusKey::try_new("done").unwrap())
+            .unwrap();
+        assert_eq!(done_after.auto_archive_after_seconds, None);
+
+        let mut set_new = done_after.clone();
+        set_new.auto_archive_after_seconds = Some(3600);
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("done").unwrap(),
+                set_new,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let after2 = store.get_project(&project_id, false).await.unwrap();
+        let done_after2 = after2
+            .item
+            .find_status(&StatusKey::try_new("done").unwrap())
+            .unwrap();
+        assert_eq!(done_after2.auto_archive_after_seconds, Some(3600));
     }
 }

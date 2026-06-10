@@ -157,6 +157,11 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_statuses_position_domain_roundtrip(&pool).await?;
     add_statuses_position_migration_is_idempotent(&pool).await?;
 
+    add_statuses_auto_archive_after_seconds_schema_invariants(&pool).await?;
+    add_statuses_auto_archive_after_seconds_defaults_to_null(&pool).await?;
+    add_statuses_auto_archive_after_seconds_domain_roundtrip(&pool).await?;
+    add_statuses_auto_archive_after_seconds_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -401,6 +406,105 @@ async fn add_statuses_position_migration_is_idempotent(pool: &SqlitePool) -> Res
         let after_pos: f64 = after.try_get("position")?;
         if (before_pos - after_pos).abs() > f64::EPSILON {
             bail!("position changed across rerun: {before_pos} -> {after_pos}");
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260617000000_add_statuses_auto_archive_after_seconds. Adds
+// `auto_archive_after_seconds INTEGER NULL` to `statuses` — the
+// per-status plumbing for the periodic auto-archive worker. `NULL`
+// (the column default) leaves the feature off for the row.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_auto_archive_after_seconds_schema_invariants(
+    pool: &SqlitePool,
+) -> Result<()> {
+    if !column_exists(pool, "statuses", "auto_archive_after_seconds").await? {
+        bail!("expected `statuses.auto_archive_after_seconds` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "statuses", "auto_archive_after_seconds").await? {
+        bail!("expected `statuses.auto_archive_after_seconds` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_defaults_to_null(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT project_id, sequence, auto_archive_after_seconds FROM statuses")
+        .fetch_all(pool)
+        .await
+        .context("read statuses for auto_archive_after_seconds default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert default against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: Option<i64> = row.try_get("auto_archive_after_seconds")?;
+        if value.is_some() {
+            bail!(
+                "statuses({project_id}, sequence={sequence}): expected NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_domain_roundtrip(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("SqliteStore::get_project(j-defaul) post-auto-archive migration")?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for (idx, status) in fetched.item.statuses.iter().enumerate() {
+        if status.auto_archive_after_seconds.is_some() {
+            bail!(
+                "j-defaul.statuses[{idx}] ({key:?}): expected auto_archive_after_seconds=None; got {got:?}",
+                key = status.key,
+                got = status.auto_archive_after_seconds,
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_auto_archive_after_seconds_migration_is_idempotent(
+    pool: &SqlitePool,
+) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT project_id, sequence, auto_archive_after_seconds FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses before auto-archive idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm auto-archive idempotency")?;
+    let snapshot_after = sqlx::query(
+        "SELECT project_id, sequence, auto_archive_after_seconds FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses after auto-archive idempotency rerun")?;
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across auto-archive idempotency rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_val: Option<i64> = before.try_get("auto_archive_after_seconds")?;
+        let after_val: Option<i64> = after.try_get("auto_archive_after_seconds")?;
+        if before_val != after_val {
+            bail!(
+                "auto_archive_after_seconds changed across rerun: {before_val:?} -> {after_val:?}"
+            );
         }
     }
     Ok(())

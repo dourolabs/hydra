@@ -10362,4 +10362,53 @@ mod tests {
         assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
         let _ = StatusKey::try_new("a").unwrap();
     }
+
+    /// `auto_archive_after_seconds` round-trips through the in-memory
+    /// store. The periodic archive worker (PR-2) reads this field off
+    /// the per-status row.
+    #[tokio::test]
+    async fn auto_archive_after_seconds_round_trips_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("aa", &[]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let mut with_window = cutover_status_def("done");
+        with_window.auto_archive_after_seconds = Some(1_209_600);
+        store
+            .add_status(&project_id, with_window, &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_status(&project_id, cutover_status_def("open"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_project(&project_id, false).await.unwrap().item;
+        let done = fetched
+            .find_status(&StatusKey::try_new("done").unwrap())
+            .unwrap();
+        assert_eq!(done.auto_archive_after_seconds, Some(1_209_600));
+        let open = fetched
+            .find_status(&StatusKey::try_new("open").unwrap())
+            .unwrap();
+        assert_eq!(open.auto_archive_after_seconds, None);
+
+        let mut cleared = done.clone();
+        cleared.auto_archive_after_seconds = None;
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("done").unwrap(),
+                cleared,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let after = store.get_project(&project_id, false).await.unwrap().item;
+        let done_after = after
+            .find_status(&StatusKey::try_new("done").unwrap())
+            .unwrap();
+        assert_eq!(done_after.auto_archive_after_seconds, None);
+    }
 }
