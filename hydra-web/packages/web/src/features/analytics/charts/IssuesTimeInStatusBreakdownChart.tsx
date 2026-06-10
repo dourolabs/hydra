@@ -6,7 +6,7 @@ import type {
 } from "@hydra/api";
 import { ChartCard } from "../ChartCard";
 import { useThroughputIssuesTimeInStatusBreakdown } from "../useThroughputIssues";
-import { formatDurationSeconds } from "../duration";
+import { formatDurationSeconds } from "../../../utils/time";
 import styles from "./charts.module.css";
 
 export interface IssuesTimeInStatusBreakdownChartProps {

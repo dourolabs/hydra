@@ -15,7 +15,8 @@ import type {
 import { ChartCard } from "../ChartCard";
 import { useThroughputIssuesCycleTime } from "../useThroughputIssues";
 import { AXIS_TICK, CHART_COLORS, GRID_STROKE, TOOLTIP_STYLE } from "./colors";
-import { formatBinRange, formatDurationSeconds } from "../duration";
+import { formatBinRange } from "../duration";
+import { formatDurationSeconds } from "../../../utils/time";
 import styles from "./charts.module.css";
 
 export interface IssuesCycleTimeChartProps {
