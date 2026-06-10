@@ -118,7 +118,7 @@ pub async fn run(
 
             let mut buffer = Vec::new();
             render(
-                ConversationSummaryRecords(&conversations),
+                ConversationSummaryRecords(&conversations.conversations),
                 context.output_format,
                 &mut buffer,
             )?;

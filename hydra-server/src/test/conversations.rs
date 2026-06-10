@@ -10,7 +10,7 @@ use crate::{
 };
 use hydra_common::agents::UpsertAgentRequest;
 use hydra_common::api::v1::conversations::{
-    Conversation, ConversationStatus, ConversationSummary, CreateConversationRequest,
+    Conversation, ConversationStatus, CreateConversationRequest, ListConversationsResponse,
     SendMessageRequest, UpdateConversationRequest,
 };
 use hydra_common::api::v1::sessions::{ListSessionsResponse, SearchSessionsQuery};
@@ -208,15 +208,16 @@ async fn create_conversation_with_unknown_agent_name_returns_400() -> anyhow::Re
 
     // Conversation should not have been persisted, and no session should
     // have been spawned, since validation runs before the store write.
-    let conversations: Vec<ConversationSummary> = client
+    let conversations: ListConversationsResponse = client
         .get(format!("{}/v1/conversations", server.base_url()))
         .send()
         .await?
         .json()
         .await?;
     assert!(
-        conversations.is_empty(),
-        "no conversation should be persisted when agent_name validation fails, got {conversations:?}"
+        conversations.conversations.is_empty(),
+        "no conversation should be persisted when agent_name validation fails, got {:?}",
+        conversations.conversations,
     );
 
     // Give the automation a chance to (not) spawn anything before asserting.
@@ -353,10 +354,10 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
         .await?;
 
     assert_eq!(response.status(), StatusCode::OK);
-    let summaries: Vec<ConversationSummary> = response.json().await?;
-    assert!(!summaries.is_empty());
+    let body: ListConversationsResponse = response.json().await?;
+    assert!(!body.conversations.is_empty());
 
-    let summary = &summaries[0];
+    let summary = &body.conversations[0];
     // `event_count` aggregates chat-text SessionEvents across every session
     // linked to the conversation. Under the queue-and-deliver model the
     // first user message stays on the chat-relay's pending queue until a
@@ -365,6 +366,84 @@ async fn list_conversations_returns_summaries_with_event_count() -> anyhow::Resu
     // entry still exists because the conversation row does; it just has
     // zero chat events on any session log.
     assert_eq!(summary.event_count, 0);
+
+    Ok(())
+}
+
+/// Pagination contract: `GET /v1/conversations?limit=N` returns `next_cursor`
+/// when more rows exist, and re-fetching with that cursor returns the next
+/// page. Page 1 ∪ page 2 must equal the unpaginated result (no overlap, no
+/// gap). Regression guard for the cursor-in-but-not-out hole tracked in the
+/// RCA at [[d-vxrcyor]].
+#[tokio::test]
+async fn list_conversations_paginates_with_next_cursor() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Create more conversations than the page limit so a second page exists.
+    let total: usize = 3;
+    for _ in 0..total {
+        client
+            .post(format!("{}/v1/conversations", server.base_url()))
+            .json(&serde_json::json!({}))
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    // Unpaginated baseline — no limit, no cursor.
+    let all: ListConversationsResponse = client
+        .get(format!("{}/v1/conversations", server.base_url()))
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(all.conversations.len(), total);
+    assert!(all.next_cursor.is_none());
+
+    // Page 1 — limit < total, response must carry a cursor for page 2.
+    let limit: usize = 2;
+    let page1: ListConversationsResponse = client
+        .get(format!("{}/v1/conversations", server.base_url()))
+        .query(&[("limit", limit.to_string())])
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(page1.conversations.len(), limit);
+    let cursor = page1
+        .next_cursor
+        .clone()
+        .expect("page 1 should expose a next_cursor when more rows exist");
+
+    // Page 2 — cursor flows back in to fetch the remainder.
+    let page2: ListConversationsResponse = client
+        .get(format!("{}/v1/conversations", server.base_url()))
+        .query(&[("limit", limit.to_string()), ("cursor", cursor)])
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(page2.conversations.len(), total - limit);
+    assert!(
+        page2.next_cursor.is_none(),
+        "page 2 exhausts the result set, must not carry a next_cursor",
+    );
+
+    // Union of page 1 + page 2 must exactly equal the unpaginated result —
+    // no overlap, no gap, same order.
+    let unpaginated_ids: Vec<_> = all
+        .conversations
+        .iter()
+        .map(|c| c.conversation_id.clone())
+        .collect();
+    let paged_ids: Vec<_> = page1
+        .conversations
+        .iter()
+        .chain(page2.conversations.iter())
+        .map(|c| c.conversation_id.clone())
+        .collect();
+    assert_eq!(paged_ids, unpaginated_ids);
 
     Ok(())
 }

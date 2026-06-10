@@ -14,6 +14,7 @@ import type {
   ConversationStatus,
   ConversationSummary,
   CreateConversationRequest,
+  ListConversationsResponse,
   SendMessageRequest,
   Session,
 } from "@hydra/api";
@@ -149,10 +150,11 @@ export function createConversationRoutes(store: Store): Hono {
       }
     }
 
-    const summaries: ConversationSummary[] = filtered.map(({ id, entry }) =>
+    const conversations: ConversationSummary[] = filtered.map(({ id, entry }) =>
       toSummary(store, id, entry.data),
     );
-    return c.json(summaries);
+    const resp: ListConversationsResponse = { conversations };
+    return c.json(resp);
   });
 
   // GET /v1/conversations/:id

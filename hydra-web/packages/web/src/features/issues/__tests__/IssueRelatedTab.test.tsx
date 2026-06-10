@@ -242,7 +242,7 @@ function resetState() {
   mockListIssues.mockReset();
   mockListSessions.mockReset();
   mockListConversations.mockReset();
-  mockListConversations.mockResolvedValue([]);
+  mockListConversations.mockResolvedValue({ conversations: [], next_cursor: null });
   mockCurrentIssue = undefined;
   mockPatches = [];
   mockDocuments = [];

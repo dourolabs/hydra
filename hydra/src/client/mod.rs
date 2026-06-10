@@ -7,9 +7,8 @@ use futures::{stream, Stream, StreamExt};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::conversations::{
-        Conversation as ApiConversation, ConversationSummary as ApiConversationSummary,
-        CreateConversationRequest, SearchConversationsQuery, SendMessageRequest,
-        UpdateConversationRequest,
+        Conversation as ApiConversation, CreateConversationRequest, ListConversationsResponse,
+        SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
     },
     api::v1::error::ApiErrorBody,
     api::v1::events::EventsQuery,
@@ -443,7 +442,7 @@ pub trait HydraClientInterface: Send + Sync {
     async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
-    ) -> Result<Vec<ApiConversationSummary>>;
+    ) -> Result<ListConversationsResponse>;
     async fn get_conversation(&self, conversation_id: &ConversationId) -> Result<ApiConversation>;
     async fn update_conversation(
         &self,
@@ -2566,7 +2565,7 @@ impl HydraClient {
     pub async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
-    ) -> Result<Vec<ApiConversationSummary>> {
+    ) -> Result<ListConversationsResponse> {
         let url = self.endpoint("/v1/conversations")?;
         let response = self
             .authed(self.http.get(url))
@@ -2580,7 +2579,7 @@ impl HydraClient {
             .await?;
 
         response
-            .json::<Vec<ApiConversationSummary>>()
+            .json::<ListConversationsResponse>()
             .await
             .context("failed to decode list conversations response")
     }
@@ -3256,7 +3255,7 @@ impl HydraClientInterface for HydraClient {
     async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
-    ) -> Result<Vec<ApiConversationSummary>> {
+    ) -> Result<ListConversationsResponse> {
         HydraClient::list_conversations(self, query).await
     }
 

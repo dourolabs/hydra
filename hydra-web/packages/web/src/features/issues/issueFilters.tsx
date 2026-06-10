@@ -182,7 +182,7 @@ export function useIssueFilters(
 
   const conversationEntities: RelationEntity[] = useMemo(
     () =>
-      (conversationListQuery.data ?? []).map((c) => ({
+      (conversationListQuery.data?.conversations ?? []).map((c) => ({
         id: c.conversation_id,
         title: c.title ?? c.conversation_id,
         sub: c.agent_name ?? c.creator,

@@ -12,7 +12,9 @@ const listIssues = vi.fn(() =>
 const listPatches = vi.fn(() =>
   Promise.resolve({ patches: [], next_cursor: null, total_count: 0n }),
 );
-const listConversations = vi.fn(() => Promise.resolve([]));
+const listConversations = vi.fn(() =>
+  Promise.resolve({ conversations: [], next_cursor: null }),
+);
 const listAgents = vi.fn(() => Promise.resolve({ agents: [] }));
 const listUsers = vi.fn(() => Promise.resolve({ users: [] }));
 

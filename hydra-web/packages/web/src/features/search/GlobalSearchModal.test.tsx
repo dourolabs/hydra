@@ -160,7 +160,9 @@ function defaultMocks() {
   listDocuments.mockResolvedValue({
     documents: [documentRow("d-1", "Doc one", "/docs/one")],
   });
-  listConversations.mockResolvedValue([conversationRow("c-1", "Chat one")]);
+  listConversations.mockResolvedValue({
+    conversations: [conversationRow("c-1", "Chat one")],
+  });
   listSessions.mockResolvedValue({
     sessions: [
       sessionRow("s-1", "session one prompt", "i-spawned"),
@@ -281,7 +283,7 @@ describe("GlobalSearchModal rendering", () => {
     listIssues.mockResolvedValue({ issues: [] });
     listPatches.mockResolvedValue({ patches: [] });
     listDocuments.mockResolvedValue({ documents: [] });
-    listConversations.mockResolvedValue([]);
+    listConversations.mockResolvedValue({ conversations: [] });
     listSessions.mockResolvedValue({ sessions: [] });
 
     renderModal();
@@ -304,7 +306,7 @@ describe("GlobalSearchModal rendering", () => {
     });
     listPatches.mockResolvedValue({ patches: [] });
     listDocuments.mockResolvedValue({ documents: [] });
-    listConversations.mockResolvedValue([]);
+    listConversations.mockResolvedValue({ conversations: [] });
     listSessions.mockResolvedValue({ sessions: [] });
 
     renderModal();
@@ -320,7 +322,7 @@ describe("GlobalSearchModal rendering", () => {
     });
     listPatches.mockResolvedValue({ patches: [] });
     listDocuments.mockResolvedValue({ documents: [] });
-    listConversations.mockResolvedValue([]);
+    listConversations.mockResolvedValue({ conversations: [] });
     listSessions.mockResolvedValue({ sessions: [] });
 
     renderModal();
@@ -337,7 +339,7 @@ describe("GlobalSearchModal rendering", () => {
     });
     listPatches.mockResolvedValue({ patches: [] });
     listDocuments.mockResolvedValue({ documents: [] });
-    listConversations.mockResolvedValue([]);
+    listConversations.mockResolvedValue({ conversations: [] });
     listSessions.mockResolvedValue({ sessions: [] });
 
     renderModal();
@@ -361,7 +363,7 @@ describe("GlobalSearchModal rendering", () => {
     listIssues.mockResolvedValue({ issues: [] });
     listPatches.mockResolvedValue({ patches: [] });
     listDocuments.mockResolvedValue({ documents: [] });
-    listConversations.mockResolvedValue([]);
+    listConversations.mockResolvedValue({ conversations: [] });
     listSessions.mockResolvedValue({
       sessions: [sessionRow("s-orphan", "lonely", null)],
     });

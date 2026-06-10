@@ -23,9 +23,8 @@ use hydra::client::{HydraClientInterface, LogStream, RelayWebSocket};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::conversations::{
-        Conversation as ApiConversation, ConversationSummary as ApiConversationSummary,
-        CreateConversationRequest, SearchConversationsQuery, SendMessageRequest,
-        UpdateConversationRequest,
+        Conversation as ApiConversation, CreateConversationRequest, ListConversationsResponse,
+        SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
     },
     api::v1::events::EventsQuery,
     api::v1::labels::{
@@ -603,7 +602,7 @@ impl HydraClientInterface for RelayCallCountingClient {
     async fn list_conversations(
         &self,
         query: &SearchConversationsQuery,
-    ) -> Result<Vec<ApiConversationSummary>> {
+    ) -> Result<ListConversationsResponse> {
         self.inner.list_conversations(query).await
     }
 

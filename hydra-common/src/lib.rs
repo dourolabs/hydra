@@ -361,6 +361,8 @@ mod ts_export {
         crate::conversations::ConversationStatus::export_all(&cfg).expect("ConversationStatus");
         crate::conversations::CreateConversationRequest::export_all(&cfg)
             .expect("CreateConversationRequest");
+        crate::conversations::ListConversationsResponse::export_all(&cfg)
+            .expect("ListConversationsResponse");
         crate::conversations::SendMessageRequest::export_all(&cfg).expect("SendMessageRequest");
         crate::conversations::SearchConversationsQuery::export_all(&cfg)
             .expect("SearchConversationsQuery");

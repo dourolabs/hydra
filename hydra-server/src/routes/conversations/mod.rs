@@ -10,7 +10,10 @@ use axum::{
 };
 use hydra_common::{
     ConversationId, Versioned,
-    api::v1::{ApiError, conversations as api_conversations},
+    api::v1::{
+        ApiError, conversations as api_conversations,
+        pagination::{compute_next_cursor, effective_limit},
+    },
 };
 use tracing::{error, info};
 
@@ -71,7 +74,7 @@ pub async fn create_conversation(
 pub async fn list_conversations(
     State(state): State<AppState>,
     Query(query): Query<api_conversations::SearchConversationsQuery>,
-) -> Result<Json<Vec<api_conversations::ConversationSummary>>, ApiError> {
+) -> Result<Json<api_conversations::ListConversationsResponse>, ApiError> {
     info!(
         status = ?query.status,
         creator = ?query.creator,
@@ -114,8 +117,21 @@ pub async fn list_conversations(
         ));
     }
 
+    // Store returns up to `limit + 1` rows ordered by the same keyset as the
+    // cursor (version-row created_at DESC, id DESC). That row's timestamp
+    // surfaces here as `summary.updated_at`.
+    let eff_limit = effective_limit(query.limit);
+    let next_cursor = compute_next_cursor(
+        &mut summaries,
+        eff_limit,
+        |s| &s.updated_at,
+        |s| s.conversation_id.as_ref(),
+    );
+
     info!(returned = summaries.len(), "list_conversations completed");
-    Ok(Json(summaries))
+    let mut response = api_conversations::ListConversationsResponse::new(summaries);
+    response.next_cursor = next_cursor;
+    Ok(Json(response))
 }
 
 pub async fn get_conversation(
