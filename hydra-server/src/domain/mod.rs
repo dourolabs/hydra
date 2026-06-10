@@ -1,6 +1,5 @@
 pub mod actors;
 pub mod agents;
-pub mod analytics;
 pub mod conversations;
 pub mod documents;
 pub mod issues;
