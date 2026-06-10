@@ -302,6 +302,9 @@ vi.mock("@hydra/ui", () => ({
       {children}
     </button>
   ),
+  ColorPicker: ({ value }: { value: string }) => (
+    <span data-testid={`color-${value}`}>{value}</span>
+  ),
 }));
 
 const updateProjectSpy = vi.fn(async (_id: string, req: unknown) => req);
@@ -402,9 +405,6 @@ vi.mock("../../../hooks/useUsers", () => ({
 }));
 
 vi.mock("../../../components/ColorPicker", () => ({
-  ColorPicker: ({ value }: { value: string }) => (
-    <span data-testid={`color-${value}`}>{value}</span>
-  ),
   LABEL_COLOR_PALETTE: ["#111", "#222", "#333", "#444", "#555", "#666"],
 }));
 

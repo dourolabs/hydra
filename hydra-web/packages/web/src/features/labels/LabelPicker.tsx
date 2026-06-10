@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { LabelRecord } from "@hydra/api";
-import { ColorPicker, LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
+import { ColorPicker } from "@hydra/ui";
+import { LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
 import { useLabels } from "./useLabels";
 import { LabelChip } from "./LabelChip";
 import styles from "./LabelPicker.module.css";
@@ -175,7 +176,11 @@ export function LabelPicker({
                 </span>
               </div>
               <div className={styles.colorPalette}>
-                <ColorPicker value={selectedColor} onChange={setSelectedColor} />
+                <ColorPicker
+                  value={selectedColor}
+                  onChange={setSelectedColor}
+                  palette={LABEL_COLOR_PALETTE}
+                />
               </div>
             </li>
           )}

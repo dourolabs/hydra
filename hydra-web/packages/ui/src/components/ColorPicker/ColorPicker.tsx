@@ -1,12 +1,11 @@
 import { useState, useEffect } from "react";
-import { LABEL_COLOR_PALETTE } from "./palette";
 import styles from "./ColorPicker.module.css";
 
-interface ColorPickerProps {
+export interface ColorPickerProps {
   value: string;
   onChange: (color: string) => void;
-  /** Palette of swatch colors. Defaults to `LABEL_COLOR_PALETTE`. */
-  palette?: readonly string[];
+  /** Palette of swatch colors. */
+  palette: readonly string[];
   /** Show a free-text hex input next to the swatches. Defaults to false. */
   allowCustom?: boolean;
   className?: string;
@@ -16,7 +15,7 @@ interface ColorPickerProps {
 export function ColorPicker({
   value,
   onChange,
-  palette = LABEL_COLOR_PALETTE,
+  palette,
   allowCustom = false,
   className,
   "aria-label": ariaLabel,

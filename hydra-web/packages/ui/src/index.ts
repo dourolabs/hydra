@@ -86,6 +86,9 @@ export type { CopyButtonProps } from "./components/CopyButton";
 export { Chip } from "./components/Chip";
 export type { ChipProps, ChipTone } from "./components/Chip";
 
+export { ColorPicker } from "./components/ColorPicker";
+export type { ColorPickerProps } from "./components/ColorPicker";
+
 export { TypeChip, issueTypeDisplayLabel } from "./components/TypeChip";
 export type { TypeChipProps, IssueType } from "./components/TypeChip";
 
