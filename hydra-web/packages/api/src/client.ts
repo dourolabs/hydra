@@ -91,6 +91,8 @@ import type { IssuesCycleTimeResponse } from "./generated/IssuesCycleTimeRespons
 import type { IssuesTimeInStatusBreakdownResponse } from "./generated/IssuesTimeInStatusBreakdownResponse";
 import type { IssuesPerStatusDistributionResponse } from "./generated/IssuesPerStatusDistributionResponse";
 import type { IssuesOverTimeResponse } from "./generated/IssuesOverTimeResponse";
+import type { TokenUsageOverTimeQuery } from "./generated/TokenUsageOverTimeQuery";
+import type { TokenUsageOverTimeResponse } from "./generated/TokenUsageOverTimeResponse";
 import {
   HydraEventSource,
   buildEventsUrl,
@@ -235,7 +237,10 @@ export class HydraApiClient {
   }
 
   /** POST /v1/sessions/:sessionId/status */
-  setSessionStatus(sessionId: string, status: SessionStatusUpdate): Promise<SetSessionStatusResponse> {
+  setSessionStatus(
+    sessionId: string,
+    status: SessionStatusUpdate,
+  ): Promise<SetSessionStatusResponse> {
     return this.post(`/v1/sessions/${encodeURIComponent(sessionId)}/status`, status);
   }
 
@@ -275,9 +280,7 @@ export class HydraApiClient {
    * it. The server returns 204 with no body.
    */
   async mintSessionProxyAuth(sessionId: string): Promise<void> {
-    await this.postNoContent(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/proxy-auth`,
-    );
+    await this.postNoContent(`/v1/sessions/${encodeURIComponent(sessionId)}/proxy-auth`);
   }
 
   /**
@@ -288,9 +291,7 @@ export class HydraApiClient {
    * session — the UI surfaces "send a message to resume" in that case.
    */
   async mintConversationProxyAuth(conversationId: string): Promise<void> {
-    await this.postNoContent(
-      `/v1/conversations/${encodeURIComponent(conversationId)}/proxy-auth`,
-    );
+    await this.postNoContent(`/v1/conversations/${encodeURIComponent(conversationId)}/proxy-auth`);
   }
 
   /**
@@ -437,10 +438,7 @@ export class HydraApiClient {
    * Fetch a document by its exact path using the list endpoint with path_is_exact=true,
    * then fetches the full record via the detail endpoint.
    */
-  async getDocumentByPath(
-    path: string,
-    includeDeleted?: boolean,
-  ): Promise<DocumentVersionRecord> {
+  async getDocumentByPath(path: string, includeDeleted?: boolean): Promise<DocumentVersionRecord> {
     const query: Partial<SearchDocumentsQuery> = {
       q: null,
       path_prefix: path,
@@ -579,9 +577,7 @@ export class HydraApiClient {
    * @param repoName — Full repo name in "org/repo" format.
    */
   getMergeQueue(repoName: string, branch: string): Promise<MergeQueue> {
-    return this.get(
-      `/v1/merge-queues/${repoName}/${encodeURIComponent(branch)}/patches`,
-    );
+    return this.get(`/v1/merge-queues/${repoName}/${encodeURIComponent(branch)}/patches`);
   }
 
   /**
@@ -590,10 +586,7 @@ export class HydraApiClient {
    */
   enqueueMergePatch(repoName: string, branch: string, patchId: string): Promise<MergeQueue> {
     const body: EnqueueMergePatchRequest = { patch_id: patchId };
-    return this.post(
-      `/v1/merge-queues/${repoName}/${encodeURIComponent(branch)}/patches`,
-      body,
-    );
+    return this.post(`/v1/merge-queues/${repoName}/${encodeURIComponent(branch)}/patches`, body);
   }
 
   // ---------------------------------------------------------------------------
@@ -618,12 +611,18 @@ export class HydraApiClient {
   /** PUT /v1/labels/:labelId/objects/:objectId */
   addLabelToObject(labelId: string, objectId: string, cascade?: boolean): Promise<void> {
     const query = cascade ? { cascade: "true" } : undefined;
-    return this.request("PUT", `/v1/labels/${encodeURIComponent(labelId)}/objects/${encodeURIComponent(objectId)}`, { query });
+    return this.request(
+      "PUT",
+      `/v1/labels/${encodeURIComponent(labelId)}/objects/${encodeURIComponent(objectId)}`,
+      { query },
+    );
   }
 
   /** DELETE /v1/labels/:labelId/objects/:objectId */
   removeLabelFromObject(labelId: string, objectId: string): Promise<void> {
-    return this.del(`/v1/labels/${encodeURIComponent(labelId)}/objects/${encodeURIComponent(objectId)}`);
+    return this.del(
+      `/v1/labels/${encodeURIComponent(labelId)}/objects/${encodeURIComponent(objectId)}`,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -638,12 +637,17 @@ export class HydraApiClient {
   /** PUT /v1/users/:username/secrets/:name */
   setSecret(username: string, name: string, value: string): Promise<void> {
     const body: SetSecretRequest = { value };
-    return this.put(`/v1/users/${encodeURIComponent(username)}/secrets/${encodeURIComponent(name)}`, body);
+    return this.put(
+      `/v1/users/${encodeURIComponent(username)}/secrets/${encodeURIComponent(name)}`,
+      body,
+    );
   }
 
   /** DELETE /v1/users/:username/secrets/:name */
   deleteSecret(username: string, name: string): Promise<void> {
-    return this.del(`/v1/users/${encodeURIComponent(username)}/secrets/${encodeURIComponent(name)}`);
+    return this.del(
+      `/v1/users/${encodeURIComponent(username)}/secrets/${encodeURIComponent(name)}`,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -674,10 +678,7 @@ export class HydraApiClient {
   }
 
   /** PUT /v1/triggers/:triggerId */
-  updateTrigger(
-    triggerId: string,
-    request: UpsertTriggerRequest,
-  ): Promise<UpsertTriggerResponse> {
+  updateTrigger(triggerId: string, request: UpsertTriggerRequest): Promise<UpsertTriggerResponse> {
     return this.put(`/v1/triggers/${encodeURIComponent(triggerId)}`, request);
   }
 
@@ -801,10 +802,7 @@ export class HydraApiClient {
    * status. Fails with 400 if any issue still references the
    * status.
    */
-  deleteProjectStatus(
-    projectRef: ProjectRef,
-    statusKey: string,
-  ): Promise<UpsertProjectResponse> {
+  deleteProjectStatus(projectRef: ProjectRef, statusKey: string): Promise<UpsertProjectResponse> {
     return this.del(
       `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}`,
     );
@@ -815,9 +813,7 @@ export class HydraApiClient {
   // ---------------------------------------------------------------------------
 
   /** GET /v1/analytics/throughput/patches/over_time */
-  getPatchesThroughputOverTime(
-    query: PatchesThroughputQuery,
-  ): Promise<PatchesOverTimeResponse> {
+  getPatchesThroughputOverTime(query: PatchesThroughputQuery): Promise<PatchesOverTimeResponse> {
     return this.get(
       "/v1/analytics/throughput/patches/over_time",
       query as unknown as Record<string, unknown>,
@@ -855,9 +851,7 @@ export class HydraApiClient {
   }
 
   /** GET /v1/analytics/throughput/issues/cycle_time */
-  getIssuesThroughputCycleTime(
-    query: IssuesThroughputQuery,
-  ): Promise<IssuesCycleTimeResponse> {
+  getIssuesThroughputCycleTime(query: IssuesThroughputQuery): Promise<IssuesCycleTimeResponse> {
     return this.get(
       "/v1/analytics/throughput/issues/cycle_time",
       query as unknown as Record<string, unknown>,
@@ -885,11 +879,21 @@ export class HydraApiClient {
   }
 
   /** GET /v1/analytics/throughput/issues/over_time */
-  getIssuesThroughputOverTime(
-    query: IssuesThroughputQuery,
-  ): Promise<IssuesOverTimeResponse> {
+  getIssuesThroughputOverTime(query: IssuesThroughputQuery): Promise<IssuesOverTimeResponse> {
     return this.get(
       "/v1/analytics/throughput/issues/over_time",
+      query as unknown as Record<string, unknown>,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Analytics — Token usage
+  // ---------------------------------------------------------------------------
+
+  /** GET /v1/analytics/token_usage/over_time */
+  getTokenUsageOverTime(query: TokenUsageOverTimeQuery): Promise<TokenUsageOverTimeResponse> {
+    return this.get(
+      "/v1/analytics/token_usage/over_time",
       query as unknown as Record<string, unknown>,
     );
   }

@@ -54,3 +54,6 @@ export type { IssuesPerStatusDistributionResponse } from "./generated/IssuesPerS
 export type { PerStatusDistribution } from "./generated/PerStatusDistribution";
 export type { IssuesOverTimeResponse } from "./generated/IssuesOverTimeResponse";
 export type { IssueOverTimeBucket } from "./generated/IssueOverTimeBucket";
+export type { TokenUsageOverTimeQuery } from "./generated/TokenUsageOverTimeQuery";
+export type { TokenUsageOverTimeResponse } from "./generated/TokenUsageOverTimeResponse";
+export type { TokenUsageOverTimeBucket } from "./generated/TokenUsageOverTimeBucket";

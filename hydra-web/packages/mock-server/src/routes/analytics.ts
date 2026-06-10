@@ -8,6 +8,7 @@ import type {
   IssuesTimeInStatusBreakdownResponse,
   IssuesPerStatusDistributionResponse,
   IssuesOverTimeResponse,
+  TokenUsageOverTimeResponse,
 } from "@hydra/api";
 
 /**
@@ -92,9 +93,21 @@ export function createAnalyticsRoutes(): Hono {
         { bin_start_seconds: BigInt(3600), bin_end_seconds: BigInt(14400), count: BigInt(2) },
         { bin_start_seconds: BigInt(14400), bin_end_seconds: BigInt(86400), count: BigInt(2) },
         { bin_start_seconds: BigInt(86400), bin_end_seconds: BigInt(86400 * 3), count: BigInt(1) },
-        { bin_start_seconds: BigInt(86400 * 3), bin_end_seconds: BigInt(86400 * 7), count: BigInt(1) },
-        { bin_start_seconds: BigInt(86400 * 7), bin_end_seconds: BigInt(86400 * 14), count: BigInt(0) },
-        { bin_start_seconds: BigInt(86400 * 14), bin_end_seconds: BigInt(86400 * 30), count: BigInt(0) },
+        {
+          bin_start_seconds: BigInt(86400 * 3),
+          bin_end_seconds: BigInt(86400 * 7),
+          count: BigInt(1),
+        },
+        {
+          bin_start_seconds: BigInt(86400 * 7),
+          bin_end_seconds: BigInt(86400 * 14),
+          count: BigInt(0),
+        },
+        {
+          bin_start_seconds: BigInt(86400 * 14),
+          bin_end_seconds: BigInt(86400 * 30),
+          count: BigInt(0),
+        },
         { bin_start_seconds: BigInt(86400 * 30), bin_end_seconds: null, count: BigInt(1) },
       ],
     };
@@ -147,7 +160,12 @@ export function createAnalyticsRoutes(): Hono {
       project_id: projectId,
       status_segments: [
         { status_key: "open", label: "Open", color: "#3498db", mean_seconds: BigInt(1200) },
-        { status_key: "in-progress", label: "In progress", color: "#f1c40f", mean_seconds: BigInt(21600) },
+        {
+          status_key: "in-progress",
+          label: "In progress",
+          color: "#f1c40f",
+          mean_seconds: BigInt(21600),
+        },
         { status_key: "closed", label: "Closed", color: "#2ecc71", mean_seconds: BigInt(0) },
       ],
       issue_count: BigInt(12),
@@ -197,6 +215,25 @@ export function createAnalyticsRoutes(): Hono {
         bucket_start: b.bucket_start,
         created: BigInt(4 + i),
         reached_terminal: BigInt(2 + i),
+      })),
+    };
+    return c.json(resp);
+  });
+
+  // ── Token usage ──
+
+  app.get("/v1/analytics/token_usage/over_time", (c) => {
+    const params = new URL(c.req.url).searchParams;
+    const common = readCommon(params);
+    if ("error" in common) return c.json(common, 400);
+    const buckets = syntheticBuckets(common.from, common.to, 4);
+    const resp: TokenUsageOverTimeResponse = {
+      buckets: buckets.map((b, i) => ({
+        bucket_start: b.bucket_start,
+        input_tokens: BigInt(1000 + i * 250),
+        output_tokens: BigInt(400 + i * 100),
+        cache_read_input_tokens: BigInt(2000 + i * 500),
+        cache_creation_input_tokens: BigInt(150 + i * 50),
       })),
     };
     return c.json(resp);
