@@ -175,6 +175,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     backfill_assignee_null_on_terminal_default_issues_nulls_targeted_rows(&pool).await?;
     backfill_assignee_null_on_terminal_default_issues_is_idempotent(&pool).await?;
 
+    add_statuses_suppress_sessions_schema_invariants(&pool).await?;
+    add_statuses_suppress_sessions_defaults_to_false(&pool).await?;
+    add_statuses_suppress_sessions_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -1001,6 +1005,92 @@ async fn backfill_assignee_null_on_terminal_default_issues_is_idempotent(
                  ({before_assignee:?}, {before_principal:?}) -> \
                  ({after_assignee:?}, {after_principal:?})"
             );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260623000000_add_statuses_suppress_sessions. Adds
+// `suppress_sessions BOOLEAN NOT NULL DEFAULT FALSE` to `statuses` — the
+// schema-only prerequisite (PR-A) for the per-status session-suppression
+// feature. No Rust code reads or writes the column yet (lands in PR-B);
+// existing rows backfill to FALSE via the column default.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_suppress_sessions_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "statuses", "suppress_sessions").await? {
+        bail!("expected `statuses.suppress_sessions` column to exist post-rollforward");
+    }
+    if column_is_nullable(pool, "statuses", "suppress_sessions").await? {
+        bail!("expected `statuses.suppress_sessions` to be NOT NULL");
+    }
+    // pragma_table_info exposes the declared DEFAULT — verify the
+    // FALSE default is what backs the no-backfill rollout.
+    let row = sqlx::query(
+        "SELECT dflt_value FROM pragma_table_info('statuses') WHERE name = 'suppress_sessions'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read pragma_table_info default for statuses.suppress_sessions")?;
+    let default_text: Option<String> = row.try_get(0)?;
+    let default_text = default_text
+        .ok_or_else(|| anyhow::anyhow!("statuses.suppress_sessions has no declared default"))?;
+    if !default_text.eq_ignore_ascii_case("FALSE") && default_text != "0" {
+        bail!("expected statuses.suppress_sessions DEFAULT FALSE; got {default_text:?}");
+    }
+    Ok(())
+}
+
+async fn add_statuses_suppress_sessions_defaults_to_false(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT project_id, sequence, suppress_sessions FROM statuses")
+        .fetch_all(pool)
+        .await
+        .context("read statuses for suppress_sessions default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: bool = row.try_get("suppress_sessions")?;
+        if value {
+            bail!(
+                "statuses({project_id}, sequence={sequence}): expected suppress_sessions=false (no backfill); got true"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_suppress_sessions_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT project_id, sequence, suppress_sessions FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses before suppress_sessions idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm suppress_sessions idempotency")?;
+    let snapshot_after = sqlx::query(
+        "SELECT project_id, sequence, suppress_sessions FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses after suppress_sessions idempotency rerun")?;
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across suppress_sessions idempotency rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_val: bool = before.try_get("suppress_sessions")?;
+        let after_val: bool = after.try_get("suppress_sessions")?;
+        if before_val != after_val {
+            bail!("suppress_sessions changed across rerun: {before_val} -> {after_val}");
         }
     }
     Ok(())
