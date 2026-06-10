@@ -17,13 +17,13 @@
 }
 
 .typeChip[data-type="task"] {
-  color: oklch(0.78 0.10 240);
-  border-color: oklch(0.78 0.10 240 / 0.3);
+  color: var(--s-open);
+  border-color: color-mix(in srgb, var(--s-open) 30%, transparent);
 }
 
 .typeChip[data-type="bug"] {
-  color: oklch(0.72 0.16 28);
-  border-color: oklch(0.72 0.16 28 / 0.3);
+  color: var(--s-failed);
+  border-color: color-mix(in srgb, var(--s-failed) 30%, transparent);
 }
 
 .typeChip[data-type="feature"] {
@@ -36,11 +36,11 @@
 }
 
 .typeChip[data-type="merge-request"] {
-  color: oklch(0.74 0.16 300);
-  border-color: oklch(0.74 0.16 300 / 0.3);
+  color: var(--c-violet);
+  border-color: color-mix(in srgb, var(--c-violet) 30%, transparent);
 }
 
 .typeChip[data-type="review-request"] {
-  color: oklch(0.82 0.13 90);
-  border-color: oklch(0.82 0.13 90 / 0.3);
+  color: var(--s-progress);
+  border-color: color-mix(in srgb, var(--s-progress) 30%, transparent);
 }
