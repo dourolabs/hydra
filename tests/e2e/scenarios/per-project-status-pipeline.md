@@ -87,7 +87,7 @@ For each of the seven statuses (`inbox`, `backlog`, `pending`, `in-development`,
 For each issue filed above, assert:
 
 - **List page.** Navigate to `/issues?project_key=engineering-v2`. The issue's status column renders the project's declared `label` and `color` for that status — **not** the legacy hardcoded mapping from `statusMapping.ts` (which is deleted by [[i-ctfcvyru]] PR 5 per design §4 "Frontend display"). Apply the status filter chip for that status; confirm the issue is included when its status is selected and excluded when a different status is selected.
-- **Detail page.** Open the issue. The status badge renders with the same `label` / `color` as on the list. Open the transition control; confirm the dropdown lists all seven statuses in the project's defined order (`inbox`, `backlog`, `pending`, `in-development`, `pair-development`, `in-review`, `pending-release`). The `pair-development` row carries the project editor's "interactive" annotation chip alongside its label.
+- **Detail page.** Open the issue. The status badge renders with the same `label` / `color` as on the list. Open the transition control; confirm the dropdown lists all seven statuses in the project's defined order (`inbox`, `backlog`, `pending`, `in-development`, `pair-development`, `in-review`, `pending-release`).
 - **Related-items panels.** If the issue is referenced from any related-items panel (e.g. a parent's child list, a blocked-by panel on a dependent), the badge appearance there matches the list and detail views.
 - **Filter dropdowns.** From any page that exposes a status filter dropdown (Issues list, Sessions filtered by issue status, etc.) when the project filter is set to `engineering-v2`, confirm all seven statuses appear as filter options.
 
@@ -156,7 +156,7 @@ This bundle validates the unified readiness rule from design [[d-druoexk]] §4 "
 
 **Bundle A — Status UI surfaces:**
 - Status badges on list, detail, related-items panels, and filter dropdowns all render the project's declared `label` / `color` for each of the seven statuses. None of the legacy hardcoded enum strings (`open`, `in-progress`, `closed`, `dropped`, `failed`) appears anywhere when the project filter is `engineering-v2`.
-- The transition dropdown lists all seven statuses in the project's defined order; `pair-development` carries the "interactive" annotation chip.
+- The transition dropdown lists all seven statuses in the project's defined order.
 - The status filter on the issues list correctly includes / excludes issues per their status.
 
 **Bundle B — End-to-end columnar flow:**
