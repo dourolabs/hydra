@@ -225,6 +225,7 @@ function makeStatus(
     unblocks_parents: overrides.unblocks_parents ?? false,
     unblocks_dependents: overrides.unblocks_dependents ?? false,
     cascades_to_children: false,
+    position: 0,
   };
 }
 
