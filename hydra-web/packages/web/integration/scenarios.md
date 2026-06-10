@@ -50,6 +50,7 @@ the catalog stays in sync.
 - `@issues:filter-include-archived-rehydrate` — Loading `/?includeArchived=1` rehydrates the Include archived chip on first paint and the initial `listIssues` request carries `include_deleted=true`
 - `@issues:filter-include-archived-sidebar` — Clicking Sidebar > Views > Archive navigates to the issues page with the Include archived chip activated and `?includeArchived=1` in the URL
 - `@issues:restore-archived` — Hovering an archived row reveals a Restore action; clicking it optimistically clears the ARCHIVED tag from the list cache before the `PUT { deleted: false }` confirms, and the restored issue appears in the default (non-archived) view
+- `@issues:archive` — Hovering a non-archived row reveals an Archive action that DELETEs the issue and optimistically drops the row from the default view before the server confirms. The issue detail page exposes the same action in its header and on a successful DELETE the page re-renders with the Archived badge.
 
 ## Labels
 

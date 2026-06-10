@@ -10,6 +10,7 @@ import { useIssue } from "./useIssue";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { FeedbackModal } from "./FeedbackModal";
+import { ArchiveIssueButton } from "./ArchiveIssueButton";
 import { FormPanel } from "./FormPanel";
 import { SessionList } from "../sessions/SessionList";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
@@ -134,6 +135,13 @@ export function IssueDetail({ record }: IssueDetailProps) {
               <Button variant="secondary" size="sm" onClick={() => setFeedbackModalOpen(true)}>
                 Give feedback
               </Button>
+              {issue.deleted !== true && (
+                <ArchiveIssueButton
+                  issueId={issueId}
+                  variant="secondary"
+                  data-testid="issue-detail-archive"
+                />
+              )}
             </div>
           </div>
 

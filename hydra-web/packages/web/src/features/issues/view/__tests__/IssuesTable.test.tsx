@@ -61,6 +61,20 @@ vi.mock("../../../related/RailRow", () => ({
   ),
 }));
 
+// Stub the row-action buttons; both require a QueryClientProvider / Toast
+// context that the desktop-table tests don't otherwise need.
+vi.mock("../../ArchiveIssueButton", () => ({
+  ArchiveIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
+    <button data-testid={testId}>Archive</button>
+  ),
+}));
+
+vi.mock("../../RestoreIssueButton", () => ({
+  RestoreIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
+    <button data-testid={testId}>Restore</button>
+  ),
+}));
+
 // Bypass CSS module proxy.
 vi.mock("../IssuesTable.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
