@@ -5,12 +5,20 @@
  *  - `created` → neutral grey
  *  - `closed`  → soft red (terminal-but-not-shipped)
  *  - `accent`  → blue (single-series default)
+ *
+ * Token-usage series ordered so the stack reads input → output → cache
+ * (read then write). Hues cool→warm so adjacent layers stay distinguishable
+ * against the dark surface.
  */
 export const CHART_COLORS = {
   created: "#7c8694",
   merged: "#2ecc71",
   closed: "#e57373",
   accent: "#3498db",
+  tokensInput: "#3498db",
+  tokensOutput: "#2ecc71",
+  tokensCacheRead: "#9b59b6",
+  tokensCacheWrite: "#e67e22",
 } as const;
 
 /** Shared recharts axis tick styling — kept here so a palette/theme tweak is a one-line change. */

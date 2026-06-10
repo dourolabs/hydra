@@ -6,3 +6,4 @@ export { IssuesOverTimeChart } from "./IssuesOverTimeChart";
 export { IssuesCycleTimeChart } from "./IssuesCycleTimeChart";
 export { IssuesTimeInStatusBreakdownChart } from "./IssuesTimeInStatusBreakdownChart";
 export { IssuesPerStatusDistributionChart } from "./IssuesPerStatusDistributionChart";
+export { TokensOverTimeChart } from "./TokensOverTimeChart";

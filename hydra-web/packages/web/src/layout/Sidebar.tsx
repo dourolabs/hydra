@@ -381,15 +381,23 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
           </div>
           <NavLink
             to="/analytics/throughput"
-            className={({ isActive }) =>
-              `${styles.item}${isActive ? ` ${styles.itemActive}` : ""}`
-            }
+            className={({ isActive }) => `${styles.item}${isActive ? ` ${styles.itemActive}` : ""}`}
             data-testid="sidebar-analytics-throughput"
           >
             <span className={styles.itemIcon}>
               <Icons.IconChart />
             </span>
             <span className={styles.itemLabel}>Throughput</span>
+          </NavLink>
+          <NavLink
+            to="/analytics/token-usage"
+            className={({ isActive }) => `${styles.item}${isActive ? ` ${styles.itemActive}` : ""}`}
+            data-testid="sidebar-analytics-token-usage"
+          >
+            <span className={styles.itemIcon}>
+              <Icons.IconChart />
+            </span>
+            <span className={styles.itemLabel}>Token Usage</span>
           </NavLink>
         </div>
 

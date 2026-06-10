@@ -222,6 +222,17 @@ export const router = createBrowserRouter([
           })),
       },
       {
+        path: "analytics/token-usage",
+        lazy: () =>
+          import("./pages/AnalyticsTokenUsagePage").then((m) => ({
+            element: (
+              <ErrorBoundary>
+                <m.AnalyticsTokenUsagePage />
+              </ErrorBoundary>
+            ),
+          })),
+      },
+      {
         path: "*",
         lazy: () =>
           import("./pages/NotFoundPage").then((m) => ({
