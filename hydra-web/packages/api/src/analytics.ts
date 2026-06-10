@@ -94,8 +94,10 @@ export type IssueTypeKey =
 
 export interface BaseIssuesThroughputQuery extends BaseThroughputQuery {
   project_id?: ProjectRef;
-  issue_type?: IssueTypeKey;
+  /** Comma-joined list of {@link IssueTypeKey} values; multi-select. */
+  issue_types?: string;
   assignee?: string;
+  /** Comma-joined list of status_key values; multi-select. */
   status_keys?: string;
 }
 

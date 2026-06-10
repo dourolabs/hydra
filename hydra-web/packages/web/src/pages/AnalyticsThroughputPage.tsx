@@ -53,7 +53,7 @@ export function AnalyticsThroughputPage() {
     () => ({
       ...baseQuery,
       ...(state.projectId ? { project_id: state.projectId } : {}),
-      ...(state.issueTypes[0] ? { issue_type: state.issueTypes[0] } : {}),
+      ...(state.issueTypes.length > 0 ? { issue_types: state.issueTypes.join(",") } : {}),
       ...(state.assignee ? { assignee: state.assignee } : {}),
       ...(state.statusKeys.length > 0 ? { status_keys: state.statusKeys.join(",") } : {}),
     }),
