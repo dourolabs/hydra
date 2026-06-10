@@ -199,7 +199,7 @@
 .sectionHeader {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: 10px;
   width: 100%;
   padding: 8px var(--pad-x);
