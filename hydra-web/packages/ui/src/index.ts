@@ -43,6 +43,9 @@ export type { TabsProps, Tab } from "./components/Tabs";
 export { Modal } from "./components/Modal";
 export type { ModalProps } from "./components/Modal";
 
+export { ConfirmModal } from "./components/ConfirmModal";
+export type { ConfirmModalProps } from "./components/ConfirmModal";
+
 export { Picker, PickerRow } from "./components/Picker";
 export type { PickerProps, PickerRowProps } from "./components/Picker";
 
