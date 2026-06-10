@@ -46,11 +46,7 @@ pub struct AutoArchiveWorker {
 }
 
 impl AutoArchiveWorker {
-    pub fn new(state: AppState, batch_size: u32) -> Self {
-        Self::with_now_fn(state, batch_size, Arc::new(Utc::now))
-    }
-
-    pub fn with_now_fn(state: AppState, batch_size: u32, now_fn: NowFn) -> Self {
+    pub fn new(state: AppState, batch_size: u32, now_fn: NowFn) -> Self {
         Self {
             state,
             batch_size,
@@ -304,7 +300,7 @@ mod tests {
         let threshold_seconds = 1i64;
         let now = fresh_versioned.timestamp + Duration::seconds(threshold_seconds);
 
-        let worker = AutoArchiveWorker::with_now_fn(handles.state.clone(), 100, fixed_clock(now));
+        let worker = AutoArchiveWorker::new(handles.state.clone(), 100, fixed_clock(now));
         let outcome = worker.run_iteration().await;
         assert_eq!(
             outcome,
@@ -333,7 +329,7 @@ mod tests {
             .unwrap();
 
         let now = Utc::now() + Duration::days(365);
-        let worker = AutoArchiveWorker::with_now_fn(handles.state.clone(), 100, fixed_clock(now));
+        let worker = AutoArchiveWorker::new(handles.state.clone(), 100, fixed_clock(now));
         let outcome = worker.run_iteration().await;
         assert_eq!(outcome, WorkerOutcome::Idle);
 
@@ -352,7 +348,7 @@ mod tests {
             .unwrap();
 
         let now = Utc::now() + Duration::days(7);
-        let worker = AutoArchiveWorker::with_now_fn(handles.state.clone(), 100, fixed_clock(now));
+        let worker = AutoArchiveWorker::new(handles.state.clone(), 100, fixed_clock(now));
 
         let outcome_1 = worker.run_iteration().await;
         assert_eq!(
@@ -413,7 +409,7 @@ mod tests {
         let threshold_seconds = 1i64;
         let now = child_versioned.timestamp + Duration::seconds(threshold_seconds);
 
-        let worker = AutoArchiveWorker::with_now_fn(handles.state.clone(), 100, fixed_clock(now));
+        let worker = AutoArchiveWorker::new(handles.state.clone(), 100, fixed_clock(now));
         let outcome = worker.run_iteration().await;
         assert_eq!(
             outcome,
@@ -451,8 +447,7 @@ mod tests {
 
         let batch_size: u32 = 2;
         let now = Utc::now() + Duration::days(7);
-        let worker =
-            AutoArchiveWorker::with_now_fn(handles.state.clone(), batch_size, fixed_clock(now));
+        let worker = AutoArchiveWorker::new(handles.state.clone(), batch_size, fixed_clock(now));
 
         let mut total_archived = 0usize;
         // Three ticks should drain 2 + 2 + 1 = 5; then an Idle tick.
@@ -483,7 +478,7 @@ mod tests {
             .await
             .unwrap();
 
-        let worker = AutoArchiveWorker::with_now_fn(
+        let worker = AutoArchiveWorker::new(
             handles.state.clone(),
             0,
             fixed_clock(Utc::now() + Duration::days(365)),
@@ -496,7 +491,7 @@ mod tests {
     async fn transient_error_when_list_projects_fails() {
         let handles =
             crate::test_utils::test_state_with_store(Arc::new(crate::test_utils::FailingStore));
-        let worker = AutoArchiveWorker::new(handles.state, 10);
+        let worker = AutoArchiveWorker::new(handles.state, 10, Arc::new(Utc::now));
         let outcome = worker.run_iteration().await;
         assert!(matches!(outcome, WorkerOutcome::TransientError { .. }));
     }
@@ -512,7 +507,7 @@ mod tests {
             .unwrap();
 
         let now = Utc::now() + Duration::days(365);
-        let worker = AutoArchiveWorker::with_now_fn(handles.state.clone(), 100, fixed_clock(now));
+        let worker = AutoArchiveWorker::new(handles.state.clone(), 100, fixed_clock(now));
         worker.run_iteration().await;
 
         let versions = handles.store.get_issue_versions(&id).await.unwrap();

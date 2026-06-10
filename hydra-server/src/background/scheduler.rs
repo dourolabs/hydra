@@ -11,6 +11,7 @@ use crate::{
     policy::integrations::github_pr_poller::GithubPollerWorker,
 };
 use async_trait::async_trait;
+use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinHandle, time::sleep};
 use tracing::{debug, info, warn};
@@ -176,6 +177,7 @@ pub fn start_background_scheduler(state: AppState) -> BackgroundScheduler {
             Arc::new(AutoArchiveWorker::new(
                 state,
                 scheduler_config.auto_archive.batch_size,
+                Arc::new(Utc::now),
             )),
         ),
     ];
