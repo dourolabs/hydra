@@ -19,6 +19,11 @@ export interface PickerProps {
   onToggle: () => void;
   /** Widens the popover's min-width — useful when rows have rich content. */
   wide?: boolean;
+  /**
+   * Suppress the visible caption above the trigger pill. The `label` is still
+   * forwarded to the trigger's `aria-label` so the dropdown stays accessible.
+   */
+  hideLabel?: boolean;
   /** Items rendered inside the popover. Use PickerRow for selectable rows. */
   children: ReactNode;
   /** Forwarded to the picker's root element for targeting from tests. */
@@ -34,6 +39,7 @@ export function Picker({
   open,
   onToggle,
   wide,
+  hideLabel,
   children,
   "data-testid": testId,
 }: PickerProps) {
@@ -90,7 +96,7 @@ export function Picker({
 
   return (
     <div className={styles.picker} ref={wrapRef} data-testid={testId}>
-      <div className={styles.pickerLabel}>{label}</div>
+      {!hideLabel && <div className={styles.pickerLabel}>{label}</div>}
       <button
         type="button"
         className={`${styles.pill}${open ? ` ${styles.pillActive}` : ""}`}
@@ -123,14 +129,22 @@ export interface PickerRowProps {
   active?: boolean;
   onClick: () => void;
   children: ReactNode;
+  /** Forwarded to the row's `<button>` for targeting from tests. */
+  "data-testid"?: string;
 }
 
-export function PickerRow({ active, onClick, children }: PickerRowProps) {
+export function PickerRow({
+  active,
+  onClick,
+  children,
+  "data-testid": testId,
+}: PickerRowProps) {
   return (
     <button
       type="button"
       className={`${styles.popRow}${active ? ` ${styles.popRowActive}` : ""}`}
       onClick={onClick}
+      data-testid={testId}
     >
       {children}
       <span className={styles.popCheck}>
