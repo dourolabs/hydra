@@ -7,12 +7,12 @@
 //! plus error mapping.
 
 use crate::analytics::{
-    CostPerAgentAccumulator, PatchesInFlightOverTimeAccumulator, PatchesOverTimeAccumulator,
-    PatchesTerminalMixAccumulator, PatchesTimeToMergeAccumulator, TokenUsageOverTimeAccumulator,
-    TopIssuesByCostAccumulator, compute_issues_cycle_time, compute_issues_over_time,
-    compute_issues_per_status_distribution, compute_issues_time_in_status_breakdown,
-    compute_top_issues_by_cost, fetch_issue_histories, for_each_patch_history,
-    for_each_session_with_usage, resolve_projects_for_histories,
+    CostPerAgentAccumulator, IssuesCycleTimeAccumulator, IssuesOverTimeAccumulator,
+    IssuesPerStatusDistributionAccumulator, IssuesTimeInStatusBreakdownAccumulator,
+    PatchesInFlightOverTimeAccumulator, PatchesOverTimeAccumulator, PatchesTerminalMixAccumulator,
+    PatchesTimeToMergeAccumulator, TokenUsageOverTimeAccumulator, TopIssuesByCostAccumulator,
+    compute_top_issues_by_cost, for_each_issue_history, for_each_patch_history,
+    for_each_session_with_usage,
 };
 use crate::app::AppState;
 use crate::app::projects::{ResolveStatusError, project_cached};
@@ -166,20 +166,12 @@ pub async fn issues_cycle_time(
         "analytics.issues_cycle_time invoked"
     );
     validate_issues_query(&query)?;
-    let histories = fetch_issue_histories(state.store(), &query)
+    let mut acc = IssuesCycleTimeAccumulator::new(query.from, query.to, query.status_keys.clone());
+    let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+    for_each_issue_history(state.store(), &query, &mut cache, |h, p| acc.fold(h, p))
         .await
         .map_err(map_store_error)?;
-    let projects = resolve_projects_for_histories(state.store(), &histories)
-        .await
-        .map_err(map_store_error)?;
-    let resp = compute_issues_cycle_time(
-        &histories,
-        &projects,
-        query.from,
-        query.to,
-        &query.status_keys,
-    );
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/throughput/issues/over_time`
@@ -195,21 +187,13 @@ pub async fn issues_over_time(
         "analytics.issues_over_time invoked"
     );
     let bucket = validate_issues_query(&query)?;
-    let histories = fetch_issue_histories(state.store(), &query)
+    let mut acc =
+        IssuesOverTimeAccumulator::new(query.from, query.to, bucket, query.status_keys.clone());
+    let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+    for_each_issue_history(state.store(), &query, &mut cache, |h, p| acc.fold(h, p))
         .await
         .map_err(map_store_error)?;
-    let projects = resolve_projects_for_histories(state.store(), &histories)
-        .await
-        .map_err(map_store_error)?;
-    let resp = compute_issues_over_time(
-        &histories,
-        &projects,
-        query.from,
-        query.to,
-        bucket,
-        &query.status_keys,
-    );
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/throughput/issues/time_in_status_breakdown`
@@ -230,18 +214,22 @@ pub async fn issues_time_in_status_breakdown(
         )
     })?;
     let project = fetch_project_or_400(&state, &project_id).await?;
-    let histories = fetch_issue_histories(state.store(), &query)
-        .await
-        .map_err(map_store_error)?;
-    let resp = compute_issues_time_in_status_breakdown(
-        &histories,
-        &project_id,
+    let mut acc = IssuesTimeInStatusBreakdownAccumulator::new(
+        project_id.clone(),
         &project,
         query.from,
         query.to,
-        &query.status_keys,
+        query.status_keys.clone(),
     );
-    Ok(Json(resp))
+    // Seed the cache so `for_each_issue_history` skips the redundant
+    // per-issue project lookup; the SearchIssuesQuery filter already
+    // restricts results to this project_id.
+    let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+    cache.insert(project_id.clone(), project.clone());
+    for_each_issue_history(state.store(), &query, &mut cache, |h, _p| acc.fold(h))
+        .await
+        .map_err(map_store_error)?;
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/throughput/issues/per_status_distribution`
@@ -262,18 +250,22 @@ pub async fn issues_per_status_distribution(
         )
     })?;
     let project = fetch_project_or_400(&state, &project_id).await?;
-    let histories = fetch_issue_histories(state.store(), &query)
-        .await
-        .map_err(map_store_error)?;
-    let resp = compute_issues_per_status_distribution(
-        &histories,
-        &project_id,
+    let mut acc = IssuesPerStatusDistributionAccumulator::new(
+        project_id.clone(),
         &project,
         query.from,
         query.to,
-        &query.status_keys,
+        query.status_keys.clone(),
     );
-    Ok(Json(resp))
+    // Seed the cache so `for_each_issue_history` skips the redundant
+    // per-issue project lookup; the SearchIssuesQuery filter already
+    // restricts results to this project_id.
+    let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+    cache.insert(project_id.clone(), project.clone());
+    for_each_issue_history(state.store(), &query, &mut cache, |h, _p| acc.fold(h))
+        .await
+        .map_err(map_store_error)?;
+    Ok(Json(acc.finalize()))
 }
 
 /// Validate the time window for the token-usage time-series query.
@@ -751,6 +743,97 @@ mod tests {
         );
         let total_merged: u64 = resp.buckets.iter().map(|b| b.merged).sum();
         assert_eq!(total_merged, 0);
+    }
+
+    /// Seed > ANALYTICS_BATCH_SIZE issues spanning multiple projects and
+    /// assert the `issues_over_time` handler totals match what every
+    /// seeded issue would contribute. Forces the batched issue driver to
+    /// advance the cursor at least once and exercises the over_time
+    /// accumulator + project cache across the boundary end-to-end. This
+    /// is the regression bar called out in [[i-ioalwzhs]].
+    #[tokio::test]
+    async fn issues_over_time_handler_matches_across_batch_boundary() {
+        use crate::analytics::ANALYTICS_BATCH_SIZE;
+        use crate::domain::issues::{Issue as DomainIssue, IssueType as DomainIssueType};
+        use crate::domain::projects::{default_project_id, default_project_seed};
+        use crate::domain::users::Username;
+        use hydra_common::ActorRef as CommonActorRef;
+        use hydra_common::api::v1::projects::{ProjectKey, StatusKey};
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        // Seed a second project so the streaming driver has to resolve
+        // more than one project across the batched sweep. Reuse the
+        // default seed's status set, just change the key/name so the
+        // project store accepts it as a distinct row. `add_project`
+        // persists the project metadata; statuses must be added
+        // separately via `add_status` to land in the project's status
+        // index, so the cloned statuses are walked into place after the
+        // project row is created.
+        let mut alt_project = default_project_seed();
+        alt_project.key = ProjectKey::try_new("alt").expect("alt project key");
+        alt_project.name = "Alt Project".to_string();
+        let alt_statuses = alt_project.statuses.clone();
+        let (alt_project_id, _) = store
+            .add_project(alt_project, &actor)
+            .await
+            .expect("add alt project");
+        for status in alt_statuses {
+            store
+                .add_status(&alt_project_id, status, &actor)
+                .await
+                .expect("add alt status");
+        }
+
+        let default_pid = default_project_id();
+        let total = (ANALYTICS_BATCH_SIZE + 25) as usize;
+        for i in 0..total {
+            // Alternate between the default project and the alt project
+            // so the driver has to resolve both inside the loop and the
+            // cache holds entries from both projects across batches.
+            let project_id = if i % 2 == 0 {
+                default_pid.clone()
+            } else {
+                alt_project_id.clone()
+            };
+            let issue = DomainIssue::new(
+                DomainIssueType::Task,
+                "title".to_string(),
+                "desc".to_string(),
+                Username::from("alice"),
+                String::new(),
+                StatusKey::try_new("open").expect("status key"),
+                project_id,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+            );
+            store.add_issue(issue, &actor).await.expect("add issue");
+        }
+
+        // Wide window comfortably containing today's `Utc::now()` so the
+        // streaming sweep visits every seeded issue.
+        let from = dt("2020-01-01T00:00:00Z");
+        let to = dt("2100-01-01T00:00:00Z");
+        let q = IssuesThroughputQuery::new(from, to);
+        let resp = issues_over_time(State(handles.state), Query(q))
+            .await
+            .expect("handler ok")
+            .0;
+        let total_created: u64 = resp.buckets.iter().map(|b| b.created).sum();
+        assert_eq!(
+            total_created, total as u64,
+            "every seeded issue must show up exactly once across the batched sweep"
+        );
+        // None of the seeded issues reached a terminal status.
+        let total_terminal: u64 = resp.buckets.iter().map(|b| b.reached_terminal).sum();
+        assert_eq!(total_terminal, 0);
     }
 
     #[tokio::test]
