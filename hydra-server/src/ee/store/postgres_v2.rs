@@ -11002,6 +11002,72 @@ mod tests {
         }
     }
 
+    /// Custom statuses with a populated `session_settings` must round-trip
+    /// through `PostgresStoreV2` — exercises the new
+    /// `metis.statuses.session_settings_json` column on INSERT (via
+    /// `add_status`), every SELECT projection, and
+    /// `status_row_to_definition`. Without the column being included in
+    /// every `StatusRow` projection, the JSON would either be dropped on
+    /// read or `StatusRow` would fail to decode (no `#[sqlx(default)]`).
+    /// The SQLite side has a parallel guard via
+    /// `add_statuses_session_settings_store_roundtrip` in
+    /// `migration_roundtrip_sqlite.rs`.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_settings_round_trips_through_postgres_store(pool: PgStorePool) {
+        use crate::domain::projects::default_project_id;
+        use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
+        use hydra_common::api::v1::projects::{ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let store = PostgresStoreV2::new(pool);
+
+        let mut frontend = StatusDefinition::new(
+            StatusKey::try_new("frontend").unwrap(),
+            "Frontend".to_string(),
+            "#abcdef".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        let mut session_settings = ApiSessionSettings::default();
+        session_settings.cpu_limit = Some("500m".to_string());
+        session_settings.memory_limit = Some("256Mi".to_string());
+        frontend.session_settings = session_settings.clone();
+
+        let project = Project::new(
+            ProjectKey::try_new("engineering").unwrap(),
+            "Engineering".to_string(),
+            vec![frontend],
+            ApiUsername::from("alice"),
+            false,
+            0.0,
+        );
+        let (id, _) = add_project_with_statuses_pg(&store, project, &ActorRef::test()).await;
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(fetched.item.statuses.len(), 1);
+        assert_eq!(
+            fetched.item.statuses[0].session_settings, session_settings,
+            "custom status must round-trip non-default session_settings"
+        );
+
+        let default = store
+            .get_project(&default_project_id(), false)
+            .await
+            .unwrap();
+        assert!(!default.item.statuses.is_empty());
+        for status in &default.item.statuses {
+            assert!(
+                ApiSessionSettings::is_default(&status.session_settings),
+                "default project status '{}' must round-trip as default session_settings, got {:?}",
+                status.key,
+                status.session_settings,
+            );
+        }
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn get_project_not_found_pg(pool: PgStorePool) {
