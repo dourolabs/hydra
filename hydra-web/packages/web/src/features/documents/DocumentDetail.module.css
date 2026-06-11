@@ -22,6 +22,39 @@
   white-space: nowrap;
 }
 
+/* ── Key-vals row ── */
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
+}
+
+.metaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metaLabel {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.metaValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
+}
+
 /* ── Prose body ── */
 .proseWrap {
   position: relative;
@@ -143,8 +176,16 @@
 
 @media (max-width: 768px) {
   /* Drop the page-chrome H1 on mobile — the breadcrumb already shows the
-     document title. */
-  .title {
+     document title. The Path / Updated meta row also collapses; the same
+     info is reachable from the document tree / list. */
+  .title,
+  .metaRow {
     display: none;
+  }
+
+  /* Float the mobile icon-button slightly above the prose top edge so it
+     visually sits in the gutter rather than overlapping the first line. */
+  .floatingActions {
+    top: calc(var(--space-1) * -1);
   }
 }

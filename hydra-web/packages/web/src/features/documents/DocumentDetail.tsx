@@ -1,11 +1,12 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Textarea, Icons } from "@hydra/ui";
+import { Button, Textarea, CopyButton, Icons } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./DocumentDetail.module.css";
 
 interface DocumentDetailProps {
@@ -71,6 +72,27 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
   return (
     <div className={styles.inner}>
       <h1 className={styles.title}>{displayTitle}</h1>
+
+      <div className={styles.metaRow}>
+        {record.document.path && (
+          <span className={styles.metaItem}>
+            <span className={styles.metaLabel}>Path</span>
+            <span className={styles.metaValue}>
+              {record.document.path}
+              <CopyButton
+                value={record.document.path}
+                onCopied={() => addToast("Copied!", "success")}
+              />
+            </span>
+          </span>
+        )}
+        <span className={styles.metaItem}>
+          <span className={styles.metaLabel}>Updated</span>
+          <span className={styles.metaValue}>
+            <AgoTime iso={record.timestamp} />
+          </span>
+        </span>
+      </div>
 
       {editing ? (
         <div className={styles.editContainer} onKeyDown={handleKeyDown}>
