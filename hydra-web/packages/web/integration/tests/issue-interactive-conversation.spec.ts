@@ -43,7 +43,7 @@ test.describe("Interactive conversation surfacing @issues:interactive-conversati
     await expect(closedRow).toBeVisible();
   });
 
-  test("clicking 'Open Conversation' lands in chat with originated-from link @issues:interactive-conversation", async ({
+  test("clicking 'Open Conversation' navigates to the spawned chat @issues:interactive-conversation", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00001");
@@ -53,14 +53,7 @@ test.describe("Interactive conversation surfacing @issues:interactive-conversati
     await link.click();
 
     await page.waitForURL(/\/chat\/c-seed00008$/);
-
-    const originated = page.getByTestId("chat-header-originated-from");
-    await expect(originated).toBeVisible();
-    await expect(originated).toContainText("originated from");
-    await expect(originated.getByRole("link", { name: "i-seed00001" })).toHaveAttribute(
-      "href",
-      "/issues/i-seed00001",
-    );
+    await expect(page.getByTestId("chat-header")).toBeVisible();
   });
 
   test("no affordance is shown when no live spawned conversation exists @issues:interactive-conversation", async ({

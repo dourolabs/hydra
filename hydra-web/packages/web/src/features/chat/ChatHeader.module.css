@@ -51,38 +51,11 @@
   padding: 0 8px;
 }
 
-.originatedLink {
-  color: var(--acc);
-  text-decoration: none;
-  font-family: var(--f-mono);
-}
-
-.originatedLink:hover {
-  color: var(--acc-bright);
-  text-decoration: underline;
-}
-
 @media (max-width: 768px) {
+  /* On mobile the breadcrumb covers the title and the page chrome is already
+     tight — drop the entire chat-header (H1 + meta) so the message list has
+     the full vertical space. */
   .header {
-    padding: 10px 16px;
-  }
-
-  /* Drop the chat-chrome H1 on mobile — the breadcrumb already shows the
-     conversation title, so the meta row alone gives enough chrome. */
-  .title {
-    display: none;
-  }
-
-  /* Stack the meta row vertically at narrow widths so the `·` separators
-     never become a leading or trailing token on a wrapped line, and the
-     "started <AgoTime/>" pair never overflows alongside the other tokens. */
-  .meta {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
-
-  .meta > .sep {
     display: none;
   }
 }

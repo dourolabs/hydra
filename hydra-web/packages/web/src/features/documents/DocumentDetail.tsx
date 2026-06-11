@@ -1,12 +1,11 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Textarea, CopyButton, Icons } from "@hydra/ui";
+import { Button, Textarea, Icons } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 import { useIsMobile } from "../../hooks/useIsMobile";
-import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./DocumentDetail.module.css";
 
 interface DocumentDetailProps {
@@ -71,54 +70,7 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
 
   return (
     <div className={styles.inner}>
-      <div className={styles.titleRow}>
-        <h1 className={styles.title}>{displayTitle}</h1>
-        {!editing && (
-          <div className={styles.actions}>
-            {isMobile ? (
-              <button
-                type="button"
-                className={styles.iconButton}
-                onClick={handleEdit}
-                aria-label="Edit document"
-                data-testid="document-edit-button"
-              >
-                <Icons.IconEdit />
-              </button>
-            ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleEdit}
-                data-testid="document-edit-button"
-              >
-                Edit
-              </Button>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className={styles.metaRow}>
-        {record.document.path && (
-          <span className={styles.metaItem}>
-            <span className={styles.metaLabel}>Path</span>
-            <span className={styles.metaValue}>
-              {record.document.path}
-              <CopyButton
-                value={record.document.path}
-                onCopied={() => addToast("Copied!", "success")}
-              />
-            </span>
-          </span>
-        )}
-        <span className={styles.metaItem}>
-          <span className={styles.metaLabel}>Updated</span>
-          <span className={styles.metaValue}>
-            <AgoTime iso={record.timestamp} />
-          </span>
-        </span>
-      </div>
+      <h1 className={styles.title}>{displayTitle}</h1>
 
       {editing ? (
         <div className={styles.editContainer} onKeyDown={handleKeyDown}>
@@ -152,8 +104,32 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
           </div>
         </div>
       ) : (
-        <div className={styles.prose}>
-          <Markdown content={record.document.body_markdown} />
+        <div className={styles.proseWrap}>
+          <div className={styles.floatingActions}>
+            {isMobile ? (
+              <button
+                type="button"
+                className={styles.iconButton}
+                onClick={handleEdit}
+                aria-label="Edit document"
+                data-testid="document-edit-button"
+              >
+                <Icons.IconEdit />
+              </button>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleEdit}
+                data-testid="document-edit-button"
+              >
+                Edit
+              </Button>
+            )}
+          </div>
+          <div className={styles.prose}>
+            <Markdown content={record.document.body_markdown} />
+          </div>
         </div>
       )}
     </div>

@@ -98,15 +98,13 @@ test.describe("Mobile chat scroll @mobile:chat-scroll", () => {
 
     await page.goto(`/chat/${CONVERSATION_ID}`);
 
-    // The chat-chrome H1 was removed in the mobile chrome-reduction pass; the
-    // conversation title lives in the breadcrumb and the chat meta row is the
-    // load-bearing chrome below it. Assert both stay in view after the
-    // message-list mounts (i.e. the page didn't snap-scroll past them).
+    // The chat-chrome H1 + meta row were removed entirely on mobile in the
+    // chrome-reduction pass; the conversation title now lives only in the
+    // breadcrumb. Assert that the breadcrumb is the load-bearing chrome that
+    // stays in view (i.e. the page didn't snap-scroll past it).
     const breadcrumb = page.locator('nav[aria-label="Breadcrumb"]');
     await expect(breadcrumb.getByText("Long conversation")).toBeVisible();
-    const headerMeta = page.getByTestId("chat-header-meta");
-    await expect(headerMeta).toBeVisible();
-    await expect(headerMeta).toBeInViewport();
+    await expect(breadcrumb).toBeInViewport();
 
     const messageList = page.getByTestId("chat-message-list");
     await expect(messageList).toBeVisible();
@@ -137,8 +135,9 @@ test.describe("Mobile chat scroll @mobile:chat-scroll", () => {
       scrollState.scrollHeight - scrollState.clientHeight,
     );
 
-    // ChatHeader stays visible after the user scrolled the message list.
-    await expect(headerMeta).toBeInViewport();
+    // Breadcrumb chrome stays visible after the user scrolled the message
+    // list.
+    await expect(breadcrumb).toBeInViewport();
 
     // The page body must NOT be the scrollable surface — scrolling the
     // message list must not have moved any page-level scroll position.

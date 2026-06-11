@@ -9,13 +9,6 @@
 }
 
 /* ── Header ── */
-.titleRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .title {
   font-family: var(--f-sans);
   font-size: var(--t-2xl);
@@ -24,28 +17,33 @@
   color: var(--fg-0);
   margin: 0;
   line-height: 1.2;
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+/* ── Prose body ── */
+.proseWrap {
+  position: relative;
+}
+
+/* Edit action floats over the document body at top-right so it doesn't
+   consume its own row of chrome above the prose. */
+.floatingActions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
 }
 
 .iconButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  background: transparent;
+  background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   color: var(--fg-1);
@@ -61,40 +59,6 @@
   color: var(--fg-0);
 }
 
-/* ── Key-vals row ── */
-.metaRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
-  font-family: var(--f-mono);
-  font-size: var(--t-xs);
-  color: var(--fg-2);
-}
-
-.metaItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.metaLabel {
-  font-family: var(--f-mono);
-  font-size: var(--t-xxs);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg-3);
-}
-
-.metaValue {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--f-mono);
-  font-size: var(--t-xs);
-  color: var(--fg-1);
-}
-
-/* ── Prose body ── */
 .prose {
   font-family: var(--f-sans);
   font-size: var(--t-md);
@@ -179,27 +143,8 @@
 
 @media (max-width: 768px) {
   /* Drop the page-chrome H1 on mobile — the breadcrumb already shows the
-     document title — and let the action row sit alone on the right. */
+     document title. */
   .title {
     display: none;
-  }
-  .titleRow {
-    justify-content: flex-end;
-  }
-
-  /* Compress the meta row to a single line at mobile widths. The path value
-     becomes truncatable so a long path doesn't push the row off-screen. */
-  .metaRow {
-    gap: 12px;
-    flex-wrap: nowrap;
-    overflow: hidden;
-  }
-  .metaItem {
-    min-width: 0;
-  }
-  .metaValue {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 }
