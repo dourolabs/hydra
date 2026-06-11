@@ -9,11 +9,33 @@
 }
 
 /* ── Header ── */
-.actionsRow {
+.titleRow {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-family: var(--f-sans);
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--fg-0);
+  margin: 0;
+  line-height: 1.2;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .iconButton {
@@ -156,6 +178,15 @@
 }
 
 @media (max-width: 768px) {
+  /* Drop the page-chrome H1 on mobile — the breadcrumb already shows the
+     document title — and let the action row sit alone on the right. */
+  .title {
+    display: none;
+  }
+  .titleRow {
+    justify-content: flex-end;
+  }
+
   /* Compress the meta row to a single line at mobile widths. The path value
      becomes truncatable so a long path doesn't push the row off-screen. */
   .metaRow {

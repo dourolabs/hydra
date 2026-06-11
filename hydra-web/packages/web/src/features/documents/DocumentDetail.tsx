@@ -20,6 +20,9 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
 
+  const displayTitle =
+    record.document.title || record.document.path || record.document_id;
+
   const handleEdit = useCallback(() => {
     setDraft(record.document.body_markdown);
     setEditing(true);
@@ -68,30 +71,33 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
 
   return (
     <div className={styles.inner}>
-      {!editing && (
-        <div className={styles.actionsRow}>
-          {isMobile ? (
-            <button
-              type="button"
-              className={styles.iconButton}
-              onClick={handleEdit}
-              aria-label="Edit document"
-              data-testid="document-edit-button"
-            >
-              <Icons.IconEdit />
-            </button>
-          ) : (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleEdit}
-              data-testid="document-edit-button"
-            >
-              Edit
-            </Button>
-          )}
-        </div>
-      )}
+      <div className={styles.titleRow}>
+        <h1 className={styles.title}>{displayTitle}</h1>
+        {!editing && (
+          <div className={styles.actions}>
+            {isMobile ? (
+              <button
+                type="button"
+                className={styles.iconButton}
+                onClick={handleEdit}
+                aria-label="Edit document"
+                data-testid="document-edit-button"
+              >
+                <Icons.IconEdit />
+              </button>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleEdit}
+                data-testid="document-edit-button"
+              >
+                Edit
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className={styles.metaRow}>
         {record.document.path && (

@@ -17,6 +17,19 @@
   min-width: 0;
 }
 
+.title {
+  font-family: var(--f-sans);
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg-0);
+  margin: 0;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .meta {
   display: flex;
   align-items: center;
@@ -52,6 +65,12 @@
 @media (max-width: 768px) {
   .header {
     padding: 10px 16px;
+  }
+
+  /* Drop the chat-chrome H1 on mobile — the breadcrumb already shows the
+     conversation title, so the meta row alone gives enough chrome. */
+  .title {
+    display: none;
   }
 
   /* Stack the meta row vertically at narrow widths so the `·` separators

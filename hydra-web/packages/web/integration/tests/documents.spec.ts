@@ -32,13 +32,12 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     await main.getByText("ADR-001: OAuth2 Migration Strategy").click();
     await expect(page).toHaveURL(/\/documents\/d-seed00001/);
 
-    // Verify the document detail page shows the title. The page-chrome H1 was
-    // removed (title now lives in the breadcrumb); the markdown body still
-    // renders its own H1, which is what we assert against here.
+    // Verify the document detail page shows the title.
     await expect(
       page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first(),
     ).toBeVisible();
-    // Breadcrumb also surfaces the title — that's the chrome-side replacement.
+    // Breadcrumb also surfaces the title (the chrome-side fallback on mobile,
+    // where the page H1 collapses).
     const breadcrumb = page.locator('nav[aria-label="Breadcrumb"]');
     await expect(
       breadcrumb.getByText("ADR-001: OAuth2 Migration Strategy"),
@@ -49,7 +48,6 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     authenticatedPage: page,
   }) => {
     await page.goto("/documents/d-seed00001");
-    // Markdown body renders the H1 — the page-chrome H1 was removed.
     await expect(
       page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first(),
     ).toBeVisible();
