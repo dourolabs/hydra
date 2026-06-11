@@ -1017,17 +1017,12 @@ impl ReadOnlyStore for MemoryStore {
         project_id: &ProjectId,
         status_key: &StatusKey,
     ) -> Result<u64, StoreError> {
-        let Some(sequence) = self
-            .statuses_indexes
-            .get(project_id)
-            .map(|idx_mutex| {
-                idx_mutex
-                    .lock()
-                    .expect("statuses index mutex poisoned")
-                    .sequence_for_key(status_key)
-            })
-            .unwrap_or_default()
-        else {
+        let Some(sequence) = self.statuses_indexes.get(project_id).and_then(|idx_mutex| {
+            idx_mutex
+                .lock()
+                .expect("statuses index mutex poisoned")
+                .sequence_for_key(status_key)
+        }) else {
             return Ok(0);
         };
 

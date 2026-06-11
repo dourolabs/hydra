@@ -11778,4 +11778,83 @@ mod tests {
             .unwrap();
         assert_eq!(done_after2.auto_archive_after_seconds, Some(3600));
     }
+
+    /// Postgres counterpart to `max_simultaneous_sessions_round_trips_sqlite`:
+    /// the field must round-trip through `add_status` / `update_status` /
+    /// `get_project`. The status-cap enforcement in
+    /// `agent_queue::spawn_for_issue` reads this off the per-status row.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn max_simultaneous_sessions_round_trips_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("ms"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut with_cap = cutover_status_def_pg("frontend");
+        with_cap.max_simultaneous_sessions = Some(5);
+        store
+            .add_status(&project_id, with_cap, &ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .add_status(
+                &project_id,
+                cutover_status_def_pg("backend"),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let fetched = store.get_project(&project_id, false).await.unwrap();
+        let frontend = fetched
+            .item
+            .find_status(&StatusKey::try_new("frontend").unwrap())
+            .unwrap();
+        assert_eq!(frontend.max_simultaneous_sessions, Some(5));
+        let backend = fetched
+            .item
+            .find_status(&StatusKey::try_new("backend").unwrap())
+            .unwrap();
+        assert_eq!(backend.max_simultaneous_sessions, None);
+
+        let mut cleared = frontend.clone();
+        cleared.max_simultaneous_sessions = None;
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("frontend").unwrap(),
+                cleared,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let after = store.get_project(&project_id, false).await.unwrap();
+        let frontend_after = after
+            .item
+            .find_status(&StatusKey::try_new("frontend").unwrap())
+            .unwrap();
+        assert_eq!(frontend_after.max_simultaneous_sessions, None);
+
+        let mut set_new = frontend_after.clone();
+        set_new.max_simultaneous_sessions = Some(3);
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("frontend").unwrap(),
+                set_new,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let after2 = store.get_project(&project_id, false).await.unwrap();
+        let frontend_after2 = after2
+            .item
+            .find_status(&StatusKey::try_new("frontend").unwrap())
+            .unwrap();
+        assert_eq!(frontend_after2.max_simultaneous_sessions, Some(3));
+    }
 }
