@@ -12,6 +12,7 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  ConversationSummary,
   Issue,
   IssueSummary,
   IssueSummaryRecord,
@@ -44,8 +45,9 @@ vi.mock("../../../dashboard/usePageIssueTrees", () => ({
   }),
 }));
 
+let conversationsByIssueMap: Map<string, ConversationSummary> = new Map();
 vi.mock("../../../chat/useActiveConversationsByIssue", () => ({
-  useActiveConversationsByIssue: () => new Map(),
+  useActiveConversationsByIssue: () => conversationsByIssueMap,
 }));
 
 // Capture the DnD onDragEnd handlers so tests can synthesize drops without
@@ -203,6 +205,7 @@ vi.mock("@hydra/ui", () => ({
     IconSpark: () => <span data-testid="icon-spark" />,
     IconChevronDown: () => <span data-testid="icon-chevron-down" />,
     IconPlus: () => <span data-testid="icon-plus" />,
+    IconChat: () => <span data-testid="icon-chat" />,
   },
 }));
 
@@ -378,6 +381,7 @@ function renderBoard(
 beforeEach(() => {
   projectsData = [];
   cellsByProject = new Map();
+  conversationsByIssueMap = new Map();
   lastModalProps.open = undefined;
   lastModalProps.projectRecord = undefined;
   lastModalProps.statusKey = undefined;
@@ -1555,5 +1559,91 @@ describe("IssuesBoard issue-card drag-and-drop", () => {
     fireEvent.drop(target, { dataTransfer: dt });
 
     expect(mockUpdateIssue).not.toHaveBeenCalled();
+  });
+});
+
+describe("IssuesBoard chat button", () => {
+  function summaryRecord(issueId: string, projectId: string): IssueSummaryRecord {
+    const status: StatusDefinition = makeStatus({ key: "open", label: "Open" });
+    const summary: IssueSummary = {
+      type: "task",
+      title: "Card",
+      description: "",
+      creator: "alice",
+      status,
+      project_id: projectId,
+      progress: "",
+      dependencies: [],
+      patches: [],
+    };
+    return {
+      issue_id: issueId,
+      version: BigInt(1),
+      timestamp: "2026-06-09T00:00:00Z",
+      issue: summary,
+      creation_time: "2026-06-09T00:00:00Z",
+    };
+  }
+
+  function conversationSummary(
+    issueId: string,
+    conversationId: string,
+    status: ConversationSummary["status"] = "active",
+  ): ConversationSummary {
+    return {
+      conversation_id: conversationId,
+      title: null,
+      agent_name: null,
+      status,
+      event_count: 0,
+      last_event_preview: null,
+      creator: "alice",
+      spawned_from: issueId,
+      created_at: "2026-06-09T00:00:00Z",
+      updated_at: "2026-06-09T00:00:00Z",
+    };
+  }
+
+  it("renders a chat affordance for issues with a live conversation", () => {
+    projectsData = [makeProject("j-eng", "engineering", DEFAULT_STATUSES, "Eng")];
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          [
+            "open",
+            emptyCell({
+              issues: [summaryRecord("i-with", "j-eng"), summaryRecord("i-no", "j-eng")],
+            }),
+          ],
+        ]),
+      ],
+    ]);
+    conversationsByIssueMap = new Map([
+      ["i-with", conversationSummary("i-with", "c-live")],
+    ]);
+
+    renderBoard();
+
+    const link = screen.getByTestId("board-card-conversation-i-with");
+    expect(link.getAttribute("href")).toBe("/chat/c-live");
+    expect(screen.queryByTestId("board-card-conversation-i-no")).toBeNull();
+  });
+
+  it("omits the chat affordance when the conversation map is empty", () => {
+    projectsData = [makeProject("j-eng", "engineering", DEFAULT_STATUSES, "Eng")];
+    cellsByProject = new Map([
+      [
+        "j-eng",
+        new Map<string, BoardCellQuery>([
+          ["open", emptyCell({ issues: [summaryRecord("i-aaa", "j-eng")] })],
+        ]),
+      ],
+    ]);
+    conversationsByIssueMap = new Map();
+
+    renderBoard();
+
+    expect(screen.queryByTestId("board-card-conversation-i-aaa")).toBeNull();
   });
 });

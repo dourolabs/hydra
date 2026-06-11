@@ -107,6 +107,7 @@ pub async fn run(
                 creator,
                 include_deleted: if include_deleted { Some(true) } else { None },
                 spawned_from: None,
+                spawned_from_ids: Vec::new(),
                 limit: Some(limit),
                 cursor: None,
             };

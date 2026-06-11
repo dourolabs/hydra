@@ -410,10 +410,11 @@
 }
 
 /* Floating "Join / Resume conversation" affordance — chat icon docked to the
-   top-right corner of a board card, revealed on card hover or keyboard focus.
-   Matches the issue-detail header's .openConversation accent-colored pattern.
-   `pointer-events: none` while hidden so the invisible button can't be tapped
-   on touch devices (no `:hover`), which would otherwise silently navigate. */
+   top-right corner of a board card. On hover-capable pointer devices it is
+   hidden by default and revealed on card hover or keyboard focus; on touch
+   devices (`@media (hover: none)`) it stays visible so it remains reachable
+   without a hover trigger. Matches the issue-detail header's
+   .openConversation accent-colored pattern. */
 .cardChatButton {
   position: absolute;
   top: 6px;
@@ -444,6 +445,13 @@
 .card:focus-within .cardChatButton {
   opacity: 1;
   pointer-events: auto;
+}
+
+@media (hover: none) {
+  .cardChatButton {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .cardChatButton:hover {

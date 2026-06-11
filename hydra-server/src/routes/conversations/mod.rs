@@ -80,6 +80,8 @@ pub async fn list_conversations(
         status = ?query.status,
         creator = ?query.creator,
         query = ?query.q,
+        spawned_from = ?query.spawned_from,
+        spawned_from_ids_count = query.spawned_from_ids.len(),
         "list_conversations invoked"
     );
 
@@ -113,6 +115,7 @@ pub async fn list_conversations(
             event_count,
             last_event_preview,
             versioned.item.creator.into(),
+            versioned.item.spawned_from,
             versioned.creation_time,
             versioned.timestamp,
         ));
