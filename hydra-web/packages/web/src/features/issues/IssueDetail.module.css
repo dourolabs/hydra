@@ -51,23 +51,12 @@
 
 .metaRow {
   display: flex;
-  align-items: center;
-  gap: 0;
+  align-items: flex-end;
+  gap: 12px;
   flex-wrap: wrap;
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--fg-2);
-}
-
-.metaRow > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.metaRow > .metaSep {
-  color: var(--fg-3);
-  padding: 0 8px;
 }
 
 .description {
@@ -287,16 +276,9 @@
     display: inline-flex;
   }
 
-  /* Stack the meta row vertically at narrow widths so the `·` / `/` separators
-     never become a leading or trailing token on a wrapped line. Mirrors the
-     pattern used in ChatHeader.module.css for the same reason. */
   .metaRow {
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
-  }
-
-  .metaRow > .metaSep {
-    display: none;
+    gap: 8px;
   }
 }

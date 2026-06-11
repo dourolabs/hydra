@@ -1,0 +1,10 @@
+.popEmpty {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-3);
+  padding: 8px 10px;
+}
+
+.popSpacer {
+  flex: 1;
+}

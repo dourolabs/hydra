@@ -7,6 +7,8 @@ import { StatusChip } from "../projects/StatusChip";
 import { useConversations } from "../chat/useConversations";
 import { useIssue } from "./useIssue";
 import { IssueAssigneePicker } from "./IssueAssigneePicker";
+import { IssueProjectPicker } from "./IssueProjectPicker";
+import { IssueStatusPicker } from "./IssueStatusPicker";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { FeedbackModal } from "./FeedbackModal";
@@ -21,7 +23,6 @@ import {
   OverflowMenu,
   type OverflowMenuItem,
 } from "../../components/OverflowMenu";
-import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./IssueDetail.module.css";
 
 type MobileTabKey = "overview" | IssueRightPanelTabKey;
@@ -99,7 +100,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
     setRightPanelTab(key);
   }, []);
 
-  const settings = issue.session_settings;
   const overviewActive = mobileTab === "overview";
 
   const overflowItems = useMemo<OverflowMenuItem[]>(() => {
@@ -152,7 +152,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
         <div className={styles.mainInner}>
           <div className={styles.titleRow}>
             <span className={styles.titleId}>{issueId}</span>
-            <StatusChip status={issue.status} />
             {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
             {issue.deleted === true && (
               <Badge status="archived" data-testid="issue-archived-badge" />
@@ -201,21 +200,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
           </div>
 
           <div className={styles.metaRow}>
-            <IssueAssigneePicker issueId={issueId} issue={issue} hideLabel />
-            <span className={styles.metaSep}>·</span>
-            <AgoTime iso={record.creation_time} />
-            {settings?.repo_name && (
-              <>
-                <span className={styles.metaSep}>·</span>
-                <span>{settings.repo_name}</span>
-              </>
-            )}
-            {settings?.branch && (
-              <>
-                <span className={styles.metaSep}>/</span>
-                <span>{settings.branch}</span>
-              </>
-            )}
+            <IssueProjectPicker issueId={issueId} issue={issue} />
+            <IssueStatusPicker issueId={issueId} issue={issue} />
+            <IssueAssigneePicker issueId={issueId} issue={issue} />
           </div>
 
           {blockedOnIds.length > 0 && (

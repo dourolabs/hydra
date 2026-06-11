@@ -38,6 +38,14 @@ vi.mock("../useArchiveIssue", () => ({
   useArchiveIssue: () => ({ archive: () => {}, isPending: false }),
 }));
 
+vi.mock("../IssueProjectPicker", () => ({
+  IssueProjectPicker: () => <div data-testid="issue-project-picker-stub" />,
+}));
+
+vi.mock("../IssueStatusPicker", () => ({
+  IssueStatusPicker: () => <div data-testid="issue-status-picker-stub" />,
+}));
+
 vi.mock("../IssueAssigneePicker", () => ({
   IssueAssigneePicker: ({
     issue,
