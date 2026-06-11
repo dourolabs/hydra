@@ -96,7 +96,7 @@ If you'd rather skip the dashboard and chat from a terminal, `hydra chat` opens 
 
 All work in Hydra is represented by issues. Issues can be assigned to either agents or users. If assigned to agents, the system will automatically spawn sessions to work on the issue. Issues have a progress field that agents automatically update with the current status of the work.
 
-Issues have child-of / blocked-on relationships between them. Hydra uses these to track which issues are ready to be worked on. 
+Issues have child-of / blocked-on relationships between them. Hydra uses these to track which issues are ready to be worked on.
 
 ### Agents
 
