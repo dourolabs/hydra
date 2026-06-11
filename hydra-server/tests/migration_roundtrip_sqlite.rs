@@ -187,6 +187,11 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_statuses_max_simultaneous_sessions_domain_roundtrip(&pool).await?;
     add_statuses_max_simultaneous_sessions_migration_is_idempotent(&pool).await?;
 
+    add_statuses_session_settings_schema_invariants(&pool).await?;
+    add_statuses_session_settings_defaults_to_null(&pool).await?;
+    add_statuses_session_settings_migration_is_idempotent(&pool).await?;
+    add_statuses_session_settings_store_roundtrip(&pool).await?;
+
     Ok(())
 }
 
@@ -3460,7 +3465,6 @@ async fn reserve_hydra_id_shape_migration_is_idempotent(pool: &SqlitePool) -> Re
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // 20260712000000_add_statuses_max_simultaneous_sessions. Adds
 // `max_simultaneous_sessions INTEGER NULL` to `statuses` — the
 // per-status cap on simultaneously-active sessions (interactive +
@@ -3552,6 +3556,134 @@ async fn add_statuses_max_simultaneous_sessions_migration_is_idempotent(
         if before_val != after_val {
             bail!(
                 "max_simultaneous_sessions changed across rerun: {before_val:?} -> {after_val:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260713000000_add_statuses_session_settings. Adds the
+// `session_settings_json TEXT NULL` column to `statuses` for the per-status
+// `SessionSettings` override layer. Backfills to NULL — the read path then
+// materializes `SessionSettings::default()`.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_session_settings_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "statuses", "session_settings_json").await? {
+        bail!("expected `statuses.session_settings_json` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "statuses", "session_settings_json").await? {
+        bail!("expected `statuses.session_settings_json` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_statuses_session_settings_defaults_to_null(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT project_id, sequence, session_settings_json FROM statuses")
+        .fetch_all(pool)
+        .await
+        .context("read statuses for session_settings_json default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: Option<String> = row.try_get("session_settings_json")?;
+        if value.is_some() {
+            bail!(
+                "statuses({project_id}, sequence={sequence}): expected session_settings_json=NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_session_settings_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm session_settings idempotency")?;
+    // After re-running, the column still exists and is still nullable.
+    add_statuses_session_settings_schema_invariants(pool).await?;
+    Ok(())
+}
+
+/// Per the issue spec: the test surface here MUST be a SqliteStore-level
+/// roundtrip on `get_<status>` after a status with non-empty
+/// `session_settings` is written. This catches the `#[sqlx(default)]`
+/// foot-gun — every SELECT projection on `statuses` must include the new
+/// `session_settings_json` column. A MemoryStore roundtrip is insufficient.
+async fn add_statuses_session_settings_store_roundtrip(pool: &SqlitePool) -> Result<()> {
+    use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
+    use hydra_common::api::v1::projects::{ProjectKey, StatusKey};
+
+    let store = SqliteStore::new(pool.clone());
+    let actor = ActorRef::System {
+        worker_name: "session_settings_roundtrip_test".to_string(),
+        on_behalf_of: None,
+    };
+    let project = hydra_common::api::v1::projects::Project::new(
+        ProjectKey::try_new("ssrnd").unwrap(),
+        "Session Settings Roundtrip".to_string(),
+        Vec::new(),
+        ApiUsername::from("test"),
+        false,
+        0.0,
+    );
+    let (project_id, _) = store
+        .add_project(project, &actor)
+        .await
+        .context("add_project for session_settings roundtrip")?;
+
+    let mut status = StatusDefinition::new(
+        StatusKey::try_new("frontend").unwrap(),
+        "Frontend".to_string(),
+        "#abcdef".parse().unwrap(),
+        false,
+        false,
+        false,
+        None,
+    );
+    let mut session_settings = ApiSessionSettings::default();
+    session_settings.cpu_limit = Some("250m".to_string());
+    session_settings.memory_limit = Some("256Mi".to_string());
+    status.session_settings = session_settings.clone();
+    store
+        .add_status(&project_id, status, &actor)
+        .await
+        .context("add_status for session_settings roundtrip")?;
+
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("get_project for session_settings roundtrip")?;
+    let frontend = fetched
+        .item
+        .statuses
+        .iter()
+        .find(|s| s.key.as_str() == "frontend")
+        .ok_or_else(|| anyhow::anyhow!("missing frontend status after add_status"))?;
+    if frontend.session_settings != session_settings {
+        bail!(
+            "frontend.session_settings roundtrip mismatch: wrote {session_settings:?}, read {:?}",
+            frontend.session_settings
+        );
+    }
+
+    // Defaulted statuses must round-trip as `SessionSettings::default()`,
+    // not NULL deserialization errors.
+    let default_seed_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let default_project = store
+        .get_project(&default_seed_id, false)
+        .await
+        .context("get_project(j-defaul) post-session_settings migration")?;
+    for status in &default_project.item.statuses {
+        if !ApiSessionSettings::is_default(&status.session_settings) {
+            bail!(
+                "j-defaul status {key:?} unexpectedly carried non-default session_settings: {got:?}",
+                key = status.key,
+                got = status.session_settings,
             );
         }
     }

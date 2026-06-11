@@ -44,11 +44,11 @@ pub enum ProjectsCommand {
 pub enum StatusCommand {
     /// Add a new status to a project, specified via the direct
     /// `--key/--label/--color/...` flags.
-    Create(CreateStatusArgs),
+    Create(Box<CreateStatusArgs>),
     /// Update a single status on a project. The direct flags are
     /// overlaid on the current definition; the `--key` flag renames the
     /// status in place (storage identity preserved).
-    Update(UpdateStatusArgs),
+    Update(Box<UpdateStatusArgs>),
     /// Delete a status from a project. Fails if any issue still
     /// references the status.
     Delete(DeleteStatusArgs),
@@ -155,6 +155,18 @@ pub struct CreateStatusArgs {
     /// status. Omit to leave the cap off.
     #[arg(long = "max-simultaneous-sessions", value_name = "COUNT")]
     pub max_simultaneous_sessions: Option<u32>,
+
+    /// Per-status container CPU limit override (e.g. `500m`, `2`). Wins
+    /// over the global default during spawn; an issue-level
+    /// `cpu_limit` still wins over this.
+    #[arg(long = "cpu-limit", value_name = "STRING")]
+    pub cpu_limit: Option<String>,
+
+    /// Per-status container memory limit override (e.g. `1Gi`, `512Mi`).
+    /// Wins over the global default during spawn; an issue-level
+    /// `memory_limit` still wins over this.
+    #[arg(long = "memory-limit", value_name = "STRING")]
+    pub memory_limit: Option<String>,
 
     /// Doc-store path for the per-status prompt slice.
     #[arg(long = "prompt-path", value_name = "DOC_PATH")]
@@ -291,6 +303,16 @@ pub struct UpdateStatusArgs {
     /// Clear the per-status simultaneously-active sessions cap.
     #[arg(long = "clear-max-simultaneous-sessions")]
     pub clear_max_simultaneous_sessions: bool,
+
+    /// Set the per-status container CPU limit (e.g. `500m`, `2`). Pass
+    /// `--cpu-limit ""` to clear the override.
+    #[arg(long = "cpu-limit", value_name = "STRING")]
+    pub cpu_limit: Option<String>,
+
+    /// Set the per-status container memory limit (e.g. `1Gi`, `512Mi`).
+    /// Pass `--memory-limit ""` to clear the override.
+    #[arg(long = "memory-limit", value_name = "STRING")]
+    pub memory_limit: Option<String>,
 
     /// On-enter: set the issue's assignee to this principal. Accepts the
     /// canonical path form: `users/<name>`, `agents/<name>`, or
@@ -436,7 +458,7 @@ pub async fn run(
         }
         ProjectsCommand::Status { command } => match command {
             StatusCommand::Create(args) => {
-                let record = create_status(client, args).await?;
+                let record = create_status(client, *args).await?;
                 render(
                     ProjectRecords(&[record]),
                     context.output_format,
@@ -444,7 +466,7 @@ pub async fn run(
                 )?;
             }
             StatusCommand::Update(args) => {
-                let record = update_status(client, args).await?;
+                let record = update_status(client, *args).await?;
                 render(
                     ProjectRecords(&[record]),
                     context.output_format,
@@ -594,7 +616,19 @@ fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefin
     def.auto_archive_after_seconds = args.auto_archive_after_seconds;
     def.max_simultaneous_sessions = args.max_simultaneous_sessions;
     def.position = args.position.unwrap_or(0.0);
+    def.session_settings.cpu_limit = normalize_blank_string(args.cpu_limit.clone());
+    def.session_settings.memory_limit = normalize_blank_string(args.memory_limit.clone());
     Ok(def)
+}
+
+/// Drop a `Some("")` flag value to `None` so empty CLI strings don't get
+/// persisted as malformed overrides. Mirrors [`normalize_prompt_path`].
+fn normalize_blank_string(arg: Option<String>) -> Option<String> {
+    match arg {
+        None => None,
+        Some(value) if value.is_empty() => None,
+        Some(value) => Some(value),
+    }
 }
 
 /// Build the `StatusDefinition` PUT by `projects status update`. The
@@ -612,7 +646,8 @@ async fn build_update_status_definition(
              --max-simultaneous-sessions, --clear-max-simultaneous-sessions, \
              --unblocks-parents=<bool>, --unblocks-dependents=<bool>, \
              --cascades-to-children=<bool>, --interactive=<bool>, \
-             --suppress-sessions=<bool>, --on-enter-*, or --clear-on-enter"
+             --suppress-sessions=<bool>, --cpu-limit, --memory-limit, \
+             --on-enter-*, or --clear-on-enter"
         );
     }
     let current_project = client
@@ -655,6 +690,8 @@ fn update_has_any_direct_flag(args: &UpdateStatusArgs) -> bool {
         || args.clear_auto_archive_after_seconds
         || args.max_simultaneous_sessions.is_some()
         || args.clear_max_simultaneous_sessions
+        || args.cpu_limit.is_some()
+        || args.memory_limit.is_some()
         || args.on_enter_assign_to.is_some()
         || args.on_enter_attach_form.is_some()
         || args.on_enter_clear_assignee
@@ -708,6 +745,12 @@ fn apply_update_overlay(
         def.max_simultaneous_sessions = None;
     } else if let Some(v) = args.max_simultaneous_sessions {
         def.max_simultaneous_sessions = Some(v);
+    }
+    if let Some(value) = args.cpu_limit.clone() {
+        def.session_settings.cpu_limit = if value.is_empty() { None } else { Some(value) };
+    }
+    if let Some(value) = args.memory_limit.clone() {
+        def.session_settings.memory_limit = if value.is_empty() { None } else { Some(value) };
     }
     def.on_enter = overlay_on_enter(args, def.on_enter)?;
     Ok(def)

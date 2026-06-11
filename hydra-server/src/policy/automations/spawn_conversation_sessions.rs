@@ -259,9 +259,7 @@ async fn spawn_session(
         ))
     })?;
 
-    let conversation_settings = ctx
-        .app_state
-        .apply_session_settings_defaults(conversation.session_settings.clone());
+    let conversation_settings = resolve_conversation_session_settings(ctx, conversation).await;
 
     let mount_spec = match ctx
         .app_state
@@ -363,6 +361,51 @@ async fn spawn_session(
     );
 
     Ok(())
+}
+
+/// Merge a conversation's effective [`crate::domain::issues::SessionSettings`]
+/// from (most → least specific) conversation overrides → per-status
+/// overrides on the spawning issue's resolved status → global default.
+/// Legacy `/chat` conversations carry `spawned_from = None` and skip the
+/// status layer entirely. A `resolve_status` failure degrades to
+/// conversation-only settings + defaults.
+async fn resolve_conversation_session_settings(
+    ctx: &AutomationContext<'_>,
+    conversation: &Conversation,
+) -> crate::domain::issues::SessionSettings {
+    let status_settings = match conversation.spawned_from.as_ref() {
+        Some(issue_id) => match ctx.store.get_issue(issue_id, false).await {
+            Ok(versioned) => match ctx.app_state.resolve_status(&versioned.item).await {
+                Ok(def) => def.session_settings.into(),
+                Err(err) => {
+                    tracing::warn!(
+                        automation = AUTOMATION_NAME,
+                        conversation.spawned_from = %issue_id,
+                        error = %err,
+                        "failed to resolve status for conversation's spawning issue; \
+                         status-level session_settings unavailable"
+                    );
+                    crate::domain::issues::SessionSettings::default()
+                }
+            },
+            Err(err) => {
+                tracing::warn!(
+                    automation = AUTOMATION_NAME,
+                    conversation.spawned_from = %issue_id,
+                    error = %err,
+                    "failed to load conversation's spawning issue; \
+                     status-level session_settings unavailable"
+                );
+                crate::domain::issues::SessionSettings::default()
+            }
+        },
+        None => crate::domain::issues::SessionSettings::default(),
+    };
+    let merged = crate::domain::issues::SessionSettings::merge(
+        conversation.session_settings.clone(),
+        status_settings,
+    );
+    ctx.app_state.apply_session_settings_defaults(merged)
 }
 
 /// Find the most-recently-created session linked to `conversation_id`.

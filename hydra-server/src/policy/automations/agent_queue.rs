@@ -118,8 +118,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
     ) -> anyhow::Result<Option<SessionId>> {
-        let session_settings =
-            state.apply_session_settings_defaults(issue.session_settings.clone());
+        let session_settings = resolve_session_settings_for_issue(state, issue).await;
 
         // Pre-resolve the mount_spec via `mount_spec_from_create_request`. The
         // server-side `create_session` defaulting from `session_settings` is
@@ -185,8 +184,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
     ) -> anyhow::Result<Option<ConversationId>> {
-        let session_settings =
-            state.apply_session_settings_defaults(issue.session_settings.clone());
+        let session_settings = resolve_session_settings_for_issue(state, issue).await;
 
         let agent_name = hydra_common::api::v1::agents::AgentName::try_new(self.agent.name.clone())
             .with_context(|| {
@@ -473,6 +471,43 @@ pub(crate) async fn agent_task_state(
     }
 
     Ok(task_state)
+}
+
+/// Resolve the effective [`crate::domain::issues::SessionSettings`] for
+/// `issue` by merging issue-level overrides over the per-status overrides
+/// declared on the issue's resolved [`StatusDefinition`], then applying
+/// the global defaults via `apply_session_settings_defaults`.
+///
+/// Precedence (most → least specific): `issue.session_settings` →
+/// `status.session_settings` → global default. `SessionSettings::merge`
+/// is None-fill (primary wins per-field), so each field falls through
+/// the layers until one supplies a `Some`. A `resolve_status` failure
+/// degrades to issue-only settings + defaults — the spawn dispatcher
+/// already emits a warning for that branch and we don't want a stale
+/// project lookup to break headless spawning.
+pub(crate) async fn resolve_session_settings_for_issue(
+    state: &AppState,
+    issue: &Issue,
+) -> crate::domain::issues::SessionSettings {
+    let status_settings: crate::domain::issues::SessionSettings = match state
+        .resolve_status(issue)
+        .await
+    {
+        Ok(def) => def.session_settings.into(),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "failed to resolve status for issue {}; status-level session_settings unavailable",
+                issue.title
+            );
+            crate::domain::issues::SessionSettings::default()
+        }
+    };
+    let merged = crate::domain::issues::SessionSettings::merge(
+        issue.session_settings.clone(),
+        status_settings,
+    );
+    state.apply_session_settings_defaults(merged)
 }
 
 /// Returns `true` if any `ChildOf` parent of `issue` has a *headless*
@@ -3840,7 +3875,7 @@ mod tests {
                 None,
                 SessionMode::Interactive {
                     conversation_id: conv_id,
-                    idle_timeout_secs: None,
+                    idle_timeout: None,
                     greet_user: false,
                 },
                 Status::Running,
@@ -3962,6 +3997,153 @@ mod tests {
         assert!(
             matches!(result, SpawnResult::Skipped),
             "agent cap saturation must block even when status cap is loose"
+        );
+
+        Ok(())
+    }
+
+    /// Overlay a `cpu_limit` / `memory_limit` override on the default
+    /// project's named status by re-running `update_status` with the
+    /// existing definition plus the requested session-settings override.
+    async fn set_status_session_settings(
+        handles: &TestStateHandles,
+        status_key: &str,
+        cpu_limit: Option<&str>,
+        memory_limit: Option<&str>,
+    ) {
+        let project_id = crate::domain::projects::default_project_id();
+        let key = StatusKey::try_new(status_key).expect("valid status key");
+        let project = handles
+            .store
+            .get_project(&project_id, false)
+            .await
+            .expect("default project exists")
+            .item;
+        let mut def = project
+            .statuses
+            .iter()
+            .find(|s| s.key == key)
+            .expect("status exists on default project")
+            .clone();
+        def.session_settings.cpu_limit = cpu_limit.map(str::to_string);
+        def.session_settings.memory_limit = memory_limit.map(str::to_string);
+        handles
+            .state
+            .update_status(&project_id, &key, def, &ActorRef::test())
+            .await
+            .expect("update_status succeeds");
+    }
+
+    /// PR-1 anchor: a status with `session_settings.cpu_limit = "500m"`
+    /// flows through to the spawned session's `cpu_limit` when the issue
+    /// itself sets no override. The headless branch is the simpler of the
+    /// two spawn paths and exercises the merge precedence end-to-end:
+    /// status override → spawn-time `Session.cpu_limit`.
+    #[tokio::test]
+    async fn status_level_cpu_limit_flows_to_spawned_session() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        set_status_session_settings(&handles, "open", Some("500m"), Some("256Mi")).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Inherit from status".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: status("open"),
+                    project_id: crate::domain::projects::default_project_id(),
+                    assignee: Some(test_agent_principal("agent-a")),
+                    session_settings: SessionSettings {
+                        repo_name: Some(repo_name.clone()),
+                        image: Some("repo-image".to_string()),
+                        ..SessionSettings::default()
+                    },
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                    form: None,
+                    form_response: None,
+                    feedback: None,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let session_id = result.into_session_id().expect("session spawned");
+        let session = handles.state.get_session(&session_id).await?;
+        assert_eq!(
+            session.cpu_limit.as_deref(),
+            Some("500m"),
+            "status-level cpu_limit must propagate to the spawned session"
+        );
+        assert_eq!(
+            session.memory_limit.as_deref(),
+            Some("256Mi"),
+            "status-level memory_limit must propagate to the spawned session"
+        );
+
+        Ok(())
+    }
+
+    /// PR-1 anchor: when the issue and its resolved status both set a
+    /// `cpu_limit`, the issue's value wins. Locks the merge order so
+    /// future per-status `SessionSettings` additions can't accidentally
+    /// flip the precedence.
+    #[tokio::test]
+    async fn issue_cpu_limit_wins_over_status_cpu_limit() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        set_status_session_settings(&handles, "open", Some("500m"), None).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Issue overrides status".to_string(),
+                    creator: default_user(),
+                    progress: String::new(),
+                    status: status("open"),
+                    project_id: crate::domain::projects::default_project_id(),
+                    assignee: Some(test_agent_principal("agent-a")),
+                    session_settings: SessionSettings {
+                        repo_name: Some(repo_name.clone()),
+                        image: Some("repo-image".to_string()),
+                        cpu_limit: Some("1000m".to_string()),
+                        ..SessionSettings::default()
+                    },
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    deleted: false,
+                    form: None,
+                    form_response: None,
+                    feedback: None,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let session_id = result.into_session_id().expect("session spawned");
+        let session = handles.state.get_session(&session_id).await?;
+        assert_eq!(
+            session.cpu_limit.as_deref(),
+            Some("1000m"),
+            "issue-level cpu_limit must win over the status-level override"
         );
 
         Ok(())

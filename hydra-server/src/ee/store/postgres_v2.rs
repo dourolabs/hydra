@@ -29,6 +29,7 @@ use chrono::{DateTime, Utc};
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SearchIssuesQuery;
+use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
 use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
@@ -1373,6 +1374,14 @@ impl PostgresStoreV2 {
             })?;
         def.suppress_sessions = row.suppress_sessions;
         def.position = row.position;
+        def.session_settings = match row.session_settings_json.as_deref() {
+            Some(json) => serde_json::from_str(json).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to deserialize status session_settings: {e}"
+                ))
+            })?,
+            None => Default::default(),
+        };
         Ok(def)
     }
 
@@ -1384,7 +1393,7 @@ impl PostgresStoreV2 {
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json \
              FROM metis.statuses WHERE project_id = $1 ORDER BY position, sequence",
         )
         .bind(project_id)
@@ -1406,7 +1415,7 @@ impl PostgresStoreV2 {
             out.entry(id.clone()).or_default();
         }
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json \
              FROM metis.statuses WHERE project_id = ANY($1) ORDER BY project_id, position, sequence",
         )
         .bind(project_ids)
@@ -1438,9 +1447,10 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
+        let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
         sqlx::query(
-            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(project_id)
         .bind(sequence)
@@ -1457,6 +1467,7 @@ impl PostgresStoreV2 {
         .bind(status.max_simultaneous_sessions.map(i64::from))
         .bind(status.suppress_sessions)
         .bind(status.position)
+        .bind(session_settings_json.as_deref())
         .execute(&mut **tx)
         .await
         .map_err(map_sqlx_error)?;
@@ -1913,6 +1924,10 @@ struct StatusRow {
     // fail loud at runtime instead of silently surfacing `0.0` in
     // place of the backfilled value.
     position: f64,
+    // No `#[sqlx(default)]`: every SELECT on `metis.statuses` must
+    // project `session_settings_json`. NULL deserializes to
+    // `SessionSettings::default()` in `status_row_to_definition`.
+    session_settings_json: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2404,6 +2419,22 @@ fn build_labels_predicates_pg(query: &SearchLabelsQuery) -> (Vec<String>, Vec<St
     }
 
     (predicates, bindings)
+}
+
+/// Serialize a status-level [`ApiSessionSettings`] for storage. Empty
+/// overrides round-trip as SQL NULL so a SELECT that observes NULL
+/// rebuilds `SessionSettings::default()` — the wire shape and the
+/// on-disk shape agree on "no override".
+fn status_session_settings_to_json(
+    settings: &ApiSessionSettings,
+) -> Result<Option<String>, StoreError> {
+    if ApiSessionSettings::is_default(settings) {
+        return Ok(None);
+    }
+    let json = serde_json::to_string(settings).map_err(|e| {
+        StoreError::Internal(format!("failed to serialize status session_settings: {e}"))
+    })?;
+    Ok(Some(json))
 }
 
 fn map_sqlx_error(err: sqlx::Error) -> StoreError {
@@ -6077,9 +6108,10 @@ impl Store for PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
+        let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
         sqlx::query(
-            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, max_simultaneous_sessions = $11, suppress_sessions = $12, position = $13 \
-             WHERE project_id = $14 AND sequence = $15",
+            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, max_simultaneous_sessions = $11, suppress_sessions = $12, position = $13, session_settings_json = $14 \
+             WHERE project_id = $15 AND sequence = $16",
         )
         .bind(status.key.as_str())
         .bind(&status.label)
@@ -6094,6 +6126,7 @@ impl Store for PostgresStoreV2 {
         .bind(status.max_simultaneous_sessions.map(i64::from))
         .bind(status.suppress_sessions)
         .bind(status.position)
+        .bind(session_settings_json.as_deref())
         .bind(id.as_ref())
         .bind(sequence)
         .execute(&mut *tx)
