@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -6,7 +6,8 @@ import {
   DragOverlay,
   KeyboardSensor,
   MeasuringStrategy,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   useSensor,
   useSensors,
@@ -48,6 +49,7 @@ import {
 } from "../usePaginatedIssues";
 import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
 import { useActiveConversationsByIssue } from "../../chat/useActiveConversationsByIssue";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import { useProjectCollapseState } from "./useProjectCollapseState";
 import {
   ProjectDragPreview,
@@ -73,6 +75,34 @@ interface IssuesBoardProps {
 // midpoint against. Large enough to leave headroom for many subsequent
 // inserts before float precision forces a renumber.
 const PROJECT_PRIORITY_STEP = 1024;
+
+// On mobile, the board view shows one project section at a time. Last
+// selection persists across navigations so the user lands back on the same
+// board after popping the issue detail page.
+const MOBILE_BOARD_LS_KEY = "hydra:board-mobile-selected-project";
+
+function loadMobileSelectedProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(MOBILE_BOARD_LS_KEY);
+    return raw && raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveMobileSelectedProjectId(projectId: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (projectId) {
+      window.localStorage.setItem(MOBILE_BOARD_LS_KEY, projectId);
+    } else {
+      window.localStorage.removeItem(MOBILE_BOARD_LS_KEY);
+    }
+  } catch {
+    /* swallow quota / private-mode errors — picker still works in-memory */
+  }
+}
 
 // Pick a new `priority` for a project that just landed between `left` and
 // `right` after a drag-and-drop. Mid-points between neighbors give O(1)
@@ -127,8 +157,17 @@ export function IssuesBoard({
   const { open: openIssueCreate } = useIssueCreateModal();
   const { isCollapsed, onToggle: onToggleCollapse } = useProjectCollapseState();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
+  const isMobile = useIsMobile();
+  const [mobileSelectedProjectId, setMobileSelectedProjectIdState] = useState<
+    string | null
+  >(() => loadMobileSelectedProjectId());
 
-  const projects: BoardProjectDescriptor[] = useMemo(() => {
+  const setMobileSelectedProjectId = useCallback((id: string | null) => {
+    setMobileSelectedProjectIdState(id);
+    saveMobileSelectedProjectId(id);
+  }, []);
+
+  const allProjectDescriptors: BoardProjectDescriptor[] = useMemo(() => {
     const out: BoardProjectDescriptor[] = [];
     const realProjects = (allProjects ?? []).filter(
       (record) => !record.project.archived,
@@ -164,6 +203,41 @@ export function IssuesBoard({
     }
     return out;
   }, [allProjects, baseFilters.project_id]);
+
+  // On mobile we render a single-project picker over `allProjectDescriptors`,
+  // then narrow the visible / fetched set to just the chosen one. The
+  // descriptor list above is what feeds the picker; `projects` below is what
+  // actually drives `useBoardIssuesByProject` and the section render — so on
+  // mobile we only fan out queries for the selected project, not all of them.
+  const showMobilePicker =
+    isMobile && !baseFilters.project_id && allProjectDescriptors.length > 1;
+
+  // Keep the selected id in range if projects load late or the previously
+  // selected one disappears (deleted, filter shifts). Falls back to the first
+  // descriptor so the board always has *something* mounted.
+  useEffect(() => {
+    if (!showMobilePicker) return;
+    const stillExists =
+      mobileSelectedProjectId !== null &&
+      allProjectDescriptors.some(
+        (p) => p.project_id === mobileSelectedProjectId,
+      );
+    if (!stillExists) {
+      setMobileSelectedProjectId(allProjectDescriptors[0].project_id);
+    }
+  }, [
+    showMobilePicker,
+    mobileSelectedProjectId,
+    allProjectDescriptors,
+    setMobileSelectedProjectId,
+  ]);
+
+  const projects: BoardProjectDescriptor[] = useMemo(() => {
+    if (!showMobilePicker) return allProjectDescriptors;
+    const id = mobileSelectedProjectId ?? allProjectDescriptors[0]?.project_id;
+    const match = allProjectDescriptors.find((p) => p.project_id === id);
+    return match ? [match] : allProjectDescriptors.slice(0, 1);
+  }, [showMobilePicker, mobileSelectedProjectId, allProjectDescriptors]);
 
   const cells = useBoardIssuesByProject(baseFilters, projects, !hideIssues);
 
@@ -294,10 +368,13 @@ export function IssuesBoard({
     ? projectRecordById.get(newStatusProjectId) ?? null
     : null;
 
-  const showNewProjectRow = !baseFilters.project_id;
+  const showNewProjectRow = !baseFilters.project_id && !showMobilePicker;
   // Only mount the project-reorder DnD when there's more than one project
-  // to reorder *and* the board isn't scoped to a single project.
-  const allowProjectReorder = !baseFilters.project_id && projects.length > 1;
+  // to reorder *and* the board isn't scoped to a single project. Mobile
+  // disables reorder entirely — the single-board view shows one project at
+  // a time, and the picker is the canonical way to switch between them.
+  const allowProjectReorder =
+    !isMobile && !baseFilters.project_id && allProjectDescriptors.length > 1;
 
   const projectReorder = useMutation({
     mutationFn: async ({
@@ -548,8 +625,18 @@ export function IssuesBoard({
     [moveIssue],
   );
 
+  // Two pointer sensors so touch devices require a long-press while mouse
+  // devices still get the existing 4px-threshold instant drag. dnd-kit picks
+  // whichever sensor activates first for a given input, so trackpad / mouse
+  // users are unaffected and touch users get a long-press gesture rather
+  // than the mouse-style "move to start dragging" — which on touch competes
+  // with native scrolling and either accidentally drags or accidentally
+  // scrolls, depending on direction.
   const projectSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -624,6 +711,33 @@ export function IssuesBoard({
 
   return (
     <div className={styles.kanban}>
+      {showMobilePicker && (
+        <div className={styles.mobilePicker}>
+          <label
+            htmlFor="board-mobile-project-picker"
+            className={styles.mobilePickerLabel}
+          >
+            Board
+          </label>
+          <select
+            id="board-mobile-project-picker"
+            className={styles.mobilePickerSelect}
+            value={
+              mobileSelectedProjectId ??
+              allProjectDescriptors[0]?.project_id ??
+              ""
+            }
+            onChange={(e) => setMobileSelectedProjectId(e.target.value)}
+            data-testid="board-mobile-picker"
+          >
+            {allProjectDescriptors.map((p) => (
+              <option key={p.project_id} value={p.project_id}>
+                {p.key} — {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {allowProjectReorder ? (
         <DndContext
           sensors={projectSensors}

@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   useSensor,
   useSensors,
@@ -195,8 +196,16 @@ export function ProjectSection({
     },
   });
 
+  // Mouse + Touch sensors so touch devices require a long-press hold before a
+  // column drag begins. With a single PointerSensor `{ distance: 4 }`, any
+  // touch drift competes with native scrolling. Splitting the sensors lets
+  // mouse users keep the immediate 4px-threshold drag while touch users
+  // explicitly opt in via a 250ms press.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 

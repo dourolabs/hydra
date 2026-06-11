@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { Link } from "react-router-dom";
 import { Avatar, FlowPill, Icons, TypeChip } from "@hydra/ui";
@@ -18,8 +19,10 @@ import type {
   BoardProjectDescriptor,
 } from "../usePaginatedIssues";
 import { AgoTime } from "../../../components/Runtime/Runtime";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import { RestoreIssueButton } from "../RestoreIssueButton";
 import { CardRuntime } from "./CardRuntime";
+import { useTouchDrag } from "./useTouchDrag";
 import styles from "./IssuesBoard.module.css";
 
 // Custom dataTransfer MIME for issue-card drags. Picked up by the column
@@ -148,12 +151,20 @@ function BoardColumn({
     });
   };
 
+  // Long-press touch drag uses this id to hit-test which column the finger is
+  // over. The HTML5 drag-and-drop path is unchanged and stays the only flow
+  // on desktop.
+  const touchDropId = `${project.project_id}::${status.key}`;
+
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={colClasses.join(" ")}
       data-testid={`board-col-${project.key}-${status.key}`}
+      data-touch-drop-id={touchDropId}
+      data-project-id={project.project_id}
+      data-status-key={status.key}
       onDragOver={handleColumnDragOver}
       onDrop={handleColumnDrop}
     >
@@ -224,108 +235,19 @@ function BoardColumn({
         {!hideIssues && showInitialLoading && (
           <div className={styles.colEmpty}>Loading…</div>
         )}
-        {colIssues.map((rec) => {
-          const issue = rec.issue;
-          const id = rec.issue_id;
-          const pill = computeFlowPillState(neighborhoodMap.get(id));
-          const conversation = conversationsByIssue.get(id);
-          const archived = issue.deleted === true;
-          const cardClass = archived
-            ? `${styles.card} ${styles.cardArchived}`
-            : styles.card;
-
-          const handleCardDragStart = (
-            e: React.DragEvent<HTMLDivElement>,
-          ) => {
-            const payload: IssueDragPayload = {
-              issueId: id,
-              sourceProjectId: project.project_id,
-              sourceStatusKey: status.key,
-            };
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData(
-              ISSUE_CARD_DRAG_MIME,
-              JSON.stringify(payload),
-            );
-          };
-          return (
-            <div
-              key={id}
-              className={cardClass}
-              onClick={() => onCardClick(id)}
-              draggable
-              onDragStart={handleCardDragStart}
-              data-testid={`board-card-${id}`}
-              data-archived={archived ? "true" : undefined}
-            >
-              {conversation && (
-                <Link
-                  to={`/chat/${conversation.conversation_id}`}
-                  className={styles.cardChatButton}
-                  title={
-                    conversation.status === "idle"
-                      ? "Resume conversation"
-                      : "Join conversation"
-                  }
-                  aria-label={
-                    conversation.status === "idle"
-                      ? "Resume conversation"
-                      : "Join conversation"
-                  }
-                  onClick={(e) => e.stopPropagation()}
-                  data-conversation-status={conversation.status}
-                  data-testid={`board-card-conversation-${id}`}
-                >
-                  <Icons.IconChat size={14} />
-                </Link>
-              )}
-              {(archived || (issue.type && issue.type !== "unknown")) && (
-                <div className={styles.cardHead}>
-                  {issue.type && issue.type !== "unknown" && (
-                    <TypeChip type={issue.type} />
-                  )}
-                  {archived && (
-                    <span
-                      className={styles.cardArchivedTag}
-                      data-testid={`board-card-archived-${id}`}
-                    >
-                      ARCHIVED
-                    </span>
-                  )}
-                  {archived && (
-                    <RestoreIssueButton
-                      issueId={id}
-                      className={styles.cardRestoreButton}
-                      data-testid={`board-card-restore-${id}`}
-                    />
-                  )}
-                </div>
-              )}
-              <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
-              <div className={styles.cardFoot}>
-                {issue.assignee && (
-                  <Avatar
-                    name={principalDisplayName(issue.assignee)}
-                    kind={principalAvatarKind(issue.assignee)}
-                    size="md"
-                  />
-                )}
-                <CardRuntime sessions={sessionsByIssue.get(id)} />
-                <AgoTime iso={rec.timestamp} />
-                <span className={styles.cardFootSpacer} />
-                {pill && (
-                  <FlowPill
-                    phase={pill.phase}
-                    num={pill.num}
-                    den={pill.den}
-                    title={pill.title}
-                    data-testid={`board-card-flowpill-${id}`}
-                  />
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {colIssues.map((rec) => (
+          <BoardIssueCard
+            key={rec.issue_id}
+            record={rec}
+            project={project}
+            statusKey={status.key}
+            neighborhood={neighborhoodMap.get(rec.issue_id)}
+            sessions={sessionsByIssue.get(rec.issue_id)}
+            conversation={conversationsByIssue.get(rec.issue_id)}
+            onCardClick={onCardClick}
+            onIssueDrop={onIssueDrop}
+          />
+        ))}
         {cell?.hasNextPage && (
           <div className={styles.colLoadMore}>
             <button
@@ -353,6 +275,174 @@ function BoardColumn({
             <span className={styles.colAddIssueIcon}>+</span>
             Add issue
           </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface BoardIssueCardProps {
+  record: BoardCellQuery["issues"][number];
+  project: BoardProjectDescriptor;
+  statusKey: string;
+  neighborhood: IssueNeighborhood | undefined;
+  sessions: SessionSummaryRecord[] | undefined;
+  conversation: ConversationSummary | undefined;
+  onCardClick: (id: string) => void;
+  onIssueDrop: IssueDropHandler;
+}
+
+// Cards keep the HTML5 draggable path for desktop unchanged. Touch devices —
+// where HTML5 drag events don't fire from finger input — get a long-press
+// shim that synthesises an equivalent flow via `useTouchDrag`, hit-testing
+// the column under the finger on release and calling the same `onIssueDrop`
+// handler the desktop drop path uses.
+function BoardIssueCard({
+  record,
+  project,
+  statusKey,
+  neighborhood,
+  sessions,
+  conversation,
+  onCardClick,
+  onIssueDrop,
+}: BoardIssueCardProps) {
+  const issue = record.issue;
+  const id = record.issue_id;
+  const pill = computeFlowPillState(neighborhood);
+  const archived = issue.deleted === true;
+  const isMobile = useIsMobile();
+
+  const touchDrag = useTouchDrag<IssueDragPayload>({
+    enabled: isMobile,
+    payload: {
+      issueId: id,
+      sourceProjectId: project.project_id,
+      sourceStatusKey: statusKey,
+    },
+    resolveDropTarget: (el) =>
+      el ? el.closest("[data-touch-drop-id]") : null,
+    onDrop: (payload, target) => {
+      const targetProjectId = target.getAttribute("data-project-id");
+      const targetStatusKey = target.getAttribute("data-status-key");
+      if (!targetProjectId || !targetStatusKey) return;
+      onIssueDrop(payload, {
+        projectId: targetProjectId,
+        statusKey: targetStatusKey,
+      });
+    },
+  });
+
+  // Toggle a highlight class on the column the finger is currently over so
+  // the user has a visible drop preview during the touch-drag gesture.
+  useEffect(() => {
+    const hoverId = touchDrag.state.hoverTargetId;
+    if (!hoverId) return;
+    const el = document.querySelector(
+      `[data-touch-drop-id="${CSS.escape(hoverId)}"]`,
+    );
+    if (!el) return;
+    el.classList.add(styles.colTouchDropOver);
+    return () => {
+      el.classList.remove(styles.colTouchDropOver);
+    };
+  }, [touchDrag.state.hoverTargetId]);
+
+  const handleCardDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    const payload: IssueDragPayload = {
+      issueId: id,
+      sourceProjectId: project.project_id,
+      sourceStatusKey: statusKey,
+    };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(ISSUE_CARD_DRAG_MIME, JSON.stringify(payload));
+  };
+
+  // Tap-vs-drag: on touch devices the long-press hold elevates the gesture
+  // into a drag. Suppress the synthetic click that would otherwise navigate
+  // to the issue detail page after the drop lands.
+  const handleClick = () => {
+    if (touchDrag.state.isDragging) return;
+    onCardClick(id);
+  };
+
+  const classes = [styles.card];
+  if (archived) classes.push(styles.cardArchived);
+  if (touchDrag.state.isDragging) classes.push(styles.cardTouchDragging);
+
+  return (
+    <div
+      className={classes.join(" ")}
+      onClick={handleClick}
+      draggable
+      onDragStart={handleCardDragStart}
+      onTouchStart={touchDrag.handlers.onTouchStart}
+      data-testid={`board-card-${id}`}
+      data-archived={archived ? "true" : undefined}
+    >
+      {conversation && (
+        <Link
+          to={`/chat/${conversation.conversation_id}`}
+          className={styles.cardChatButton}
+          title={
+            conversation.status === "idle"
+              ? "Resume conversation"
+              : "Join conversation"
+          }
+          aria-label={
+            conversation.status === "idle"
+              ? "Resume conversation"
+              : "Join conversation"
+          }
+          onClick={(e) => e.stopPropagation()}
+          data-conversation-status={conversation.status}
+          data-testid={`board-card-conversation-${id}`}
+        >
+          <Icons.IconChat size={14} />
+        </Link>
+      )}
+      {(archived || (issue.type && issue.type !== "unknown")) && (
+        <div className={styles.cardHead}>
+          {issue.type && issue.type !== "unknown" && (
+            <TypeChip type={issue.type} />
+          )}
+          {archived && (
+            <span
+              className={styles.cardArchivedTag}
+              data-testid={`board-card-archived-${id}`}
+            >
+              ARCHIVED
+            </span>
+          )}
+          {archived && (
+            <RestoreIssueButton
+              issueId={id}
+              className={styles.cardRestoreButton}
+              data-testid={`board-card-restore-${id}`}
+            />
+          )}
+        </div>
+      )}
+      <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
+      <div className={styles.cardFoot}>
+        {issue.assignee && (
+          <Avatar
+            name={principalDisplayName(issue.assignee)}
+            kind={principalAvatarKind(issue.assignee)}
+            size="md"
+          />
+        )}
+        <CardRuntime sessions={sessions} />
+        <AgoTime iso={record.timestamp} />
+        <span className={styles.cardFootSpacer} />
+        {pill && (
+          <FlowPill
+            phase={pill.phase}
+            num={pill.num}
+            den={pill.den}
+            title={pill.title}
+            data-testid={`board-card-flowpill-${id}`}
+          />
         )}
       </div>
     </div>
