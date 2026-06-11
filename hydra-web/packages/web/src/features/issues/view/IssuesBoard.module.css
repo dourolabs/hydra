@@ -2,11 +2,7 @@
   display: flex;
   flex-direction: column;
   gap: 18px;
-  /* Only vertical padding here; horizontal padding lives on .projectColumns
-     so the sticky viewport-wide bar can reach the body's left/right edges
-     without a 20px overhang on each side (which would hide the chevron at
-     max scrollLeft or the gear at scrollLeft=0). */
-  padding: 14px 0;
+  padding: 14px 20px;
   /* All project rows share one horizontal scrollbar at the bottom of the
      scrolling ancestor (IssuesView's .body). Sizing the kanban to
      max-content makes every row stretch to the widest project's column
@@ -34,13 +30,16 @@
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
-  /* Sized to the visible scroller width and stuck to the left edge so the
-     bar stays a fixed viewport-wide header while the columns below scroll
-     horizontally underneath it. 100cqi references IssuesView's .body
-     (which is the inline-size container). */
+  /* Inset 20px from each visible-scroller edge so the whole rectangle
+     (borders included) stays fully within the viewport. The bar sticks
+     at left: 20px and is sized to the visible scroller width minus 40px
+     of total inset, so the columns scroll underneath while the bar's
+     entire rectangle — chevron, chip, gear, and all four borders — stays
+     anchored. 100cqi references IssuesView's .body (the inline-size
+     container). */
   position: sticky;
-  left: 0;
-  width: 100cqi;
+  left: 20px;
+  width: calc(100cqi - 40px);
   z-index: 1;
 }
 
@@ -187,10 +186,7 @@
   display: flex;
   flex-direction: row;
   gap: 12px;
-  /* 20px left/right inset (moved from .kanban) so columns keep their gap
-     from the viewport edges, while the sticky bar above can still span
-     the full viewport width without padding on its containing column. */
-  padding: 0 20px 4px;
+  padding-bottom: 4px;
 }
 
 .col {
@@ -565,13 +561,13 @@
     background var(--tx-fast),
     border-color var(--tx-fast),
     color var(--tx-fast);
-  /* Matches the project bars: sized to the visible scroller width and
-     stuck to the left edge, so the button stays a fixed viewport-wide
-     footer regardless of horizontal scroll position. Content is
-     centered in the viewport via justify-content: center. */
+  /* Matches the project bars: inset 20px from each visible-scroller edge
+     so the whole rectangle stays sticky inside the viewport while the
+     columns scroll underneath. Content stays centered via
+     justify-content: center. */
   position: sticky;
-  left: 0;
-  width: 100cqi;
+  left: 20px;
+  width: calc(100cqi - 40px);
 }
 
 .newProjectGhost:hover {
