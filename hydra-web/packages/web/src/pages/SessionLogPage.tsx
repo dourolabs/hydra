@@ -10,6 +10,8 @@ import { SessionLogViewer } from "../features/sessions/SessionLogViewer";
 import { SessionSettings } from "../features/sessions/SessionSettings";
 import { SessionEventsView } from "../features/sessions/SessionEventsView";
 import { DeleteConfirmModal } from "../components/DeleteConfirmModal/DeleteConfirmModal";
+import { OverflowMenu } from "../components/OverflowMenu";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { apiClient, ApiError } from "../api/client";
 import { useToast } from "../features/toast/useToast";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
@@ -31,6 +33,7 @@ export function SessionLogPage() {
   const { data: record, isLoading, error } = useSession(sessionId ?? "");
   const { addToast } = useToast();
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
   const [activeTab, setActiveTab] = useState<TabKey>("events");
   const [killModalOpen, setKillModalOpen] = useState(false);
   const [killRequested, setKillRequested] = useState(false);
@@ -130,6 +133,20 @@ export function SessionLogPage() {
                       <Spinner size="sm" />
                       Terminating…
                     </span>
+                  ) : isMobile ? (
+                    <OverflowMenu
+                      triggerLabel="Session actions"
+                      triggerTestId="session-overflow-trigger"
+                      menuTestId="session-overflow-menu"
+                      items={[
+                        {
+                          key: "kill",
+                          label: "Kill Session",
+                          onSelect: () => setKillModalOpen(true),
+                          testId: "session-overflow-kill",
+                        },
+                      ]}
+                    />
                   ) : (
                     <Button
                       variant="danger"

@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import type { Conversation } from "@hydra/api";
 import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./ChatHeader.module.css";
@@ -11,7 +10,7 @@ export function ChatHeader({ conversation }: ChatHeaderProps) {
   const title = conversation.title || "Untitled conversation";
 
   return (
-    <div className={styles.header}>
+    <div className={styles.header} data-testid="chat-header">
       <div className={styles.inner}>
         <h1 className={styles.title}>{title}</h1>
         <div className={styles.meta} data-testid="chat-header-meta">
@@ -21,27 +20,11 @@ export function ChatHeader({ conversation }: ChatHeaderProps) {
               <span className={styles.sep}>·</span>
             </>
           )}
-          <span>opened by {conversation.creator}</span>
-          <span className={styles.sep}>·</span>
           <span data-testid="chat-header-started">
             started <AgoTime iso={conversation.created_at} />
           </span>
           <span className={styles.sep}>·</span>
           <span>{conversation.status}</span>
-          {conversation.spawned_from && (
-            <>
-              <span className={styles.sep}>·</span>
-              <span data-testid="chat-header-originated-from">
-                originated from{" "}
-                <Link
-                  to={`/issues/${conversation.spawned_from}`}
-                  className={styles.originatedLink}
-                >
-                  {conversation.spawned_from}
-                </Link>
-              </span>
-            </>
-          )}
         </div>
       </div>
     </div>

@@ -32,13 +32,19 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     await main.getByText("ADR-001: OAuth2 Migration Strategy").click();
     await expect(page).toHaveURL(/\/documents\/d-seed00001/);
 
-    // Verify the document detail page shows the title
+    // Verify the document detail page shows the title.
     await expect(
       page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first(),
     ).toBeVisible();
+    // Breadcrumb also surfaces the title (the chrome-side fallback on mobile,
+    // where the page H1 collapses).
+    const breadcrumb = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(
+      breadcrumb.getByText("ADR-001: OAuth2 Migration Strategy"),
+    ).toBeVisible();
   });
 
-  test("document detail page shows content and metadata @documents:view-detail", async ({
+  test("document detail page shows title and body @documents:view-detail", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/documents/d-seed00001");
@@ -46,8 +52,8 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
       page.getByRole("heading", { name: "ADR-001: OAuth2 Migration Strategy" }).first(),
     ).toBeVisible();
 
-    // Verify path metadata is displayed
-    await expect(page.getByText("/research/adr-001-oauth2-migration")).toBeVisible();
+    // Edit affordance is rendered (floats over the body at top-right).
+    await expect(page.getByTestId("document-edit-button")).toBeVisible();
   });
 
   test("clicking a folder shows its documents in the right pane @documents:list", async ({

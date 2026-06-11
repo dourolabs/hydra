@@ -249,3 +249,10 @@ export const IconCoin = (p: IconProps) => (
     <path d="M9.75 6.25H7a1.25 1.25 0 0 0 0 2.5h2a1.25 1.25 0 0 1 0 2.5H6" />
   </IconBase>
 );
+
+export const IconEdit = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M3 13l1-3 7-7 2 2-7 7z" />
+    <path d="M11 3l2 2" />
+  </IconBase>
+);

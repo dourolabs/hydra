@@ -204,7 +204,25 @@
 
 @media (max-width: 768px) {
   .headerInner {
-    padding: 16px 16px 12px;
+    padding: 12px 16px 10px;
+    gap: 8px;
+  }
+  .headerTop {
+    gap: 8px;
+  }
+  /* Drop the "Creator" eyebrow label at mobile widths — the avatar + name
+     already make the creator identity clear, and the label widens the row
+     enough to push the status badge to a new line. */
+  .agentLabel {
+    display: none;
+  }
+  .agentName {
+    font-size: var(--t-xs);
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .tabsInner {
     padding: 0 16px;
@@ -215,7 +233,21 @@
   .bodyFull {
     padding: 12px 16px 16px;
   }
+  /* Two-column meta grid at mobile widths so the Issue/Runtime/Started/Created
+     pairs stay scannable instead of wrapping unpredictably. */
   .meta {
-    gap: 12px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+  }
+  .metaItem {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .metaValue,
+  .metaLink {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }

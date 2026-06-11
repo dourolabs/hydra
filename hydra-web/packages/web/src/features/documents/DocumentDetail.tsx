@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Textarea, CopyButton } from "@hydra/ui";
+import { Button, Textarea, CopyButton, Icons } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -73,13 +73,17 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
     <div className={styles.inner}>
       <div className={styles.titleRow}>
         <h1 className={styles.title}>{displayTitle}</h1>
-        <div className={styles.actions}>
-          {!editing && (
-            <Button variant="secondary" size="sm" onClick={handleEdit}>
-              Edit
-            </Button>
-          )}
-        </div>
+        {!isMobile && !editing && (
+          <button
+            type="button"
+            className={styles.iconButton}
+            onClick={handleEdit}
+            aria-label="Edit document"
+            data-testid="document-edit-button"
+          >
+            <Icons.IconEdit />
+          </button>
+        )}
       </div>
 
       <div className={styles.metaRow}>
@@ -135,8 +139,23 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
           </div>
         </div>
       ) : (
-        <div className={styles.prose}>
-          <Markdown content={record.document.body_markdown} />
+        <div className={styles.proseWrap}>
+          {isMobile && (
+            <div className={styles.floatingActions}>
+              <button
+                type="button"
+                className={styles.iconButton}
+                onClick={handleEdit}
+                aria-label="Edit document"
+                data-testid="document-edit-button"
+              >
+                <Icons.IconEdit />
+              </button>
+            </div>
+          )}
+          <div className={styles.prose}>
+            <Markdown content={record.document.body_markdown} />
+          </div>
         </div>
       )}
     </div>

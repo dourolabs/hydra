@@ -13,7 +13,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
 }
 
 .title {
@@ -29,13 +28,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
 }
 
 /* ── Key-vals row ── */
@@ -72,6 +64,43 @@
 }
 
 /* ── Prose body ── */
+.proseWrap {
+  position: relative;
+}
+
+/* Edit action floats over the document body at top-right so it doesn't
+   consume its own row of chrome above the prose. */
+.floatingActions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  flex-shrink: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  cursor: pointer;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.iconButton:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
 .prose {
   font-family: var(--f-sans);
   font-size: var(--t-md);
@@ -147,11 +176,25 @@
 @media (max-width: 600px) {
   .inner {
     padding: 16px;
-  }
-  .title {
-    font-size: var(--t-xl);
+    gap: 12px;
   }
   .editTextarea {
     min-height: 320px;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Drop the page-chrome H1 on mobile — the breadcrumb already shows the
+     document title. The Path / Updated meta row also collapses; the same
+     info is reachable from the document tree / list. */
+  .title,
+  .metaRow {
+    display: none;
+  }
+
+  /* Float the mobile icon-button slightly above the prose top edge so it
+     visually sits in the gutter rather than overlapping the first line. */
+  .floatingActions {
+    top: calc(var(--space-1) * -1);
   }
 }
