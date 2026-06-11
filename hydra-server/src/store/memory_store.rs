@@ -1720,16 +1720,17 @@ impl ReadOnlyStore for MemoryStore {
                 Some((entry.key().clone(), versioned))
             })
             .collect();
-        // Sort by `priority ASC` first, then `creation_time DESC` as a
-        // stable tiebreak — mirroring the SQL stores' `ORDER BY p.priority
-        // ASC, p.created_at DESC, p.id DESC`. `f64` is not `Ord`; treat
-        // NaN as equal to keep the comparator total.
+        // Sort by `priority ASC` first, then `project_id ASC` as a stable
+        // tiebreak — mirroring the SQL stores' `ORDER BY p.priority ASC,
+        // p.id ASC`. The id is immutable per project, so updates can't
+        // shift a project's position among same-priority peers. `f64` is
+        // not `Ord`; treat NaN as equal to keep the comparator total.
         items.sort_by(|a, b| {
             a.1.item
                 .priority
                 .partial_cmp(&b.1.item.priority)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.1.creation_time.cmp(&a.1.creation_time))
+                .then_with(|| a.0.cmp(&b.0))
         });
         Ok(items)
     }

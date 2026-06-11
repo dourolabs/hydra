@@ -2442,10 +2442,10 @@ async fn add_projects_priority_backfill_domain_roundtrip(pool: &SqlitePool) -> R
     // Round-trip through `SqliteStore::list_projects` so any drift
     // between the migration's column shape and the typed `ProjectRow` /
     // `row_to_project` projection fails loud. The list is sorted by
-    // `priority ASC, created_at DESC, id DESC`; we filter to just the
-    // three baseline rows to keep the assertion stable against unrelated
-    // smoke inserts in `assert_recent_migration_store_smoke` that land
-    // at the default `priority = 0.0`.
+    // `priority ASC, id ASC`; we filter to just the three baseline rows
+    // to keep the assertion stable against unrelated smoke inserts in
+    // `assert_recent_migration_store_smoke` that land at the default
+    // `priority = 0.0`.
     let store = SqliteStore::new(pool.clone());
     let listed = store
         .list_projects(false)
