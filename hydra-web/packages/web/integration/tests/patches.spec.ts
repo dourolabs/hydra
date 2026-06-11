@@ -5,8 +5,11 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
     authenticatedPage: page,
   }) => {
     await page.goto("/patches/p-seed00001");
+    // The patch title now lives in the breadcrumb (replacing the bare id).
     await expect(
-      page.getByRole("heading", { name: "Add OAuth2 provider integration" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Add OAuth2 provider integration",
+      ),
     ).toBeVisible();
   });
 
@@ -15,11 +18,12 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
   }) => {
     await page.goto("/patches/p-seed00001");
     await expect(
-      page.getByRole("heading", { name: "Add OAuth2 provider integration" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Add OAuth2 provider integration",
+      ),
     ).toBeVisible();
 
-    // patch_id is rendered alongside the title (no Metadata tab anymore).
-    // Scope to <main> since the breadcrumb also shows the patch ID.
+    // patch_id is rendered inside the detail body's title row.
     await expect(
       page.getByRole("main").getByText("p-seed00001", { exact: true })
     ).toBeVisible();
@@ -46,7 +50,9 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
     // i-seed00002 has patch p-seed00001
     await page.goto("/issues/i-seed00002");
     await expect(
-      page.getByRole("heading", { name: "Migrate authentication to OAuth2" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Migrate authentication to OAuth2",
+      ),
     ).toBeVisible();
 
     // Patches are now listed in the right-rail Related tab (default active).
@@ -62,7 +68,9 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
       .click();
     await expect(page).toHaveURL(/\/patches\/p-seed00001/);
     await expect(
-      page.getByRole("heading", { name: "Add OAuth2 provider integration" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Add OAuth2 provider integration",
+      ),
     ).toBeVisible();
   });
 });

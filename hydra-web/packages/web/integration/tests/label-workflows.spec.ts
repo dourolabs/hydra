@@ -79,7 +79,9 @@ test.describe("Hidden labels are excluded from user-facing label UI @labels:hidd
   }) => {
     await page.goto("/issues/i-seed00008");
     await expect(
-      page.getByRole("heading", { name: "Add dark mode support" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Add dark mode support",
+      ),
     ).toBeVisible();
     await openDetailsTab(page);
 
@@ -93,7 +95,9 @@ test.describe("Hidden labels are excluded from user-facing label UI @labels:hidd
   }) => {
     await page.goto("/issues/i-seed00008");
     await expect(
-      page.getByRole("heading", { name: "Add dark mode support" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Add dark mode support",
+      ),
     ).toBeVisible();
     await openDetailsTab(page);
 
@@ -111,7 +115,9 @@ test.describe("Hidden labels are excluded from user-facing label UI @labels:hidd
   }) => {
     await page.goto("/issues/i-seed00008");
     await expect(
-      page.getByRole("heading", { name: "Add dark mode support" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Add dark mode support",
+      ),
     ).toBeVisible();
     await openDetailsTab(page);
 
@@ -169,9 +175,9 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor @labels:
   }) => {
     await page.goto("/issues/i-seed00002");
     await expect(
-      page.getByRole("heading", {
-        name: "Migrate authentication to OAuth2",
-      })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Migrate authentication to OAuth2",
+      ),
     ).toBeVisible();
     await openDetailsTab(page);
 
@@ -186,9 +192,9 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor @labels:
   }) => {
     await page.goto("/issues/i-seed00002");
     await expect(
-      page.getByRole("heading", {
-        name: "Migrate authentication to OAuth2",
-      })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Migrate authentication to OAuth2",
+      ),
     ).toBeVisible();
     await openDetailsTab(page);
 
@@ -213,9 +219,11 @@ test.describe("Editing labels on issue detail page via IssueLabelEditor @labels:
     await expect(infraOption).toBeVisible();
     await infraOption.click();
 
-    // Close the dropdown by clicking the page heading (away from the picker)
+    // Close the dropdown by clicking the breadcrumb title (away from the
+    // picker). The detail H1 was removed in favor of the breadcrumb title.
     await page
-      .getByRole("heading", { name: "Migrate authentication to OAuth2" })
+      .locator('nav[aria-label="Breadcrumb"]')
+      .getByText("Migrate authentication to OAuth2")
       .click();
 
     // Save changes

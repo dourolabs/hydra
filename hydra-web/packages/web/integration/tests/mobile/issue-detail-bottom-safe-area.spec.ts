@@ -34,7 +34,9 @@ test.describe("Mobile issue detail bottom safe-area @mobile:issue-detail-bottom-
     await page.goto("/issues/i-seed00002");
 
     await expect(
-      page.getByRole("heading", { name: "Migrate authentication to OAuth2" }),
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Migrate authentication to OAuth2",
+      ),
     ).toBeVisible();
 
     // Hard stop: env(safe-area-inset-bottom) is gated behind viewport-fit=cover

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Badge, Button, TypeChip } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { IssueVersionRecord } from "@hydra/api";
@@ -11,11 +11,16 @@ import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
 import { FeedbackModal } from "./FeedbackModal";
 import { ArchiveIssueButton } from "./ArchiveIssueButton";
+import { useArchiveIssue } from "./useArchiveIssue";
 import { FormPanel } from "./FormPanel";
 import { SessionList } from "../sessions/SessionList";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
 import { MobileTabBar, type MobileTabBarItem } from "../../components/MobileTabBar";
+import {
+  OverflowMenu,
+  type OverflowMenuItem,
+} from "../../components/OverflowMenu";
 import { AgoTime } from "../../components/Runtime/Runtime";
 import styles from "./IssueDetail.module.css";
 
@@ -48,6 +53,7 @@ interface IssueDetailProps {
 export function IssueDetail({ record }: IssueDetailProps) {
   const { issue } = record;
   const issueId = record.issue_id;
+  const navigate = useNavigate();
 
   const [mobileTab, setMobileTab] = useState<MobileTabKey>("overview");
   const [rightPanelTab, setRightPanelTab] = useState<IssueRightPanelTabKey>("related");
@@ -56,6 +62,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
 
   const { data: sessions } = useSessionsByIssue(issueId);
   const { durationText, isRunning } = useSessionDuration(sessions);
+  const { archive: archiveIssue, isPending: archivePending } = useArchiveIssue(issueId);
 
   // Live (non-closed) spawned conversation for this issue, if any. The
   // server-side filter narrows to this issue; we then pick the first
@@ -95,6 +102,38 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const settings = issue.session_settings;
   const overviewActive = mobileTab === "overview";
 
+  const overflowItems = useMemo<OverflowMenuItem[]>(() => {
+    const items: OverflowMenuItem[] = [];
+    if (liveConversation) {
+      const label =
+        liveConversation.status === "idle"
+          ? "Resume Conversation"
+          : "Open Conversation";
+      items.push({
+        key: "conversation",
+        label,
+        onSelect: () => navigate(`/chat/${liveConversation.conversation_id}`),
+        testId: "issue-overflow-conversation",
+      });
+    }
+    items.push({
+      key: "feedback",
+      label: "Give feedback",
+      onSelect: () => setFeedbackModalOpen(true),
+      testId: "issue-overflow-feedback",
+    });
+    if (issue.deleted !== true) {
+      items.push({
+        key: "archive",
+        label: archivePending ? "Archiving…" : "Archive",
+        onSelect: archiveIssue,
+        disabled: archivePending,
+        testId: "issue-overflow-archive",
+      });
+    }
+    return items;
+  }, [liveConversation, navigate, issue.deleted, archivePending, archiveIssue]);
+
   return (
     <div className={styles.detail}>
       <MobileTabBar
@@ -118,34 +157,48 @@ export function IssueDetail({ record }: IssueDetailProps) {
             {issue.deleted === true && (
               <Badge status="archived" data-testid="issue-archived-badge" />
             )}
-            <div className={styles.headActions}>
-              {isRunning && <span className={styles.sessionTimer}>{durationText}</span>}
-              {liveConversation && (
-                <Link
-                  to={`/chat/${liveConversation.conversation_id}`}
-                  data-testid="issue-open-conversation"
-                  data-conversation-status={liveConversation.status}
-                  className={styles.openConversation}
-                >
-                  {liveConversation.status === "idle"
-                    ? "Resume Conversation"
-                    : "Open Conversation"}
-                </Link>
+            <div className={styles.headRight}>
+              {isRunning && (
+                <span className={styles.sessionTimer}>{durationText}</span>
               )}
-              <Button variant="secondary" size="sm" onClick={() => setFeedbackModalOpen(true)}>
-                Give feedback
-              </Button>
-              {issue.deleted !== true && (
-                <ArchiveIssueButton
-                  issueId={issueId}
+              <div className={styles.headActions}>
+                {liveConversation && (
+                  <Link
+                    to={`/chat/${liveConversation.conversation_id}`}
+                    data-testid="issue-open-conversation"
+                    data-conversation-status={liveConversation.status}
+                    className={styles.openConversation}
+                  >
+                    {liveConversation.status === "idle"
+                      ? "Resume Conversation"
+                      : "Open Conversation"}
+                  </Link>
+                )}
+                <Button
                   variant="secondary"
-                  data-testid="issue-detail-archive"
+                  size="sm"
+                  onClick={() => setFeedbackModalOpen(true)}
+                >
+                  Give feedback
+                </Button>
+                {issue.deleted !== true && (
+                  <ArchiveIssueButton
+                    issueId={issueId}
+                    variant="secondary"
+                    data-testid="issue-detail-archive"
+                  />
+                )}
+              </div>
+              <div className={styles.headOverflow}>
+                <OverflowMenu
+                  items={overflowItems}
+                  triggerLabel="More actions"
+                  triggerTestId="issue-overflow-trigger"
+                  menuTestId="issue-overflow-menu"
                 />
-              )}
+              </div>
             </div>
           </div>
-
-          <h1 className={styles.title}>{issue.title || issueId}</h1>
 
           <div className={styles.metaRow}>
             <IssueAssigneePicker issueId={issueId} issue={issue} hideLabel />

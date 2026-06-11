@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type { Form, FormResponse, IssueVersionRecord, Principal } from "@hydra/api";
@@ -32,6 +32,10 @@ vi.mock("../FeedbackModal", () => ({
 
 vi.mock("../ArchiveIssueButton", () => ({
   ArchiveIssueButton: () => <button data-testid="archive-button-stub">Archive</button>,
+}));
+
+vi.mock("../useArchiveIssue", () => ({
+  useArchiveIssue: () => ({ archive: () => {}, isPending: false }),
 }));
 
 vi.mock("../IssueAssigneePicker", () => ({
@@ -118,12 +122,19 @@ vi.mock("@hydra/ui", () => ({
   ),
   Textarea: (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...props} />,
   MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div>,
+  Icons: new Proxy(
+    {},
+    {
+      get: () => () => <span aria-hidden="true" />,
+    },
+  ),
 }));
 
 vi.mock("react-router-dom", () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
     <a href={to}>{children}</a>
   ),
+  useNavigate: () => () => {},
 }));
 
 vi.mock("../IssueDetail.module.css", () => ({
@@ -306,5 +317,41 @@ describe("IssueDetail archived badge", () => {
     });
 
     expect(screen.queryByTestId("badge-archived")).toBeNull();
+  });
+});
+
+describe("IssueDetail title and overflow menu", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("does not render an h1 title heading", () => {
+    render(<IssueDetail record={makeRecord({})} />, { wrapper: makeWrapper() });
+    // The title moved to the breadcrumb; the detail body no longer renders an
+    // <h1>. Sample / Sample-record's title must not appear as a heading role.
+    expect(screen.queryByRole("heading", { name: "Sample" })).toBeNull();
+  });
+
+  it("renders an overflow trigger and feedback / archive menu items", () => {
+    render(<IssueDetail record={makeRecord({})} />, { wrapper: makeWrapper() });
+
+    const trigger = screen.getByTestId("issue-overflow-trigger");
+    expect(trigger).toBeDefined();
+
+    fireEvent.click(trigger);
+
+    expect(screen.getByTestId("issue-overflow-feedback")).toBeDefined();
+    expect(screen.getByTestId("issue-overflow-archive")).toBeDefined();
+    // No conversation menu item without a live spawned conversation.
+    expect(screen.queryByTestId("issue-overflow-conversation")).toBeNull();
+  });
+
+  it("omits the archive menu item when the issue is already archived", () => {
+    render(<IssueDetail record={makeRecord({ deleted: true })} />, {
+      wrapper: makeWrapper(),
+    });
+
+    fireEvent.click(screen.getByTestId("issue-overflow-trigger"));
+
+    expect(screen.queryByTestId("issue-overflow-archive")).toBeNull();
+    expect(screen.getByTestId("issue-overflow-feedback")).toBeDefined();
   });
 });
