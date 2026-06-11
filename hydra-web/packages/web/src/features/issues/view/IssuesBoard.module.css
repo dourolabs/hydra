@@ -30,6 +30,14 @@
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
+  /* Sized to the visible scroller width and stuck to the left edge so the
+     bar stays a fixed viewport-wide header while the columns below scroll
+     horizontally underneath it. 100cqi references IssuesView's .body
+     (which is the inline-size container). */
+  position: sticky;
+  left: 0;
+  width: 100cqi;
+  z-index: 1;
 }
 
 .projectBarDraggable {
@@ -537,7 +545,7 @@
 .newProjectGhost {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 14px 16px;
   background: transparent;
   border: 1px dashed var(--line);
@@ -550,12 +558,13 @@
     background var(--tx-fast),
     border-color var(--tx-fast),
     color var(--tx-fast);
-  /* Sized to fit content (with a sensible minimum) and anchored to the
-     start of the kanban so it sits at the left and scrolls horizontally
-     with the project rows below it, rather than stretching to the
-     kanban's full max-content width. */
-  align-self: flex-start;
-  min-width: 240px;
+  /* Matches the project bars: sized to the visible scroller width and
+     stuck to the left edge, so the button stays a fixed viewport-wide
+     footer regardless of horizontal scroll position. Content is
+     left-aligned (justify-content: flex-start) per design. */
+  position: sticky;
+  left: 0;
+  width: 100cqi;
 }
 
 .newProjectGhost:hover {
@@ -580,6 +589,11 @@
 
   .projectBar {
     flex-wrap: wrap;
+    /* Mobile uses per-project scrolling, so the bar doesn't need to be
+       a sticky viewport-wide header — let it sit at its natural width
+       inside the project section. */
+    position: static;
+    width: auto;
   }
 
   .projectBarRight {
@@ -606,8 +620,10 @@
   }
 
   .newProjectGhost {
+    position: static;
     width: 82vw;
     min-width: 0;
     align-self: center;
+    justify-content: center;
   }
 }
