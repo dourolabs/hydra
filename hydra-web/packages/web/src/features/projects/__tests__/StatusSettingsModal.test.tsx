@@ -396,12 +396,14 @@ vi.mock("../../toast/useToast", () => ({
   useToast: () => ({ addToast: addToastSpy }),
 }));
 
+let agentsList: { name: string }[] = [];
 vi.mock("../../../hooks/useAgents", () => ({
-  useAgents: () => ({ data: [] }),
+  useAgents: () => ({ data: agentsList }),
 }));
 
+let usersList: { username: string }[] = [];
 vi.mock("../../../hooks/useUsers", () => ({
-  useUsers: () => ({ data: [] }),
+  useUsers: () => ({ data: usersList }),
 }));
 
 vi.mock("../../../components/ColorPicker", () => ({
@@ -476,6 +478,8 @@ describe("StatusSettingsModal", () => {
     queryDataByKey = new Map();
     mutationPending = false;
     simulateError = null;
+    agentsList = [];
+    usersList = [];
     promptQueryState = {
       isLoading: false,
       isError: false,
@@ -1540,6 +1544,239 @@ describe("StatusSettingsModal", () => {
         nextStatuses: StatusDefinition[];
       };
       expect(payload.nextStatuses[0].on_enter).toBeNull();
+    });
+  });
+
+  describe("suppress_sessions", () => {
+    it("renders unchecked when the status has no suppress_sessions flag", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      const toggle = screen.getByTestId(
+        "status-settings-suppress-sessions",
+      ) as HTMLInputElement;
+      expect(toggle.checked).toBe(false);
+    });
+
+    it("Save persists suppress_sessions=true when checked", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      fireEvent.click(
+        screen.getByTestId("status-settings-suppress-sessions"),
+      );
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(payload.nextStatuses[0].suppress_sessions).toBe(true);
+    });
+
+    it("renders checked when the status carries suppress_sessions=true", () => {
+      const project = makeProject([
+        makeStatus("in-progress", { suppress_sessions: true }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      const toggle = screen.getByTestId(
+        "status-settings-suppress-sessions",
+      ) as HTMLInputElement;
+      expect(toggle.checked).toBe(true);
+    });
+  });
+
+  describe("on-enter flags (clear_assignee, teardown_work)", () => {
+    it("checking teardown_work materializes on_enter from null with just that flag set", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("status-settings-teardown-work"));
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      const onEnter = payload.nextStatuses[0].on_enter;
+      expect(onEnter).not.toBeNull();
+      expect(onEnter?.teardown_work).toBe(true);
+      expect(onEnter?.clear_assignee).toBe(false);
+      expect(onEnter?.assign_to ?? null).toBeNull();
+    });
+
+    it("checking clear_assignee persists clear_assignee=true", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("status-settings-clear-assignee"));
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(payload.nextStatuses[0].on_enter?.clear_assignee).toBe(true);
+    });
+
+    it("renders checked from the existing on_enter flags", () => {
+      const project = makeProject([
+        makeStatus("closed", {
+          on_enter: {
+            assign_to: null,
+            attach_form: null,
+            clear_assignee: true,
+            teardown_work: true,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="closed"
+          issueCount={0}
+        />,
+      );
+      expect(
+        (screen.getByTestId(
+          "status-settings-clear-assignee",
+        ) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(
+        (screen.getByTestId(
+          "status-settings-teardown-work",
+        ) as HTMLInputElement).checked,
+      ).toBe(true);
+    });
+
+    it("unchecking the last on_enter flag collapses on_enter back to null", () => {
+      const project = makeProject([
+        makeStatus("closed", {
+          on_enter: {
+            assign_to: null,
+            attach_form: null,
+            clear_assignee: false,
+            teardown_work: true,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="closed"
+          issueCount={0}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("status-settings-teardown-work"));
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(payload.nextStatuses[0].on_enter).toBeNull();
+    });
+
+    it("checking clear_assignee clears a previously set assignee", () => {
+      const project = makeProject([
+        makeStatus("closed", {
+          on_enter: {
+            assign_to: { Agent: { name: "swe" } },
+            attach_form: null,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="closed"
+          issueCount={0}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("status-settings-clear-assignee"));
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      const onEnter = payload.nextStatuses[0].on_enter;
+      expect(onEnter?.clear_assignee).toBe(true);
+      expect(onEnter?.assign_to ?? null).toBeNull();
+    });
+
+    it("picking an assignee clears a previously set clear_assignee", () => {
+      agentsList = [{ name: "swe" }];
+      const project = makeProject([
+        makeStatus("closed", {
+          on_enter: {
+            assign_to: null,
+            attach_form: null,
+            clear_assignee: true,
+            teardown_work: false,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="closed"
+          issueCount={0}
+        />,
+      );
+      // Sanity: the on_enter starts with clear_assignee set.
+      expect(
+        (screen.getByTestId(
+          "status-settings-clear-assignee",
+        ) as HTMLInputElement).checked,
+      ).toBe(true);
+
+      fireEvent.click(screen.getByLabelText("Assign to"));
+      const menu = screen.getByRole("menu");
+      const rows = within(menu).getAllByRole("menuitem");
+      // Rows: [Unassigned, swe]. Pick the agent row.
+      fireEvent.click(rows[1]);
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      const onEnter = payload.nextStatuses[0].on_enter;
+      expect(onEnter?.clear_assignee).toBe(false);
+      expect(onEnter?.assign_to).toEqual({ Agent: { name: "swe" } });
     });
   });
 });
