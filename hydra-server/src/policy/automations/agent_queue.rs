@@ -297,13 +297,48 @@ impl AgentQueue {
         let has_active_session = task_state.existing_issue_ids.contains(issue_id);
         let has_active_conv = has_active_conversation(state, issue_id).await?;
         let parent_running = parent_has_running_task(state, issue).await?;
+        // Resolve the issue's status once: used both for the per-status
+        // cap check below and for the interactive dispatch further down.
+        // An unresolvable status falls back to a non-interactive branch
+        // with the cap left off (preserving prior behavior for malformed
+        // rows).
+        let resolved_status = match state.resolve_status(issue).await {
+            Ok(def) => Some(def),
+            Err(err) => {
+                tracing::warn!(
+                    agent = self.agent.name,
+                    issue_id = %issue_id,
+                    status = %issue.status,
+                    error = %err,
+                    "failed to resolve issue status; defaulting to non-interactive headless branch"
+                );
+                None
+            }
+        };
+        let status_at_capacity = if let Some(def) = resolved_status.as_ref() {
+            match def.max_simultaneous_sessions {
+                Some(cap) => {
+                    let in_status = state
+                        .store
+                        .count_active_sessions_in_status(&issue.project_id, &def.key)
+                        .await
+                        .context("failed to count active sessions for status cap")?;
+                    in_status >= cap as u64
+                }
+                None => false,
+            }
+        } else {
+            false
+        };
 
         // Feedback bypasses readiness and parent-running checks; capacity,
-        // active-session, and active-conversation checks are always enforced.
-        // The conversation gate is the sibling of `has_active_session`: it
-        // blocks any spawn (headless or interactive) when a live conversation
-        // already exists for this issue.
+        // active-session, active-conversation, and per-status cap checks
+        // are always enforced. The conversation gate is the sibling of
+        // `has_active_session`: it blocks any spawn (headless or
+        // interactive) when a live conversation already exists for this
+        // issue.
         if at_capacity
+            || status_at_capacity
             || has_active_session
             || has_active_conv
             || (!has_feedback && (!is_ready || parent_running))
@@ -348,19 +383,10 @@ impl AgentQueue {
         // headless branch; an interactive status mints a `Conversation`
         // whose companion session is materialized asynchronously by
         // `SpawnConversationSessionsAutomation`.
-        let interactive = match state.resolve_status(issue).await {
-            Ok(def) => def.interactive,
-            Err(err) => {
-                tracing::warn!(
-                    agent = self.agent.name,
-                    issue_id = %issue_id,
-                    status = %issue.status,
-                    error = %err,
-                    "failed to resolve issue status; defaulting to non-interactive headless branch"
-                );
-                false
-            }
-        };
+        let interactive = resolved_status
+            .as_ref()
+            .map(|def| def.interactive)
+            .unwrap_or(false);
 
         if interactive {
             let maybe_conversation_id =
@@ -3659,6 +3685,283 @@ mod tests {
         assert!(
             matches!(result, SpawnResult::RetriesExhausted { .. }),
             "expected RetriesExhausted on the second interactive attempt"
+        );
+
+        Ok(())
+    }
+
+    /// Set `max_simultaneous_sessions = Some(cap)` on the default-project
+    /// `open` status while preserving every other field. Goes through
+    /// `update_status` for the same reason as
+    /// `enable_auto_archive` in `auto_archive.rs`.
+    async fn set_status_cap(handles: &TestStateHandles, status_key: &str, cap: Option<u32>) {
+        use crate::domain::projects::default_project_id;
+        let project_id = default_project_id();
+        let versioned = handles
+            .store
+            .get_project(&project_id, false)
+            .await
+            .expect("project must exist");
+        let mut status = versioned
+            .item
+            .statuses
+            .iter()
+            .find(|s| s.key.as_str() == status_key)
+            .cloned()
+            .unwrap_or_else(|| panic!("status '{status_key}' not found on default project"));
+        status.max_simultaneous_sessions = cap;
+        let key = status.key.clone();
+        handles
+            .store
+            .update_status(&project_id, &key, status, &ActorRef::test())
+            .await
+            .expect("update_status failed");
+    }
+
+    /// Per-status cap defers spawns once the count of active sessions
+    /// (across all agents in the status) reaches the cap; the spawn
+    /// resumes after one of the active sessions terminates.
+    #[tokio::test]
+    async fn status_cap_defers_spawns_at_capacity_then_resumes_when_session_terminates()
+    -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        set_status_cap(&handles, "open", Some(1)).await;
+
+        // First ready issue: spawn succeeds and consumes the cap.
+        let (first_id, _) = handles
+            .store
+            .add_issue(
+                issue("first", status("open"), Some("agent-a"), vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let first_issue = handles.store.get_issue(&first_id, false).await?.item;
+        let first_result = queue
+            .spawn_for_issue(&handles.state, &first_id, &first_issue, &task_state)
+            .await?;
+        let first_session = first_result
+            .into_session_id()
+            .expect("first issue must spawn under fresh status cap");
+
+        // Second ready issue: deferred — cap of 1 is already saturated.
+        let (second_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "second",
+                    status("open"),
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let second_issue = handles.store.get_issue(&second_id, false).await?.item;
+        let deferred = queue
+            .spawn_for_issue(&handles.state, &second_id, &second_issue, &task_state)
+            .await?;
+        assert!(
+            matches!(deferred, SpawnResult::Skipped),
+            "second issue must defer while status cap is saturated"
+        );
+
+        // Terminate the first session; the cap should now allow the
+        // second issue's spawn to proceed.
+        record_completed_task(&handles, first_session).await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let second_issue = handles.store.get_issue(&second_id, false).await?.item;
+        let retried = queue
+            .spawn_for_issue(&handles.state, &second_id, &second_issue, &task_state)
+            .await?;
+        assert!(
+            retried.is_spawned(),
+            "second issue must spawn once cap is freed"
+        );
+
+        Ok(())
+    }
+
+    /// Cap counts interactive (conversation-backed) sessions alongside
+    /// headless ones: one of each saturates a cap of 2 and a third
+    /// (headless) spawn is deferred. The interactive path is exercised
+    /// via the `interactive` status on a separate project, but its
+    /// session lands against the default-project `open` cap when the
+    /// issue spans that status (modeled here by adding an extra agent
+    /// task and an extra `add_session` for the interactive count).
+    #[tokio::test]
+    async fn status_cap_counts_both_interactive_and_headless_sessions() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        set_status_cap(&handles, "open", Some(2)).await;
+
+        // Issue A: headless spawn (counts 1 toward cap).
+        let (a_id, _) = handles
+            .store
+            .add_issue(
+                issue("A", status("open"), Some("agent-a"), vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let a_issue = handles.store.get_issue(&a_id, false).await?.item;
+        let _ = queue
+            .spawn_for_issue(&handles.state, &a_id, &a_issue, &task_state)
+            .await?
+            .into_session_id()
+            .expect("A must spawn (headless)");
+
+        // Issue B: pre-seed an interactive (conversation-backed) session
+        // whose `spawned_from = B` so it counts toward the per-status
+        // cap alongside the headless spawn for A.
+        let (b_id, _) = handles
+            .store
+            .add_issue(
+                issue("B", status("open"), Some("agent-b"), vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+        let conv_id = ConversationId::new();
+        let interactive_session = {
+            use crate::domain::sessions::{AgentConfig, SessionMode};
+            Session::new(
+                Username::from("creator"),
+                Some(b_id.clone()),
+                None,
+                AgentConfig::new(None, None, Some("interactive".into()), None),
+                mount_spec_from_create_request(Bundle::None, None),
+                None,
+                HashMap::new(),
+                None,
+                None,
+                None,
+                SessionMode::Interactive {
+                    conversation_id: conv_id,
+                    idle_timeout_secs: None,
+                    greet_user: false,
+                },
+                Status::Running,
+                None,
+                None,
+            )
+        };
+        handles
+            .state
+            .add_session(interactive_session, Utc::now(), ActorRef::test())
+            .await?;
+
+        // Cap = 2; both slots taken. Issue C must defer.
+        let (c_id, _) = handles
+            .store
+            .add_issue(
+                issue("C", status("open"), Some("agent-a"), vec![], &repo_name),
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let c_issue = handles.store.get_issue(&c_id, false).await?.item;
+        let deferred = queue
+            .spawn_for_issue(&handles.state, &c_id, &c_issue, &task_state)
+            .await?;
+        assert!(
+            matches!(deferred, SpawnResult::Skipped),
+            "C must defer with cap saturated by headless + interactive sessions"
+        );
+
+        Ok(())
+    }
+
+    /// Per-status cap and per-agent cap are independent; whichever is
+    /// tighter blocks. Here the agent cap allows the spawn (default,
+    /// large) but the status cap is set to 0 so no spawn proceeds.
+    #[tokio::test]
+    async fn status_cap_blocks_when_agent_cap_permits() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        set_status_cap(&handles, "open", Some(0)).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "blocked-by-status",
+                    status("open"),
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        // Agent cap is large (default), so the only block source is the
+        // status cap of 0.
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            matches!(result, SpawnResult::Skipped),
+            "status cap of 0 must block even when agent cap is loose"
+        );
+
+        Ok(())
+    }
+
+    /// Inverse: agent cap is the tighter bound; status cap is loose
+    /// (None) or large enough that it doesn't kick in. The agent cap
+    /// continues to be enforced regardless of the status cap.
+    #[tokio::test]
+    async fn agent_cap_blocks_when_status_cap_permits() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        // Status cap: loose (large).
+        set_status_cap(&handles, "open", Some(100)).await;
+
+        // Agent cap: tight (1). Saturate it with an unrelated active
+        // session so the agent at_capacity branch trips first.
+        let mut queue = queue("agent-a");
+        queue.agent.max_simultaneous = 1;
+        let saturating_session = task(
+            "saturating",
+            Bundle::None,
+            None,
+            None,
+            HashMap::from([
+                (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+                (ISSUE_ID_ENV_VAR.to_string(), "i-saturat".to_string()),
+            ]),
+        );
+        let mut running_session = saturating_session;
+        running_session.status = Status::Running;
+        handles
+            .state
+            .add_session(running_session, Utc::now(), ActorRef::test())
+            .await?;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "blocked-by-agent",
+                    status("open"),
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            matches!(result, SpawnResult::Skipped),
+            "agent cap saturation must block even when status cap is loose"
         );
 
         Ok(())

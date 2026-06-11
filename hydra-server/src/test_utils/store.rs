@@ -92,6 +92,14 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn count_active_sessions_in_status(
+        &self,
+        _project_id: &ProjectId,
+        _status_key: &StatusKey,
+    ) -> Result<u64, StoreError> {
+        fail()
+    }
+
     async fn get_issue_children(&self, _issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         fail()
     }

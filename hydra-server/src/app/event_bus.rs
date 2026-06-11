@@ -1536,6 +1536,16 @@ impl ReadOnlyStore for StoreWithEvents {
             .await
     }
 
+    async fn count_active_sessions_in_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+    ) -> Result<u64, StoreError> {
+        self.inner
+            .count_active_sessions_in_status(project_id, status_key)
+            .await
+    }
+
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError> {
         self.inner.get_issue_children(issue_id).await
     }

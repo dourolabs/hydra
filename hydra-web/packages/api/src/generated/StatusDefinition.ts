@@ -41,6 +41,15 @@ export type StatusDefinition = {
    */
   auto_archive_after_seconds?: bigint | null;
   /**
+   * When `Some(N)`, at most `N` active sessions (counting both
+   * interactive and headless, across all agents) may be associated
+   * with issues currently in this status. New spawns block until the
+   * active count drops below the cap. `None` (the default) leaves the
+   * cap off. Existing sessions above a freshly-lowered cap are not
+   * torn down — enforcement is only on new spawns.
+   */
+  max_simultaneous_sessions?: number | null;
+  /**
    * Sort key for status ordering within a project. Smaller values
    * appear earlier. Default 0.0; drag-and-drop UI sets explicit
    * values to reorder. Mirrors the existing [`Project::priority`]

@@ -1012,6 +1012,64 @@ impl ReadOnlyStore for MemoryStore {
         Ok(self.filter_issues(query).count() as u64)
     }
 
+    async fn count_active_sessions_in_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+    ) -> Result<u64, StoreError> {
+        let Some(sequence) = self.statuses_indexes.get(project_id).and_then(|idx_mutex| {
+            idx_mutex
+                .lock()
+                .expect("statuses index mutex poisoned")
+                .sequence_for_key(status_key)
+        }) else {
+            return Ok(0);
+        };
+
+        let mut count: u64 = 0;
+        for entry in self.tasks.iter() {
+            let Some(latest) = Self::latest_versioned(entry.value()) else {
+                continue;
+            };
+            if latest.item.deleted {
+                continue;
+            }
+            if !matches!(
+                latest.item.status,
+                Status::Created | Status::Pending | Status::Running
+            ) {
+                continue;
+            }
+            let Some(spawned_from) = latest.item.spawned_from.as_ref() else {
+                continue;
+            };
+            let Some(issue_entry) = self.issues.get(spawned_from) else {
+                continue;
+            };
+            let Some(issue_latest) = Self::latest_versioned(issue_entry.value()) else {
+                continue;
+            };
+            if issue_latest.item.deleted {
+                continue;
+            }
+            if &issue_latest.item.project_id != project_id {
+                continue;
+            }
+            let Ok(version) = i64::try_from(issue_latest.version) else {
+                continue;
+            };
+            let stored_sequence = self
+                .issue_status_sequences
+                .get(&(spawned_from.clone(), version))
+                .map(|e| *e.value());
+            if stored_sequence != Some(sequence) {
+                continue;
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
     async fn list_stale_issues_for_status(
         &self,
         project_id: &ProjectId,

@@ -296,6 +296,7 @@ struct StatusRow {
     prompt_path: Option<String>,
     interactive: bool,
     auto_archive_after_seconds: Option<i64>,
+    max_simultaneous_sessions: Option<i64>,
     suppress_sessions: bool,
     // No `#[sqlx(default)]`: forces every SELECT site on `statuses` to
     // project `position`. A missing column should fail loud at runtime
@@ -1121,6 +1122,15 @@ impl SqliteStore {
         def.prompt_path = row.prompt_path.clone();
         def.interactive = row.interactive;
         def.auto_archive_after_seconds = row.auto_archive_after_seconds;
+        def.max_simultaneous_sessions = row
+            .max_simultaneous_sessions
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!(
+                    "invalid max_simultaneous_sessions stored for status: {e}"
+                ))
+            })?;
         def.suppress_sessions = row.suppress_sessions;
         def.position = row.position;
         Ok(def)
@@ -1134,7 +1144,7 @@ impl SqliteStore {
         E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position \
              FROM statuses WHERE project_id = ?1 ORDER BY position, sequence",
         )
         .bind(project_id)
@@ -1157,7 +1167,7 @@ impl SqliteStore {
         }
         let placeholders: Vec<String> = (1..=project_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position \
              FROM statuses WHERE project_id IN ({}) ORDER BY project_id, position, sequence",
             placeholders.join(", ")
         );
@@ -1299,8 +1309,8 @@ impl SqliteStore {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )
         .bind(project_id)
         .bind(sequence)
@@ -1314,6 +1324,7 @@ impl SqliteStore {
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
         .bind(status.auto_archive_after_seconds)
+        .bind(status.max_simultaneous_sessions.map(i64::from))
         .bind(status.suppress_sessions)
         .bind(status.position)
         .execute(&mut **tx)
@@ -3028,6 +3039,28 @@ impl ReadOnlyStore for SqliteStore {
             .await
             .map_err(map_sqlx_error)?;
 
+        Ok(count as u64)
+    }
+
+    async fn count_active_sessions_in_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+    ) -> Result<u64, StoreError> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM {TABLE_TASKS_V2} t \
+             INNER JOIN {TABLE_ISSUES_V2} i ON i.id = t.spawned_from AND i.is_latest = 1 AND i.deleted = 0 \
+             INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE t.is_latest = 1 AND t.deleted = 0 \
+               AND t.status IN ('created', 'pending', 'running') \
+               AND i.project_id = ?1 AND s.key = ?2"
+        );
+        let count: i64 = sqlx::query_scalar(&sql)
+            .bind(project_id.as_ref())
+            .bind(status_key.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
         Ok(count as u64)
     }
 
@@ -6351,8 +6384,8 @@ impl Store for SqliteStore {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "UPDATE statuses SET key = ?1, label = ?2, color = ?3, unblocks_parents = ?4, unblocks_dependents = ?5, cascades_to_children = ?6, on_enter = ?7, prompt_path = ?8, interactive = ?9, auto_archive_after_seconds = ?10, suppress_sessions = ?11, position = ?12 \
-             WHERE project_id = ?13 AND sequence = ?14",
+            "UPDATE statuses SET key = ?1, label = ?2, color = ?3, unblocks_parents = ?4, unblocks_dependents = ?5, cascades_to_children = ?6, on_enter = ?7, prompt_path = ?8, interactive = ?9, auto_archive_after_seconds = ?10, max_simultaneous_sessions = ?11, suppress_sessions = ?12, position = ?13 \
+             WHERE project_id = ?14 AND sequence = ?15",
         )
         .bind(status.key.as_str())
         .bind(&status.label)
@@ -6364,6 +6397,7 @@ impl Store for SqliteStore {
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
         .bind(status.auto_archive_after_seconds)
+        .bind(status.max_simultaneous_sessions.map(i64::from))
         .bind(status.suppress_sessions)
         .bind(status.position)
         .bind(id.as_ref())
@@ -14609,6 +14643,179 @@ mod tests {
             .find_status(&StatusKey::try_new("done").unwrap())
             .unwrap();
         assert_eq!(done_after2.auto_archive_after_seconds, Some(3600));
+    }
+
+    /// `count_active_sessions_in_status` counts only non-terminal
+    /// sessions whose `spawned_from` issue is currently in the given
+    /// status. Headless + interactive (conversation-backed) sessions
+    /// both count; terminal sessions, deleted sessions, and sessions
+    /// for issues in other statuses do not.
+    #[tokio::test]
+    async fn count_active_sessions_in_status_includes_both_modes_sqlite() {
+        let store = create_test_store().await;
+        let project_id = crate::domain::projects::default_project_id();
+        let open_key = status("open");
+        let closed_key = status("closed");
+
+        // No sessions yet → zero.
+        assert_eq!(
+            store
+                .count_active_sessions_in_status(&project_id, &open_key)
+                .await
+                .unwrap(),
+            0
+        );
+
+        // Issue A (open): headless session in `Running` → counts.
+        let (issue_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut headless = spawn_task();
+        headless.spawned_from = Some(issue_a.clone());
+        headless.status = Status::Running;
+        store
+            .add_session(headless, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Issue B (open): interactive (conversation-backed) session in
+        // `Pending` → counts.
+        let (issue_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let conv_id = ConversationId::new();
+        let mut interactive = interactive_session(Some(conv_id));
+        interactive.spawned_from = Some(issue_b.clone());
+        interactive.status = Status::Pending;
+        store
+            .add_session(interactive, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Issue C (open): a terminal `Complete` session → does NOT count.
+        let (issue_c, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut done = spawn_task();
+        done.spawned_from = Some(issue_c.clone());
+        done.status = Status::Complete;
+        store
+            .add_session(done, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Issue D (closed status): an active session in a different
+        // status must not be counted against `open`.
+        let mut closed_issue = sample_issue(vec![]);
+        closed_issue.status = closed_key.clone();
+        let (issue_d, _) = store
+            .add_issue(closed_issue, &ActorRef::test())
+            .await
+            .unwrap();
+        let mut other = spawn_task();
+        other.spawned_from = Some(issue_d.clone());
+        other.status = Status::Running;
+        store
+            .add_session(other, Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // 2 active in `open` (mixed-mode: headless + interactive).
+        assert_eq!(
+            store
+                .count_active_sessions_in_status(&project_id, &open_key)
+                .await
+                .unwrap(),
+            2
+        );
+        // 1 active in `closed`.
+        assert_eq!(
+            store
+                .count_active_sessions_in_status(&project_id, &closed_key)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+
+    /// `max_simultaneous_sessions` must round-trip through
+    /// `add_status` / `update_status` / `get_project`. The status-cap
+    /// enforcement in `agent_queue::spawn_for_issue` reads this off the
+    /// per-status row.
+    #[tokio::test]
+    async fn max_simultaneous_sessions_round_trips_sqlite() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = create_test_store().await;
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("ms"), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut with_cap = cutover_status_def("frontend");
+        with_cap.max_simultaneous_sessions = Some(5);
+        store
+            .add_status(&project_id, with_cap, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let bare = cutover_status_def("backend");
+        store
+            .add_status(&project_id, bare, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let fetched = store.get_project(&project_id, false).await.unwrap();
+        let frontend = fetched
+            .item
+            .find_status(&StatusKey::try_new("frontend").unwrap())
+            .unwrap();
+        assert_eq!(frontend.max_simultaneous_sessions, Some(5));
+        let backend = fetched
+            .item
+            .find_status(&StatusKey::try_new("backend").unwrap())
+            .unwrap();
+        assert_eq!(backend.max_simultaneous_sessions, None);
+
+        // `update_status` clears the cap.
+        let mut cleared = frontend.clone();
+        cleared.max_simultaneous_sessions = None;
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("frontend").unwrap(),
+                cleared,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let after = store.get_project(&project_id, false).await.unwrap();
+        let frontend_after = after
+            .item
+            .find_status(&StatusKey::try_new("frontend").unwrap())
+            .unwrap();
+        assert_eq!(frontend_after.max_simultaneous_sessions, None);
+
+        // `update_status` sets a new cap.
+        let mut set_new = frontend_after.clone();
+        set_new.max_simultaneous_sessions = Some(3);
+        store
+            .update_status(
+                &project_id,
+                &StatusKey::try_new("frontend").unwrap(),
+                set_new,
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        let after2 = store.get_project(&project_id, false).await.unwrap();
+        let frontend_after2 = after2
+            .item
+            .find_status(&StatusKey::try_new("frontend").unwrap())
+            .unwrap();
+        assert_eq!(frontend_after2.max_simultaneous_sessions, Some(3));
     }
 
     // ---- Comment tests ----
