@@ -5,10 +5,18 @@ use chrono::{DateTime, Utc};
 use hydra_common::api::v1::analytics::{
     BucketGranularity, PatchInFlightBucket, PatchOverTimeBucket, PatchesInFlightOverTimeResponse,
     PatchesOverTimeResponse, PatchesTerminalMixResponse, PatchesThroughputQuery,
-    PatchesTimeToMergeResponse,
+    PatchesTimeToMergeResponse, TimeToMergeBin,
 };
+use hydra_common::api::v1::pagination::compute_next_cursor;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::{PatchId, Versioned};
+
+/// Batch size used when streaming patches through the analytics
+/// aggregators. Matches [`hydra_common::api::v1::pagination::MAX_LIMIT`]
+/// — the same ceiling every other paginated route applies — so callers
+/// pay one round-trip per 200 patches instead of materializing the full
+/// list.
+pub const ANALYTICS_BATCH_SIZE: u32 = 200;
 
 /// One patch and its full ascending-version-order history. Aggregation
 /// inputs are intentionally simple structs so unit tests can pass
@@ -64,172 +72,302 @@ impl PatchHistory {
     }
 }
 
-/// Fetch the patches matching the throughput-query filters and their
-/// full version histories. Deleted patches and `is_automatic_backup`
-/// patches are excluded — both checks run against the latest stored
-/// version. The `from`/`to`/`bucket` fields on `query` are not used
-/// here; the pure aggregators apply the time window.
-pub async fn fetch_patch_histories(
+/// Stream the patches matching the throughput-query filters through
+/// `visit`, one [`PatchHistory`] at a time. The implementation walks
+/// [`ReadOnlyStore::list_patches`] in [`ANALYTICS_BATCH_SIZE`]-sized
+/// cursor-paged batches so peak memory is bounded by one page of
+/// histories — not the full dataset. Deleted patches and
+/// `is_automatic_backup` patches are excluded; deleted patches are
+/// filtered store-side at the latest version, `is_automatic_backup` is
+/// filtered per-row inside the loop because it isn't a list-level
+/// filter.
+pub async fn for_each_patch_history<F>(
     store: &dyn ReadOnlyStore,
     query: &PatchesThroughputQuery,
-) -> Result<Vec<PatchHistory>, StoreError> {
-    // `list_patches` already filters out `deleted=true` at latest by
-    // default. `is_automatic_backup` isn't a list-level filter, so we
-    // drop those in the loop below.
+    mut visit: F,
+) -> Result<(), StoreError>
+where
+    F: FnMut(&PatchHistory),
+{
     let mut search = SearchPatchesQuery::default();
     search.repo_name = query.repo_name.clone();
     search.creator = query.creator.clone();
     search.status = query.status.clone();
+    search.limit = Some(ANALYTICS_BATCH_SIZE);
 
-    let patches = store.list_patches(&search).await?;
-    let mut histories = Vec::with_capacity(patches.len());
-    for (patch_id, latest) in patches {
-        if latest.item.is_automatic_backup {
-            continue;
+    let mut cursor: Option<String> = None;
+    loop {
+        search.cursor = cursor.clone();
+        let mut page = store.list_patches(&search).await?;
+        if page.is_empty() {
+            return Ok(());
         }
-        let versions = store.get_patch_versions(&patch_id).await?;
-        if versions.is_empty() {
-            continue;
+        // `list_patches` returns up to `limit + 1` rows; `compute_next_cursor`
+        // truncates the extra and returns the cursor that resumes the next
+        // page, or `None` when the page is the tail.
+        let next_cursor = compute_next_cursor(
+            &mut page,
+            Some(ANALYTICS_BATCH_SIZE),
+            |(_id, v)| &v.timestamp,
+            |(id, _v)| id.as_ref(),
+        );
+        for (patch_id, latest) in page {
+            if latest.item.is_automatic_backup {
+                continue;
+            }
+            let versions = store.get_patch_versions(&patch_id).await?;
+            if versions.is_empty() {
+                continue;
+            }
+            let history = PatchHistory::new(patch_id, versions);
+            visit(&history);
         }
-        histories.push(PatchHistory::new(patch_id, versions));
+        match next_cursor {
+            Some(c) => cursor = Some(c),
+            None => return Ok(()),
+        }
     }
-    Ok(histories)
 }
 
-/// Compute `patches/over_time` series: per bucket, the count of patches
-/// whose creation timestamp lands in the bucket and the count of
-/// patches whose first transition-to-merged timestamp lands in the
-/// bucket. Buckets with zero hits are kept so the frontend gets a
-/// dense series.
+/// Streaming accumulator for `patches/over_time`. Per bucket, counts
+/// patches whose creation timestamp lands in the bucket and patches
+/// whose first transition-to-merged timestamp lands in the bucket.
+/// Buckets with zero hits are kept so the frontend gets a dense series.
+pub struct PatchesOverTimeAccumulator {
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    first_start: Option<DateTime<Utc>>,
+    step_secs: i64,
+    buckets: Vec<PatchOverTimeBucket>,
+}
+
+impl PatchesOverTimeAccumulator {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>, bucket: BucketGranularity) -> Self {
+        let starts = bucket_starts(from, to, bucket);
+        let first_start = starts.first().copied();
+        let buckets: Vec<PatchOverTimeBucket> = starts
+            .into_iter()
+            .map(|s| PatchOverTimeBucket::new(s, 0, 0))
+            .collect();
+        Self {
+            from,
+            to,
+            first_start,
+            step_secs: step(bucket).num_seconds(),
+            buckets,
+        }
+    }
+
+    fn bucket_for(&self, t: DateTime<Utc>) -> Option<usize> {
+        if t < self.from || t >= self.to {
+            return None;
+        }
+        let first_start = self.first_start?;
+        let delta = (t - first_start).num_seconds();
+        let idx = (delta / self.step_secs) as usize;
+        if idx >= self.buckets.len() {
+            None
+        } else {
+            Some(idx)
+        }
+    }
+
+    pub fn fold(&mut self, history: &PatchHistory) {
+        if let Some(idx) = self.bucket_for(history.created_at()) {
+            self.buckets[idx].created += 1;
+        }
+        if let Some(merged_at) = history.merged_at() {
+            if let Some(idx) = self.bucket_for(merged_at) {
+                self.buckets[idx].merged += 1;
+            }
+        }
+    }
+
+    pub fn finalize(self) -> PatchesOverTimeResponse {
+        PatchesOverTimeResponse::new(self.buckets)
+    }
+}
+
+/// Compute `patches/over_time` from an already-materialized slice.
+/// Thin wrapper around [`PatchesOverTimeAccumulator`] kept so unit tests
+/// can pass hand-rolled fixtures without going through a Store.
 pub fn compute_patches_over_time(
     histories: &[PatchHistory],
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     bucket: BucketGranularity,
 ) -> PatchesOverTimeResponse {
-    let starts = bucket_starts(from, to, bucket);
-    if starts.is_empty() {
-        return PatchesOverTimeResponse::new(Vec::new());
-    }
-    let step = step(bucket);
-
-    let mut buckets: Vec<PatchOverTimeBucket> = starts
-        .iter()
-        .map(|s| PatchOverTimeBucket::new(*s, 0, 0))
-        .collect();
-
-    let first_start = starts[0];
-    let bucket_len = buckets.len();
-    let bucket_for = |t: DateTime<Utc>| -> Option<usize> {
-        if t < from || t >= to {
-            return None;
-        }
-        let delta = t - first_start;
-        let idx = (delta.num_seconds() / step.num_seconds()) as usize;
-        if idx >= bucket_len { None } else { Some(idx) }
-    };
-
+    let mut acc = PatchesOverTimeAccumulator::new(from, to, bucket);
     for history in histories {
-        let created = history.created_at();
-        if let Some(idx) = bucket_for(created) {
-            buckets[idx].created += 1;
-        }
-        if let Some(merged_at) = history.merged_at() {
-            if let Some(idx) = bucket_for(merged_at) {
-                buckets[idx].merged += 1;
-            }
-        }
+        acc.fold(history);
     }
-
-    PatchesOverTimeResponse::new(buckets)
+    acc.finalize()
 }
 
-/// Compute `patches/terminal_mix`: count patches by the terminal state
-/// they first flipped to, provided that flip falls inside `[from, to)`.
+/// Streaming accumulator for `patches/terminal_mix`. Counts patches by
+/// the terminal state they first flipped to, provided that flip falls
+/// inside `[from, to)`.
+pub struct PatchesTerminalMixAccumulator {
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    merged: u64,
+    closed: u64,
+}
+
+impl PatchesTerminalMixAccumulator {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>) -> Self {
+        Self {
+            from,
+            to,
+            merged: 0,
+            closed: 0,
+        }
+    }
+
+    pub fn fold(&mut self, history: &PatchHistory) {
+        let Some((status, flip_at)) = history.first_terminal() else {
+            return;
+        };
+        if flip_at < self.from || flip_at >= self.to {
+            return;
+        }
+        match status {
+            PatchStatus::Merged => self.merged += 1,
+            PatchStatus::Closed => self.closed += 1,
+            // first_terminal only returns Merged/Closed.
+            PatchStatus::Open | PatchStatus::ChangesRequested => {}
+        }
+    }
+
+    pub fn finalize(self) -> PatchesTerminalMixResponse {
+        PatchesTerminalMixResponse::new(self.merged, self.closed)
+    }
+}
+
+/// Compute `patches/terminal_mix` from an already-materialized slice.
 pub fn compute_patches_terminal_mix(
     histories: &[PatchHistory],
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> PatchesTerminalMixResponse {
-    let mut merged = 0u64;
-    let mut closed = 0u64;
+    let mut acc = PatchesTerminalMixAccumulator::new(from, to);
     for history in histories {
-        let Some((status, flip_at)) = history.first_terminal() else {
-            continue;
-        };
-        if flip_at < from || flip_at >= to {
-            continue;
-        }
-        match status {
-            PatchStatus::Merged => merged += 1,
-            PatchStatus::Closed => closed += 1,
-            // first_terminal only returns Merged/Closed.
-            PatchStatus::Open | PatchStatus::ChangesRequested => {}
-        }
+        acc.fold(history);
     }
-    PatchesTerminalMixResponse::new(merged, closed)
+    acc.finalize()
 }
 
-/// Compute `patches/time_to_merge`: histogram of merge latency over
-/// patches whose `merged_at` falls inside `[from, to)`. `merged_at` is
-/// the timestamp of the first version with status `Merged`.
-pub fn compute_patches_time_to_merge(
-    histories: &[PatchHistory],
+/// Streaming accumulator for `patches/time_to_merge`. Builds the
+/// histogram and the per-sample delta list for percentile computation.
+/// The delta list grows with the in-window merged-patch count, not the
+/// total cohort size — accumulator state, not full materialization.
+pub struct PatchesTimeToMergeAccumulator {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-) -> PatchesTimeToMergeResponse {
-    let mut deltas: Vec<u64> = Vec::new();
-    let mut histogram = empty_duration_histogram();
-    for history in histories {
+    deltas: Vec<u64>,
+    histogram: Vec<TimeToMergeBin>,
+}
+
+impl PatchesTimeToMergeAccumulator {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>) -> Self {
+        Self {
+            from,
+            to,
+            deltas: Vec::new(),
+            histogram: empty_duration_histogram(),
+        }
+    }
+
+    pub fn fold(&mut self, history: &PatchHistory) {
         let Some(merged_at) = history.merged_at() else {
-            continue;
+            return;
         };
-        if merged_at < from || merged_at >= to {
-            continue;
+        if merged_at < self.from || merged_at >= self.to {
+            return;
         }
         let created = history.created_at();
         // A merged_at strictly before created would be a corrupt
         // history; clamp to 0 rather than panic so analytics stays
         // best-effort.
         let delta = (merged_at - created).num_seconds().max(0) as u64;
-        deltas.push(delta);
+        self.deltas.push(delta);
         let idx = bin_index_for(delta);
-        histogram[idx].count += 1;
+        self.histogram[idx].count += 1;
     }
 
-    deltas.sort_unstable();
-    let count = deltas.len() as u64;
-    let median = percentile(&deltas, 0.5);
-    let p95 = percentile(&deltas, 0.95);
-    PatchesTimeToMergeResponse::new(median, p95, count, histogram)
+    pub fn finalize(mut self) -> PatchesTimeToMergeResponse {
+        self.deltas.sort_unstable();
+        let count = self.deltas.len() as u64;
+        let median = percentile(&self.deltas, 0.5);
+        let p95 = percentile(&self.deltas, 0.95);
+        PatchesTimeToMergeResponse::new(median, p95, count, self.histogram)
+    }
 }
 
-/// Compute `patches/in_flight_over_time`: snapshot count of patches in
-/// `Open` or `ChangesRequested` at each bucket boundary inside
-/// `[from, to)`.
+/// Compute `patches/time_to_merge` from an already-materialized slice.
+pub fn compute_patches_time_to_merge(
+    histories: &[PatchHistory],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> PatchesTimeToMergeResponse {
+    let mut acc = PatchesTimeToMergeAccumulator::new(from, to);
+    for history in histories {
+        acc.fold(history);
+    }
+    acc.finalize()
+}
+
+/// Streaming accumulator for `patches/in_flight_over_time`. Per bucket
+/// boundary, counts patches whose status snapshot is `Open` or
+/// `ChangesRequested`. Bucket boundaries are pure functions of
+/// `[from, to)` + granularity, so they're constant across batches.
+pub struct PatchesInFlightOverTimeAccumulator {
+    starts: Vec<DateTime<Utc>>,
+    counts: Vec<u64>,
+}
+
+impl PatchesInFlightOverTimeAccumulator {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>, bucket: BucketGranularity) -> Self {
+        let starts = bucket_starts(from, to, bucket);
+        let counts = vec![0u64; starts.len()];
+        Self { starts, counts }
+    }
+
+    pub fn fold(&mut self, history: &PatchHistory) {
+        for (i, start) in self.starts.iter().enumerate() {
+            if matches!(
+                history.status_at(*start),
+                Some(PatchStatus::Open) | Some(PatchStatus::ChangesRequested)
+            ) {
+                self.counts[i] += 1;
+            }
+        }
+    }
+
+    pub fn finalize(self) -> PatchesInFlightOverTimeResponse {
+        let buckets = self
+            .starts
+            .into_iter()
+            .zip(self.counts)
+            .map(|(start, in_flight)| PatchInFlightBucket::new(start, in_flight))
+            .collect();
+        PatchesInFlightOverTimeResponse::new(buckets)
+    }
+}
+
+/// Compute `patches/in_flight_over_time` from an already-materialized
+/// slice.
 pub fn compute_patches_in_flight_over_time(
     histories: &[PatchHistory],
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     bucket: BucketGranularity,
 ) -> PatchesInFlightOverTimeResponse {
-    let starts = bucket_starts(from, to, bucket);
-    let buckets = starts
-        .into_iter()
-        .map(|start| {
-            let in_flight = histories
-                .iter()
-                .filter(|h| {
-                    matches!(
-                        h.status_at(start),
-                        Some(PatchStatus::Open) | Some(PatchStatus::ChangesRequested)
-                    )
-                })
-                .count() as u64;
-            PatchInFlightBucket::new(start, in_flight)
-        })
-        .collect();
-    PatchesInFlightOverTimeResponse::new(buckets)
+    let mut acc = PatchesInFlightOverTimeAccumulator::new(from, to, bucket);
+    for history in histories {
+        acc.fold(history);
+    }
+    acc.finalize()
 }
 
 #[cfg(test)]
@@ -703,8 +841,22 @@ mod tests {
         assert_eq!(day_05_13.in_flight, 3);
     }
 
+    /// Collect every history surfaced by [`for_each_patch_history`] into
+    /// a `Vec` for assertion. Only used in tests — production code uses
+    /// the streaming accumulators.
+    async fn collect_histories(
+        store: &dyn ReadOnlyStore,
+        query: &PatchesThroughputQuery,
+    ) -> Vec<PatchHistory> {
+        let mut out: Vec<PatchHistory> = Vec::new();
+        for_each_patch_history(store, query, |h| out.push(h.clone()))
+            .await
+            .expect("for_each_patch_history");
+        out
+    }
+
     #[tokio::test]
-    async fn fetch_patch_histories_excludes_automatic_backup_and_deleted() {
+    async fn for_each_patch_history_excludes_automatic_backup_and_deleted() {
         use crate::test_utils::test_state_handles;
 
         let handles = test_state_handles();
@@ -733,15 +885,13 @@ mod tests {
 
         let query =
             PatchesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
-        let histories = fetch_patch_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let histories = collect_histories(store.as_ref(), &query).await;
         let ids: Vec<_> = histories.iter().map(|h| h.patch_id.clone()).collect();
         assert_eq!(ids, vec![normal_id]);
     }
 
     #[tokio::test]
-    async fn fetch_patch_histories_respects_repo_and_creator_filters() {
+    async fn for_each_patch_history_respects_repo_and_creator_filters() {
         use crate::test_utils::test_state_handles;
 
         let handles = test_state_handles();
@@ -761,10 +911,123 @@ mod tests {
             PatchesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
         query.repo_name = Some("dourolabs/hydra".to_string());
         query.creator = Some("alice".to_string());
-        let histories = fetch_patch_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let histories = collect_histories(store.as_ref(), &query).await;
         let ids: Vec<_> = histories.iter().map(|h| h.patch_id.clone()).collect();
         assert_eq!(ids, vec![alice_a_id]);
+    }
+
+    /// Seed > [`ANALYTICS_BATCH_SIZE`] patches and confirm the batched
+    /// driver returns every one in a single sweep. Crosses ≥ 2 cursor
+    /// pages, which is the regression bar for the cursor advance.
+    #[tokio::test]
+    async fn for_each_patch_history_crosses_batch_boundary() {
+        use crate::test_utils::test_state_handles;
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+        let repo_a = repo("dourolabs/hydra");
+
+        // ANALYTICS_BATCH_SIZE + 5 so the driver has to advance the
+        // cursor at least once.
+        let total = (ANALYTICS_BATCH_SIZE + 5) as usize;
+        let mut expected = std::collections::HashSet::new();
+        for _ in 0..total {
+            let p = patch_with_status(PatchStatus::Open, "alice", repo_a.clone(), false);
+            let (id, _) = store.add_patch(p, &actor).await.expect("add patch");
+            expected.insert(id);
+        }
+
+        let query =
+            PatchesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        let histories = collect_histories(store.as_ref(), &query).await;
+
+        let seen: std::collections::HashSet<_> =
+            histories.iter().map(|h| h.patch_id.clone()).collect();
+        assert_eq!(seen, expected);
+        assert_eq!(histories.len(), total);
+    }
+
+    /// Drive each accumulator twice over the same seeded store — once
+    /// via the batched driver, once via the all-at-once `compute_*`
+    /// helper — and assert wire-identical results. Catches batch-boundary
+    /// regressions for every aggregator in one shot.
+    #[tokio::test]
+    async fn accumulators_match_single_pass_across_batch_boundary() {
+        use crate::test_utils::test_state_handles;
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+        let repo_a = repo("dourolabs/hydra");
+
+        // Mix creates / merges / closes spread across the window so each
+        // aggregator gets non-trivial input and the cursor advances ≥ once.
+        let total = (ANALYTICS_BATCH_SIZE + 50) as usize;
+        let from = dt("2026-05-10T00:00:00Z");
+        let to = dt("2026-05-20T00:00:00Z");
+        for i in 0..total {
+            let mut p = patch_with_status(PatchStatus::Open, "alice", repo_a.clone(), false);
+            let (id, _) = store.add_patch(p.clone(), &actor).await.expect("add patch");
+            // Every third patch gets merged; every fifth gets closed.
+            // The remainder stay open.
+            if i % 3 == 0 {
+                p.status = PatchStatus::Merged;
+                store
+                    .update_patch(&id, p.clone(), &actor)
+                    .await
+                    .expect("merge");
+            } else if i % 5 == 0 {
+                p.status = PatchStatus::Closed;
+                store
+                    .update_patch(&id, p.clone(), &actor)
+                    .await
+                    .expect("close");
+            }
+        }
+
+        let query = PatchesThroughputQuery::new(from, to);
+        let histories = collect_histories(store.as_ref(), &query).await;
+        assert!(histories.len() > ANALYTICS_BATCH_SIZE as usize);
+
+        // over_time
+        let mut acc = PatchesOverTimeAccumulator::new(from, to, BucketGranularity::Day);
+        for_each_patch_history(store.as_ref(), &query, |h| acc.fold(h))
+            .await
+            .expect("drive over_time");
+        assert_eq!(
+            acc.finalize(),
+            compute_patches_over_time(&histories, from, to, BucketGranularity::Day)
+        );
+
+        // terminal_mix
+        let mut acc = PatchesTerminalMixAccumulator::new(from, to);
+        for_each_patch_history(store.as_ref(), &query, |h| acc.fold(h))
+            .await
+            .expect("drive terminal_mix");
+        assert_eq!(
+            acc.finalize(),
+            compute_patches_terminal_mix(&histories, from, to)
+        );
+
+        // time_to_merge
+        let mut acc = PatchesTimeToMergeAccumulator::new(from, to);
+        for_each_patch_history(store.as_ref(), &query, |h| acc.fold(h))
+            .await
+            .expect("drive time_to_merge");
+        assert_eq!(
+            acc.finalize(),
+            compute_patches_time_to_merge(&histories, from, to)
+        );
+
+        // in_flight_over_time
+        let mut acc = PatchesInFlightOverTimeAccumulator::new(from, to, BucketGranularity::Day);
+        for_each_patch_history(store.as_ref(), &query, |h| acc.fold(h))
+            .await
+            .expect("drive in_flight");
+        assert_eq!(
+            acc.finalize(),
+            compute_patches_in_flight_over_time(&histories, from, to, BucketGranularity::Day)
+        );
     }
 }

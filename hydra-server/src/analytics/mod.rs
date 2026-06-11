@@ -29,8 +29,10 @@ pub use issues::{
     fetch_issue_histories, resolve_projects_for_histories,
 };
 pub use patches::{
-    PatchHistory, compute_patches_in_flight_over_time, compute_patches_over_time,
-    compute_patches_terminal_mix, compute_patches_time_to_merge, fetch_patch_histories,
+    ANALYTICS_BATCH_SIZE, PatchHistory, PatchesInFlightOverTimeAccumulator,
+    PatchesOverTimeAccumulator, PatchesTerminalMixAccumulator, PatchesTimeToMergeAccumulator,
+    compute_patches_in_flight_over_time, compute_patches_over_time, compute_patches_terminal_mix,
+    compute_patches_time_to_merge, for_each_patch_history,
 };
 pub use token_usage::{
     SessionWithUsage, compute_cost_per_agent, compute_token_usage_over_time,
