@@ -327,6 +327,20 @@ async fn migration_roundtrip() -> Result<()> {
             "add_statuses_max_simultaneous_sessions: Store::get_project reads field as None",
         )?;
 
+    add_statuses_session_settings_schema_invariants(&pool)
+        .await
+        .context(
+            "add_statuses_session_settings: session_settings_json TEXT NULL added to metis.statuses",
+        )?;
+    add_statuses_session_settings_defaults_to_null(&pool)
+        .await
+        .context("add_statuses_session_settings: existing rows backfill to NULL")?;
+    add_statuses_session_settings_domain_roundtrip(&pool)
+        .await
+        .context(
+            "add_statuses_session_settings: SqliteStore-style get_project read includes the new column",
+        )?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -358,6 +372,11 @@ async fn migration_roundtrip() -> Result<()> {
     add_statuses_max_simultaneous_sessions_defaults_to_null(&pool)
         .await
         .context("add_statuses_max_simultaneous_sessions: idempotent rerun keeps existing NULLs")?;
+    add_statuses_session_settings_defaults_to_null(&pool)
+        .await
+        .context(
+            "add_statuses_session_settings: idempotent rerun keeps existing NULLs on backfilled rows",
+        )?;
 
     Ok(())
 }
@@ -1173,6 +1192,85 @@ async fn add_statuses_suppress_sessions_defaults_to_false(pool: &PgPool) -> Resu
         if value {
             bail!(
                 "metis.statuses({project_id}, sequence={sequence}): expected suppress_sessions=false (no backfill); got true"
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260713000000_add_statuses_session_settings. Adds the
+// `session_settings_json TEXT NULL` column to `metis.statuses` for the
+// per-status `SessionSettings` override layer. Backfills to NULL — the
+// read path materializes `SessionSettings::default()`.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_session_settings_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "statuses", "session_settings_json").await? {
+        bail!("expected `metis.statuses.session_settings_json` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "statuses", "session_settings_json").await? {
+        bail!("expected `metis.statuses.session_settings_json` to be NULLABLE");
+    }
+    let row = sqlx::query(
+        "SELECT data_type FROM information_schema.columns \
+         WHERE table_schema = 'metis' AND table_name = 'statuses' \
+           AND column_name = 'session_settings_json'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up data_type for metis.statuses.session_settings_json")?;
+    let data_type: String = row.try_get("data_type")?;
+    if data_type != "text" {
+        bail!("expected metis.statuses.session_settings_json data_type=text; got {data_type:?}");
+    }
+    Ok(())
+}
+
+async fn add_statuses_session_settings_defaults_to_null(pool: &PgPool) -> Result<()> {
+    let rows =
+        sqlx::query("SELECT project_id, sequence, session_settings_json FROM metis.statuses")
+            .fetch_all(pool)
+            .await
+            .context("read metis.statuses for session_settings_json default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one metis.statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: Option<String> = row.try_get("session_settings_json")?;
+        if value.is_some() {
+            bail!(
+                "metis.statuses({project_id}, sequence={sequence}): expected session_settings_json=NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_session_settings_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    // Pull the seeded default project back through `PostgresStoreV2::get_project`
+    // — verifies the new `session_settings_json` column is included in the
+    // `StatusRow` SELECT projections (catches the `#[sqlx(default)]`
+    // foot-gun). Backfilled rows must rebuild as
+    // `SessionSettings::default()`.
+    use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
+    let store = PostgresStoreV2::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("PostgresStoreV2::get_project(j-defaul) post-session_settings migration")?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for status in &fetched.item.statuses {
+        if !ApiSessionSettings::is_default(&status.session_settings) {
+            bail!(
+                "j-defaul status {key:?} unexpectedly carried non-default session_settings: {got:?}",
+                key = status.key,
+                got = status.session_settings,
             );
         }
     }

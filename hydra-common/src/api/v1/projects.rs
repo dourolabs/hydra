@@ -7,6 +7,7 @@
 //! [`StatusOnEnter`] automation that fires when an issue transitions into
 //! the status.
 
+use crate::api::v1::issues::SessionSettings;
 use crate::document_path::DocumentPath;
 use crate::ids::HydraId;
 use crate::principal::Principal;
@@ -241,6 +242,13 @@ pub struct StatusDefinition {
     /// pattern.
     #[serde(default)]
     pub position: f64,
+    /// Per-status overrides for the [`SessionSettings`] applied when
+    /// spawning sessions for issues in this status. Merges with
+    /// `Issue.session_settings` (issue-level wins) and the global
+    /// defaults during spawn — see
+    /// `SessionSettings::merge` and `apply_session_settings_defaults`.
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
 }
 
 impl StatusDefinition {
@@ -267,6 +275,7 @@ impl StatusDefinition {
             auto_archive_after_seconds: None,
             max_simultaneous_sessions: None,
             position: 0.0,
+            session_settings: SessionSettings::default(),
         }
     }
 }
