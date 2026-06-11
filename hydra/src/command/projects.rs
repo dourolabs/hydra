@@ -2,7 +2,6 @@ use crate::{
     client::HydraClientInterface,
     command::{
         output::{render, CommandContext, ProjectRecords, ProjectStatuses, ResolvedOutputFormat},
-        project_body_file::load_status_body_file,
         utils::resolve_username,
     },
     output_writer::write_stdout,
@@ -14,7 +13,6 @@ use hydra_common::api::v1::projects::{
     UpsertProjectRequest, UpsertProjectResponse,
 };
 use hydra_common::{DocumentPath, Principal, Rgb};
-use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 #[derive(Debug, Subcommand)]
@@ -40,22 +38,16 @@ pub enum ProjectsCommand {
         #[command(subcommand)]
         command: StatusCommand,
     },
-    /// Write a richly-commented sample status body file to disk. The
-    /// output is a valid `--body-file` input for
-    /// `projects status create` / `projects status update`.
-    SampleConfig(SampleConfigArgs),
 }
 
 #[derive(Debug, Subcommand)]
 pub enum StatusCommand {
-    /// Add a new status to a project. Specify either `--body-file` to
-    /// load a YAML/JSON `StatusDefinition`, or the equivalent direct
+    /// Add a new status to a project, specified via the direct
     /// `--key/--label/--color/...` flags.
     Create(CreateStatusArgs),
-    /// Update a single status on a project. Specify either `--body-file`
-    /// (the body replaces the existing status; a body whose `key`
-    /// differs from `<status_key>` renames the status in place) or the
-    /// direct flags (which are overlaid on the current definition).
+    /// Update a single status on a project. The direct flags are
+    /// overlaid on the current definition; the `--key` flag renames the
+    /// status in place (storage identity preserved).
     Update(UpdateStatusArgs),
     /// Delete a status from a project. Fails if any issue still
     /// references the status.
@@ -87,18 +79,6 @@ pub struct GetProjectArgs {
 }
 
 #[derive(Debug, Clone, Args)]
-pub struct SampleConfigArgs {
-    /// Destination path for the sample status body YAML.
-    #[arg(value_name = "OUTPUT_PATH")]
-    pub output_path: PathBuf,
-
-    /// Overwrite `<OUTPUT_PATH>` if it already exists. Without this flag
-    /// the command refuses to clobber an existing file.
-    #[arg(long)]
-    pub force: bool,
-}
-
-#[derive(Debug, Clone, Args)]
 pub struct UpdateProjectArgs {
     /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
     #[arg(value_name = "PROJECT_ID_OR_KEY")]
@@ -120,74 +100,23 @@ pub struct UpdateProjectArgs {
     pub prompt_path: Option<String>,
 }
 
-/// Names of every direct flag on [`CreateStatusArgs`]. Listed here so the
-/// `--body-file` arg can declare `conflicts_with_all` against all of them
-/// in one place.
-const CREATE_DIRECT_FLAG_IDS: &[&str] = &[
-    "key",
-    "label",
-    "color",
-    "unblocks_parents",
-    "unblocks_dependents",
-    "cascades_to_children",
-    "interactive",
-    "suppress_sessions",
-    "position",
-    "auto_archive_after_seconds",
-    "prompt_path",
-    "on_enter_assign_to",
-    "on_enter_attach_form",
-    "on_enter_clear_assignee",
-    "on_enter_teardown_work",
-];
-
-/// Names of every direct flag on [`UpdateStatusArgs`].
-const UPDATE_DIRECT_FLAG_IDS: &[&str] = &[
-    "key",
-    "label",
-    "color",
-    "prompt_path",
-    "unblocks_parents",
-    "unblocks_dependents",
-    "cascades_to_children",
-    "interactive",
-    "suppress_sessions",
-    "position",
-    "auto_archive_after_seconds",
-    "clear_auto_archive_after_seconds",
-    "on_enter_assign_to",
-    "on_enter_attach_form",
-    "on_enter_clear_assignee",
-    "on_enter_teardown_work",
-    "clear_on_enter",
-];
-
 #[derive(Debug, Clone, Args)]
 pub struct CreateStatusArgs {
     /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
     #[arg(value_name = "PROJECT_ID_OR_KEY")]
     pub project_ref: ProjectRef,
 
-    /// Path to a JSON or YAML file containing the `StatusDefinition`
-    /// body to add. Mutually exclusive with the direct `--key/--label/...`
-    /// flags below.
-    #[arg(long = "body-file", value_name = "PATH", conflicts_with_all = CREATE_DIRECT_FLAG_IDS)]
-    pub body_file: Option<PathBuf>,
+    /// Status key (slug; unique within the project).
+    #[arg(long, value_name = "STATUS_KEY")]
+    pub key: StatusKey,
 
-    /// Status key (slug; unique within the project). Required when
-    /// `--body-file` is not used.
-    #[arg(long, value_name = "STATUS_KEY", required_unless_present = "body_file")]
-    pub key: Option<StatusKey>,
+    /// Human-readable status label.
+    #[arg(long, value_name = "STRING")]
+    pub label: String,
 
-    /// Human-readable status label. Required when `--body-file` is not
-    /// used.
-    #[arg(long, value_name = "STRING", required_unless_present = "body_file")]
-    pub label: Option<String>,
-
-    /// Display color as `#RRGGBB`. Required when `--body-file` is not
-    /// used.
-    #[arg(long, value_name = "#RRGGBB", required_unless_present = "body_file")]
-    pub color: Option<Rgb>,
+    /// Display color as `#RRGGBB`.
+    #[arg(long, value_name = "#RRGGBB")]
+    pub color: Rgb,
 
     /// Closing this status unblocks the issue's parents.
     #[arg(long = "unblocks-parents")]
@@ -258,16 +187,10 @@ pub struct UpdateStatusArgs {
     #[arg(value_name = "PROJECT_ID_OR_KEY")]
     pub project_ref: ProjectRef,
 
-    /// Status key (within the project) to update. If `--key` is passed
-    /// (or the body file's `key` field is different), the status is
-    /// renamed in place — storage identity is preserved.
+    /// Status key (within the project) to update. If `--key` is passed,
+    /// the status is renamed in place — storage identity is preserved.
     #[arg(value_name = "STATUS_KEY")]
     pub status_key: StatusKey,
-
-    /// Path to a JSON or YAML file containing the new `StatusDefinition`
-    /// body. Mutually exclusive with the direct flags below.
-    #[arg(long = "body-file", value_name = "PATH", conflicts_with_all = UPDATE_DIRECT_FLAG_IDS)]
-    pub body_file: Option<PathBuf>,
 
     /// Rename the status to this key. Storage identity is preserved.
     #[arg(long, value_name = "STATUS_KEY")]
@@ -518,10 +441,6 @@ pub async fn run(
                 )?;
             }
         },
-        ProjectsCommand::SampleConfig(args) => {
-            write_sample_config(&args.output_path, args.force)?;
-            write_sample_config_summary(context.output_format, &args.output_path, &mut buffer)?;
-        }
     }
     write_stdout(&buffer)?;
     Ok(())
@@ -632,28 +551,9 @@ async fn update_status(
     Ok(record)
 }
 
-/// Build the `StatusDefinition` POSTed by `projects status create`. When
-/// `--body-file` is set, the body is loaded from disk; otherwise it is
-/// constructed from the direct `--key/--label/...` flags. Clap guarantees
-/// that the three required flags (`key`, `label`, `color`) are set
-/// whenever `--body-file` is absent via `required_unless_present`.
+/// Build the `StatusDefinition` POSTed by `projects status create` from
+/// the direct `--key/--label/...` flags.
 fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefinition> {
-    if let Some(body_file) = &args.body_file {
-        return load_status_body_file(body_file);
-    }
-    let key = args
-        .key
-        .clone()
-        .expect("clap `required_unless_present` guarantees --key when --body-file is absent");
-    let label = args
-        .label
-        .clone()
-        .expect("clap `required_unless_present` guarantees --label when --body-file is absent");
-    let color = args
-        .color
-        .clone()
-        .expect("clap `required_unless_present` guarantees --color when --body-file is absent");
-
     let on_enter = build_on_enter_from_flags(
         args.on_enter_assign_to.clone(),
         args.on_enter_attach_form.clone(),
@@ -661,9 +561,9 @@ fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefin
         args.on_enter_teardown_work,
     )?;
     let mut def = StatusDefinition::new(
-        key,
-        label,
-        color,
+        args.key.clone(),
+        args.label.clone(),
+        args.color.clone(),
         args.unblocks_parents,
         args.unblocks_dependents,
         args.cascades_to_children,
@@ -677,8 +577,7 @@ fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefin
     Ok(def)
 }
 
-/// Build the `StatusDefinition` PUT by `projects status update`. When
-/// `--body-file` is set, the body is loaded from disk; otherwise the
+/// Build the `StatusDefinition` PUT by `projects status update`. The
 /// existing definition is fetched from the server and the user's flags
 /// are overlaid on top. Errors when no direct flag is set so the caller
 /// gets a clear message instead of a no-op update.
@@ -686,16 +585,13 @@ async fn build_update_status_definition(
     client: &dyn HydraClientInterface,
     args: &UpdateStatusArgs,
 ) -> Result<StatusDefinition> {
-    if let Some(body_file) = &args.body_file {
-        return load_status_body_file(body_file);
-    }
     if !update_has_any_direct_flag(args) {
         bail!(
             "no updates specified; use --key, --label, --color, --prompt-path, --position, \
              --auto-archive-after-seconds, --clear-auto-archive-after-seconds, \
              --unblocks-parents=<bool>, --unblocks-dependents=<bool>, \
              --cascades-to-children=<bool>, --interactive=<bool>, \
-             --suppress-sessions=<bool>, --on-enter-*, --clear-on-enter, or --body-file"
+             --suppress-sessions=<bool>, --on-enter-*, or --clear-on-enter"
         );
     }
     let current_project = client
@@ -878,37 +774,6 @@ fn apply_prompt_path_arg(arg: Option<String>, current: Option<String>) -> Option
     }
 }
 
-fn write_sample_config(path: &Path, force: bool) -> Result<()> {
-    if path.exists() && !force {
-        bail!(
-            "refusing to overwrite existing file '{}' (pass --force to overwrite)",
-            path.display()
-        );
-    }
-    std::fs::write(path, SAMPLE_STATUS_BODY_YAML.as_bytes())
-        .with_context(|| format!("failed to write sample config to '{}'", path.display()))?;
-    Ok(())
-}
-
-fn write_sample_config_summary<W: std::io::Write>(
-    format: ResolvedOutputFormat,
-    path: &Path,
-    writer: &mut W,
-) -> Result<()> {
-    match format {
-        ResolvedOutputFormat::Pretty => {
-            writeln!(writer, "Wrote sample status body to '{}'", path.display())?;
-        }
-        ResolvedOutputFormat::Jsonl => {
-            let line = serde_json::json!({ "output_path": path.display().to_string() });
-            serde_json::to_writer(&mut *writer, &line)?;
-            writer.write_all(b"\n")?;
-        }
-    }
-    writer.flush()?;
-    Ok(())
-}
-
 fn write_delete_summary<W: std::io::Write>(
     format: ResolvedOutputFormat,
     response: &UpsertProjectResponse,
@@ -930,11 +795,6 @@ fn write_delete_summary<W: std::io::Write>(
     writer.flush()?;
     Ok(())
 }
-
-/// Richly-commented sample status body file. Round-trips through
-/// [`load_status_body_file`] and is the documented starting point for
-/// `--body-file` authoring.
-const SAMPLE_STATUS_BODY_YAML: &str = include_str!("sample_status_body.yaml");
 
 #[cfg(test)]
 mod tests {
@@ -968,61 +828,6 @@ mod tests {
             apply_prompt_path_arg(Some("/b".into()), None),
             Some("/b".into())
         );
-    }
-
-    /// The sample yaml must round-trip through [`load_status_body_file`].
-    #[test]
-    fn sample_status_body_yaml_round_trips() {
-        let body = load_sample_body();
-        // basic invariants: key + label + color populate, the file
-        // exercises the optional fields too.
-        assert!(!body.label.is_empty());
-        assert!(body.prompt_path.is_some());
-    }
-
-    fn load_sample_body() -> StatusDefinition {
-        crate::command::project_body_file::parse_status_body(SAMPLE_STATUS_BODY_YAML)
-            .expect("sample yaml must parse as a StatusDefinition")
-    }
-
-    #[test]
-    fn sample_status_body_yaml_contains_inline_comments() {
-        assert!(
-            SAMPLE_STATUS_BODY_YAML.contains('#'),
-            "sample yaml lost its inline `#` comments",
-        );
-    }
-
-    #[test]
-    fn write_sample_config_refuses_to_overwrite_without_force() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sample.yaml");
-        std::fs::write(&path, b"existing\n").unwrap();
-        let err = write_sample_config(&path, false).unwrap_err();
-        assert!(
-            err.to_string().contains("refusing to overwrite"),
-            "got: {err}",
-        );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing\n");
-    }
-
-    #[test]
-    fn write_sample_config_overwrites_with_force() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sample.yaml");
-        std::fs::write(&path, b"existing\n").unwrap();
-        write_sample_config(&path, true).unwrap();
-        let contents = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(contents, SAMPLE_STATUS_BODY_YAML);
-    }
-
-    #[test]
-    fn write_sample_config_writes_to_new_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sample.yaml");
-        write_sample_config(&path, false).unwrap();
-        let contents = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(contents, SAMPLE_STATUS_BODY_YAML);
     }
 
     // --- direct-flag plumbing ----------------------------------------
@@ -1112,36 +917,13 @@ mod tests {
     // --- create-mode tests -------------------------------------------
 
     #[test]
-    fn create_required_flags_when_no_body_file() {
+    fn create_required_flags() {
         let err = parse_create_failure(&[]);
         let msg = err.to_string();
         assert!(
             msg.contains("--key") || msg.contains("required"),
             "expected required-flag error, got: {msg}",
         );
-    }
-
-    #[test]
-    fn create_body_file_alone_succeeds() {
-        let args = parse_create(&["--body-file", "/tmp/some.yaml"]).expect("body-file only");
-        assert!(args.body_file.is_some());
-        assert!(args.key.is_none());
-        assert!(args.label.is_none());
-    }
-
-    #[test]
-    fn create_body_file_conflicts_with_direct_flags() {
-        let err = parse_create_failure(&[
-            "--body-file",
-            "/tmp/x.yaml",
-            "--key",
-            "inbox",
-            "--label",
-            "Inbox",
-            "--color",
-            "#aabbcc",
-        ]);
-        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
@@ -1270,41 +1052,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn create_direct_flags_match_body_file_equivalent() {
-        let args = parse_create(&[
-            "--key",
-            "released",
-            "--label",
-            "Released",
-            "--color",
-            "#22aa44",
-            "--unblocks-parents",
-            "--unblocks-dependents",
-        ])
-        .unwrap();
-        let from_flags = build_create_status_definition(&args).unwrap();
-        let from_body = crate::command::project_body_file::parse_status_body(
-            r##"{
-                "key": "released",
-                "label": "Released",
-                "color": "#22aa44",
-                "unblocks_parents": true,
-                "unblocks_dependents": true,
-                "cascades_to_children": false
-            }"##,
-        )
-        .unwrap();
-        assert_eq!(from_flags, from_body);
-    }
-
     // --- update-mode tests -------------------------------------------
-
-    #[test]
-    fn update_body_file_alone_succeeds() {
-        let args = parse_update(&["--body-file", "/tmp/x.yaml"]).expect("body-file only");
-        assert!(args.body_file.is_some());
-    }
 
     #[test]
     fn update_no_direct_flag_rejected_with_clear_error() {
@@ -1318,12 +1066,6 @@ mod tests {
             err.to_string().contains("no updates specified"),
             "got: {err}",
         );
-    }
-
-    #[test]
-    fn update_body_file_conflicts_with_direct_flags() {
-        let err = parse_update_failure(&["--body-file", "/tmp/x.yaml", "--label", "Renamed"]);
-        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
@@ -1426,9 +1168,6 @@ mod tests {
     /// tests: skips the server fetch, exercising only the overlay /
     /// validation paths.
     fn build_update_status_definition_sync(args: &UpdateStatusArgs) -> Result<StatusDefinition> {
-        if let Some(body_file) = &args.body_file {
-            return load_status_body_file(body_file);
-        }
         if !update_has_any_direct_flag(args) {
             bail!("no updates specified; use --key, --label, --color, --prompt-path, --position");
         }
