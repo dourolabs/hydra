@@ -82,6 +82,7 @@ function toSummary(
     event_count,
     last_event_preview,
     creator: conversation.creator,
+    spawned_from: conversation.spawned_from,
     created_at: conversation.created_at,
     updated_at: conversation.updated_at,
   };
@@ -116,6 +117,7 @@ export function createConversationRoutes(store: Store): Hono {
     const status = c.req.query("status") as ConversationStatus | undefined;
     const creator = c.req.query("creator");
     const spawnedFrom = c.req.query("spawned_from");
+    const spawnedFromIds = c.req.query("spawned_from_ids");
     const limitParam = c.req.query("limit");
 
     const items = store.list<Conversation>(COLLECTION, includeDeleted);
@@ -141,6 +143,12 @@ export function createConversationRoutes(store: Store): Hono {
     }
     if (spawnedFrom) {
       filtered = filtered.filter(({ entry }) => entry.data.spawned_from === spawnedFrom);
+    }
+    if (spawnedFromIds) {
+      const ids = new Set(spawnedFromIds.split(",").map((s) => s.trim()));
+      filtered = filtered.filter(
+        ({ entry }) => entry.data.spawned_from != null && ids.has(entry.data.spawned_from),
+      );
     }
 
     if (limitParam !== undefined && limitParam !== null) {

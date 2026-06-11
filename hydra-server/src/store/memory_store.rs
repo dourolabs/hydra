@@ -2057,6 +2057,7 @@ impl ReadOnlyStore for MemoryStore {
             .status
             .map(crate::domain::conversations::ConversationStatus::from);
         let spawned_from_filter = query.spawned_from.as_ref();
+        let spawned_from_ids_filter = &query.spawned_from_ids;
 
         let items: Vec<(ConversationId, Versioned<Conversation>)> = self
             .conversations
@@ -2086,6 +2087,13 @@ impl ReadOnlyStore for MemoryStore {
                 if let Some(expected) = spawned_from_filter {
                     if conv.spawned_from.as_ref() != Some(expected) {
                         return None;
+                    }
+                }
+
+                if !spawned_from_ids_filter.is_empty() {
+                    match conv.spawned_from.as_ref() {
+                        Some(spawned) if spawned_from_ids_filter.contains(spawned) => {}
+                        _ => return None,
                     }
                 }
 

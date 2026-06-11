@@ -4554,6 +4554,19 @@ impl ReadOnlyStore for PostgresStoreV2 {
             bindings.push(spawned_from.as_ref().to_string());
         }
 
+        if !query.spawned_from_ids.is_empty() {
+            let placeholders: Vec<String> = query
+                .spawned_from_ids
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", bindings.len() + i + 1))
+                .collect();
+            predicates.push(format!("spawned_from IN ({})", placeholders.join(", ")));
+            for id in &query.spawned_from_ids {
+                bindings.push(id.as_ref().to_string());
+            }
+        }
+
         apply_pagination_sql_pg(
             &mut sql,
             &mut predicates,

@@ -1,5 +1,6 @@
 use super::agents::AgentName;
 use super::issues::SessionSettings;
+use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separated};
 use crate::{ConversationId, IssueId, users::Username};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,15 @@ pub struct SearchConversationsQuery {
     /// Filter by the issue that spawned this conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
+    /// Filter conversations spawned from any of these issue IDs (comma-separated).
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        serialize_with = "serialize_comma_separated",
+        deserialize_with = "deserialize_comma_separated"
+    )]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub spawned_from_ids: Vec<IssueId>,
     /// Maximum number of results to return.
     #[serde(default)]
     pub limit: Option<u32>,
@@ -127,6 +137,8 @@ pub struct ConversationSummary {
     pub event_count: usize,
     pub last_event_preview: Option<String>,
     pub creator: Username,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawned_from: Option<IssueId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -141,6 +153,7 @@ impl ConversationSummary {
         event_count: usize,
         last_event_preview: Option<String>,
         creator: Username,
+        spawned_from: Option<IssueId>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -152,6 +165,7 @@ impl ConversationSummary {
             event_count,
             last_event_preview,
             creator,
+            spawned_from,
             created_at,
             updated_at,
         }
@@ -349,6 +363,29 @@ mod tests {
         let query = SearchConversationsQuery::default();
         let json = serde_json::to_string(&query).unwrap();
         assert!(!json.contains("spawned_from"));
+    }
+
+    #[test]
+    fn search_conversations_query_serializes_spawned_from_ids() {
+        let id1 = IssueId::from_str("i-abcd").unwrap();
+        let id2 = IssueId::from_str("i-efgh").unwrap();
+        let query = SearchConversationsQuery {
+            spawned_from_ids: vec![id1.clone(), id2.clone()],
+            ..SearchConversationsQuery::default()
+        };
+
+        let params = serde_urlencoded::to_string(&query).unwrap();
+        let expected = format!("{id1}%2C{id2}");
+        assert!(params.contains(&format!("spawned_from_ids={expected}")));
+    }
+
+    #[test]
+    fn search_conversations_query_deserializes_spawned_from_ids() {
+        let query: SearchConversationsQuery =
+            serde_urlencoded::from_str("spawned_from_ids=i-abcd%2Ci-efgh").unwrap();
+        assert_eq!(query.spawned_from_ids.len(), 2);
+        assert_eq!(query.spawned_from_ids[0].as_ref(), "i-abcd");
+        assert_eq!(query.spawned_from_ids[1].as_ref(), "i-efgh");
     }
 
     mod graph_view {

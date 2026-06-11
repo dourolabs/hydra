@@ -24,6 +24,10 @@ export type SearchConversationsQuery = {
    */
   spawned_from?: IssueId | null;
   /**
+   * Filter conversations spawned from any of these issue IDs (comma-separated).
+   */
+  spawned_from_ids?: string;
+  /**
    * Maximum number of results to return.
    */
   limit: number | null;

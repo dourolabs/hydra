@@ -2,6 +2,7 @@
 import type { AgentName } from "./AgentName";
 import type { ConversationId } from "./ConversationId";
 import type { ConversationStatus } from "./ConversationStatus";
+import type { IssueId } from "./IssueId";
 import type { Username } from "./Username";
 
 export type ConversationSummary = {
@@ -12,6 +13,7 @@ export type ConversationSummary = {
   event_count: number;
   last_event_preview: string | null;
   creator: Username;
+  spawned_from?: IssueId | null;
   created_at: string;
   updated_at: string;
 };

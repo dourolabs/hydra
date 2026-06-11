@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { ConversationSummary } from "@hydra/api";
 import { apiClient } from "../../api/client";
 
@@ -9,45 +9,43 @@ import { apiClient } from "../../api/client";
  * Used by the board / table views to flag issues that have a live conversation
  * a human can join.
  *
- * The API has no batch-by-issue-id filter for conversations, so this fires
- * one request per id and lets React Query handle parallelization, caching,
- * and dedup. SSE invalidation on `["conversations", …]` keeps each entry
- * fresh.
+ * Issues the request as a single batched call via
+ * `SearchConversationsQuery.spawned_from_ids`, mirroring the sessions pattern
+ * in `usePageIssueTrees`.
  */
 export function useActiveConversationsByIssue(
   issueIds: string[],
 ): Map<string, ConversationSummary> {
-  const sortedIds = useMemo(() => [...issueIds].sort(), [issueIds]);
+  const spawned_from_ids = useMemo(
+    () => [...issueIds].sort().join(","),
+    [issueIds],
+  );
 
-  const results = useQueries({
-    queries: sortedIds.map((issueId) => ({
-      queryKey: [
-        "conversations",
-        { spawned_from: issueId, include_deleted: false },
-      ],
-      queryFn: async () => {
-        const resp = await apiClient.listConversations({
-          spawned_from: issueId,
-          include_deleted: false,
-        });
-        return resp.conversations;
-      },
-      staleTime: 30_000,
-      enabled: !!issueId,
-    })),
+  const { data } = useQuery({
+    queryKey: ["conversations", "batch", spawned_from_ids],
+    queryFn: () =>
+      apiClient.listConversations({
+        spawned_from_ids,
+        include_deleted: false,
+      }),
+    enabled: issueIds.length > 0,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    select: (resp) => resp.conversations,
   });
 
   return useMemo(() => {
     const map = new Map<string, ConversationSummary>();
-    sortedIds.forEach((issueId, idx) => {
-      const conversations = results[idx]?.data;
-      if (!conversations || conversations.length === 0) return;
-      const live = conversations.find((c) => c.status !== "closed");
-      if (live) map.set(issueId, live);
-    });
+    if (!data) return map;
+    for (const conv of data) {
+      if (conv.status === "closed") continue;
+      const issueId = conv.spawned_from;
+      if (!issueId) continue;
+      const existing = map.get(issueId);
+      if (!existing || conv.updated_at > existing.updated_at) {
+        map.set(issueId, conv);
+      }
+    }
     return map;
-    // results is a new array each render but each entry is stable; depend on
-    // the data references rather than the array identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedIds, ...results.map((r) => r.data)]);
+  }, [data]);
 }
