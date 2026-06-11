@@ -151,10 +151,11 @@ what's changing.
       hydra projects status update <id> <status_key> [--label ...] [--color ...] ...
 
   Status edits are **field-level** — flags you don't pass preserve the existing value. This is
-  different from the old YAML flow, which replaced the whole status body; surface that to the user
-  when it matters (e.g., omitting `--on-enter-assign-to` keeps the existing assignee — use
-  `--on-enter-clear-assignee` or `--clear-on-enter` to actually clear it). Run
-  `hydra projects status update --help` for the full flag list.
+  different from the old YAML flow, which replaced the whole status body. **`on_enter` is the
+  exception:** any `--on-enter-*` flag rebuilds the entire `on_enter` automation from just the
+  flags in that call, so include every on_enter field you want to keep. Use
+  `--on-enter-clear-assignee` to clear only the assignee; `--clear-on-enter` wipes the whole
+  on_enter automation. Run `hydra projects status update --help` for the full flag list.
 
 ### Prompt slices
 
