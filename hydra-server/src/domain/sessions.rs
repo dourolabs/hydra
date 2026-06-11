@@ -7,6 +7,7 @@ use hydra_common::api::v1::agents::AgentName;
 use hydra_common::api::v1::sessions::{
     McpConfig, MountSpec, ProxyTarget, ResumeSource, TokenUsage,
 };
+use hydra_common::api::v1::timeout::Timeout;
 use hydra_common::{ConversationId, IssueId, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,7 +61,10 @@ pub enum SessionMode {
         conversation_id: ConversationId,
         /// Optional worker-side idle timeout override. `None` falls back to
         /// `config.job.interactive_idle_timeout_secs`.
-        idle_timeout_secs: Option<u64>,
+        /// `Some(Timeout::Infinite)` means the worker never arms an idle
+        /// clock for this session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idle_timeout: Option<Timeout>,
         /// Whether the agent should produce a greeting turn before any user
         /// message arrives. Default `false` matches today's interactive
         /// behavior.
@@ -281,11 +285,11 @@ impl From<api::sessions::SessionMode> for SessionMode {
             api::sessions::SessionMode::Headless => SessionMode::Headless,
             api::sessions::SessionMode::Interactive {
                 conversation_id,
-                idle_timeout_secs,
+                idle_timeout,
                 greet_user,
             } => SessionMode::Interactive {
                 conversation_id,
-                idle_timeout_secs,
+                idle_timeout,
                 greet_user,
             },
             _ => unreachable!("unsupported session mode variant"),
@@ -299,11 +303,11 @@ impl From<SessionMode> for api::sessions::SessionMode {
             SessionMode::Headless => api::sessions::SessionMode::Headless,
             SessionMode::Interactive {
                 conversation_id,
-                idle_timeout_secs,
+                idle_timeout,
                 greet_user,
             } => api::sessions::SessionMode::Interactive {
                 conversation_id,
-                idle_timeout_secs,
+                idle_timeout,
                 greet_user,
             },
         }

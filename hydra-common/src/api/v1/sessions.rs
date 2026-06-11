@@ -1,7 +1,7 @@
 use crate::{
     BuildCacheContext, ConversationId, IssueId, RepoName, SessionId, VersionNumber,
     actor_ref::ActorRef,
-    api::v1::agents::AgentName,
+    api::v1::{agents::AgentName, timeout::Timeout},
     task_status::{Status, TaskError},
     users::Username,
 };
@@ -111,8 +111,10 @@ pub enum SessionMode {
         /// applies its configured default (`job.interactive_idle_timeout_secs`)
         /// at handshake time — used when the caller didn't supply a value
         /// and for legacy rows that don't carry one.
+        /// `Some(Timeout::Infinite)` means the worker never arms an idle
+        /// clock for this session.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        idle_timeout_secs: Option<u64>,
+        idle_timeout: Option<Timeout>,
         /// Whether the agent should produce a greeting turn before any user
         /// message arrives. When `true`, the server emits `FirstMessage` with
         /// an empty `user_message` as soon as the worker signals `Ready`,
@@ -622,8 +624,13 @@ pub struct WorkerContext {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_config: Option<McpConfig>,
+    /// Idle timeout for the worker's interactive event loop. `None` is
+    /// only emitted for headless sessions and for interactive sessions
+    /// where the resolved timeout is `Timeout::Infinite` — in both
+    /// cases the worker must not arm an idle clock. `Some(seconds)`
+    /// arms the clock to that many seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_timeout_secs: Option<u64>,
+    pub idle_timeout: Option<Timeout>,
     #[serde(default)]
     pub resolved_env: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -639,7 +646,7 @@ impl WorkerContext {
         working_dir: RelativePath,
         model: Option<String>,
         mcp_config: Option<McpConfig>,
-        idle_timeout_secs: Option<u64>,
+        idle_timeout: Option<Timeout>,
         resolved_env: HashMap<String, String>,
         github_token: Option<String>,
     ) -> Self {
@@ -650,7 +657,7 @@ impl WorkerContext {
             working_dir,
             model,
             mcp_config,
-            idle_timeout_secs,
+            idle_timeout,
             resolved_env,
             github_token,
         }
@@ -1354,7 +1361,7 @@ mod tests {
         let mut session = make_test_session("interactive prompt");
         session.mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: Some(600),
+            idle_timeout: Timeout::seconds(600),
             greet_user: false,
         };
         let summary = SessionSummary::from(&session);
@@ -1483,14 +1490,30 @@ mod tests {
         let conv_id = crate::ConversationId::new();
         let interactive = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: Some(300),
+            idle_timeout: Timeout::seconds(300),
             greet_user: false,
         };
         let i_json = serde_json::to_value(&interactive).unwrap();
         assert_eq!(i_json["type"], "interactive");
         assert_eq!(i_json["conversation_id"], conv_id.as_ref());
-        assert_eq!(i_json["idle_timeout_secs"], 300);
+        assert_eq!(i_json["idle_timeout"]["kind"], "seconds");
+        assert_eq!(i_json["idle_timeout"]["value"], 300);
         let parsed: SessionMode = serde_json::from_value(i_json).unwrap();
+        assert_eq!(parsed, interactive);
+    }
+
+    #[test]
+    fn session_mode_interactive_serializes_infinite_idle_timeout() {
+        let conv_id = crate::ConversationId::new();
+        let interactive = SessionMode::Interactive {
+            conversation_id: conv_id,
+            idle_timeout: Some(Timeout::Infinite),
+            greet_user: false,
+        };
+        let json = serde_json::to_value(&interactive).unwrap();
+        assert_eq!(json["idle_timeout"]["kind"], "infinite");
+        assert!(json["idle_timeout"].get("value").is_none());
+        let parsed: SessionMode = serde_json::from_value(json).unwrap();
         assert_eq!(parsed, interactive);
     }
 
@@ -1561,7 +1584,7 @@ mod tests {
         let request = CreateSessionRequest {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id.clone(),
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {
@@ -1730,15 +1753,28 @@ mod tests {
     #[test]
     fn worker_context_serializes_interactive_mode_kind() {
         let mut ctx = make_test_worker_context(SessionModeKind::Interactive);
-        ctx.idle_timeout_secs = Some(600);
+        ctx.idle_timeout = Timeout::seconds(600);
 
         let json = serde_json::to_value(&ctx).unwrap();
         assert_eq!(json["mode_kind"], "interactive");
-        assert_eq!(json["idle_timeout_secs"], 600);
+        assert_eq!(json["idle_timeout"]["kind"], "seconds");
+        assert_eq!(json["idle_timeout"]["value"], 600);
 
         let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
         assert_eq!(deserialized.mode_kind, SessionModeKind::Interactive);
-        assert_eq!(deserialized.idle_timeout_secs, Some(600));
+        assert_eq!(deserialized.idle_timeout, Timeout::seconds(600));
+    }
+
+    #[test]
+    fn worker_context_serializes_infinite_idle_timeout() {
+        let mut ctx = make_test_worker_context(SessionModeKind::Interactive);
+        ctx.idle_timeout = Some(Timeout::Infinite);
+
+        let json = serde_json::to_value(&ctx).unwrap();
+        assert_eq!(json["idle_timeout"]["kind"], "infinite");
+
+        let deserialized: WorkerContext = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.idle_timeout, Some(Timeout::Infinite));
     }
 
     #[test]
@@ -1999,7 +2035,7 @@ mod tests {
         let conv_id = crate::ConversationId::new();
         let mode = SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: None,
+            idle_timeout: None,
             greet_user: true,
         };
         let json = serde_json::to_value(&mode).unwrap();

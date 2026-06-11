@@ -256,7 +256,7 @@ mod tests {
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             None => SessionMode::Headless,

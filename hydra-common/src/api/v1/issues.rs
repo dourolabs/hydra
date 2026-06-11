@@ -1,6 +1,7 @@
 use super::form::{Form, FormResponse};
 use super::labels::LabelSummary;
 use super::projects::{StatusDefinition, StatusKey};
+use super::timeout::Timeout;
 use super::users::Username;
 pub use crate::IssueId;
 use crate::principal::Principal;
@@ -406,6 +407,13 @@ pub struct SessionSettings {
     pub memory_limit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub secrets: Option<Vec<String>>,
+    /// Per-session idle timeout for interactive sessions. `None` falls
+    /// back to `config.job.interactive_idle_timeout_secs` at handshake
+    /// time. `Some(Timeout::Infinite)` means the worker never times out
+    /// the conversation due to inactivity — useful for statuses backing
+    /// long-running dev-preview sessions.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub idle_timeout: Option<Timeout>,
 }
 
 impl SessionSettings {
@@ -445,6 +453,9 @@ impl SessionSettings {
         }
         if self.secrets.is_none() {
             self.secrets = other.secrets.take();
+        }
+        if self.idle_timeout.is_none() {
+            self.idle_timeout = other.idle_timeout.take();
         }
     }
 }

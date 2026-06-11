@@ -1151,7 +1151,7 @@ mod tests {
         if interactive {
             session.mode = SessionMode::Interactive {
                 conversation_id: ConversationId::new(),
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             };
         }
@@ -1374,6 +1374,7 @@ mod tests {
                         cpu_limit: None,
                         memory_limit: None,
                         secrets: None,
+                        idle_timeout: None,
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -1408,6 +1409,7 @@ mod tests {
                         cpu_limit: None,
                         memory_limit: None,
                         secrets: None,
+                        idle_timeout: None,
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -1508,6 +1510,7 @@ mod tests {
                         cpu_limit: None,
                         memory_limit: None,
                         secrets: None,
+                        idle_timeout: None,
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -2117,6 +2120,7 @@ mod tests {
                         cpu_limit: None,
                         memory_limit: None,
                         secrets: None,
+                        idle_timeout: None,
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -2194,6 +2198,7 @@ mod tests {
                         cpu_limit: None,
                         memory_limit: None,
                         secrets: Some(secrets.clone()),
+                        idle_timeout: None,
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
@@ -2249,6 +2254,7 @@ mod tests {
                         cpu_limit: None,
                         memory_limit: None,
                         secrets: None,
+                        idle_timeout: None,
                     },
                     dependencies: vec![],
                     patches: Vec::new(),

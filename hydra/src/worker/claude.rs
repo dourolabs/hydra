@@ -95,7 +95,10 @@ pub struct Claude {
     env: HashMap<String, String>,
     mcp_config: Option<McpConfig>,
     _mcp_tempdir: Option<TempDir>,
-    idle_timeout: Duration,
+    /// `None` means the interactive event loop never arms an idle
+    /// deadline — used for `Timeout::Infinite` (e.g. long-running
+    /// dev-preview sessions). `Some(d)` arms the clock to `d`.
+    idle_timeout: Option<Duration>,
 }
 
 /// On-disk MCP config written for Claude's `--mcp-config` flag.
@@ -116,7 +119,7 @@ impl Claude {
         home_dir: PathBuf,
         env: HashMap<String, String>,
         mcp_config_json: Option<&str>,
-        idle_timeout: Duration,
+        idle_timeout: Option<Duration>,
     ) -> Result<Self> {
         let has_anthropic_key = env
             .get(ENV_ANTHROPIC_API_KEY)
@@ -517,8 +520,14 @@ impl Claude {
             }
         }
 
+        // `None` means the caller (a `Timeout::Infinite` user, or a
+        // headless dispatch that doesn't use the idle clock) opted out
+        // of the idle deadline entirely. Park the timer on
+        // `Duration::MAX` and disable the branch so it never fires.
         let idle_timeout = self.idle_timeout;
-        let idle_deadline = tokio::time::sleep(idle_timeout);
+        let idle_arming = idle_timeout.is_some();
+        let initial_sleep = idle_timeout.unwrap_or(Duration::MAX);
+        let idle_deadline = tokio::time::sleep(initial_sleep);
         tokio::pin!(idle_deadline);
 
         loop {
@@ -561,9 +570,11 @@ impl Claude {
                 msg = input.recv(), if stdin_open => {
                     match msg {
                         Some(ClaudeUserMessage { content }) => {
-                            idle_deadline
-                                .as_mut()
-                                .reset(tokio::time::Instant::now() + idle_timeout);
+                            if let Some(window) = idle_timeout {
+                                idle_deadline
+                                    .as_mut()
+                                    .reset(tokio::time::Instant::now() + window);
+                            }
                             if let Some(stdin) = stdin_taken.as_mut() {
                                 let input_line = build_claude_input(&content);
                                 if stdin.write_all(input_line.as_bytes()).await.is_err() {
@@ -591,7 +602,7 @@ impl Claude {
                     }
                 }
 
-                _ = &mut idle_deadline => {
+                _ = &mut idle_deadline, if idle_arming => {
                     println!("Interactive idle timeout ({idle_timeout:?}); ending session");
                     stdin_open = false;
                     stdin_taken = None;
@@ -1235,7 +1246,15 @@ mod tests {
         let home = tmp.path().to_path_buf();
         let working_dir = tmp.path().to_path_buf();
         let env: HashMap<String, String> = HashMap::new();
-        let result = Claude::new(None, working_dir, home, env, None, Duration::from_secs(60)).await;
+        let result = Claude::new(
+            None,
+            working_dir,
+            home,
+            env,
+            None,
+            Some(Duration::from_secs(60)),
+        )
+        .await;
         let err = match result {
             Ok(_) => panic!("expected Err"),
             Err(e) => e,
@@ -1259,7 +1278,7 @@ mod tests {
             tmp.path().to_path_buf(),
             env,
             None,
-            Duration::from_secs(60),
+            Some(Duration::from_secs(60)),
         )
         .await;
         assert!(result.is_ok());
@@ -1279,7 +1298,7 @@ mod tests {
             tmp.path().to_path_buf(),
             env,
             None,
-            Duration::from_secs(60),
+            Some(Duration::from_secs(60)),
         )
         .await;
         assert!(result.is_ok());
@@ -1318,7 +1337,7 @@ mod tests {
             home.to_path_buf(),
             env,
             None,
-            Duration::from_secs(60),
+            Some(Duration::from_secs(60)),
         )
         .await
         .unwrap()

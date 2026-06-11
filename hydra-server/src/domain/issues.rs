@@ -2,6 +2,7 @@ use super::users::Username;
 use hydra_common::api::v1 as api;
 use hydra_common::api::v1::form::{Form, FormResponse};
 use hydra_common::api::v1::projects::StatusKey;
+use hydra_common::api::v1::timeout::Timeout;
 use hydra_common::principal::Principal;
 use hydra_common::{IssueId, PatchId, ProjectId, RepoName};
 use serde::{Deserialize, Serialize};
@@ -204,6 +205,12 @@ pub struct SessionSettings {
     pub memory_limit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub secrets: Option<Vec<String>>,
+    /// Per-session idle timeout for interactive sessions. `None` falls
+    /// back to `config.job.interactive_idle_timeout_secs` at handshake
+    /// time. `Some(Timeout::Infinite)` means the worker never times out
+    /// the conversation due to inactivity.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub idle_timeout: Option<Timeout>,
 }
 
 impl SessionSettings {
@@ -243,6 +250,9 @@ impl SessionSettings {
         }
         if self.secrets.is_none() {
             self.secrets = other.secrets.take();
+        }
+        if self.idle_timeout.is_none() {
+            self.idle_timeout = other.idle_timeout.take();
         }
     }
 }
@@ -320,6 +330,7 @@ impl From<api::issues::SessionSettings> for SessionSettings {
             cpu_limit: value.cpu_limit,
             memory_limit: value.memory_limit,
             secrets: value.secrets,
+            idle_timeout: value.idle_timeout,
         }
     }
 }
@@ -336,6 +347,7 @@ impl From<SessionSettings> for api::issues::SessionSettings {
         session_settings.cpu_limit = value.cpu_limit;
         session_settings.memory_limit = value.memory_limit;
         session_settings.secrets = value.secrets;
+        session_settings.idle_timeout = value.idle_timeout;
         session_settings
     }
 }
@@ -432,6 +444,7 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: secrets.clone(),
+            idle_timeout: None,
         };
 
         let api_session_settings: api::issues::SessionSettings = session_settings.clone().into();
@@ -454,6 +467,7 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: Some(vec!["primary-secret".to_string()]),
+            idle_timeout: None,
         };
         let secondary = SessionSettings {
             repo_name: None,
@@ -465,6 +479,7 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: Some(vec!["secondary-secret".to_string()]),
+            idle_timeout: None,
         };
 
         let merged = SessionSettings::merge(primary, secondary);
@@ -484,6 +499,7 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: None,
+            idle_timeout: None,
         };
         let secondary = SessionSettings {
             repo_name: None,
@@ -495,10 +511,65 @@ mod tests {
             cpu_limit: None,
             memory_limit: None,
             secrets: Some(vec!["secondary-secret".to_string()]),
+            idle_timeout: None,
         };
 
         let merged = SessionSettings::merge(primary, secondary);
 
         assert_eq!(merged.secrets, Some(vec!["secondary-secret".to_string()]));
+    }
+
+    /// `SessionSettings::merge` follows the same primary-wins / fill-from-
+    /// secondary contract for `idle_timeout` as it does for every other
+    /// field — the merge logic itself is None-fill, but covering this
+    /// explicitly anchors the issue > status > default precedence the
+    /// merge layer is wired into.
+    #[test]
+    fn session_settings_merge_prefers_primary_idle_timeout() {
+        let infinite = Some(Timeout::Infinite);
+        let sixty = Timeout::seconds(60);
+        let primary = SessionSettings {
+            idle_timeout: infinite,
+            ..Default::default()
+        };
+        let secondary = SessionSettings {
+            idle_timeout: sixty,
+            ..Default::default()
+        };
+        let merged = SessionSettings::merge(primary, secondary);
+        assert_eq!(merged.idle_timeout, infinite);
+    }
+
+    #[test]
+    fn session_settings_merge_fills_idle_timeout_from_secondary() {
+        let primary = SessionSettings::default();
+        let sixty = Timeout::seconds(60);
+        let secondary = SessionSettings {
+            idle_timeout: sixty,
+            ..Default::default()
+        };
+        let merged = SessionSettings::merge(primary, secondary);
+        assert_eq!(merged.idle_timeout, sixty);
+    }
+
+    /// `SessionSettings.idle_timeout` round-trips through serde — both
+    /// `Some(Timeout::Infinite)` and `Some(Timeout::Seconds(_))` survive
+    /// the issue's `job_settings_json` storage shape.
+    #[test]
+    fn session_settings_idle_timeout_round_trips_through_json() {
+        for value in [
+            Some(Timeout::Infinite),
+            Timeout::seconds(600),
+            Timeout::seconds(1),
+            None,
+        ] {
+            let settings = SessionSettings {
+                idle_timeout: value,
+                ..Default::default()
+            };
+            let json = serde_json::to_value(&settings).unwrap();
+            let parsed: SessionSettings = serde_json::from_value(json).unwrap();
+            assert_eq!(parsed.idle_timeout, value);
+        }
     }
 }

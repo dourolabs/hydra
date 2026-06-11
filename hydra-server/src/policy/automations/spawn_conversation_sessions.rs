@@ -267,7 +267,7 @@ async fn spawn_session(
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id: conversation_id.clone(),
-            idle_timeout_secs: None,
+            idle_timeout: conversation_settings.idle_timeout,
             greet_user,
         },
         agent_config: AgentSpec::Named { name: agent_name },
@@ -493,7 +493,7 @@ mod tests {
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             None => SessionMode::Headless,
@@ -1009,7 +1009,7 @@ mod tests {
             None,
             DomainSessionMode::Interactive {
                 conversation_id: conversation_id.clone(),
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             TaskStatus::Complete,

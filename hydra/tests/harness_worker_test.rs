@@ -195,7 +195,7 @@ async fn run_worker_gpt4o_interactive_rejects_before_opening_relay() -> Result<(
     let request = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id,
-            idle_timeout_secs: None,
+            idle_timeout: None,
             greet_user: false,
         },
         agent_config: AgentSpec::Adhoc {

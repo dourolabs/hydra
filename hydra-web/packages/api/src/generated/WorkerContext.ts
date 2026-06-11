@@ -3,6 +3,7 @@ import type { MountItem } from "./MountItem";
 import type { RelativePath } from "./RelativePath";
 import type { SessionId } from "./SessionId";
 import type { SessionModeKind } from "./SessionModeKind";
+import type { Timeout } from "./Timeout";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
@@ -22,7 +23,14 @@ export type WorkerContext = {
   working_dir: RelativePath;
   model?: string | null;
   mcp_config?: JsonValue | null;
-  idle_timeout_secs?: bigint | null;
+  /**
+   * Idle timeout for the worker's interactive event loop. `None` is
+   * only emitted for headless sessions and for interactive sessions
+   * where the resolved timeout is `Timeout::Infinite` — in both
+   * cases the worker must not arm an idle clock. `Some(seconds)`
+   * arms the clock to that many seconds.
+   */
+  idle_timeout?: Timeout | null;
   resolved_env: { [key in string]: string };
   github_token?: string | null;
 };

@@ -1203,7 +1203,7 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
                 // idle-timeout through `session.mode.Interactive`.
                 mode: SessionMode::Interactive {
                     conversation_id: hydra_common::ConversationId::new(),
-                    idle_timeout_secs: None,
+                    idle_timeout: None,
                     greet_user: false,
                 },
                 status: Status::Created,
@@ -1234,7 +1234,136 @@ async fn get_session_context_populates_idle_timeout_from_config() -> anyhow::Res
     assert!(response.status().is_success());
     let body: v1::sessions::WorkerContext = response.json().await?;
     assert_eq!(body.mode_kind, v1::sessions::SessionModeKind::Interactive);
-    assert_eq!(body.idle_timeout_secs, Some(expected_idle_timeout));
+    assert_eq!(
+        body.idle_timeout,
+        v1::timeout::Timeout::seconds(expected_idle_timeout)
+    );
+    Ok(())
+}
+
+/// `SessionMode::Interactive { idle_timeout: Some(Timeout::Seconds(n)) }`
+/// surfaces verbatim on the worker context — no fallback to the
+/// server-configured default — so the worker arms its idle clock to
+/// the per-session value the caller pinned.
+#[tokio::test]
+async fn get_session_context_pins_idle_timeout_to_seconds_when_session_specifies()
+-> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let state = handles.state;
+    let default_image = default_image();
+    let pinned = v1::timeout::Timeout::seconds(60).expect("60 is non-zero");
+    let (job_id, _) = handles
+        .store
+        .add_session(
+            Session {
+                creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
+                image: Some(default_image),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                mode: SessionMode::Interactive {
+                    conversation_id: hydra_common::ConversationId::new(),
+                    idle_timeout: Some(pinned),
+                    greet_user: false,
+                },
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+                usage: None,
+                proxy_targets: Vec::new(),
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: v1::sessions::WorkerContext = response.json().await?;
+    assert_eq!(body.idle_timeout, Some(pinned));
+    Ok(())
+}
+
+/// `SessionMode::Interactive { idle_timeout: Some(Timeout::Infinite) }`
+/// surfaces as `Some(Timeout::Infinite)` on the worker context — NOT
+/// folded back into a default — so the worker honors the explicit
+/// opt-out and never arms its idle clock for this session.
+#[tokio::test]
+async fn get_session_context_preserves_infinite_idle_timeout() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let state = handles.state;
+    let default_image = default_image();
+    let (job_id, _) = handles
+        .store
+        .add_session(
+            Session {
+                creator: Username::from("test-creator"),
+                spawned_from: None,
+                resumed_from: None,
+                agent_config: AgentConfig::default(),
+                mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+                    hydra_common::api::v1::sessions::Bundle::None,
+                    None,
+                ),
+                image: Some(default_image),
+                env_vars: HashMap::new(),
+                cpu_limit: None,
+                memory_limit: None,
+                secrets: None,
+                mode: SessionMode::Interactive {
+                    conversation_id: hydra_common::ConversationId::new(),
+                    idle_timeout: Some(v1::timeout::Timeout::Infinite),
+                    greet_user: false,
+                },
+                status: Status::Created,
+                last_message: None,
+                error: None,
+                deleted: false,
+                creation_time: None,
+                start_time: None,
+                end_time: None,
+                usage: None,
+                proxy_targets: Vec::new(),
+            },
+            Utc::now(),
+            &ActorRef::test(),
+        )
+        .await?;
+    let server = spawn_test_server_with_state(state, handles.store.clone()).await?;
+
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/sessions/{job_id}/context",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body: v1::sessions::WorkerContext = response.json().await?;
+    assert_eq!(body.idle_timeout, Some(v1::timeout::Timeout::Infinite));
     Ok(())
 }
 

@@ -1715,7 +1715,7 @@ mod tests {
             None,
             SessionMode::Interactive {
                 conversation_id: conversation_id.clone(),
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             Status::Running,

@@ -513,9 +513,9 @@ async fn worker_context_includes_configured_idle_timeout() -> anyhow::Result<()>
         hydra_common::sessions::SessionModeKind::Interactive
     );
     assert_eq!(
-        context.idle_timeout_secs,
-        Some(2),
-        "WorkerContext.idle_timeout_secs must surface the configured \
+        context.idle_timeout,
+        hydra_common::api::v1::timeout::Timeout::seconds(2),
+        "WorkerContext.idle_timeout must surface the configured \
          interactive_idle_timeout_secs so the worker idle-timer fires at \
          the test-tuned interval"
     );
@@ -2326,7 +2326,7 @@ async fn create_interactive_session_with_settings(
     let req = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id,
-            idle_timeout_secs: None,
+            idle_timeout: None,
             greet_user,
         },
         agent_config: AgentSpec::Adhoc {
@@ -2625,7 +2625,7 @@ async fn transcript_resume_carries_agent_prompt_from_current_session() -> anyhow
     let resumed_req = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: None,
+            idle_timeout: None,
             greet_user: false,
         },
         agent_config: AgentSpec::Adhoc {
@@ -2717,7 +2717,7 @@ async fn first_message_resumed_interactive_greet_user_true_folds_prior_user_mess
     let resumed_req = CreateSessionRequest {
         mode: SessionMode::Interactive {
             conversation_id: conv_id.clone(),
-            idle_timeout_secs: None,
+            idle_timeout: None,
             greet_user: true,
         },
         agent_config: AgentSpec::Adhoc {
