@@ -19,6 +19,7 @@ import type {
   Principal,
   ProjectRecord,
   StatusDefinition,
+  StatusOnEnter,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
@@ -667,23 +668,48 @@ function StatusForm({
       return null;
     }, [principal]);
 
-  const setAssign = (next: Principal | null) => {
-    const nextForm = onEnter?.attach_form ?? null;
-    if (!next && !nextForm) {
+  const clearAssignee = onEnter?.clear_assignee ?? false;
+  const teardownWork = onEnter?.teardown_work ?? false;
+
+  const patchOnEnter = (updates: Partial<StatusOnEnter>) => {
+    const next: StatusOnEnter = {
+      assign_to: onEnter?.assign_to ?? null,
+      attach_form: onEnter?.attach_form ?? null,
+      clear_assignee: clearAssignee,
+      teardown_work: teardownWork,
+      ...updates,
+    };
+    if (
+      !next.assign_to &&
+      !next.attach_form &&
+      !next.clear_assignee &&
+      !next.teardown_work
+    ) {
       patch({ on_enter: null });
       return;
     }
-    patch({ on_enter: { assign_to: next, attach_form: nextForm } });
+    patch({ on_enter: next });
+  };
+
+  // Picking an assignee enforces the `assign_to` ⊕ `clear_assignee` invariant
+  // (the backend's `StatusOnEnter::validate` rejects both set at once) by
+  // auto-unchecking `clear_assignee`.
+  const setAssign = (next: Principal | null) => {
+    patchOnEnter({ assign_to: next, clear_assignee: next ? false : clearAssignee });
   };
 
   const setAttachForm = (raw: string) => {
-    const nextForm = raw ? (raw as DocumentPath) : null;
-    const nextAssign = onEnter?.assign_to ?? null;
-    if (!nextAssign && !nextForm) {
-      patch({ on_enter: null });
-      return;
-    }
-    patch({ on_enter: { assign_to: nextAssign, attach_form: nextForm } });
+    patchOnEnter({ attach_form: raw ? (raw as DocumentPath) : null });
+  };
+
+  // Symmetric to `setAssign` — checking clears the assignee so the two can
+  // never round-trip as both-set.
+  const setClearAssignee = (next: boolean) => {
+    patchOnEnter({ clear_assignee: next, assign_to: next ? null : principal });
+  };
+
+  const setTeardownWork = (next: boolean) => {
+    patchOnEnter({ teardown_work: next });
   };
 
   return (
@@ -740,6 +766,15 @@ function StatusForm({
             data-testid="status-settings-interactive"
           />
           Interactive
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={draft.suppress_sessions ?? false}
+            onChange={(e) => patch({ suppress_sessions: e.target.checked })}
+            data-testid="status-settings-suppress-sessions"
+          />
+          Suppress sessions
         </label>
       </div>
 
@@ -865,6 +900,30 @@ function StatusForm({
           onChange={(e) => setAttachForm(e.target.value)}
           placeholder="/forms/review.yaml"
         />
+        <div className={styles.flagRow}>
+          <label>
+            <input
+              type="checkbox"
+              checked={clearAssignee}
+              onChange={(e) => setClearAssignee(e.target.checked)}
+              data-testid="status-settings-clear-assignee"
+            />
+            Clear assignee
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={teardownWork}
+              onChange={(e) => setTeardownWork(e.target.checked)}
+              data-testid="status-settings-teardown-work"
+            />
+            Teardown work
+          </label>
+        </div>
+        <span className={styles.helpText}>
+          "Clear assignee" and "Assign to" are mutually exclusive — picking one
+          clears the other.
+        </span>
       </div>
 
       <div className={styles.row}>
