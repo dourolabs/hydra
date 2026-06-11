@@ -131,6 +131,7 @@ const CREATE_DIRECT_FLAG_IDS: &[&str] = &[
     "unblocks_dependents",
     "cascades_to_children",
     "interactive",
+    "suppress_sessions",
     "position",
     "auto_archive_after_seconds",
     "prompt_path",
@@ -150,6 +151,7 @@ const UPDATE_DIRECT_FLAG_IDS: &[&str] = &[
     "unblocks_dependents",
     "cascades_to_children",
     "interactive",
+    "suppress_sessions",
     "position",
     "auto_archive_after_seconds",
     "clear_auto_archive_after_seconds",
@@ -203,6 +205,11 @@ pub struct CreateStatusArgs {
     /// instead of a headless session.
     #[arg(long)]
     pub interactive: bool,
+
+    /// Issues that land in this status do not spawn agent sessions —
+    /// useful for "tracked but inert" terminal-ish statuses.
+    #[arg(long = "suppress-sessions")]
+    pub suppress_sessions: bool,
 
     /// Sort key within the project (smaller = earlier). Defaults to
     /// `0.0` if omitted.
@@ -316,6 +323,15 @@ pub struct UpdateStatusArgs {
         value_parser = BoolishValueParser::new(),
     )]
     pub interactive: Option<bool>,
+
+    /// Set `suppress_sessions`. Explicit value form is required.
+    #[arg(
+        long = "suppress-sessions",
+        value_name = "BOOL",
+        num_args = 1,
+        value_parser = BoolishValueParser::new(),
+    )]
+    pub suppress_sessions: Option<bool>,
 
     /// Set the sort key within the project.
     #[arg(long, value_name = "FLOAT")]
@@ -655,6 +671,7 @@ fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefin
     );
     def.prompt_path = normalize_prompt_path(args.prompt_path.clone());
     def.interactive = args.interactive;
+    def.suppress_sessions = args.suppress_sessions;
     def.auto_archive_after_seconds = args.auto_archive_after_seconds;
     def.position = args.position.unwrap_or(0.0);
     Ok(def)
@@ -677,8 +694,8 @@ async fn build_update_status_definition(
             "no updates specified; use --key, --label, --color, --prompt-path, --position, \
              --auto-archive-after-seconds, --clear-auto-archive-after-seconds, \
              --unblocks-parents=<bool>, --unblocks-dependents=<bool>, \
-             --cascades-to-children=<bool>, --interactive=<bool>, --on-enter-*, \
-             --clear-on-enter, or --body-file"
+             --cascades-to-children=<bool>, --interactive=<bool>, \
+             --suppress-sessions=<bool>, --on-enter-*, --clear-on-enter, or --body-file"
         );
     }
     let current_project = client
@@ -715,6 +732,7 @@ fn update_has_any_direct_flag(args: &UpdateStatusArgs) -> bool {
         || args.unblocks_dependents.is_some()
         || args.cascades_to_children.is_some()
         || args.interactive.is_some()
+        || args.suppress_sessions.is_some()
         || args.position.is_some()
         || args.auto_archive_after_seconds.is_some()
         || args.clear_auto_archive_after_seconds
@@ -755,6 +773,9 @@ fn apply_update_overlay(
     }
     if let Some(v) = args.interactive {
         def.interactive = v;
+    }
+    if let Some(v) = args.suppress_sessions {
+        def.suppress_sessions = v;
     }
     if let Some(v) = args.position {
         def.position = v;
@@ -1155,6 +1176,7 @@ mod tests {
             "--prompt-path",
             "/projects/eng/statuses/inbox.md",
             "--interactive",
+            "--suppress-sessions",
             "--unblocks-parents",
         ])
         .unwrap();
@@ -1166,6 +1188,7 @@ mod tests {
         assert!(!def.unblocks_dependents);
         assert!(!def.cascades_to_children);
         assert!(def.interactive);
+        assert!(def.suppress_sessions);
         assert_eq!(def.position, 1.5);
         assert_eq!(def.auto_archive_after_seconds, Some(120));
         assert_eq!(
@@ -1183,6 +1206,7 @@ mod tests {
         assert_eq!(def.position, 0.0);
         assert!(def.on_enter.is_none());
         assert_eq!(def.auto_archive_after_seconds, None);
+        assert!(!def.suppress_sessions);
     }
 
     #[test]
@@ -1367,6 +1391,37 @@ mod tests {
         assert_eq!(args.unblocks_parents, Some(false));
     }
 
+    #[test]
+    fn update_suppress_sessions_parses_explicit_value() {
+        let args = parse_update(&["--suppress-sessions=true"]).unwrap();
+        assert_eq!(args.suppress_sessions, Some(true));
+        let args = parse_update(&["--suppress-sessions=false"]).unwrap();
+        assert_eq!(args.suppress_sessions, Some(false));
+    }
+
+    #[test]
+    fn update_suppress_sessions_bare_form_rejected() {
+        let err = parse_update_failure(&["--suppress-sessions"]);
+        let kind = err.kind();
+        assert!(
+            matches!(
+                kind,
+                clap::error::ErrorKind::InvalidValue
+                    | clap::error::ErrorKind::MissingRequiredArgument
+                    | clap::error::ErrorKind::ValueValidation
+                    | clap::error::ErrorKind::WrongNumberOfValues
+                    | clap::error::ErrorKind::UnknownArgument
+            ),
+            "expected value-required error, got: {kind:?}",
+        );
+    }
+
+    #[test]
+    fn update_suppress_sessions_alone_does_not_trigger_no_updates_bail() {
+        let args = parse_update(&["--suppress-sessions=true"]).unwrap();
+        assert!(update_has_any_direct_flag(&args));
+    }
+
     /// Sync mirror of `build_update_status_definition` for use in unit
     /// tests: skips the server fetch, exercising only the overlay /
     /// validation paths.
@@ -1434,6 +1489,24 @@ mod tests {
         let def = build_update_status_definition_sync(&args).unwrap();
         assert!(def.unblocks_parents);
         assert!(!def.cascades_to_children);
+    }
+
+    #[test]
+    fn update_overlay_suppress_sessions_flips_existing_value() {
+        let mut base = current_status_with_on_enter();
+        base.suppress_sessions = true;
+        let args = parse_update(&["--suppress-sessions=false"]).unwrap();
+        let def = apply_update_overlay(&args, base).unwrap();
+        assert!(!def.suppress_sessions);
+    }
+
+    #[test]
+    fn update_overlay_suppress_sessions_preserved_when_flag_absent() {
+        let mut base = current_status_with_on_enter();
+        base.suppress_sessions = true;
+        let args = parse_update(&["--label", "Refreshed"]).unwrap();
+        let def = apply_update_overlay(&args, base).unwrap();
+        assert!(def.suppress_sessions);
     }
 
     #[test]
