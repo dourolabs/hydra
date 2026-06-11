@@ -9,8 +9,8 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use hydra_common::{
-    api::v1::sessions::SessionModeKind,
-    constants::{DEFAULT_CONVERSATION_TIMEOUT_SECS, ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
+    api::v1::{sessions::SessionModeKind, timeout::Timeout},
+    constants::{ENV_HYDRA_DOCUMENTS_DIR, ENV_HYDRA_ISSUE_ID},
     session_status::{SessionStatusUpdate, SetSessionStatusResponse},
     sessions::{MountSpec, WorkerContext},
     SessionId,
@@ -57,7 +57,7 @@ pub async fn run(
         working_dir,
         model,
         mcp_config,
-        idle_timeout_secs,
+        idle_timeout,
         resolved_env,
         github_token,
         ..
@@ -132,8 +132,17 @@ pub async fn run(
         let selector_home_dir = worker_home_dir
             .clone()
             .ok_or_else(|| anyhow!("HOME must be set to construct a model wrapper"))?;
-        let selector_idle_timeout =
-            Duration::from_secs(idle_timeout_secs.unwrap_or(DEFAULT_CONVERSATION_TIMEOUT_SECS));
+        // Translate the server-resolved `Option<Timeout>` into the
+        // worker's `Option<Duration>`:
+        //   - `None`                       → no idle clock (headless, or
+        //     interactive where the server resolved nothing).
+        //   - `Some(Timeout::Seconds(n))`  → arm to `n` seconds.
+        //   - `Some(Timeout::Infinite)`    → no idle clock (the user
+        //     explicitly opted out of inactivity timeouts).
+        let selector_idle_timeout: Option<Duration> = match idle_timeout {
+            None | Some(Timeout::Infinite) => None,
+            Some(Timeout::Seconds { value }) => Some(Duration::from_secs(value.get())),
+        };
 
         let selector_result = ModelSelector::from_context(
             &model,

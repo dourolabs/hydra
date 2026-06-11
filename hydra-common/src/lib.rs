@@ -30,7 +30,7 @@ pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
     agents, analytics, comments, conversations, documents, events, form, issues, labels, login,
     logs, merge_check, merge_queues, patches, projects, relay, repositories, secrets,
-    session_status, sessions, task_status, triggers, users, version, whoami,
+    session_status, sessions, task_status, timeout, triggers, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -254,6 +254,9 @@ mod ts_export {
         crate::form::Action::export_all(&cfg).expect("Action");
         crate::form::Effect::export_all(&cfg).expect("Effect");
         crate::form::FormResponse::export_all(&cfg).expect("FormResponse");
+
+        // API v1: timeout
+        crate::timeout::Timeout::export_all(&cfg).expect("Timeout");
 
         // API v1: session_status
         crate::session_status::SessionStatusUpdate::export_all(&cfg).expect("SessionStatusUpdate");

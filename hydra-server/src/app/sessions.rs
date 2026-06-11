@@ -223,6 +223,7 @@ impl AppState {
                 // before the merge to keep the agent-first ordering.
                 let settings_with_secrets = SessionSettings {
                     secrets: secrets.clone(),
+                    idle_timeout: None,
                     ..SessionSettings::default()
                 };
                 secrets = merge_agent_and_settings_secrets(&agent, &settings_with_secrets);
@@ -1642,7 +1643,7 @@ mod tests {
         let chat_request = CreateSessionRequest {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id,
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {
@@ -1742,7 +1743,7 @@ mod tests {
         let request = CreateSessionRequest {
             mode: SessionMode::Interactive {
                 conversation_id: conv_id.clone(),
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             agent_config: AgentSpec::Adhoc {

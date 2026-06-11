@@ -84,7 +84,7 @@ impl ModelSelector {
         home_dir: PathBuf,
         env: HashMap<String, String>,
         mcp_config_json: Option<&str>,
-        idle_timeout: Duration,
+        idle_timeout: Option<Duration>,
     ) -> Result<Self> {
         let kind = Self::decide_kind(model.as_deref());
         match kind {

@@ -6453,6 +6453,7 @@ mod tests {
                 cpu_limit: Some("2".to_string()),
                 memory_limit: Some("4Gi".to_string()),
                 secrets: Some(vec!["job-secret".to_string()]),
+                idle_timeout: None,
             }),
             dependencies,
             patches,
@@ -9385,7 +9386,7 @@ mod tests {
         let mut task_a = sample_session();
         task_a.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_a.clone(),
-            idle_timeout_secs: None,
+            idle_timeout: None,
             greet_user: false,
         };
         let (task_a_id, _) = handles
@@ -9397,7 +9398,7 @@ mod tests {
         let mut task_b = sample_session();
         task_b.mode = crate::domain::sessions::SessionMode::Interactive {
             conversation_id: conv_b.clone(),
-            idle_timeout_secs: None,
+            idle_timeout: None,
             greet_user: false,
         };
         handles
@@ -9457,6 +9458,7 @@ mod tests {
                 cpu_limit: Some("2".to_string()),
                 memory_limit: Some("4Gi".to_string()),
                 secrets: Some(vec!["conv-secret".to_string()]),
+                idle_timeout: None,
             },
             spawned_from: None,
             deleted: false,
@@ -9749,7 +9751,7 @@ mod tests {
         let mode = match conversation_id {
             Some(cid) => SessionMode::Interactive {
                 conversation_id: cid,
-                idle_timeout_secs: None,
+                idle_timeout: None,
                 greet_user: false,
             },
             None => SessionMode::Headless,
@@ -10526,8 +10528,8 @@ mod tests {
         let mode = mode.expect("mode is non-null");
         assert_eq!(mode["type"], "interactive");
         assert_eq!(mode["conversation_id"], conv_id.as_ref());
-        // `idle_timeout_secs` is omitted when None (server applies default).
-        assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
+        // `idle_timeout` is omitted when None (server applies default).
+        assert!(mode.get("idle_timeout").is_none_or(|v| v.is_null()));
     }
 
     #[sqlx::test(migrations = "./migrations")]

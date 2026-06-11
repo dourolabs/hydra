@@ -7204,6 +7204,7 @@ mod tests {
                 cpu_limit: Some("2".to_string()),
                 memory_limit: Some("4Gi".to_string()),
                 secrets: Some(vec!["job-secret".to_string()]),
+                idle_timeout: None,
             }),
             dependencies,
             patches,
@@ -11817,7 +11818,7 @@ mod tests {
             Some(conv_id) => {
                 session.mode = SessionMode::Interactive {
                     conversation_id: conv_id,
-                    idle_timeout_secs: None,
+                    idle_timeout: None,
                     greet_user: false,
                 };
             }
@@ -12592,8 +12593,8 @@ mod tests {
         let mode = parse_json(row.mode.as_deref().expect("mode is non-null"));
         assert_eq!(mode["type"], "interactive");
         assert_eq!(mode["conversation_id"], conv_id.as_ref());
-        // `idle_timeout_secs` is omitted when None (server applies default).
-        assert!(mode.get("idle_timeout_secs").is_none_or(|v| v.is_null()));
+        // `idle_timeout` is omitted when None (server applies default).
+        assert!(mode.get("idle_timeout").is_none_or(|v| v.is_null()));
     }
 
     #[tokio::test]

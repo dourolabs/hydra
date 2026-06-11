@@ -4,7 +4,10 @@ use crate::{
     routes::sessions::{ApiError, SessionIdPath},
 };
 use axum::{Json, extract::State};
-use hydra_common::{api::v1, constants::ENV_HYDRA_ID};
+use hydra_common::{
+    api::v1::{self, timeout::Timeout},
+    constants::ENV_HYDRA_ID,
+};
 use tracing::{error, info, warn};
 
 pub async fn get_session_context(
@@ -51,17 +54,22 @@ pub async fn get_session_context(
         }
     };
 
-    // Project the mode kind + idle timeout. For interactive sessions, fall
-    // back to the server-configured default when the caller didn't pin a
-    // value at create-time.
-    let (mode_kind, idle_timeout_secs) = match &task.mode {
+    // Project the mode kind + idle timeout. For interactive sessions:
+    //   - `None`                       → fall back to the configured
+    //     default (`config.job.interactive_idle_timeout_secs`).
+    //   - `Some(Timeout::Seconds(n))`  → arm to `n` seconds.
+    //   - `Some(Timeout::Infinite)`    → no idle clock at all
+    //     (the worker must honor by not arming a deadline).
+    let (mode_kind, idle_timeout) = match &task.mode {
         SessionMode::Headless => (v1::sessions::SessionModeKind::Headless, None),
-        SessionMode::Interactive {
-            idle_timeout_secs, ..
-        } => (
-            v1::sessions::SessionModeKind::Interactive,
-            Some(idle_timeout_secs.unwrap_or(state.config.job.interactive_idle_timeout_secs)),
-        ),
+        SessionMode::Interactive { idle_timeout, .. } => {
+            let resolved = match idle_timeout {
+                None => Timeout::seconds(state.config.job.interactive_idle_timeout_secs),
+                Some(Timeout::Seconds { value }) => Some(Timeout::Seconds { value: *value }),
+                Some(Timeout::Infinite) => Some(Timeout::Infinite),
+            };
+            (v1::sessions::SessionModeKind::Interactive, resolved)
+        }
     };
 
     let context = v1::sessions::WorkerContext::new(
@@ -71,7 +79,7 @@ pub async fn get_session_context(
         mount_spec.working_dir,
         task.agent_config.model.clone(),
         task.agent_config.mcp_config.clone(),
-        idle_timeout_secs,
+        idle_timeout,
         env_vars,
         github_token,
     );
