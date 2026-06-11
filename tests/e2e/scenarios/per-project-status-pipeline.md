@@ -69,8 +69,8 @@ All interactions go through the dashboard at `http://localhost:8080` per the sui
 
 ### Step 1 — Pre-check
 
-1. Navigate to `http://localhost:8080/projects/engineering-v2`.
-2. Confirm the Project editor page renders with the seven statuses listed above. If it does not (404, redirect to a "not found" view, or the route is unknown to the router), treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
+1. Navigate to `http://localhost:8080/projects`. Locate the `engineering-v2` row in the list (the project editor renders inline on this page; there is no per-project deep link).
+2. Confirm `engineering-v2` is present and that its inline project editor exposes the seven statuses listed above (open the project's settings affordance if the row is collapsed). If the project is missing from the list or the editor does not render the expected statuses, treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
 
 ### Step 2 — Test bundle A: Status UI surfaces
 

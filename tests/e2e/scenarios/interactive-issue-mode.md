@@ -33,9 +33,9 @@ All dashboard interactions go through `http://localhost:8080` per the suite's co
 
 ### Step 1 — Pre-check
 
-1. Navigate to `http://localhost:8080/projects/engineering-v2`.
-2. Confirm the Project editor page renders with the seven statuses defined in `per-project-status-pipeline.md`'s **Setup**. If it does not (404, redirect, or the project is missing), treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
-3. Confirm `pair-development` is present in the status list. Open its row and confirm the `interactive` toggle is on.
+1. Navigate to `http://localhost:8080/projects`. Locate the `engineering-v2` row in the list (the project editor renders inline on this page; there is no per-project deep link).
+2. Confirm `engineering-v2` is present and that its inline project editor exposes the seven statuses defined in `per-project-status-pipeline.md`'s **Setup** (open the project's settings affordance if the row is collapsed). If the project is missing from the list or the editor does not render the expected statuses, treat this run as **failed** — the runner-side seeding in `tests/e2e/run.sh` should have wired up the project.
+3. Confirm `pair-development` is present in the status list of the inline editor. Open its row and confirm the `interactive` toggle is on.
 4. From `/issues?project_key=engineering-v2`, open the "Create issue" form's status dropdown and confirm `pair-development` is listed.
 
 ### Step 2 — Test bundle A: Interactive spawn and greet-user
