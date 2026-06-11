@@ -179,6 +179,9 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_statuses_suppress_sessions_defaults_to_false(&pool).await?;
     add_statuses_suppress_sessions_migration_is_idempotent(&pool).await?;
 
+    create_issue_comments_schema_invariants(&pool).await?;
+    create_issue_comments_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -1098,6 +1101,103 @@ async fn add_statuses_suppress_sessions_migration_is_idempotent(pool: &SqlitePoo
         if before_val != after_val {
             bail!("suppress_sessions changed across rerun: {before_val} -> {after_val}");
         }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260711000000_create_issue_comments. Creates the `issue_comments` table
+// for the per-issue append-only comments feature. Append-only, no backfill,
+// no FK to `issues_v2`. Sister Postgres migration is part of PR-3.
+// ---------------------------------------------------------------------------
+
+async fn create_issue_comments_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    let table = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'issue_comments'",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("look up sqlite_master for issue_comments table")?;
+    if table.is_none() {
+        bail!("expected `issue_comments` table to exist post-rollforward");
+    }
+
+    for (column, nullable) in [
+        ("issue_id", false),
+        ("sequence", false),
+        ("body", false),
+        ("actor", false),
+        ("created_at", false),
+    ] {
+        if !column_exists(pool, "issue_comments", column).await? {
+            bail!("expected `issue_comments.{column}` column to exist post-rollforward");
+        }
+        if column_is_nullable(pool, "issue_comments", column).await? != nullable {
+            bail!(
+                "expected `issue_comments.{column}` nullable={nullable}; got {}",
+                !nullable
+            );
+        }
+    }
+
+    // PK is (issue_id, sequence) — pragma_table_info exposes the `pk`
+    // column with the 1-based PK ordinal of each member (0 for non-PK).
+    let pk_rows = sqlx::query("SELECT name, pk FROM pragma_table_info('issue_comments')")
+        .fetch_all(pool)
+        .await
+        .context("pragma_table_info(issue_comments) for PK shape")?;
+    let mut pk: Vec<(i64, String)> = pk_rows
+        .iter()
+        .filter_map(|r| {
+            let name: String = r.try_get("name").ok()?;
+            let pk_pos: i64 = r.try_get("pk").ok()?;
+            (pk_pos > 0).then_some((pk_pos, name))
+        })
+        .collect();
+    pk.sort_by_key(|(pos, _)| *pos);
+    let pk_names: Vec<String> = pk.into_iter().map(|(_, n)| n).collect();
+    if pk_names != ["issue_id".to_string(), "sequence".to_string()] {
+        bail!("expected issue_comments PK to be (issue_id, sequence); got {pk_names:?}");
+    }
+
+    // `created_at` declared default must be the SQLite strftime
+    // expression; pragma_table_info wraps the body in parentheses.
+    let row = sqlx::query(
+        "SELECT dflt_value FROM pragma_table_info('issue_comments') WHERE name = 'created_at'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read pragma_table_info default for issue_comments.created_at")?;
+    let default_text: Option<String> = row.try_get(0)?;
+    let default_text = default_text
+        .ok_or_else(|| anyhow::anyhow!("issue_comments.created_at has no declared default"))?;
+    if !default_text.contains("strftime") {
+        bail!("expected issue_comments.created_at default to use strftime; got {default_text:?}");
+    }
+
+    if !index_exists(pool, "issue_comments_issue_seq_desc_idx").await? {
+        bail!("expected `issue_comments_issue_seq_desc_idx` index to exist post-rollforward");
+    }
+
+    Ok(())
+}
+
+async fn create_issue_comments_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM issue_comments")
+        .fetch_one(pool)
+        .await
+        .context("count issue_comments before idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm create_issue_comments idempotency")?;
+    let count_after: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM issue_comments")
+        .fetch_one(pool)
+        .await
+        .context("count issue_comments after idempotency rerun")?;
+    if count_before != count_after {
+        bail!(
+            "issue_comments row count changed across idempotency rerun: {count_before} -> {count_after}"
+        );
     }
     Ok(())
 }
