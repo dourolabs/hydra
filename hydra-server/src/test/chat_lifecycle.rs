@@ -2671,6 +2671,91 @@ async fn transcript_resume_carries_agent_prompt_from_current_session() -> anyhow
     Ok(())
 }
 
+/// (f) Resumed interactive with `greet_user = true` — the greet branch
+/// must NOT fire on resume. Before the fix, `handle_ready` blanked
+/// `agent_prompt` for resumed sessions and then entered the
+/// `greet_user` branch which forced `user_message = ""`, so the worker
+/// saw `FirstMessage { "", "" }` and reported an empty first user
+/// message. The relay must fall through to the fold-first-user-message
+/// path so the prior session's first UserMessage is carried over.
+#[tokio::test]
+async fn first_message_resumed_interactive_greet_user_true_folds_prior_user_message()
+-> anyhow::Result<()> {
+    use crate::domain::users::Username;
+    use hydra_common::api::v1::sessions::{
+        AgentSpec, CreateSessionRequest, MountSpec, SessionMode,
+    };
+
+    let (state, store) = state_with_idle_timeout_secs(60);
+    let server = spawn_test_server_with_state(state.clone(), store.clone()).await?;
+
+    // Prior interactive session with `greet_user = true` and a stored
+    // UserMessage that the resumed session should pick up.
+    let prior_session_id =
+        create_interactive_session_with_settings(&state, &store, "prior prompt", true).await?;
+    let conv_id = store
+        .get_session(&prior_session_id, false)
+        .await?
+        .item
+        .conversation_id()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("prior session must have a conversation_id"))?;
+    store
+        .append_session_event(
+            &prior_session_id,
+            crate::domain::sessions::SessionEvent::UserMessage {
+                content: "first user turn".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            &ActorRef::test(),
+        )
+        .await?;
+
+    // Resumed session in the same conversation, also with greet_user =
+    // true (matches the policy in `spawn_conversation_sessions.rs`
+    // where `greet_user = spawned_from.is_some()`).
+    let resumed_req = CreateSessionRequest {
+        mode: SessionMode::Interactive {
+            conversation_id: conv_id.clone(),
+            idle_timeout_secs: None,
+            greet_user: true,
+        },
+        agent_config: AgentSpec::Adhoc {
+            system_prompt: "current prompt".to_string(),
+            mcp_config: None,
+        },
+        model: None,
+        mount_spec: MountSpec::default(),
+        image: None,
+        env_vars: std::collections::HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        spawned_from: None,
+        resumed_from: Some(prior_session_id.clone()),
+    };
+    let (resumed_session_id, _) = state
+        .create_session(resumed_req, ActorRef::test(), Username::from("creator"))
+        .await
+        .map_err(|err| anyhow::anyhow!("create_session failed: {err}"))?;
+
+    let mut ws = connect_relay(&server.base_url(), &resumed_session_id).await?;
+    let _ = worker_handshake(&mut ws, WorkerMessage::Fresh).await?;
+    let first = send_ready_and_await_first_message(&mut ws, Duration::from_secs(2)).await?;
+    let (agent_prompt, user_message) =
+        first.ok_or_else(|| anyhow::anyhow!("expected a FirstMessage; got none"))?;
+    assert_eq!(
+        agent_prompt, "",
+        "resumed session's FirstMessage.agent_prompt must be blanked (Transcript carries the prompt)"
+    );
+    assert_eq!(
+        user_message, "first user turn",
+        "resumed session must fold the prior session's first UserMessage in, not take the greet branch"
+    );
+
+    Ok(())
+}
+
 /// First inbound that is not `Fresh` or `Reconnecting` is a protocol error
 /// — the relay closes the WS without entering Phase 2.
 #[tokio::test]
