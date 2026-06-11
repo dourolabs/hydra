@@ -7,12 +7,12 @@
 //! plus error mapping.
 
 use crate::analytics::{
-    compute_cost_per_agent, compute_issues_cycle_time, compute_issues_over_time,
-    compute_issues_per_status_distribution, compute_issues_time_in_status_breakdown,
-    compute_patches_in_flight_over_time, compute_patches_over_time, compute_patches_terminal_mix,
-    compute_patches_time_to_merge, compute_token_usage_over_time, compute_top_issues_by_cost,
-    fetch_issue_histories, fetch_patch_histories, fetch_sessions_with_usage,
-    rank_top_issues_by_cost, resolve_projects_for_histories,
+    PatchesInFlightOverTimeAccumulator, PatchesOverTimeAccumulator, PatchesTerminalMixAccumulator,
+    PatchesTimeToMergeAccumulator, compute_cost_per_agent, compute_issues_cycle_time,
+    compute_issues_over_time, compute_issues_per_status_distribution,
+    compute_issues_time_in_status_breakdown, compute_token_usage_over_time,
+    compute_top_issues_by_cost, fetch_issue_histories, fetch_sessions_with_usage,
+    for_each_patch_history, rank_top_issues_by_cost, resolve_projects_for_histories,
 };
 use crate::app::AppState;
 use crate::app::projects::{ResolveStatusError, project_cached};
@@ -65,11 +65,11 @@ pub async fn patches_over_time(
         "analytics.patches_over_time invoked"
     );
     let bucket = validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &query)
+    let mut acc = PatchesOverTimeAccumulator::new(query.from, query.to, bucket);
+    for_each_patch_history(state.store(), &query, |h| acc.fold(h))
         .await
         .map_err(map_store_error)?;
-    let resp = compute_patches_over_time(&histories, query.from, query.to, bucket);
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/throughput/patches/terminal_mix`
@@ -83,11 +83,11 @@ pub async fn patches_terminal_mix(
         "analytics.patches_terminal_mix invoked"
     );
     validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &query)
+    let mut acc = PatchesTerminalMixAccumulator::new(query.from, query.to);
+    for_each_patch_history(state.store(), &query, |h| acc.fold(h))
         .await
         .map_err(map_store_error)?;
-    let resp = compute_patches_terminal_mix(&histories, query.from, query.to);
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/throughput/patches/time_to_merge`
@@ -101,11 +101,11 @@ pub async fn patches_time_to_merge(
         "analytics.patches_time_to_merge invoked"
     );
     validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &query)
+    let mut acc = PatchesTimeToMergeAccumulator::new(query.from, query.to);
+    for_each_patch_history(state.store(), &query, |h| acc.fold(h))
         .await
         .map_err(map_store_error)?;
-    let resp = compute_patches_time_to_merge(&histories, query.from, query.to);
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/throughput/patches/in_flight_over_time`
@@ -120,11 +120,11 @@ pub async fn patches_in_flight_over_time(
         "analytics.patches_in_flight_over_time invoked"
     );
     let bucket = validate_query(&query)?;
-    let histories = fetch_patch_histories(state.store(), &query)
+    let mut acc = PatchesInFlightOverTimeAccumulator::new(query.from, query.to, bucket);
+    for_each_patch_history(state.store(), &query, |h| acc.fold(h))
         .await
         .map_err(map_store_error)?;
-    let resp = compute_patches_in_flight_over_time(&histories, query.from, query.to, bucket);
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 fn validate_issues_query(query: &IssuesThroughputQuery) -> Result<BucketGranularity, ApiError> {
@@ -614,6 +614,61 @@ mod tests {
             .await
             .expect_err("inverted window must 400");
         assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    /// Seed > ANALYTICS_BATCH_SIZE patches and assert the handler's
+    /// totals match a single-batch computation. Forces the batched
+    /// driver to advance the cursor at least once and exercises the
+    /// over_time accumulator across the boundary end-to-end. This is
+    /// the regression bar called out in [[i-rqquesth]].
+    #[tokio::test]
+    async fn patches_over_time_handler_matches_across_batch_boundary() {
+        use crate::analytics::ANALYTICS_BATCH_SIZE;
+        use crate::domain::patches::{Patch, PatchStatus};
+        use crate::domain::users::Username;
+        use hydra_common::ActorRef as CommonActorRef;
+        use hydra_common::RepoName;
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+        let repo_a = RepoName::new("dourolabs", "hydra").expect("repo name");
+
+        let total = (ANALYTICS_BATCH_SIZE + 25) as usize;
+        for _ in 0..total {
+            let p = Patch::new(
+                "title".to_string(),
+                "desc".to_string(),
+                "diff".to_string(),
+                PatchStatus::Open,
+                false,
+                Username::from("alice"),
+                Vec::new(),
+                repo_a.clone(),
+                None,
+                None,
+                None,
+                None,
+            );
+            store.add_patch(p, &actor).await.expect("add patch");
+        }
+
+        // Window starts well before "now" and extends past it so every
+        // created-now patch lands in the final bucket.
+        let from = dt("2020-01-01T00:00:00Z");
+        let to = dt("2100-01-01T00:00:00Z");
+        let q = PatchesThroughputQuery::new(from, to);
+        let resp = patches_over_time(State(handles.state), Query(q))
+            .await
+            .expect("handler ok")
+            .0;
+        let total_created: u64 = resp.buckets.iter().map(|b| b.created).sum();
+        assert_eq!(
+            total_created, total as u64,
+            "every seeded patch must show up exactly once across the batched sweep"
+        );
+        let total_merged: u64 = resp.buckets.iter().map(|b| b.merged).sum();
+        assert_eq!(total_merged, 0);
     }
 
     #[tokio::test]
