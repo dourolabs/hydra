@@ -40,7 +40,9 @@ const DETAIL_CASES: DetailCase[] = [
     // entries and the Related tab can surface real rail rows. This exercises
     // the historically-overflowing four-tab MobileTabBar.
     path: "/issues/i-seed00002",
-    heading: "Migrate authentication to OAuth2",
+    // The detail H1 was removed in favor of the breadcrumb title — no
+    // page-heading readiness signal is available for the issue detail case.
+    heading: "",
     tabs: [
       { tabTestId: "issue-mobile-tab-related", label: "Related" },
       { tabTestId: "issue-mobile-tab-activity", label: "Activity" },

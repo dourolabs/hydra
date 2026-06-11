@@ -181,6 +181,14 @@ export const IconMenu = (p: IconProps) => (
   </IconBase>
 );
 
+export const IconMore = (p: IconProps) => (
+  <IconBase {...p}>
+    <circle cx="3.5" cy="8" r="1" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" />
+    <circle cx="12.5" cy="8" r="1" fill="currentColor" stroke="none" />
+  </IconBase>
+);
+
 export const IconDot = (p: IconProps) => (
   <IconBase {...p}>
     <circle cx="8" cy="8" r="2" fill="currentColor" stroke="none" />

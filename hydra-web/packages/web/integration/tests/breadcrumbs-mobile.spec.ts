@@ -1,7 +1,7 @@
 import { test, expect } from "../fixtures/auth";
 
 // The breadcrumb on an issue detail page renders three crumbs:
-//   Workspace > Issues > <issueId>
+//   Workspace > Issues > <issueTitle>
 // On mobile (≤768px) only the trailing (current) crumb should be visible;
 // on desktop the full trail must stay intact.
 
@@ -15,8 +15,10 @@ test.describe("Breadcrumbs mobile collapse @mobile:breadcrumbs", () => {
     const breadcrumb = page.locator('nav[aria-label="Breadcrumb"]');
     await expect(breadcrumb).toBeVisible();
 
-    // The current crumb (the issue id code-chip) must be visible.
-    await expect(breadcrumb.getByText("i-seed00001")).toBeVisible();
+    // The current crumb (the issue title) must be visible.
+    await expect(
+      breadcrumb.getByText("Platform v2.0 Migration"),
+    ).toBeVisible();
 
     // Ancestor links are present in the DOM but collapsed via display:none.
     await expect(breadcrumb.getByRole("link", { name: "Workspace" })).toBeHidden();
@@ -41,6 +43,8 @@ test.describe("Breadcrumbs mobile collapse @mobile:breadcrumbs", () => {
 
     await expect(breadcrumb.getByRole("link", { name: "Workspace" })).toBeVisible();
     await expect(breadcrumb.getByRole("link", { name: "Issues" })).toBeVisible();
-    await expect(breadcrumb.getByText("i-seed00001")).toBeVisible();
+    await expect(
+      breadcrumb.getByText("Platform v2.0 Migration"),
+    ).toBeVisible();
   });
 });

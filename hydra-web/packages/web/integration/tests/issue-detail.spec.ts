@@ -6,12 +6,15 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
   }) => {
     await page.goto("/issues/i-seed00002");
     // i-seed00002: "Migrate authentication to OAuth2"
-    // Breadcrumb shows the issue ID as the trailing crumb; the title is the page heading.
+    // The title now lives in the breadcrumb (replacing the bare issue id); the
+    // id chip stays visible inside the detail body's title row.
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00002")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Migrate authentication to OAuth2",
+      ),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Migrate authentication to OAuth2" })
+      page.getByRole("main").getByText("i-seed00002", { exact: true }),
     ).toBeVisible();
   });
 
@@ -124,9 +127,11 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
     await expect(modal).not.toBeVisible();
 
     // The issue detail page should still be showing — breadcrumb's trailing
-    // crumb is the issue ID.
+    // crumb is the issue title.
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00005")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Database schema migration for v2.0",
+      ),
     ).toBeVisible();
   });
 

@@ -61,12 +61,15 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     authenticatedPage: page,
   }) => {
     await page.goto("/issues/i-seed00001");
-    // Breadcrumb's trailing crumb is the issue ID; the title is the page heading.
+    // Breadcrumb's trailing crumb is the issue title; the id chip stays
+    // visible in the detail body's title row.
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText("i-seed00001")
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Platform v2.0 Migration",
+      ),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Platform v2.0 Migration" })
+      page.getByRole("main").getByText("i-seed00001", { exact: true }),
     ).toBeVisible();
   });
 
@@ -74,13 +77,15 @@ test.describe("Navigation @nav:sidebar @nav:deep-link @nav:back-button @nav:side
     authenticatedPage: page,
   }) => {
     await page.goto("/patches/p-seed00001");
+    // Breadcrumb shows the patch title; the id chip is rendered inside the
+    // detail body's title row.
     await expect(
-      page.getByRole("heading", { name: "Add OAuth2 provider integration" })
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Add OAuth2 provider integration",
+      ),
     ).toBeVisible();
-    // patch_id is rendered in the title block; no Metadata tab anymore.
-    // Scope to <main> since the breadcrumb also shows the patch ID.
     await expect(
-      page.getByRole("main").getByText("p-seed00001", { exact: true })
+      page.getByRole("main").getByText("p-seed00001", { exact: true }),
     ).toBeVisible();
   });
 

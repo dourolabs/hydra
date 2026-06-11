@@ -23,9 +23,11 @@ test.describe("Mobile Issue Detail overflow @mobile:issue-detail-overflow", () =
     // path.
     await page.goto("/issues/i-seed00002");
 
-    // Wait for the heading so the page has fully laid out.
+    // Wait for the breadcrumb title so the page has fully laid out.
     await expect(
-      page.getByRole("heading", { name: "Migrate authentication to OAuth2" }),
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Migrate authentication to OAuth2",
+      ),
     ).toBeVisible();
 
     // Acceptance criterion 1: no horizontal overflow on the document.

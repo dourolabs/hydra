@@ -33,7 +33,7 @@ export function PatchDetailPage() {
     ];
   }
 
-  useBreadcrumbs(breadcrumbItems, patchId ?? "", "code");
+  useBreadcrumbs(breadcrumbItems, record?.patch.title || patchId || "");
 
   return (
     <div className={styles.page}>

@@ -30,14 +30,16 @@ test.describe("Issue Detail page for archived issues @issues:view-detail-archive
 
     await page.goto(`/issues/${TARGET_ISSUE}`);
 
-    // The detail page renders normally: the seeded title is the page heading
-    // and the breadcrumb tail is the issue id (rather than a 404 / empty
-    // shell).
+    // The detail page renders normally: the seeded title is now the breadcrumb
+    // tail (replacing the bare id) and the id chip stays visible inside the
+    // detail body's title row (rather than a 404 / empty shell).
     await expect(
-      page.getByRole("heading", { name: "Implement OAuth2 token refresh logic" }),
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Implement OAuth2 token refresh logic",
+      ),
     ).toBeVisible();
     await expect(
-      page.locator('nav[aria-label="Breadcrumb"]').getByText(TARGET_ISSUE),
+      page.getByRole("main").getByText(TARGET_ISSUE, { exact: true }),
     ).toBeVisible();
 
     // The Archived badge appears in the title row.
@@ -60,7 +62,9 @@ test.describe("Issue Detail page for archived issues @issues:view-detail-archive
     await page.goto("/issues/i-seed00002");
 
     await expect(
-      page.getByRole("heading", { name: "Migrate authentication to OAuth2" }),
+      page.locator('nav[aria-label="Breadcrumb"]').getByText(
+        "Migrate authentication to OAuth2",
+      ),
     ).toBeVisible();
     await expect(page.getByTestId("issue-archived-badge")).toHaveCount(0);
   });
