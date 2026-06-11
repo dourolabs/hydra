@@ -964,8 +964,11 @@ mod tests {
         // Mix creates / merges / closes spread across the window so each
         // aggregator gets non-trivial input and the cursor advances ≥ once.
         let total = (ANALYTICS_BATCH_SIZE + 50) as usize;
-        let from = dt("2026-05-10T00:00:00Z");
-        let to = dt("2026-05-20T00:00:00Z");
+        // Window must straddle `Utc::now()` so every seeded patch
+        // (timestamped at add time) lands inside it; otherwise the
+        // cross-batch equality checks degenerate to empty == empty.
+        let from = dt("2020-01-01T00:00:00Z");
+        let to = dt("2100-01-01T00:00:00Z");
         for i in 0..total {
             let mut p = patch_with_status(PatchStatus::Open, "alice", repo_a.clone(), false);
             let (id, _) = store.add_patch(p.clone(), &actor).await.expect("add patch");
