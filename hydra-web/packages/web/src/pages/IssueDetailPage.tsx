@@ -29,7 +29,7 @@ export function IssueDetailPage() {
     { label: "Issues", to: issuesReturnUrl },
   ];
 
-  useBreadcrumbs(breadcrumbItems, record?.issue.title || issueId || "");
+  useBreadcrumbs(breadcrumbItems, record?.issue.title ?? "");
 
   return (
     <div className={styles.page}>

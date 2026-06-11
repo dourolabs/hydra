@@ -40,9 +40,13 @@ export function Breadcrumbs({ items, current, currentKind }: BreadcrumbsProps) {
         </Fragment>
       ))}
       {items.length > 0 && <Separator />}
-      <span className={currentKind === "code" ? styles.currentCode : styles.current}>
-        {current}
-      </span>
+      {current === "" ? (
+        <span className={styles.currentSkeleton} aria-hidden="true" />
+      ) : (
+        <span className={currentKind === "code" ? styles.currentCode : styles.current}>
+          {current}
+        </span>
+      )}
     </nav>
   );
 }
