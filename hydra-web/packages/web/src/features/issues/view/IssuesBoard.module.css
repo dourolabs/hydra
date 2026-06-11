@@ -320,6 +320,7 @@
 }
 
 .card {
+  position: relative;
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
@@ -406,6 +407,54 @@
 
 .cardFootSpacer {
   flex: 1;
+}
+
+/* Floating "Join / Resume conversation" affordance — chat icon docked to the
+   top-right corner of a board card, revealed on card hover or keyboard focus.
+   Matches the issue-detail header's .openConversation accent-colored pattern.
+   `pointer-events: none` while hidden so the invisible button can't be tapped
+   on touch devices (no `:hover`), which would otherwise silently navigate. */
+.cardChatButton {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: var(--acc-soft);
+  border: 1px solid var(--acc);
+  border-radius: var(--radius-sm);
+  color: var(--acc);
+  text-decoration: none;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--tx-fast),
+    background var(--tx-fast),
+    border-color var(--tx-fast),
+    color var(--tx-fast);
+  z-index: 1;
+}
+
+.card:hover .cardChatButton,
+.card:focus-within .cardChatButton {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cardChatButton:hover {
+  background: var(--acc);
+  border-color: var(--acc-bright);
+  color: var(--acc-fg-on);
+}
+
+.cardChatButton:focus-visible {
+  outline: 1px solid var(--acc);
+  outline-offset: 1px;
 }
 
 .colEmpty {

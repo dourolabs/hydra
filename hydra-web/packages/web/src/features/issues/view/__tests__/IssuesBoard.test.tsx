@@ -44,6 +44,10 @@ vi.mock("../../../dashboard/usePageIssueTrees", () => ({
   }),
 }));
 
+vi.mock("../../../chat/useActiveConversationsByIssue", () => ({
+  useActiveConversationsByIssue: () => new Map(),
+}));
+
 // Capture the DnD onDragEnd handlers so tests can synthesize drops without
 // driving a real pointer/keyboard event flow. Mocking out the dnd-kit
 // runtime here also keeps `useSortable` from requiring a real DOM measurer.

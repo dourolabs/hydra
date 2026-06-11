@@ -1,6 +1,8 @@
 import { useSortable } from "@dnd-kit/sortable";
+import { Link } from "react-router-dom";
 import { Avatar, FlowPill, Icons, TypeChip } from "@hydra/ui";
 import type {
+  ConversationSummary,
   ProjectRecord,
   SessionSummaryRecord,
   StatusDefinition,
@@ -48,6 +50,7 @@ export interface BoardColumnProps {
   cell: BoardCellQuery | undefined;
   neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
+  conversationsByIssue: Map<string, ConversationSummary>;
   hideIssues: boolean;
   onCardClick: (id: string) => void;
   onGearClick: (
@@ -105,6 +108,7 @@ function BoardColumn({
   cell,
   neighborhoodMap,
   sessionsByIssue,
+  conversationsByIssue,
   hideIssues,
   onCardClick,
   onGearClick,
@@ -224,6 +228,7 @@ function BoardColumn({
           const issue = rec.issue;
           const id = rec.issue_id;
           const pill = computeFlowPillState(neighborhoodMap.get(id));
+          const conversation = conversationsByIssue.get(id);
           const archived = issue.deleted === true;
           const cardClass = archived
             ? `${styles.card} ${styles.cardArchived}`
@@ -253,6 +258,27 @@ function BoardColumn({
               data-testid={`board-card-${id}`}
               data-archived={archived ? "true" : undefined}
             >
+              {conversation && (
+                <Link
+                  to={`/chat/${conversation.conversation_id}`}
+                  className={styles.cardChatButton}
+                  title={
+                    conversation.status === "idle"
+                      ? "Resume conversation"
+                      : "Join conversation"
+                  }
+                  aria-label={
+                    conversation.status === "idle"
+                      ? "Resume conversation"
+                      : "Join conversation"
+                  }
+                  onClick={(e) => e.stopPropagation()}
+                  data-conversation-status={conversation.status}
+                  data-testid={`board-card-conversation-${id}`}
+                >
+                  <Icons.IconChat size={14} />
+                </Link>
+              )}
               {(archived || (issue.type && issue.type !== "unknown")) && (
                 <div className={styles.cardHead}>
                   {issue.type && issue.type !== "unknown" && (

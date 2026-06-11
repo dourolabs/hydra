@@ -46,6 +46,7 @@ import {
   type IssueFilters,
 } from "../usePaginatedIssues";
 import { usePageIssueTrees } from "../../dashboard/usePageIssueTrees";
+import { useActiveConversationsByIssue } from "../../chat/useActiveConversationsByIssue";
 import { useProjectCollapseState } from "./useProjectCollapseState";
 import {
   ProjectDragPreview,
@@ -183,6 +184,12 @@ export function IssuesBoard({
   const { neighborhoodMap, sessionsByIssue } = usePageIssueTrees(
     hideIssues ? [] : boardIssuesUnion,
   );
+
+  const boardIssueIds = useMemo(
+    () => (hideIssues ? [] : boardIssuesUnion.map((r) => r.issue_id)),
+    [hideIssues, boardIssuesUnion],
+  );
+  const conversationsByIssue = useActiveConversationsByIssue(boardIssueIds);
 
   const projectRecordById = useMemo(() => {
     const map = new Map<string, ProjectRecord>();
@@ -524,6 +531,7 @@ export function IssuesBoard({
       projectIssueCount,
       neighborhoodMap,
       sessionsByIssue,
+      conversationsByIssue,
       hideIssues,
       collapsed: isCollapsed(project.project_id),
       onToggleCollapsed: onToggleCollapse,

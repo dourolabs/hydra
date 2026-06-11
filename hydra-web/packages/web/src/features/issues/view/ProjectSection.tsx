@@ -18,6 +18,7 @@ import {
 } from "@dnd-kit/sortable";
 import { Icons } from "@hydra/ui";
 import type {
+  ConversationSummary,
   ListProjectsResponse,
   ProjectId,
   ProjectRecord,
@@ -50,6 +51,7 @@ export interface ProjectSectionProps {
   projectIssueCount: number;
   neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
+  conversationsByIssue: Map<string, ConversationSummary>;
   hideIssues: boolean;
   collapsed: boolean;
   onToggleCollapsed: (projectId: string) => void;
@@ -138,6 +140,7 @@ export function ProjectSection({
   projectIssueCount,
   neighborhoodMap,
   sessionsByIssue,
+  conversationsByIssue,
   hideIssues,
   collapsed,
   onToggleCollapsed,
@@ -250,6 +253,7 @@ export function ProjectSection({
         cell={cell}
         neighborhoodMap={neighborhoodMap}
         sessionsByIssue={sessionsByIssue}
+        conversationsByIssue={conversationsByIssue}
         hideIssues={hideIssues}
         onCardClick={onCardClick}
         onGearClick={onGearClick}
