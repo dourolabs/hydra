@@ -3,11 +3,13 @@
 //! The three compute functions are pure; they take pre-fetched
 //! `(SessionId, Session)` rows whose `usage`/`end_time` have already
 //! been narrowed to the requested window, and produce the wire
-//! responses. The `fetch_sessions_with_usage` helper walks the
-//! `list_sessions` primitive and applies the in-process narrowing —
-//! `repo_name` resolves through each session's spawning issue's
-//! `session_settings`, matching the throughput-handler precedent.
+//! responses. The [`for_each_session_with_usage`] helper walks the
+//! `list_sessions` primitive in cursor-paged batches and applies the
+//! in-process narrowing — `repo_name` resolves through each session's
+//! spawning issue's `session_settings`, matching the throughput-handler
+//! precedent.
 
+use super::ANALYTICS_BATCH_SIZE;
 use super::buckets::{bucket_starts, step};
 use super::pricing::cost_usd;
 use crate::domain::sessions::Session;
@@ -18,6 +20,7 @@ use hydra_common::api::v1::analytics::{
     AgentCost, AgentSessionCost, BucketGranularity, IssueCost, TokenUsageCostPerAgentResponse,
     TokenUsageOverTimeBucket, TokenUsageOverTimeResponse, TokenUsageTopIssuesByCostResponse,
 };
+use hydra_common::api::v1::pagination::compute_next_cursor;
 use hydra_common::api::v1::sessions::{SearchSessionsQuery, TokenUsage};
 use hydra_common::{IssueId, SessionId};
 use std::collections::HashMap;
@@ -36,7 +39,7 @@ pub struct SessionWithUsage {
 }
 
 impl SessionWithUsage {
-    /// Caller guarantees `Some(_)` (filtered in `fetch_sessions_with_usage`).
+    /// Caller guarantees `Some(_)` (filtered in `for_each_session_with_usage`).
     fn usage(&self) -> &TokenUsage {
         self.session
             .usage
@@ -44,7 +47,7 @@ impl SessionWithUsage {
             .expect("SessionWithUsage requires Session.usage = Some(_)")
     }
 
-    /// Caller guarantees `Some(_)` (filtered in `fetch_sessions_with_usage`).
+    /// Caller guarantees `Some(_)` (filtered in `for_each_session_with_usage`).
     fn end_time(&self) -> DateTime<Utc> {
         self.session
             .end_time
@@ -56,123 +59,168 @@ impl SessionWithUsage {
     }
 }
 
-/// Fetch sessions with `Some(TokenUsage)` whose `end_time` lands inside
-/// `[from, to)`, narrowed by the optional `creator` (matched against
-/// `Session.creator` — `creator` on `SearchSessionsQuery` does the same
-/// thing store-side) and optional `repo_name` (which lives on the
-/// spawning issue's `session_settings`, so we resolve it per session).
+/// Stream the sessions with `Some(TokenUsage)` whose `end_time` lands
+/// inside `[from, to)` through `visit`, one [`SessionWithUsage`] at a
+/// time. The implementation walks [`ReadOnlyStore::list_sessions`] in
+/// [`ANALYTICS_BATCH_SIZE`]-sized cursor-paged batches so peak memory
+/// is bounded by one page of sessions plus the `issue_repo_cache`
+/// resolved-state map — not the full dataset.
+///
+/// In-process filters applied per row:
+/// - `usage.is_some()` and `end_time.is_some()` (skip rows missing either),
+/// - `end_time` in `[from, to)`,
+/// - optional `repo_name` — resolved through each session's
+///   `spawned_from` issue's `session_settings.repo_name`.
 ///
 /// Sessions without `spawned_from` are dropped when a `repo_name`
 /// filter is active — there's no issue to read the repo off of. With
 /// no `repo_name` filter, those sessions stay in the result.
 ///
 /// Deleted issues / lookup failures count as "doesn't match"; we log
-/// and skip rather than 500.
-pub async fn fetch_sessions_with_usage(
+/// and skip rather than 500. The cache carries across pages so a given
+/// issue's repo lookup costs at most one round-trip per request.
+pub async fn for_each_session_with_usage<F>(
     store: &dyn ReadOnlyStore,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     repo_name: Option<&str>,
     creator: Option<&str>,
-) -> Result<Vec<SessionWithUsage>, StoreError> {
+    mut visit: F,
+) -> Result<(), StoreError>
+where
+    F: FnMut(&SessionWithUsage),
+{
     let mut search = SearchSessionsQuery::default();
     search.creator = creator.map(|s| s.to_string());
+    search.limit = Some(ANALYTICS_BATCH_SIZE);
 
-    let sessions = store.list_sessions(&search).await?;
-    let mut out = Vec::with_capacity(sessions.len());
     let mut issue_repo_cache: HashMap<IssueId, Option<String>> = HashMap::new();
+    let mut cursor: Option<String> = None;
 
-    for (session_id, versioned) in sessions {
-        let session = versioned.item;
-        if session.usage.is_none() {
-            continue;
+    loop {
+        search.cursor = cursor.clone();
+        let mut page = store.list_sessions(&search).await?;
+        if page.is_empty() {
+            return Ok(());
         }
-        let Some(end_time) = session.end_time else {
-            continue;
-        };
-        if end_time < from || end_time >= to {
-            continue;
-        }
+        // `list_sessions` returns up to `limit + 1` rows; `compute_next_cursor`
+        // truncates the extra and returns the cursor that resumes the next
+        // page, or `None` when the page is the tail.
+        let next_cursor = compute_next_cursor(
+            &mut page,
+            Some(ANALYTICS_BATCH_SIZE),
+            |(_id, v)| &v.timestamp,
+            |(id, _v)| id.as_ref(),
+        );
 
-        if let Some(expected_repo) = repo_name {
-            let Some(issue_id) = session.spawned_from.as_ref() else {
+        for (session_id, versioned) in page {
+            let session = versioned.item;
+            if session.usage.is_none() {
+                continue;
+            }
+            let Some(end_time) = session.end_time else {
                 continue;
             };
-            let cached = match issue_repo_cache.get(issue_id) {
-                Some(v) => v.clone(),
-                None => {
-                    let repo = match store.get_issue(issue_id, false).await {
-                        Ok(versioned) => versioned
-                            .item
-                            .session_settings
-                            .repo_name
-                            .as_ref()
-                            .map(|r| r.to_string()),
-                        Err(err) => {
-                            warn!(
-                                error = %err,
-                                issue_id = %issue_id,
-                                "token_usage: failed to resolve spawning issue for repo filter; skipping session"
-                            );
-                            None
-                        }
-                    };
-                    issue_repo_cache.insert(issue_id.clone(), repo.clone());
-                    repo
-                }
-            };
-            match cached {
-                Some(r) if r == expected_repo => {}
-                _ => continue,
+            if end_time < from || end_time >= to {
+                continue;
             }
-        }
 
-        out.push(SessionWithUsage {
-            session_id,
-            session,
-        });
+            if let Some(expected_repo) = repo_name {
+                let Some(issue_id) = session.spawned_from.as_ref() else {
+                    continue;
+                };
+                let cached = match issue_repo_cache.get(issue_id) {
+                    Some(v) => v.clone(),
+                    None => {
+                        let repo = match store.get_issue(issue_id, false).await {
+                            Ok(versioned) => versioned
+                                .item
+                                .session_settings
+                                .repo_name
+                                .as_ref()
+                                .map(|r| r.to_string()),
+                            Err(err) => {
+                                warn!(
+                                    error = %err,
+                                    issue_id = %issue_id,
+                                    "token_usage: failed to resolve spawning issue for repo filter; skipping session"
+                                );
+                                None
+                            }
+                        };
+                        issue_repo_cache.insert(issue_id.clone(), repo.clone());
+                        repo
+                    }
+                };
+                match cached {
+                    Some(r) if r == expected_repo => {}
+                    _ => continue,
+                }
+            }
+
+            let entry = SessionWithUsage {
+                session_id,
+                session,
+            };
+            visit(&entry);
+        }
+        match next_cursor {
+            Some(c) => cursor = Some(c),
+            None => return Ok(()),
+        }
     }
-    Ok(out)
 }
 
-/// Compute the `token_usage/over_time` series: per bucket, the sum of
-/// every `TokenUsage` field across sessions whose `end_time` lands in
-/// the bucket. Zero buckets are kept so the frontend gets a dense
-/// series.
-pub fn compute_token_usage_over_time(
-    sessions: &[SessionWithUsage],
+/// Streaming accumulator for `token_usage/over_time`. Per bucket, the
+/// sum of every `TokenUsage` field across sessions whose `end_time`
+/// lands in the bucket. Zero buckets are kept so the frontend gets a
+/// dense series. Bucket boundaries are pure functions of `[from, to)`
+/// + granularity, so they're constant across batches.
+pub struct TokenUsageOverTimeAccumulator {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-    bucket: BucketGranularity,
-) -> TokenUsageOverTimeResponse {
-    let starts = bucket_starts(from, to, bucket);
-    if starts.is_empty() {
-        return TokenUsageOverTimeResponse::new(Vec::new());
+    first_start: Option<DateTime<Utc>>,
+    step_secs: i64,
+    buckets: Vec<TokenUsageOverTimeBucket>,
+}
+
+impl TokenUsageOverTimeAccumulator {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>, bucket: BucketGranularity) -> Self {
+        let starts = bucket_starts(from, to, bucket);
+        let first_start = starts.first().copied();
+        let buckets: Vec<TokenUsageOverTimeBucket> = starts
+            .into_iter()
+            .map(|s| TokenUsageOverTimeBucket::new(s, 0, 0, 0, 0))
+            .collect();
+        Self {
+            from,
+            to,
+            first_start,
+            step_secs: step(bucket).num_seconds(),
+            buckets,
+        }
     }
-    let step = step(bucket);
 
-    let mut buckets: Vec<TokenUsageOverTimeBucket> = starts
-        .iter()
-        .map(|s| TokenUsageOverTimeBucket::new(*s, 0, 0, 0, 0))
-        .collect();
-
-    let first_start = starts[0];
-    let bucket_len = buckets.len();
-    let bucket_for = |t: DateTime<Utc>| -> Option<usize> {
-        if t < from || t >= to {
+    fn bucket_for(&self, t: DateTime<Utc>) -> Option<usize> {
+        if t < self.from || t >= self.to {
             return None;
         }
-        let delta = t - first_start;
-        let idx = (delta.num_seconds() / step.num_seconds()) as usize;
-        if idx >= bucket_len { None } else { Some(idx) }
-    };
+        let first_start = self.first_start?;
+        let delta = (t - first_start).num_seconds();
+        let idx = (delta / self.step_secs) as usize;
+        if idx >= self.buckets.len() {
+            None
+        } else {
+            Some(idx)
+        }
+    }
 
-    for entry in sessions {
-        let Some(idx) = bucket_for(entry.end_time()) else {
-            continue;
+    pub fn fold(&mut self, entry: &SessionWithUsage) {
+        let Some(idx) = self.bucket_for(entry.end_time()) else {
+            return;
         };
         let usage = entry.usage();
-        let b = &mut buckets[idx];
+        let b = &mut self.buckets[idx];
         b.input_tokens = b.input_tokens.saturating_add(usage.input_tokens);
         b.output_tokens = b.output_tokens.saturating_add(usage.output_tokens);
         b.cache_read_input_tokens = b
@@ -183,86 +231,168 @@ pub fn compute_token_usage_over_time(
             .saturating_add(usage.cache_creation_input_tokens);
     }
 
-    TokenUsageOverTimeResponse::new(buckets)
+    pub fn finalize(self) -> TokenUsageOverTimeResponse {
+        TokenUsageOverTimeResponse::new(self.buckets)
+    }
 }
 
-/// Compute the `token_usage/cost_per_agent` response: per agent, the
-/// blended-dollar total cost across the window plus the per-session
-/// breakdown. Sorted by `total_cost_usd` descending with `agent_name`
-/// ascending (and `None` last) as a tie-break so output is deterministic
-/// across runs. The per-session list inside each agent is sorted by
-/// `cost_usd` descending; that sort is stable over an input-ordered Vec,
-/// so it's already deterministic. Ad-hoc sessions
-/// (`agent_config.agent_name == None`) are aggregated under a single
-/// `None` bucket.
-pub fn compute_cost_per_agent(sessions: &[SessionWithUsage]) -> TokenUsageCostPerAgentResponse {
-    let mut by_agent: HashMap<Option<AgentName>, Vec<AgentSessionCost>> = HashMap::new();
+/// Compute `token_usage/over_time` from an already-materialized slice.
+/// Thin wrapper around [`TokenUsageOverTimeAccumulator`] kept so unit
+/// tests can pass hand-rolled fixtures without going through a Store.
+pub fn compute_token_usage_over_time(
+    sessions: &[SessionWithUsage],
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    bucket: BucketGranularity,
+) -> TokenUsageOverTimeResponse {
+    let mut acc = TokenUsageOverTimeAccumulator::new(from, to, bucket);
     for entry in sessions {
+        acc.fold(entry);
+    }
+    acc.finalize()
+}
+
+/// Streaming accumulator for `token_usage/cost_per_agent`. Per agent
+/// (with ad-hoc `agent_name == None` aggregated under a single bucket),
+/// the blended-dollar total cost across the window plus the per-session
+/// breakdown.
+///
+/// Sorting / tie-break happens in [`Self::finalize`] so cross-batch
+/// folds produce the same wire output as a single-pass fold: by
+/// `total_cost_usd` descending, with `agent_name` ascending and `None`
+/// last as a tie-break. The per-session list inside each agent is
+/// sorted by `cost_usd` descending; that sort is stable, so for equal
+/// costs the original page-walk order is preserved — identical to the
+/// single-batch behavior because the page-walk order is the same.
+pub struct CostPerAgentAccumulator {
+    by_agent: HashMap<Option<AgentName>, Vec<AgentSessionCost>>,
+}
+
+impl CostPerAgentAccumulator {
+    pub fn new() -> Self {
+        Self {
+            by_agent: HashMap::new(),
+        }
+    }
+
+    pub fn fold(&mut self, entry: &SessionWithUsage) {
         let cost = cost_usd(entry.usage());
         let key = entry.agent_key().cloned();
-        by_agent
+        self.by_agent
             .entry(key)
             .or_default()
             .push(AgentSessionCost::new(entry.session_id.clone(), cost));
     }
 
-    let mut agents: Vec<AgentCost> = by_agent
-        .into_iter()
-        .map(|(name, mut session_costs)| {
-            session_costs.sort_by(|a, b| {
-                b.cost_usd
-                    .partial_cmp(&a.cost_usd)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            let total: f64 = session_costs.iter().map(|s| s.cost_usd).sum();
-            AgentCost::new(name, total, session_costs)
-        })
-        .collect();
-    agents.sort_by(|a, b| {
-        b.total_cost_usd
-            .partial_cmp(&a.total_cost_usd)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| match (&a.agent_name, &b.agent_name) {
-                (Some(x), Some(y)) => x.cmp(y),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
+    pub fn finalize(self) -> TokenUsageCostPerAgentResponse {
+        let mut agents: Vec<AgentCost> = self
+            .by_agent
+            .into_iter()
+            .map(|(name, mut session_costs)| {
+                session_costs.sort_by(|a, b| {
+                    b.cost_usd
+                        .partial_cmp(&a.cost_usd)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                let total: f64 = session_costs.iter().map(|s| s.cost_usd).sum();
+                AgentCost::new(name, total, session_costs)
             })
-    });
+            .collect();
+        agents.sort_by(|a, b| {
+            b.total_cost_usd
+                .partial_cmp(&a.total_cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| match (&a.agent_name, &b.agent_name) {
+                    (Some(x), Some(y)) => x.cmp(y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                })
+        });
+        TokenUsageCostPerAgentResponse::new(agents)
+    }
+}
 
-    TokenUsageCostPerAgentResponse::new(agents)
+impl Default for CostPerAgentAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Compute `token_usage/cost_per_agent` from an already-materialized
+/// slice. Thin wrapper around [`CostPerAgentAccumulator`].
+pub fn compute_cost_per_agent(sessions: &[SessionWithUsage]) -> TokenUsageCostPerAgentResponse {
+    let mut acc = CostPerAgentAccumulator::new();
+    for entry in sessions {
+        acc.fold(entry);
+    }
+    acc.finalize()
+}
+
+/// Streaming accumulator for `token_usage/top_issues_by_cost`. Builds a
+/// `HashMap<IssueId, (cost, count)>` across batches and ranks +
+/// truncates to the top [`TOP_ISSUES_LIMIT`] in [`Self::finalize`]. Per
+/// the task brief, the truncate runs after the cross-batch merge so
+/// ties at the boundary aren't decided by HashMap iteration order
+/// inside an early batch.
+pub struct TopIssuesByCostAccumulator {
+    by_issue: HashMap<IssueId, (f64, u64)>,
+}
+
+impl TopIssuesByCostAccumulator {
+    pub fn new() -> Self {
+        Self {
+            by_issue: HashMap::new(),
+        }
+    }
+
+    pub fn fold(&mut self, entry: &SessionWithUsage) {
+        let Some(issue_id) = entry.session.spawned_from.as_ref() else {
+            return;
+        };
+        let cost = cost_usd(entry.usage());
+        let slot = self.by_issue.entry(issue_id.clone()).or_insert((0.0, 0));
+        slot.0 += cost;
+        slot.1 += 1;
+    }
+
+    pub fn finalize(self) -> Vec<(IssueId, f64, u64)> {
+        let mut ranked: Vec<(IssueId, f64, u64)> = self
+            .by_issue
+            .into_iter()
+            .map(|(id, (c, n))| (id, c, n))
+            .collect();
+        // Secondary key on `issue_id` asc makes the truncate boundary stable
+        // when costs tie — without it, the dropped issue depends on HashMap
+        // iteration order.
+        ranked.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        ranked.truncate(TOP_ISSUES_LIMIT);
+        ranked
+    }
+}
+
+impl Default for TopIssuesByCostAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Compute the (IssueId, cost, session_count) tuples ranked by cost,
 /// truncated to the top [`TOP_ISSUES_LIMIT`]. Title lookups happen at
 /// the route layer (the spec calls out direct, single-hop
 /// `session.spawned_from == issue_id` attribution — sessions without
-/// `spawned_from` are excluded).
+/// `spawned_from` are excluded). Thin wrapper around
+/// [`TopIssuesByCostAccumulator`].
 pub fn rank_top_issues_by_cost(sessions: &[SessionWithUsage]) -> Vec<(IssueId, f64, u64)> {
-    let mut by_issue: HashMap<IssueId, (f64, u64)> = HashMap::new();
+    let mut acc = TopIssuesByCostAccumulator::new();
     for entry in sessions {
-        let Some(issue_id) = entry.session.spawned_from.as_ref() else {
-            continue;
-        };
-        let cost = cost_usd(entry.usage());
-        let slot = by_issue.entry(issue_id.clone()).or_insert((0.0, 0));
-        slot.0 += cost;
-        slot.1 += 1;
+        acc.fold(entry);
     }
-    let mut ranked: Vec<(IssueId, f64, u64)> = by_issue
-        .into_iter()
-        .map(|(id, (c, n))| (id, c, n))
-        .collect();
-    // Secondary key on `issue_id` asc makes the truncate boundary stable
-    // when costs tie — without it, the dropped issue depends on HashMap
-    // iteration order.
-    ranked.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    ranked.truncate(TOP_ISSUES_LIMIT);
-    ranked
+    acc.finalize()
 }
 
 /// Compose the `top_issues_by_cost` wire response from pre-ranked
@@ -655,8 +785,25 @@ mod tests {
 
     // ----- fetch helper -----
 
+    /// Collect every session surfaced by [`for_each_session_with_usage`]
+    /// into a `Vec` for assertion. Only used in tests — production code
+    /// uses the streaming accumulators.
+    async fn collect_sessions(
+        store: &dyn ReadOnlyStore,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        repo_name: Option<&str>,
+        creator: Option<&str>,
+    ) -> Vec<SessionWithUsage> {
+        let mut out = Vec::new();
+        for_each_session_with_usage(store, from, to, repo_name, creator, |s| out.push(s.clone()))
+            .await
+            .expect("for_each_session_with_usage");
+        out
+    }
+
     #[tokio::test]
-    async fn fetch_filters_to_sessions_with_usage_and_end_time_in_window() {
+    async fn for_each_session_filters_to_sessions_with_usage_and_end_time_in_window() {
         use crate::test_utils::test_state_handles;
         use hydra_common::ActorRef as CommonActorRef;
 
@@ -703,16 +850,134 @@ mod tests {
             .await
             .expect("add out");
 
-        let got = fetch_sessions_with_usage(
+        let got = collect_sessions(
             store.as_ref(),
             dt("2026-05-10T00:00:00Z"),
             dt("2026-05-13T00:00:00Z"),
             None,
             None,
         )
-        .await
-        .expect("fetch");
+        .await;
         let kept: Vec<_> = got.into_iter().map(|s| s.session_id).collect();
         assert_eq!(kept, vec![keep_id]);
+    }
+
+    /// Seed > [`ANALYTICS_BATCH_SIZE`] sessions and confirm the batched
+    /// driver returns every one in a single sweep. Crosses ≥ 2 cursor
+    /// pages, which is the regression bar for the cursor advance.
+    #[tokio::test]
+    async fn for_each_session_crosses_batch_boundary() {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::ActorRef as CommonActorRef;
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        // ANALYTICS_BATCH_SIZE + 5 so the driver has to advance the
+        // cursor at least once.
+        let total = (ANALYTICS_BATCH_SIZE + 5) as usize;
+        let mut expected = std::collections::HashSet::new();
+        for i in 0..total {
+            // Spread end_time across a wide window so every seeded
+            // session lands inside the analytics window. Spacing them
+            // a second apart keeps the cursor ordering deterministic.
+            let end = dt("2026-05-10T00:00:00Z") + chrono::Duration::seconds(i as i64);
+            let mut session =
+                session_with(Some("swe"), None, Some(end), Some(usage(100, 50, 0, 0)));
+            session.creation_time = Some(end);
+            let (id, _) = store
+                .add_session(session, end, &actor)
+                .await
+                .expect("add session");
+            expected.insert(id);
+        }
+
+        let from = dt("2026-05-09T00:00:00Z");
+        let to = dt("2026-05-13T00:00:00Z");
+        let got = collect_sessions(store.as_ref(), from, to, None, None).await;
+
+        let seen: std::collections::HashSet<_> = got.iter().map(|s| s.session_id.clone()).collect();
+        assert_eq!(seen, expected);
+        assert_eq!(got.len(), total);
+    }
+
+    /// Drive each accumulator twice over the same seeded store — once
+    /// via the batched driver, once via the all-at-once `compute_*`
+    /// helper — and assert wire-identical results. Catches batch-boundary
+    /// regressions for every aggregator in one shot.
+    #[tokio::test]
+    async fn accumulators_match_single_pass_across_batch_boundary() {
+        use crate::test_utils::test_state_handles;
+        use hydra_common::ActorRef as CommonActorRef;
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        // Spread issues across enough distinct ids that the top-10
+        // truncate is exercised: every `top_distinct_issues` sessions
+        // round-robin into the same issue id, so we get
+        // (total / top_distinct_issues + 1) ≈ 12 distinct issues, > 10.
+        let total = (ANALYTICS_BATCH_SIZE + 50) as usize;
+        let top_distinct_issues = 12usize;
+        let issue_ids: Vec<IssueId> = (0..top_distinct_issues).map(|_| IssueId::new()).collect();
+        let from = dt("2026-05-09T00:00:00Z");
+        let to = dt("2026-05-15T00:00:00Z");
+
+        for i in 0..total {
+            // Mix two agents and one ad-hoc bucket so cost_per_agent has
+            // real input across batches. Vary cost per session so sort
+            // order is non-trivial.
+            let agent = match i % 3 {
+                0 => Some("swe"),
+                1 => Some("reviewer"),
+                _ => None,
+            };
+            let issue = issue_ids[i % top_distinct_issues].clone();
+            let end = dt("2026-05-10T00:00:00Z") + chrono::Duration::seconds(i as i64);
+            let mut session = session_with(
+                agent,
+                Some(issue),
+                Some(end),
+                Some(usage((i as u64 + 1) * 1_000, (i as u64) * 100, 10, 0)),
+            );
+            session.creation_time = Some(end);
+            store
+                .add_session(session, end, &actor)
+                .await
+                .expect("add session");
+        }
+
+        let materialized = collect_sessions(store.as_ref(), from, to, None, None).await;
+        assert!(materialized.len() > ANALYTICS_BATCH_SIZE as usize);
+
+        // over_time
+        let mut acc = TokenUsageOverTimeAccumulator::new(from, to, BucketGranularity::Day);
+        for_each_session_with_usage(store.as_ref(), from, to, None, None, |s| acc.fold(s))
+            .await
+            .expect("drive over_time");
+        assert_eq!(
+            acc.finalize(),
+            compute_token_usage_over_time(&materialized, from, to, BucketGranularity::Day)
+        );
+
+        // cost_per_agent
+        let mut acc = CostPerAgentAccumulator::new();
+        for_each_session_with_usage(store.as_ref(), from, to, None, None, |s| acc.fold(s))
+            .await
+            .expect("drive cost_per_agent");
+        assert_eq!(acc.finalize(), compute_cost_per_agent(&materialized));
+
+        // top_issues_by_cost — > 10 distinct issues exercises the
+        // post-merge truncate boundary.
+        let mut acc = TopIssuesByCostAccumulator::new();
+        for_each_session_with_usage(store.as_ref(), from, to, None, None, |s| acc.fold(s))
+            .await
+            .expect("drive top_issues");
+        let streamed_ranked = acc.finalize();
+        let baseline_ranked = rank_top_issues_by_cost(&materialized);
+        assert_eq!(streamed_ranked.len(), 10);
+        assert_eq!(streamed_ranked, baseline_ranked);
     }
 }

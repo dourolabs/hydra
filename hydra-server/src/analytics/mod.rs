@@ -23,18 +23,26 @@ mod patches;
 mod pricing;
 mod token_usage;
 
+/// Batch size used when streaming patches / issues / sessions through
+/// the analytics aggregators. Matches
+/// [`hydra_common::api::v1::pagination::MAX_LIMIT`] — the same ceiling
+/// every other paginated route applies — so callers pay one round-trip
+/// per 200 rows instead of materializing the full list.
+pub const ANALYTICS_BATCH_SIZE: u32 = 200;
+
 pub use issues::{
     IssueHistory, compute_issues_cycle_time, compute_issues_over_time,
     compute_issues_per_status_distribution, compute_issues_time_in_status_breakdown,
     fetch_issue_histories, resolve_projects_for_histories,
 };
 pub use patches::{
-    ANALYTICS_BATCH_SIZE, PatchHistory, PatchesInFlightOverTimeAccumulator,
-    PatchesOverTimeAccumulator, PatchesTerminalMixAccumulator, PatchesTimeToMergeAccumulator,
+    PatchHistory, PatchesInFlightOverTimeAccumulator, PatchesOverTimeAccumulator,
+    PatchesTerminalMixAccumulator, PatchesTimeToMergeAccumulator,
     compute_patches_in_flight_over_time, compute_patches_over_time, compute_patches_terminal_mix,
     compute_patches_time_to_merge, for_each_patch_history,
 };
 pub use token_usage::{
-    SessionWithUsage, compute_cost_per_agent, compute_token_usage_over_time,
-    compute_top_issues_by_cost, fetch_sessions_with_usage, rank_top_issues_by_cost,
+    CostPerAgentAccumulator, SessionWithUsage, TokenUsageOverTimeAccumulator,
+    TopIssuesByCostAccumulator, compute_cost_per_agent, compute_token_usage_over_time,
+    compute_top_issues_by_cost, for_each_session_with_usage, rank_top_issues_by_cost,
 };
