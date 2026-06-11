@@ -4137,7 +4137,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
         if !include_deleted {
             sql.push_str(" AND p.deleted = false");
         }
-        sql.push_str(" ORDER BY p.priority ASC, p.created_at DESC, p.id DESC");
+        // `p.id` is the stable tiebreak: it's an immutable per-project value,
+        // so updating a project (which inserts a new is_latest row with a
+        // fresh `created_at`) can never shift its position among same-priority
+        // peers. The earlier `p.created_at DESC` tiebreak did exactly that.
+        sql.push_str(" ORDER BY p.priority ASC, p.id ASC");
 
         let rows = sqlx::query_as::<_, ProjectRow>(&sql)
             .fetch_all(&self.pool)
@@ -11073,14 +11077,13 @@ mod tests {
         );
     }
 
-    /// `list_projects` must return projects in `priority ASC, created_at
-    /// DESC, id DESC` order — the discriminator the priority-column
-    /// migration adds. The default-project seed migration writes
-    /// `priority = 1000.0` for `j-defaul`; this test inserts two custom
-    /// projects with priorities straddling the default (1500.0 and
-    /// 5000.0) and asserts the resulting order is `[default, custom-1500,
-    /// custom-5000]`. Updating one project's priority must reflect in the
-    /// next listing.
+    /// `list_projects` must return projects in `priority ASC, id ASC`
+    /// order. The default-project seed migration writes `priority =
+    /// 1000.0` for `j-defaul`; this test inserts two custom projects
+    /// with priorities straddling the default (1500.0 and 5000.0) and
+    /// asserts the resulting order is `[default, custom-1500,
+    /// custom-5000]`. Updating one project's priority must reflect in
+    /// the next listing.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn list_projects_orders_by_priority_pg(pool: PgStorePool) {

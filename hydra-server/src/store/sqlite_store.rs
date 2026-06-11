@@ -4398,7 +4398,11 @@ impl ReadOnlyStore for SqliteStore {
         if !include_deleted {
             sql.push_str(" AND p.deleted = 0");
         }
-        sql.push_str(" ORDER BY p.priority ASC, p.created_at DESC, p.id DESC");
+        // `p.id` is the stable tiebreak: it's an immutable per-project value,
+        // so updating a project (which inserts a new is_latest row with a
+        // fresh `created_at`) can never shift its position among same-priority
+        // peers. The earlier `p.created_at DESC` tiebreak did exactly that.
+        sql.push_str(" ORDER BY p.priority ASC, p.id ASC");
 
         let rows = sqlx::query_as::<_, ProjectRow>(&sql)
             .fetch_all(&self.pool)
@@ -13723,14 +13727,13 @@ mod tests {
         );
     }
 
-    /// `list_projects` must return projects in `priority ASC, created_at
-    /// DESC, id DESC` order — the discriminator the priority-column
-    /// migration adds. The default-project seed migration writes
-    /// `priority = 1000.0` for `j-defaul`; this test inserts two custom
-    /// projects with priorities straddling the default (1500.0 and
-    /// 5000.0) and asserts the resulting order is `[default, custom-1500,
-    /// custom-5000]`. Updating one project's priority must reflect in the
-    /// next listing.
+    /// `list_projects` must return projects in `priority ASC, id ASC`
+    /// order. The default-project seed migration writes `priority =
+    /// 1000.0` for `j-defaul`; this test inserts two custom projects
+    /// with priorities straddling the default (1500.0 and 5000.0) and
+    /// asserts the resulting order is `[default, custom-1500,
+    /// custom-5000]`. Updating one project's priority must reflect in
+    /// the next listing.
     #[tokio::test]
     async fn list_projects_orders_by_priority_sqlite() {
         use crate::domain::projects::default_project_id;
@@ -13777,6 +13780,64 @@ mod tests {
             ids,
             vec![&default_id, &high_id, &mid_id],
             "after bumping mid → 9000, order must be default(1000) → high(5000) → mid(9000)"
+        );
+    }
+
+    /// Regression for [[i-esgcpsmn]]: among projects sharing a priority,
+    /// `list_projects` orders by `project_id ASC` and stays stable
+    /// across non-priority updates. The earlier `created_at DESC`
+    /// tiebreak used the latest version's row timestamp, so updating
+    /// any unrelated field (e.g. `name`) would jump that project ahead
+    /// of its same-priority peers.
+    #[tokio::test]
+    async fn list_projects_same_priority_tiebreaks_by_id_and_is_stable_across_updates_sqlite() {
+        let store = create_test_store().await;
+
+        let mut a = sample_project();
+        a.key = ProjectKey::try_new("alpha").unwrap();
+        a.priority = 2000.0;
+        let (a_id, _) = store.add_project(a, &ActorRef::test()).await.unwrap();
+
+        let mut b = sample_project();
+        b.key = ProjectKey::try_new("bravo").unwrap();
+        b.priority = 2000.0;
+        let (b_id, _) = store.add_project(b, &ActorRef::test()).await.unwrap();
+
+        let initial: Vec<ProjectId> = store
+            .list_projects(false)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|(id, _)| id == &a_id || id == &b_id)
+            .map(|(id, _)| id)
+            .collect();
+        let mut by_id = vec![a_id.clone(), b_id.clone()];
+        by_id.sort();
+        assert_eq!(
+            initial, by_id,
+            "same-priority projects must sort by project_id ASC"
+        );
+
+        // Update alpha — name only, priority unchanged. The old ORDER BY
+        // (created_at DESC) would push alpha ahead of bravo here.
+        let mut updated_a = store.get_project(&a_id, false).await.unwrap().item;
+        updated_a.name = "Alpha Renamed".to_string();
+        store
+            .update_project(&a_id, updated_a, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let after_update: Vec<ProjectId> = store
+            .list_projects(false)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|(id, _)| id == &a_id || id == &b_id)
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(
+            after_update, by_id,
+            "updating a project must not shift it among same-priority peers"
         );
     }
 
