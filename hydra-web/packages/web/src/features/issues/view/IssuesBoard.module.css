@@ -545,7 +545,7 @@
 .newProjectGhost {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   padding: 14px 16px;
   background: transparent;
   border: 1px dashed var(--line);
@@ -561,7 +561,7 @@
   /* Matches the project bars: sized to the visible scroller width and
      stuck to the left edge, so the button stays a fixed viewport-wide
      footer regardless of horizontal scroll position. Content is
-     left-aligned (justify-content: flex-start) per design. */
+     centered in the viewport via justify-content: center. */
   position: sticky;
   left: 0;
   width: 100cqi;
