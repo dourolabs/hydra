@@ -1,4 +1,5 @@
 use super::buckets::{bin_index_for, bucket_starts, empty_duration_histogram, percentile, step};
+use super::patches::ANALYTICS_BATCH_SIZE;
 use crate::app::projects::{ResolveStatusError, project_cached};
 use crate::domain::issues::Issue;
 use crate::store::{ReadOnlyStore, StoreError};
@@ -9,6 +10,7 @@ use hydra_common::api::v1::analytics::{
     IssuesTimeInStatusBreakdownResponse, PerStatusDistribution, TimeInStatusSegment,
 };
 use hydra_common::api::v1::issues::SearchIssuesQuery;
+use hydra_common::api::v1::pagination::compute_next_cursor;
 use hydra_common::api::v1::projects::{Project, StatusDefinition, StatusKey};
 use hydra_common::principal::Principal;
 use hydra_common::{IssueId, ProjectId, Versioned};
@@ -72,7 +74,7 @@ impl IssueHistory {
 /// the issue-type filter (`issue_types` plural include-set with
 /// fallback to the singular `issue_type`). The store-side filters
 /// (`creator`, `project_id`) are pushed down through
-/// [`SearchIssuesQuery`] in [`fetch_issue_histories`]; this is the
+/// [`SearchIssuesQuery`] in [`for_each_issue_history`]; this is the
 /// leftover sieve.
 fn issue_passes_inprocess_filters(issue: &Issue, query: &IssuesThroughputQuery) -> bool {
     if let Some(expected_repo) = query.repo_name.as_deref() {
@@ -122,60 +124,74 @@ fn issue_passes_inprocess_filters(issue: &Issue, query: &IssuesThroughputQuery) 
     true
 }
 
-/// Fetch the issues matching the throughput-query filters and their
-/// full version histories. Deleted issues are excluded by
-/// `list_issues`'s default (we don't pass `include_deleted`).
+/// Stream the issues matching the throughput-query filters through
+/// `visit`, one [`IssueHistory`] at a time, alongside the resolved
+/// [`Project`] for the issue (or `None` when the project lookup fails).
+/// The implementation walks [`ReadOnlyStore::list_issues`] in
+/// [`ANALYTICS_BATCH_SIZE`]-sized cursor-paged batches so peak memory
+/// is bounded by one page of histories plus the per-call project cache.
 /// `creator` and `project_id` are pushed into [`SearchIssuesQuery`];
-/// `repo_name`, `issue_type`, and `assignee` are applied in process
-/// because they don't map onto the store-side filter set today.
-pub async fn fetch_issue_histories(
+/// `repo_name`, `issue_type{,s}`, and `assignee` stay in the in-process
+/// sieve and are applied per-row before the per-issue
+/// [`ReadOnlyStore::get_issue_versions`] call so we still skip the
+/// version fetch for filtered-out rows. Project resolution failures map
+/// to `None` on the visit callback (same behavior as the old pre-resolve
+/// flow); store errors propagate.
+pub async fn for_each_issue_history<F>(
     store: &dyn ReadOnlyStore,
     query: &IssuesThroughputQuery,
-) -> Result<Vec<IssueHistory>, StoreError> {
+    project_cache: &mut HashMap<ProjectId, Project>,
+    mut visit: F,
+) -> Result<(), StoreError>
+where
+    F: FnMut(&IssueHistory, Option<&Project>),
+{
     let mut search = SearchIssuesQuery::default();
     search.project_id = query.project_id.clone();
     search.creator = query.creator.clone();
+    search.limit = Some(ANALYTICS_BATCH_SIZE);
 
-    let issues = store.list_issues(&search).await?;
-    let mut histories = Vec::with_capacity(issues.len());
-    for (issue_id, latest) in issues {
-        if !issue_passes_inprocess_filters(&latest.item, query) {
-            continue;
+    let mut cursor: Option<String> = None;
+    loop {
+        search.cursor = cursor.clone();
+        let mut page = store.list_issues(&search).await?;
+        if page.is_empty() {
+            return Ok(());
         }
-        let versions = store.get_issue_versions(&issue_id).await?;
-        if versions.is_empty() {
-            continue;
-        }
-        histories.push(IssueHistory::new(issue_id, versions));
-    }
-    Ok(histories)
-}
-
-/// Resolve the `Project`s referenced by the supplied issue histories,
-/// returning a `(ProjectId, Project)` cache. Failed lookups are skipped
-/// — the calling aggregator treats issues with no resolvable project as
-/// if their status weren't declared (no terminal flip, no time-in-status
-/// contribution).
-pub async fn resolve_projects_for_histories(
-    store: &dyn ReadOnlyStore,
-    histories: &[IssueHistory],
-) -> Result<HashMap<ProjectId, Project>, StoreError> {
-    let mut cache: HashMap<ProjectId, Project> = HashMap::new();
-    for history in histories {
-        let pid = history.project_id();
-        if cache.contains_key(pid) {
-            continue;
-        }
-        match project_cached(&mut cache, store, pid).await {
-            Ok(_) => {}
-            Err(ResolveStatusError::ProjectNotFound(_)) => {}
-            Err(ResolveStatusError::Store(err)) => return Err(err),
-            Err(other) => {
-                tracing::warn!(error = %other, project_id = %pid, "analytics: skipping unresolvable project");
+        // `list_issues` returns up to `limit + 1` rows; `compute_next_cursor`
+        // truncates the extra and returns the cursor that resumes the next
+        // page, or `None` when the page is the tail.
+        let next_cursor = compute_next_cursor(
+            &mut page,
+            Some(ANALYTICS_BATCH_SIZE),
+            |(_id, v)| &v.timestamp,
+            |(id, _v)| id.as_ref(),
+        );
+        for (issue_id, latest) in page {
+            if !issue_passes_inprocess_filters(&latest.item, query) {
+                continue;
             }
+            let versions = store.get_issue_versions(&issue_id).await?;
+            if versions.is_empty() {
+                continue;
+            }
+            let history = IssueHistory::new(issue_id, versions);
+            let project = match project_cached(project_cache, store, history.project_id()).await {
+                Ok(p) => Some(p),
+                Err(ResolveStatusError::ProjectNotFound(_)) => None,
+                Err(ResolveStatusError::Store(err)) => return Err(err),
+                Err(other) => {
+                    tracing::warn!(error = %other, project_id = %history.project_id(), "analytics: skipping unresolvable project");
+                    None
+                }
+            };
+            visit(&history, project);
+        }
+        match next_cursor {
+            Some(c) => cursor = Some(c),
+            None => return Ok(()),
         }
     }
-    Ok(cache)
 }
 
 /// Returns `true` iff `history` should be included in the cohort under
@@ -197,12 +213,67 @@ fn issue_passes_status_filter(
         .unwrap_or(false)
 }
 
+/// Streaming accumulator for `issues/cycle_time`. Builds the histogram
+/// and the per-sample delta list for percentile computation. The delta
+/// list grows with the in-window cohort size — accumulator state, not
+/// full materialization.
+pub struct IssuesCycleTimeAccumulator {
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    status_keys: Vec<StatusKey>,
+    deltas: Vec<u64>,
+    histogram: Vec<hydra_common::api::v1::analytics::TimeToMergeBin>,
+}
+
+impl IssuesCycleTimeAccumulator {
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>, status_keys: Vec<StatusKey>) -> Self {
+        Self {
+            from,
+            to,
+            status_keys,
+            deltas: Vec::new(),
+            histogram: empty_duration_histogram(),
+        }
+    }
+
+    pub fn fold(&mut self, history: &IssueHistory, project: Option<&Project>) {
+        let Some(project) = project else {
+            return;
+        };
+        let Some((_, terminal_at)) = history.first_terminal(project) else {
+            return;
+        };
+        if terminal_at < self.from || terminal_at >= self.to {
+            return;
+        }
+        if !issue_passes_status_filter(history, project, &self.status_keys) {
+            return;
+        }
+        let created = history.created_at();
+        let delta = (terminal_at - created).num_seconds().max(0) as u64;
+        self.deltas.push(delta);
+        let idx = bin_index_for(delta);
+        self.histogram[idx].count += 1;
+    }
+
+    pub fn finalize(mut self) -> IssuesCycleTimeResponse {
+        self.deltas.sort_unstable();
+        let count = self.deltas.len() as u64;
+        let median = percentile(&self.deltas, 0.5);
+        let p95 = percentile(&self.deltas, 0.95);
+        IssuesCycleTimeResponse::new(median, p95, count, self.histogram)
+    }
+}
+
 /// Compute `issues/cycle_time`: histogram of `created_at → terminal_at`
 /// for issues that reached a terminal status (per their *own* project's
 /// status definitions) within `[from, to)`.
 ///
 /// `status_keys`: when populated, only issues whose terminal status key
 /// is in the set count toward the cohort (include-form filter).
+///
+/// Thin wrapper around [`IssuesCycleTimeAccumulator`] kept so unit tests
+/// can pass hand-rolled fixtures without going through a Store.
 pub fn compute_issues_cycle_time(
     histories: &[IssueHistory],
     projects: &HashMap<ProjectId, Project>,
@@ -210,32 +281,88 @@ pub fn compute_issues_cycle_time(
     to: DateTime<Utc>,
     status_keys: &[StatusKey],
 ) -> IssuesCycleTimeResponse {
-    let mut deltas: Vec<u64> = Vec::new();
-    let mut histogram = empty_duration_histogram();
+    let mut acc = IssuesCycleTimeAccumulator::new(from, to, status_keys.to_vec());
     for history in histories {
-        let Some(project) = projects.get(history.project_id()) else {
-            continue;
-        };
-        let Some((_, terminal_at)) = history.first_terminal(project) else {
-            continue;
-        };
-        if terminal_at < from || terminal_at >= to {
-            continue;
-        }
-        if !issue_passes_status_filter(history, project, status_keys) {
-            continue;
-        }
-        let created = history.created_at();
-        let delta = (terminal_at - created).num_seconds().max(0) as u64;
-        deltas.push(delta);
-        let idx = bin_index_for(delta);
-        histogram[idx].count += 1;
+        let project = projects.get(history.project_id());
+        acc.fold(history, project);
     }
-    deltas.sort_unstable();
-    let count = deltas.len() as u64;
-    let median = percentile(&deltas, 0.5);
-    let p95 = percentile(&deltas, 0.95);
-    IssuesCycleTimeResponse::new(median, p95, count, histogram)
+    acc.finalize()
+}
+
+/// Streaming accumulator for `issues/over_time`. Per bucket, counts
+/// issues whose creation timestamp lands in the bucket and issues whose
+/// first transition-to-terminal timestamp lands in the bucket. The
+/// `status_keys` include-filter gates the `reached_terminal` increment
+/// only — `created` counts remain unfiltered (an issue's `created_at`
+/// predates any terminal flip, so filtering creation on a future status
+/// would surprise callers).
+pub struct IssuesOverTimeAccumulator {
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    status_keys: Vec<StatusKey>,
+    first_start: Option<DateTime<Utc>>,
+    step_secs: i64,
+    buckets: Vec<IssueOverTimeBucket>,
+}
+
+impl IssuesOverTimeAccumulator {
+    pub fn new(
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        bucket: BucketGranularity,
+        status_keys: Vec<StatusKey>,
+    ) -> Self {
+        let starts = bucket_starts(from, to, bucket);
+        let first_start = starts.first().copied();
+        let buckets: Vec<IssueOverTimeBucket> = starts
+            .into_iter()
+            .map(|s| IssueOverTimeBucket::new(s, 0, 0))
+            .collect();
+        Self {
+            from,
+            to,
+            status_keys,
+            first_start,
+            step_secs: step(bucket).num_seconds(),
+            buckets,
+        }
+    }
+
+    fn bucket_for(&self, t: DateTime<Utc>) -> Option<usize> {
+        if t < self.from || t >= self.to {
+            return None;
+        }
+        let first_start = self.first_start?;
+        let delta = (t - first_start).num_seconds();
+        let idx = (delta / self.step_secs) as usize;
+        if idx >= self.buckets.len() {
+            None
+        } else {
+            Some(idx)
+        }
+    }
+
+    pub fn fold(&mut self, history: &IssueHistory, project: Option<&Project>) {
+        let created = history.created_at();
+        if let Some(idx) = self.bucket_for(created) {
+            self.buckets[idx].created += 1;
+        }
+        let Some(project) = project else {
+            return;
+        };
+        if let Some((_, terminal_at)) = history.first_terminal(project) {
+            if !issue_passes_status_filter(history, project, &self.status_keys) {
+                return;
+            }
+            if let Some(idx) = self.bucket_for(terminal_at) {
+                self.buckets[idx].reached_terminal += 1;
+            }
+        }
+    }
+
+    pub fn finalize(self) -> IssuesOverTimeResponse {
+        IssuesOverTimeResponse::new(self.buckets)
+    }
 }
 
 /// Compute `issues/over_time`: per-bucket counts of issues created and
@@ -244,9 +371,6 @@ pub fn compute_issues_cycle_time(
 ///
 /// `status_keys`: when populated, gates only the `reached_terminal`
 /// increment on the issue's terminal-status key being in the set.
-/// `created` counts remain unfiltered — an issue's `created_at`
-/// predates any terminal flip, so filtering creation on a future
-/// status would surprise callers.
 pub fn compute_issues_over_time(
     histories: &[IssueHistory],
     projects: &HashMap<ProjectId, Project>,
@@ -255,86 +379,64 @@ pub fn compute_issues_over_time(
     bucket: BucketGranularity,
     status_keys: &[StatusKey],
 ) -> IssuesOverTimeResponse {
-    let starts = bucket_starts(from, to, bucket);
-    if starts.is_empty() {
-        return IssuesOverTimeResponse::new(Vec::new());
-    }
-    let step = step(bucket);
-
-    let mut buckets: Vec<IssueOverTimeBucket> = starts
-        .iter()
-        .map(|s| IssueOverTimeBucket::new(*s, 0, 0))
-        .collect();
-
-    let first_start = starts[0];
-    let bucket_len = buckets.len();
-    let bucket_for = |t: DateTime<Utc>| -> Option<usize> {
-        if t < from || t >= to {
-            return None;
-        }
-        let delta = t - first_start;
-        let idx = (delta.num_seconds() / step.num_seconds()) as usize;
-        if idx >= bucket_len { None } else { Some(idx) }
-    };
-
+    let mut acc = IssuesOverTimeAccumulator::new(from, to, bucket, status_keys.to_vec());
     for history in histories {
-        let created = history.created_at();
-        if let Some(idx) = bucket_for(created) {
-            buckets[idx].created += 1;
-        }
-        let Some(project) = projects.get(history.project_id()) else {
-            continue;
-        };
-        if let Some((_, terminal_at)) = history.first_terminal(project) {
-            if !issue_passes_status_filter(history, project, status_keys) {
-                continue;
-            }
-            if let Some(idx) = bucket_for(terminal_at) {
-                buckets[idx].reached_terminal += 1;
-            }
-        }
+        let project = projects.get(history.project_id());
+        acc.fold(history, project);
     }
-
-    IssuesOverTimeResponse::new(buckets)
+    acc.finalize()
 }
 
-/// Compute `issues/time_in_status_breakdown` for a single project's
-/// status set: per-status mean time issues in the terminal-window cohort
-/// spent in that status. The final terminal version contributes 0
-/// (no time-in-status since it's the end-state) — matching the spec.
+/// Streaming accumulator for `issues/time_in_status_breakdown`. Borrows
+/// the resolved [`Project`] for the duration of the aggregation; the
+/// handler owns the project and the accumulator references it.
 ///
-/// Cohort = issues whose terminal-status flip falls inside `[from, to)`.
-/// `histories` is assumed to already be scoped to `project_id` — the
-/// route handler enforces `project_id` is required for this endpoint.
-///
-/// `status_keys`: when populated, excludes issues whose terminal status
-/// key isn't in the set (include-form filter). Issues that never
-/// reached terminal continue to be excluded regardless.
-pub fn compute_issues_time_in_status_breakdown(
-    histories: &[IssueHistory],
-    project_id: &ProjectId,
-    project: &Project,
+/// Cohort = issues whose terminal-status flip falls inside `[from, to)`
+/// and whose `project_id` matches the bound project_id. `status_keys`,
+/// when populated, further restricts to terminal keys in the set.
+pub struct IssuesTimeInStatusBreakdownAccumulator<'p> {
+    project_id: ProjectId,
+    project: &'p Project,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-    status_keys: &[StatusKey],
-) -> IssuesTimeInStatusBreakdownResponse {
-    let mut total_per_status: HashMap<StatusKey, u64> = HashMap::new();
-    let mut cohort_size: u64 = 0;
+    status_keys: Vec<StatusKey>,
+    total_per_status: HashMap<StatusKey, u64>,
+    cohort_size: u64,
+}
 
-    for history in histories {
-        if history.project_id() != project_id {
-            continue;
+impl<'p> IssuesTimeInStatusBreakdownAccumulator<'p> {
+    pub fn new(
+        project_id: ProjectId,
+        project: &'p Project,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        status_keys: Vec<StatusKey>,
+    ) -> Self {
+        Self {
+            project_id,
+            project,
+            from,
+            to,
+            status_keys,
+            total_per_status: HashMap::new(),
+            cohort_size: 0,
         }
-        let Some((_, terminal_at)) = history.first_terminal(project) else {
-            continue;
+    }
+
+    pub fn fold(&mut self, history: &IssueHistory) {
+        if history.project_id() != &self.project_id {
+            return;
+        }
+        let Some((_, terminal_at)) = history.first_terminal(self.project) else {
+            return;
         };
-        if terminal_at < from || terminal_at >= to {
-            continue;
+        if terminal_at < self.from || terminal_at >= self.to {
+            return;
         }
-        if !issue_passes_status_filter(history, project, status_keys) {
-            continue;
+        if !issue_passes_status_filter(history, self.project, &self.status_keys) {
+            return;
         }
-        cohort_size += 1;
+        self.cohort_size += 1;
 
         // Walk versions in pairs; the duration each `(version_N).status`
         // contributes is `version_{N+1}.timestamp - version_N.timestamp`.
@@ -345,38 +447,137 @@ pub fn compute_issues_time_in_status_breakdown(
             let next = &window[1];
             let key = curr.item.status.clone();
             let delta = (next.timestamp - curr.timestamp).num_seconds().max(0) as u64;
-            *total_per_status.entry(key).or_insert(0) += delta;
+            *self.total_per_status.entry(key).or_insert(0) += delta;
         }
     }
 
-    let denom = cohort_size.max(1);
+    pub fn finalize(self) -> IssuesTimeInStatusBreakdownResponse {
+        let denom = self.cohort_size.max(1);
+        let mut segments: Vec<TimeInStatusSegment> =
+            Vec::with_capacity(self.project.statuses.len());
+        for status in ordered_statuses(self.project) {
+            let total = self.total_per_status.get(&status.key).copied().unwrap_or(0);
+            let mean = if self.cohort_size == 0 {
+                0
+            } else {
+                total / denom
+            };
+            segments.push(TimeInStatusSegment::new(
+                status.key.clone(),
+                status.label.clone(),
+                status.color.clone(),
+                mean,
+            ));
+        }
+        IssuesTimeInStatusBreakdownResponse::new(self.project_id, segments, self.cohort_size)
+    }
+}
 
-    let mut segments: Vec<TimeInStatusSegment> = Vec::with_capacity(project.statuses.len());
-    for status in ordered_statuses(project) {
-        let total = total_per_status.get(&status.key).copied().unwrap_or(0);
-        let mean = if cohort_size == 0 { 0 } else { total / denom };
-        segments.push(TimeInStatusSegment::new(
-            status.key.clone(),
-            status.label.clone(),
-            status.color.clone(),
-            mean,
-        ));
+/// Compute `issues/time_in_status_breakdown` for a single project's
+/// status set.
+pub fn compute_issues_time_in_status_breakdown(
+    histories: &[IssueHistory],
+    project_id: &ProjectId,
+    project: &Project,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    status_keys: &[StatusKey],
+) -> IssuesTimeInStatusBreakdownResponse {
+    let mut acc = IssuesTimeInStatusBreakdownAccumulator::new(
+        project_id.clone(),
+        project,
+        from,
+        to,
+        status_keys.to_vec(),
+    );
+    for history in histories {
+        acc.fold(history);
+    }
+    acc.finalize()
+}
+
+/// Streaming accumulator for `issues/per_status_distribution`. Borrows
+/// the resolved [`Project`] for the duration of the aggregation.
+///
+/// Per-status percentiles (median, p95) over every `(issue, status)`
+/// dwell-segment that *ended* inside `[from, to)`. An issue still
+/// sitting in a status when the window closes does not contribute.
+pub struct IssuesPerStatusDistributionAccumulator<'p> {
+    project_id: ProjectId,
+    project: &'p Project,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    status_keys: Vec<StatusKey>,
+    samples_per_status: HashMap<StatusKey, Vec<u64>>,
+}
+
+impl<'p> IssuesPerStatusDistributionAccumulator<'p> {
+    pub fn new(
+        project_id: ProjectId,
+        project: &'p Project,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        status_keys: Vec<StatusKey>,
+    ) -> Self {
+        Self {
+            project_id,
+            project,
+            from,
+            to,
+            status_keys,
+            samples_per_status: HashMap::new(),
+        }
     }
 
-    IssuesTimeInStatusBreakdownResponse::new(project_id.clone(), segments, cohort_size)
+    pub fn fold(&mut self, history: &IssueHistory) {
+        if history.project_id() != &self.project_id {
+            return;
+        }
+        if !issue_passes_status_filter(history, self.project, &self.status_keys) {
+            return;
+        }
+        let versions = &history.versions;
+        for window in versions.windows(2) {
+            let curr = &window[0];
+            let next = &window[1];
+            // Segment ends at `next.timestamp`.
+            if next.timestamp < self.from || next.timestamp >= self.to {
+                continue;
+            }
+            let delta = (next.timestamp - curr.timestamp).num_seconds().max(0) as u64;
+            self.samples_per_status
+                .entry(curr.item.status.clone())
+                .or_default()
+                .push(delta);
+        }
+    }
+
+    pub fn finalize(mut self) -> IssuesPerStatusDistributionResponse {
+        let mut out: Vec<PerStatusDistribution> = Vec::with_capacity(self.project.statuses.len());
+        for status in ordered_statuses(self.project) {
+            let mut samples = self
+                .samples_per_status
+                .remove(&status.key)
+                .unwrap_or_default();
+            samples.sort_unstable();
+            let sample_count = samples.len() as u64;
+            let median = percentile(&samples, 0.5);
+            let p95 = percentile(&samples, 0.95);
+            out.push(PerStatusDistribution::new(
+                status.key.clone(),
+                status.label.clone(),
+                status.color.clone(),
+                median,
+                p95,
+                sample_count,
+            ));
+        }
+        IssuesPerStatusDistributionResponse::new(self.project_id, out)
+    }
 }
 
 /// Compute `issues/per_status_distribution` for a single project's
-/// status set: per-status percentiles (median, p95) over every
-/// `(issue, status)` dwell-segment that *ended* inside `[from, to)`.
-/// An issue still sitting in a status when the window closes does not
-/// contribute.
-///
-/// `status_keys`: when populated, only segments from issues that
-/// reached a terminal status whose key is in the set contribute samples
-/// (issues that never reached terminal are excluded). When empty, all
-/// issues contribute their ended segments — including those that never
-/// reached terminal — matching the unfiltered baseline.
+/// status set.
 pub fn compute_issues_per_status_distribution(
     histories: &[IssueHistory],
     project_id: &ProjectId,
@@ -385,47 +586,17 @@ pub fn compute_issues_per_status_distribution(
     to: DateTime<Utc>,
     status_keys: &[StatusKey],
 ) -> IssuesPerStatusDistributionResponse {
-    let mut samples_per_status: HashMap<StatusKey, Vec<u64>> = HashMap::new();
+    let mut acc = IssuesPerStatusDistributionAccumulator::new(
+        project_id.clone(),
+        project,
+        from,
+        to,
+        status_keys.to_vec(),
+    );
     for history in histories {
-        if history.project_id() != project_id {
-            continue;
-        }
-        if !issue_passes_status_filter(history, project, status_keys) {
-            continue;
-        }
-        let versions = &history.versions;
-        for window in versions.windows(2) {
-            let curr = &window[0];
-            let next = &window[1];
-            // Segment ends at `next.timestamp`.
-            if next.timestamp < from || next.timestamp >= to {
-                continue;
-            }
-            let delta = (next.timestamp - curr.timestamp).num_seconds().max(0) as u64;
-            samples_per_status
-                .entry(curr.item.status.clone())
-                .or_default()
-                .push(delta);
-        }
+        acc.fold(history);
     }
-
-    let mut out: Vec<PerStatusDistribution> = Vec::with_capacity(project.statuses.len());
-    for status in ordered_statuses(project) {
-        let mut samples = samples_per_status.remove(&status.key).unwrap_or_default();
-        samples.sort_unstable();
-        let sample_count = samples.len() as u64;
-        let median = percentile(&samples, 0.5);
-        let p95 = percentile(&samples, 0.95);
-        out.push(PerStatusDistribution::new(
-            status.key.clone(),
-            status.label.clone(),
-            status.color.clone(),
-            median,
-            p95,
-            sample_count,
-        ));
-    }
-    IssuesPerStatusDistributionResponse::new(project_id.clone(), out)
+    acc.finalize()
 }
 
 /// The project's status list ordered by the `position` field
@@ -1080,6 +1251,21 @@ mod tests {
 
     // ----- fetch / status-set evolution -----
 
+    /// Collect every history (and the resolved project, if any) surfaced
+    /// by [`for_each_issue_history`] for assertion. Only used in tests —
+    /// production code drives the streaming accumulators directly.
+    async fn collect_histories(
+        store: &dyn ReadOnlyStore,
+        query: &IssuesThroughputQuery,
+    ) -> (Vec<IssueHistory>, HashMap<ProjectId, Project>) {
+        let mut out: Vec<IssueHistory> = Vec::new();
+        let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+        for_each_issue_history(store, query, &mut cache, |h, _project| out.push(h.clone()))
+            .await
+            .expect("for_each_issue_history");
+        (out, cache)
+    }
+
     #[tokio::test]
     async fn fetch_issue_histories_excludes_deleted() {
         use crate::test_utils::test_state_handles;
@@ -1100,9 +1286,7 @@ mod tests {
 
         let query =
             IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
-        let histories = fetch_issue_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let (histories, _) = collect_histories(store.as_ref(), &query).await;
         let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
         assert_eq!(ids, vec![normal_id]);
     }
@@ -1148,9 +1332,7 @@ mod tests {
         let mut query =
             IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
         query.issue_types = vec![ApiIssueType::Feature, ApiIssueType::Bug];
-        let histories = fetch_issue_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let (histories, _) = collect_histories(store.as_ref(), &query).await;
         let mut ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
         ids.sort();
         let mut expected = vec![feature_id, bug_id];
@@ -1175,9 +1357,7 @@ mod tests {
             IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
         query.issue_type = Some(ApiIssueType::Feature);
         // issue_types empty → singular field applies.
-        let histories = fetch_issue_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let (histories, _) = collect_histories(store.as_ref(), &query).await;
         let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
         assert_eq!(ids, vec![feature_id]);
     }
@@ -1199,9 +1379,7 @@ mod tests {
         let query =
             IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
         // Both issue_type and issue_types unset.
-        let histories = fetch_issue_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let (histories, _) = collect_histories(store.as_ref(), &query).await;
         assert_eq!(histories.len(), 3);
     }
 
@@ -1223,9 +1401,7 @@ mod tests {
         // Non-empty issue_types wins; singular issue_type is ignored.
         query.issue_types = vec![ApiIssueType::Feature];
         query.issue_type = Some(ApiIssueType::Bug);
-        let histories = fetch_issue_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let (histories, _) = collect_histories(store.as_ref(), &query).await;
         let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
         assert_eq!(ids, vec![feature_id]);
     }
@@ -1254,9 +1430,7 @@ mod tests {
             IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
         query.creator = Some("alice".to_string());
         query.repo_name = Some("dourolabs/hydra".to_string());
-        let histories = fetch_issue_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let (histories, _) = collect_histories(store.as_ref(), &query).await;
         let ids: Vec<_> = histories.iter().map(|h| h.issue_id.clone()).collect();
         assert_eq!(ids, vec![alice_a_id]);
     }
@@ -1312,13 +1486,8 @@ mod tests {
 
         let query =
             IssuesThroughputQuery::new(dt("2020-01-01T00:00:00Z"), dt("2030-01-01T00:00:00Z"));
-        let histories = fetch_issue_histories(store.as_ref(), &query)
-            .await
-            .expect("fetch");
+        let (histories, projects) = collect_histories(store.as_ref(), &query).await;
         assert_eq!(histories.len(), 1);
-        let projects = resolve_projects_for_histories(store.as_ref(), &histories)
-            .await
-            .expect("resolve");
         let resp = compute_issues_cycle_time(
             &histories,
             &projects,
@@ -1327,5 +1496,155 @@ mod tests {
             &[],
         );
         assert_eq!(resp.count, 1);
+    }
+
+    /// Seed > [`ANALYTICS_BATCH_SIZE`] issues and confirm the batched
+    /// driver returns every one in a single sweep. Crosses ≥ 2 cursor
+    /// pages, which is the regression bar for the cursor advance.
+    #[tokio::test]
+    async fn for_each_issue_history_crosses_batch_boundary() {
+        use crate::test_utils::test_state_handles;
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        // ANALYTICS_BATCH_SIZE + 5 so the driver has to advance the
+        // cursor at least once.
+        let total = (ANALYTICS_BATCH_SIZE + 5) as usize;
+        let mut expected = std::collections::HashSet::new();
+        for _ in 0..total {
+            let i = issue_in_default_project("open", "alice");
+            let (id, _) = store.add_issue(i, &actor).await.expect("add issue");
+            expected.insert(id);
+        }
+
+        let query =
+            IssuesThroughputQuery::new(dt("2026-05-10T00:00:00Z"), dt("2026-05-13T00:00:00Z"));
+        let (histories, _) = collect_histories(store.as_ref(), &query).await;
+
+        let seen: std::collections::HashSet<_> =
+            histories.iter().map(|h| h.issue_id.clone()).collect();
+        assert_eq!(seen, expected);
+        assert_eq!(histories.len(), total);
+    }
+
+    /// Drive each accumulator twice over the same seeded store — once
+    /// via the batched driver, once via the all-at-once `compute_*`
+    /// helper — and assert wire-identical results. Catches batch-boundary
+    /// regressions for every aggregator in one shot.
+    #[tokio::test]
+    async fn accumulators_match_single_pass_across_batch_boundary() {
+        use crate::test_utils::test_state_handles;
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        // Mix opens / closes / drops spread across the window so each
+        // aggregator gets non-trivial input and the cursor advances ≥ once.
+        let total = (ANALYTICS_BATCH_SIZE + 50) as usize;
+        // Wide window that comfortably contains today's `Utc::now()` —
+        // store-side timestamps come from the wall clock, so the analytics
+        // window must straddle "now" for the per-aggregator equality
+        // assertions below to verify non-trivial state, not just empty
+        // accumulators.
+        let from = dt("2020-01-01T00:00:00Z");
+        let to = dt("2030-01-01T00:00:00Z");
+        for i in 0..total {
+            let initial = issue_in_default_project("open", "alice");
+            let (id, _) = store.add_issue(initial, &actor).await.expect("add issue");
+            // Every third issue gets closed; every fifth gets dropped.
+            // The remainder stay open.
+            if i % 3 == 0 {
+                let closed = issue_in_default_project("closed", "alice");
+                store
+                    .update_issue(&id, closed, &actor)
+                    .await
+                    .expect("close");
+            } else if i % 5 == 0 {
+                let dropped = issue_in_default_project("dropped", "alice");
+                store
+                    .update_issue(&id, dropped, &actor)
+                    .await
+                    .expect("drop");
+            }
+        }
+
+        let query = IssuesThroughputQuery::new(from, to);
+        let (histories, projects) = collect_histories(store.as_ref(), &query).await;
+        assert!(histories.len() > ANALYTICS_BATCH_SIZE as usize);
+
+        // cycle_time
+        let mut acc = IssuesCycleTimeAccumulator::new(from, to, Vec::new());
+        let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+        for_each_issue_history(store.as_ref(), &query, &mut cache, |h, p| acc.fold(h, p))
+            .await
+            .expect("drive cycle_time");
+        assert_eq!(
+            acc.finalize(),
+            compute_issues_cycle_time(&histories, &projects, from, to, &[])
+        );
+
+        // over_time
+        let mut acc = IssuesOverTimeAccumulator::new(from, to, BucketGranularity::Day, Vec::new());
+        let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+        for_each_issue_history(store.as_ref(), &query, &mut cache, |h, p| acc.fold(h, p))
+            .await
+            .expect("drive over_time");
+        assert_eq!(
+            acc.finalize(),
+            compute_issues_over_time(&histories, &projects, from, to, BucketGranularity::Day, &[])
+        );
+
+        // time_in_status_breakdown
+        let project = default_project_seed();
+        let project_id = default_project_id();
+        let mut acc = IssuesTimeInStatusBreakdownAccumulator::new(
+            project_id.clone(),
+            &project,
+            from,
+            to,
+            Vec::new(),
+        );
+        let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+        for_each_issue_history(store.as_ref(), &query, &mut cache, |h, _p| acc.fold(h))
+            .await
+            .expect("drive time_in_status_breakdown");
+        assert_eq!(
+            acc.finalize(),
+            compute_issues_time_in_status_breakdown(
+                &histories,
+                &project_id,
+                &project,
+                from,
+                to,
+                &[]
+            )
+        );
+
+        // per_status_distribution
+        let mut acc = IssuesPerStatusDistributionAccumulator::new(
+            project_id.clone(),
+            &project,
+            from,
+            to,
+            Vec::new(),
+        );
+        let mut cache: HashMap<ProjectId, Project> = HashMap::new();
+        for_each_issue_history(store.as_ref(), &query, &mut cache, |h, _p| acc.fold(h))
+            .await
+            .expect("drive per_status_distribution");
+        assert_eq!(
+            acc.finalize(),
+            compute_issues_per_status_distribution(
+                &histories,
+                &project_id,
+                &project,
+                from,
+                to,
+                &[]
+            )
+        );
     }
 }

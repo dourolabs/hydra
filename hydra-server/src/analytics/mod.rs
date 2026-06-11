@@ -24,9 +24,10 @@ mod pricing;
 mod token_usage;
 
 pub use issues::{
-    IssueHistory, compute_issues_cycle_time, compute_issues_over_time,
-    compute_issues_per_status_distribution, compute_issues_time_in_status_breakdown,
-    fetch_issue_histories, resolve_projects_for_histories,
+    IssueHistory, IssuesCycleTimeAccumulator, IssuesOverTimeAccumulator,
+    IssuesPerStatusDistributionAccumulator, IssuesTimeInStatusBreakdownAccumulator,
+    compute_issues_cycle_time, compute_issues_over_time, compute_issues_per_status_distribution,
+    compute_issues_time_in_status_breakdown, for_each_issue_history,
 };
 pub use patches::{
     ANALYTICS_BATCH_SIZE, PatchHistory, PatchesInFlightOverTimeAccumulator,
