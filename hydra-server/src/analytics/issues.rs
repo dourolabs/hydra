@@ -1,5 +1,5 @@
+use super::ANALYTICS_BATCH_SIZE;
 use super::buckets::{bin_index_for, bucket_starts, empty_duration_histogram, percentile, step};
-use super::patches::ANALYTICS_BATCH_SIZE;
 use crate::app::projects::{ResolveStatusError, project_cached};
 use crate::domain::issues::Issue;
 use crate::store::{ReadOnlyStore, StoreError};

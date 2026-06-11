@@ -1,3 +1,4 @@
+use super::ANALYTICS_BATCH_SIZE;
 use super::buckets::{bin_index_for, bucket_starts, empty_duration_histogram, percentile, step};
 use crate::domain::patches::{Patch, PatchStatus};
 use crate::store::{ReadOnlyStore, StoreError};
@@ -10,13 +11,6 @@ use hydra_common::api::v1::analytics::{
 use hydra_common::api::v1::pagination::compute_next_cursor;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::{PatchId, Versioned};
-
-/// Batch size used when streaming patches through the analytics
-/// aggregators. Matches [`hydra_common::api::v1::pagination::MAX_LIMIT`]
-/// — the same ceiling every other paginated route applies — so callers
-/// pay one round-trip per 200 patches instead of materializing the full
-/// list.
-pub const ANALYTICS_BATCH_SIZE: u32 = 200;
 
 /// One patch and its full ascending-version-order history. Aggregation
 /// inputs are intentionally simple structs so unit tests can pass
@@ -964,8 +958,11 @@ mod tests {
         // Mix creates / merges / closes spread across the window so each
         // aggregator gets non-trivial input and the cursor advances ≥ once.
         let total = (ANALYTICS_BATCH_SIZE + 50) as usize;
-        let from = dt("2026-05-10T00:00:00Z");
-        let to = dt("2026-05-20T00:00:00Z");
+        // Window must straddle `Utc::now()` so every seeded patch
+        // (timestamped at add time) lands inside it; otherwise the
+        // cross-batch equality checks degenerate to empty == empty.
+        let from = dt("2020-01-01T00:00:00Z");
+        let to = dt("2100-01-01T00:00:00Z");
         for i in 0..total {
             let mut p = patch_with_status(PatchStatus::Open, "alice", repo_a.clone(), false);
             let (id, _) = store.add_patch(p.clone(), &actor).await.expect("add patch");
