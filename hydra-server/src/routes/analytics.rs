@@ -7,12 +7,12 @@
 //! plus error mapping.
 
 use crate::analytics::{
-    PatchesInFlightOverTimeAccumulator, PatchesOverTimeAccumulator, PatchesTerminalMixAccumulator,
-    PatchesTimeToMergeAccumulator, compute_cost_per_agent, compute_issues_cycle_time,
-    compute_issues_over_time, compute_issues_per_status_distribution,
-    compute_issues_time_in_status_breakdown, compute_token_usage_over_time,
-    compute_top_issues_by_cost, fetch_issue_histories, fetch_sessions_with_usage,
-    for_each_patch_history, rank_top_issues_by_cost, resolve_projects_for_histories,
+    CostPerAgentAccumulator, PatchesInFlightOverTimeAccumulator, PatchesOverTimeAccumulator,
+    PatchesTerminalMixAccumulator, PatchesTimeToMergeAccumulator, TokenUsageOverTimeAccumulator,
+    TopIssuesByCostAccumulator, compute_issues_cycle_time, compute_issues_over_time,
+    compute_issues_per_status_distribution, compute_issues_time_in_status_breakdown,
+    compute_top_issues_by_cost, fetch_issue_histories, for_each_patch_history,
+    for_each_session_with_usage, resolve_projects_for_histories,
 };
 use crate::app::AppState;
 use crate::app::projects::{ResolveStatusError, project_cached};
@@ -306,17 +306,18 @@ pub async fn token_usage_over_time(
         "analytics.token_usage_over_time invoked"
     );
     let bucket = validate_token_usage_over_time_query(&query)?;
-    let sessions = fetch_sessions_with_usage(
+    let mut acc = TokenUsageOverTimeAccumulator::new(query.from, query.to, bucket);
+    for_each_session_with_usage(
         state.store(),
         query.from,
         query.to,
         query.repo_name.as_deref(),
         query.creator.as_deref(),
+        |s| acc.fold(s),
     )
     .await
     .map_err(map_store_error)?;
-    let resp = compute_token_usage_over_time(&sessions, query.from, query.to, bucket);
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/token_usage/cost_per_agent`
@@ -330,17 +331,18 @@ pub async fn token_usage_cost_per_agent(
         "analytics.token_usage_cost_per_agent invoked"
     );
     validate_token_usage_query(&query)?;
-    let sessions = fetch_sessions_with_usage(
+    let mut acc = CostPerAgentAccumulator::new();
+    for_each_session_with_usage(
         state.store(),
         query.from,
         query.to,
         query.repo_name.as_deref(),
         query.creator.as_deref(),
+        |s| acc.fold(s),
     )
     .await
     .map_err(map_store_error)?;
-    let resp = compute_cost_per_agent(&sessions);
-    Ok(Json(resp))
+    Ok(Json(acc.finalize()))
 }
 
 /// `GET /v1/analytics/token_usage/top_issues_by_cost`
@@ -354,16 +356,18 @@ pub async fn token_usage_top_issues_by_cost(
         "analytics.token_usage_top_issues_by_cost invoked"
     );
     validate_token_usage_query(&query)?;
-    let sessions = fetch_sessions_with_usage(
+    let mut acc = TopIssuesByCostAccumulator::new();
+    for_each_session_with_usage(
         state.store(),
         query.from,
         query.to,
         query.repo_name.as_deref(),
         query.creator.as_deref(),
+        |s| acc.fold(s),
     )
     .await
     .map_err(map_store_error)?;
-    let ranked = rank_top_issues_by_cost(&sessions);
+    let ranked = acc.finalize();
     let mut titles: HashMap<IssueId, String> = HashMap::with_capacity(ranked.len());
     for (issue_id, _, _) in &ranked {
         match state.store().get_issue(issue_id, false).await {
@@ -614,6 +618,84 @@ mod tests {
             .await
             .expect_err("inverted window must 400");
         assert_eq!(err.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    /// Seed > ANALYTICS_BATCH_SIZE sessions and assert the handler's
+    /// totals match a single-batch computation. Forces the batched
+    /// driver to advance the cursor at least once and exercises the
+    /// token_usage_over_time accumulator across the boundary end-to-end.
+    #[tokio::test]
+    async fn token_usage_over_time_handler_matches_across_batch_boundary() {
+        use crate::analytics::ANALYTICS_BATCH_SIZE;
+        use crate::domain::sessions::{AgentConfig, Session, SessionMode};
+        use crate::domain::task_status::Status;
+        use crate::domain::users::Username;
+        use crate::routes::sessions::mount_spec_from_create_request;
+        use hydra_common::ActorRef as CommonActorRef;
+        use hydra_common::api::v1::agents::AgentName;
+        use hydra_common::api::v1::sessions::{Bundle, TokenUsage};
+
+        let handles = test_state_handles();
+        let store = handles.store.clone();
+        let actor = CommonActorRef::test();
+
+        let total = (ANALYTICS_BATCH_SIZE + 25) as usize;
+        let mut total_input: u64 = 0;
+        for i in 0..total {
+            let agent_config = AgentConfig {
+                agent_name: Some(AgentName::try_new("swe").expect("valid agent name")),
+                model: None,
+                system_prompt: None,
+                mcp_config: None,
+            };
+            // Spread end_time across distinct seconds so the cursor
+            // ordering is deterministic and every session lands in the
+            // window.
+            let end = dt("2026-05-10T00:00:00Z") + chrono::Duration::seconds(i as i64);
+            let mut session = Session::new(
+                Username::from("test"),
+                None,
+                None,
+                agent_config,
+                mount_spec_from_create_request(Bundle::None, None),
+                None,
+                std::collections::HashMap::new(),
+                None,
+                None,
+                None,
+                SessionMode::Headless,
+                Status::Complete,
+                None,
+                None,
+            );
+            session.end_time = Some(end);
+            session.creation_time = Some(end);
+            let input = (i as u64 + 1) * 100;
+            total_input += input;
+            session.usage = Some(TokenUsage {
+                input_tokens: input,
+                output_tokens: 0,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            });
+            store
+                .add_session(session, end, &actor)
+                .await
+                .expect("add session");
+        }
+
+        let from = dt("2026-05-09T00:00:00Z");
+        let to = dt("2026-05-13T00:00:00Z");
+        let q = TokenUsageOverTimeQuery::new(from, to);
+        let resp = token_usage_over_time(State(handles.state), Query(q))
+            .await
+            .expect("handler ok")
+            .0;
+        let observed_input: u64 = resp.buckets.iter().map(|b| b.input_tokens).sum();
+        assert_eq!(
+            observed_input, total_input,
+            "every seeded session must contribute exactly once across the batched sweep"
+        );
     }
 
     /// Seed > ANALYTICS_BATCH_SIZE patches and assert the handler's

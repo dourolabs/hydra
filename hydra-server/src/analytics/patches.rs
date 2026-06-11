@@ -1,3 +1,4 @@
+use super::ANALYTICS_BATCH_SIZE;
 use super::buckets::{bin_index_for, bucket_starts, empty_duration_histogram, percentile, step};
 use crate::domain::patches::{Patch, PatchStatus};
 use crate::store::{ReadOnlyStore, StoreError};
@@ -10,13 +11,6 @@ use hydra_common::api::v1::analytics::{
 use hydra_common::api::v1::pagination::compute_next_cursor;
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::{PatchId, Versioned};
-
-/// Batch size used when streaming patches through the analytics
-/// aggregators. Matches [`hydra_common::api::v1::pagination::MAX_LIMIT`]
-/// — the same ceiling every other paginated route applies — so callers
-/// pay one round-trip per 200 patches instead of materializing the full
-/// list.
-pub const ANALYTICS_BATCH_SIZE: u32 = 200;
 
 /// One patch and its full ascending-version-order history. Aggregation
 /// inputs are intentionally simple structs so unit tests can pass
