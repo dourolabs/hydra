@@ -107,6 +107,15 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
+    async fn list_comments(
+        &self,
+        _issue_id: &IssueId,
+        _limit: u32,
+        _before_sequence: Option<u64>,
+    ) -> Result<crate::domain::comments::ListCommentsPage, StoreError> {
+        fail()
+    }
+
     async fn get_patch(
         &self,
         _id: &PatchId,
@@ -798,6 +807,15 @@ impl Store for FailingStore {
         _status_key: &StatusKey,
         _actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
+        fail()
+    }
+
+    async fn add_comment(
+        &self,
+        _issue_id: &IssueId,
+        _body: String,
+        _actor: &ActorRef,
+    ) -> Result<crate::domain::comments::Comment, StoreError> {
         fail()
     }
 }

@@ -1,6 +1,7 @@
 use crate::domain::{
     actors::ActorRef,
     agents::Agent,
+    comments::{Comment, ListCommentsPage},
     conversations::Conversation,
     documents::Document,
     issues::Issue,
@@ -431,6 +432,20 @@ pub trait ReadOnlyStore: Send + Sync {
         &self,
         issue_id: &IssueId,
     ) -> Result<Vec<SessionId>, StoreError>;
+
+    /// List comments for an issue, ordered DESC by `sequence` (most
+    /// recent first), with cursor-based pagination via
+    /// `before_sequence`. `limit` is clamped to `[1, 200]` inside the
+    /// trait impl.
+    ///
+    /// Returns `StoreError::IssueNotFound` if no issue with this id
+    /// exists.
+    async fn list_comments(
+        &self,
+        issue_id: &IssueId,
+        limit: u32,
+        before_sequence: Option<u64>,
+    ) -> Result<ListCommentsPage, StoreError>;
 
     /// Returns `StoreError::PatchNotFound` for deleted patches unless `include_deleted` is true.
     async fn get_patch(
@@ -1296,6 +1311,19 @@ pub trait Store: ReadOnlyStore {
         status_key: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
+
+    /// Append a new comment to the issue. `sequence` is allocated by
+    /// the store as the per-issue high-water mark + 1 (starts at 1).
+    ///
+    /// Returns `StoreError::IssueNotFound` if no issue with this id
+    /// exists. Body validation (non-empty / non-whitespace-only) is
+    /// owned by the route layer; the store stores `body` verbatim.
+    async fn add_comment(
+        &self,
+        issue_id: &IssueId,
+        body: String,
+        actor: &ActorRef,
+    ) -> Result<Comment, StoreError>;
 
     /// Records that a trigger fired at `fired_at`, **in place** on the
     /// current latest row.

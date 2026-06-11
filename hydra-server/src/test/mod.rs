@@ -9,6 +9,7 @@ mod events;
 mod github_app;
 mod github_token;
 mod health;
+mod issue_comments;
 mod issues;
 mod labels;
 mod library_api;
