@@ -457,19 +457,44 @@ impl AppState {
     /// ready ⇔
     ///     every blocked_on dep    has resolve_status(dep).unblocks_dependents = true
     ///   ∧ every direct child      has resolve_status(child).unblocks_parents  = true
+    ///   ∧ resolve_status(issue).suppress_sessions = false
     /// ```
     ///
-    /// The issue's own status does not appear in the rule: dispatch is
-    /// gated by `assignee` instead, and `on_enter.clear_assignee` keeps
-    /// terminal-status issues out of every agent queue.
+    /// The dependency clauses are about ancestors/descendants; the
+    /// issue's own status appears only via `suppress_sessions`, which is
+    /// an explicit opt-out. Issues parked in a status flagged
+    /// `suppress_sessions = true` are intentionally kept out of the
+    /// spawn dispatcher even when otherwise ready — the typical use is
+    /// a custom "parked" or "waiting on human" status where the user
+    /// wants the issue to retain its assignee (so dispatch is not
+    /// suppressed via the `clear_assignee` path) but to stop spawning
+    /// new sessions until a status transition reactivates it.
     ///
     /// Status resolution failures (unknown project, malformed key) on
-    /// blockers or children are treated as "not ready" and logged —
-    /// upstream validation should have prevented these, so the warn
-    /// flags a real misconfiguration rather than a routine signal.
+    /// the issue's own status, blockers, or children are treated as
+    /// "not ready" and logged — upstream validation should have
+    /// prevented these, so the warn flags a real misconfiguration
+    /// rather than a routine signal.
     pub async fn is_issue_ready(&self, issue_id: &IssueId) -> Result<bool, StoreError> {
         let store = self.store.as_ref();
         let issue = store.get_issue(issue_id, false).await?.item;
+
+        match self.resolve_status(&issue).await {
+            Ok(def) => {
+                if def.suppress_sessions {
+                    return Ok(false);
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    issue_id = %issue_id,
+                    issue_status = %issue.status,
+                    error = %err,
+                    "is_issue_ready: failed to resolve own status; treating as not ready"
+                );
+                return Ok(false);
+            }
+        }
 
         for dependency in &issue.dependencies {
             if dependency.dependency_type != IssueDependencyType::BlockedOn {
@@ -1997,5 +2022,121 @@ mod tests {
         assert!(!state.is_issue_ready(&dependent_id).await.unwrap());
 
         runner.shutdown().await;
+    }
+
+    /// Seed a custom project owning a single `parked` status with the
+    /// caller-controlled `suppress_sessions` flag, returning the new
+    /// project id.
+    async fn seed_parked_project(
+        state: &crate::app::AppState,
+        suppress_sessions: bool,
+    ) -> hydra_common::ProjectId {
+        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let mut parked = StatusDefinition::new(
+            StatusKey::try_new("parked").unwrap(),
+            "Parked".to_string(),
+            "#95a5a6".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        parked.suppress_sessions = suppress_sessions;
+
+        let project = Project::new(
+            ProjectKey::try_new(if suppress_sessions {
+                "parked-project"
+            } else {
+                "active-project"
+            })
+            .unwrap(),
+            "Parked project".to_string(),
+            vec![],
+            ApiUsername::from("alice"),
+            false,
+            0.0,
+        );
+
+        let store = state.store.as_ref();
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        store
+            .add_status(&project_id, parked, &ActorRef::test())
+            .await
+            .unwrap();
+        project_id
+    }
+
+    #[tokio::test]
+    async fn issue_not_ready_when_status_suppresses_sessions() {
+        // The new readiness clause: a status flagged
+        // `suppress_sessions = true` parks the issue out of the spawn
+        // dispatcher regardless of blockers/children.
+        let state = test_state();
+        let project_id = seed_parked_project(&state, true).await;
+
+        let mut issue = issue_with_status("parked", status("parked"), vec![]);
+        issue.project_id = project_id;
+
+        let (issue_id, _) = state
+            .store
+            .as_ref()
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn issue_ready_when_custom_status_does_not_suppress_sessions() {
+        // Negative control: the same custom-project setup, but with
+        // `suppress_sessions = false`, must leave readiness alone. This
+        // proves the field flip is what drives the change above, not
+        // any side effect of using a non-default project.
+        let state = test_state();
+        let project_id = seed_parked_project(&state, false).await;
+
+        let mut issue = issue_with_status("parked", status("parked"), vec![]);
+        issue.project_id = project_id;
+
+        let (issue_id, _) = state
+            .store
+            .as_ref()
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        assert!(state.is_issue_ready(&issue_id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn issue_not_ready_when_own_status_resolution_fails() {
+        // Mirror of the blocker/child status-resolution-failure
+        // pattern, applied to the issue's own status. The store
+        // refuses to add an issue with an unknown status outright, so
+        // we instead soft-delete the owning project after the issue
+        // is registered: that takes `resolve_status` down the
+        // `ProjectNotFound` branch, which the new own-status check
+        // must convert into `Ok(false)` with a warn log.
+        let state = test_state();
+        let project_id = seed_parked_project(&state, false).await;
+
+        let mut issue = issue_with_status("parked", status("parked"), vec![]);
+        issue.project_id = project_id.clone();
+
+        let store = state.store.as_ref();
+        let (issue_id, _) = store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+
+        store
+            .delete_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
     }
 }
