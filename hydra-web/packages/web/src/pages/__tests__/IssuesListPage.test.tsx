@@ -164,6 +164,10 @@ vi.mock("../../features/issues/view/IssuesView.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+vi.mock("../../layout/PageHead.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
 vi.mock("../../features/issues/view/IssuesTable.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));

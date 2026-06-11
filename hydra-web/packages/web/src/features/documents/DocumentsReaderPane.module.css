@@ -134,3 +134,9 @@
   font-size: var(--t-sm);
   text-align: center;
 }
+
+@media (max-width: 768px) {
+  .breadcrumb {
+    display: none;
+  }
+}

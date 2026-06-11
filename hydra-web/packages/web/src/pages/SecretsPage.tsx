@@ -4,6 +4,7 @@ import { useUsername } from "../features/auth/useUsername";
 import { useSecrets } from "../features/secrets/useSecrets";
 import { SecretsSection } from "../features/secrets/SecretsSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import styles from "./SecretsPage.module.css";
 
 export function SecretsPage() {
@@ -16,17 +17,16 @@ export function SecretsPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>SYSTEM · {label}</span>
-          <h1 className={styles.pageTitle}>Secrets</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
-          <Icons.IconPlus />
-          Add secret
-        </Button>
-      </div>
+      <PageHead
+        eyebrow={`SYSTEM · ${label}`}
+        title="Secrets"
+        actions={
+          <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
+            <Icons.IconPlus />
+            Add secret
+          </Button>
+        }
+      />
 
       <div className={styles.body}>
         <SecretsSection adding={adding} onAddingChange={setAdding} />

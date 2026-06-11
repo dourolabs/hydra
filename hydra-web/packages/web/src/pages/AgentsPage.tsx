@@ -3,6 +3,7 @@ import { Button, Icons } from "@hydra/ui";
 import { useAgents } from "../hooks/useAgents";
 import { AgentsSection } from "../features/agents/AgentsSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import styles from "./AgentsPage.module.css";
 
 export function AgentsPage() {
@@ -14,17 +15,16 @@ export function AgentsPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>SYSTEM · {label}</span>
-          <h1 className={styles.pageTitle}>Agents</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-          <Icons.IconPlus />
-          Add agent
-        </Button>
-      </div>
+      <PageHead
+        eyebrow={`SYSTEM · ${label}`}
+        title="Agents"
+        actions={
+          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+            <Icons.IconPlus />
+            Add agent
+          </Button>
+        }
+      />
 
       <div className={styles.body}>
         <AgentsSection

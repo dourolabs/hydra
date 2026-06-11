@@ -4,6 +4,7 @@ import { IssuesBoard } from "../features/issues/view/IssuesBoard";
 import { ProjectCreateModal } from "../features/projects/ProjectCreateModal";
 import { useProjects } from "../features/projects/useProjects";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import styles from "./ProjectsListPage.module.css";
 
 export function ProjectsListPage() {
@@ -15,22 +16,21 @@ export function ProjectsListPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>WORKSPACE · {label}</span>
-          <h1 className={styles.pageTitle}>Projects</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => setCreateOpen(true)}
-          data-testid="projects-list-add"
-        >
-          <Icons.IconPlus />
-          Add project
-        </Button>
-      </div>
+      <PageHead
+        eyebrow={`WORKSPACE · ${label}`}
+        title="Projects"
+        actions={
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setCreateOpen(true)}
+            data-testid="projects-list-add"
+          >
+            <Icons.IconPlus />
+            Add project
+          </Button>
+        }
+      />
 
       <div className={styles.body}>
         <IssuesBoard
