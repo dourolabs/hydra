@@ -3,6 +3,7 @@ import { Button, Icons } from "@hydra/ui";
 import { useRepositories } from "../hooks/useRepositories";
 import { RepositoriesSection } from "../features/repositories/RepositoriesSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import styles from "./RepositoriesPage.module.css";
 
 export function RepositoriesPage() {
@@ -14,17 +15,16 @@ export function RepositoriesPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>SYSTEM · {label}</span>
-          <h1 className={styles.pageTitle}>Repositories</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-          <Icons.IconPlus />
-          Add repository
-        </Button>
-      </div>
+      <PageHead
+        eyebrow={`SYSTEM · ${label}`}
+        title="Repositories"
+        actions={
+          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+            <Icons.IconPlus />
+            Add repository
+          </Button>
+        }
+      />
 
       <div className={styles.body}>
         <RepositoriesSection

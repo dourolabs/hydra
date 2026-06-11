@@ -3,6 +3,7 @@ import { Icons } from "@hydra/ui";
 import type { IssueNeighborhood } from "../flowPill";
 import type { IssueFilters } from "../usePaginatedIssues";
 import { FilterBar, type Filter, type FilterDefinitions } from "../../filters";
+import { PageHead } from "../../../layout/PageHead";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
 import styles from "./IssuesView.module.css";
@@ -65,13 +66,10 @@ export function IssuesView({
 }: IssuesViewProps) {
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>{eyebrow}</span>
-          <h1 className={styles.pageTitle}>{title}</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <div className={styles.headRight}>
+      <PageHead
+        eyebrow={eyebrow}
+        title={title}
+        actions={
           <div className={styles.segmented} role="tablist" aria-label="Layout">
             <button
               type="button"
@@ -82,7 +80,7 @@ export function IssuesView({
               data-testid="issues-layout-table"
             >
               <Icons.IconMenu size={14} />
-              Table
+              <span className={styles.segmentedLabel}>Table</span>
             </button>
             <button
               type="button"
@@ -93,11 +91,11 @@ export function IssuesView({
               data-testid="issues-layout-board"
             >
               <Icons.IconDot size={14} />
-              Board
+              <span className={styles.segmentedLabel}>Board</span>
             </button>
           </div>
-        </div>
-      </div>
+        }
+      />
 
       <div className={styles.toolbar}>
         <div className={styles.searchBox}>

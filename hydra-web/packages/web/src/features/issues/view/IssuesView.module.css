@@ -6,51 +6,6 @@
   background: var(--bg-0);
 }
 
-/* ─── Page head ─── */
-.pageHead {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  padding: 18px 24px 14px;
-  border-bottom: 1px solid var(--line);
-  flex-shrink: 0;
-}
-
-.headLeft {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.eyebrow {
-  font-family: var(--f-mono);
-  font-size: var(--t-xs);
-  color: var(--fg-2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.pageTitle {
-  font-family: var(--f-sans);
-  font-size: var(--t-xl);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--fg-0);
-  margin: 0;
-}
-
-.headSpacer {
-  flex: 1;
-}
-
-.headRight {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* ─── Toolbar ─── */
 .toolbar {
   display: flex;
@@ -232,19 +187,18 @@
 }
 
 @media (max-width: 768px) {
-  .pageHead {
-    padding: 14px 16px 10px;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  .headRight {
-    width: 100%;
-  }
-
   .toolbar {
     padding: 8px 16px;
+  }
+
+  /* Drop the "Table" / "Board" labels on the narrow mobile bar so the
+     segmented control fits on the same row as the eyebrow at 375px. */
+  .segmentedLabel {
+    display: none;
+  }
+
+  .segmented button {
+    padding: 0 8px;
   }
 
   /* Force the search box onto its own row instead of letting it squeeze into

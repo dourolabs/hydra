@@ -3,6 +3,7 @@ import { Button, Icons } from "@hydra/ui";
 import { useTriggers } from "../features/triggers/useTriggers";
 import { TriggersSection } from "../features/triggers/TriggersSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import styles from "./TriggersListPage.module.css";
 
 export function TriggersListPage() {
@@ -14,17 +15,16 @@ export function TriggersListPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>WORKSPACE · {label}</span>
-          <h1 className={styles.pageTitle}>Triggers</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-          <Icons.IconPlus />
-          Add trigger
-        </Button>
-      </div>
+      <PageHead
+        eyebrow={`WORKSPACE · ${label}`}
+        title="Triggers"
+        actions={
+          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+            <Icons.IconPlus />
+            Add trigger
+          </Button>
+        }
+      />
 
       <div className={styles.body}>
         <TriggersSection

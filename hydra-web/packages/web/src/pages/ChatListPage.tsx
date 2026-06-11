@@ -25,6 +25,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { ChatRailRow } from "../features/related/RailRow";
 import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import styles from "./ChatListPage.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -157,22 +158,21 @@ export function ChatListPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>WORK · {totalLabel}</span>
-          <h1 className={styles.pageTitle}>Chats</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => createMutation.mutate()}
-          disabled={createMutation.isPending}
-        >
-          <Icons.IconPlus />
-          {createMutation.isPending ? "Creating…" : "New chat"}
-        </Button>
-      </div>
+      <PageHead
+        eyebrow={`WORK · ${totalLabel}`}
+        title="Chats"
+        actions={
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => createMutation.mutate()}
+            disabled={createMutation.isPending}
+          >
+            <Icons.IconPlus />
+            {createMutation.isPending ? "Creating…" : "New chat"}
+          </Button>
+        }
+      />
 
       <div className={styles.toolbar}>
         <div className={styles.searchBox}>

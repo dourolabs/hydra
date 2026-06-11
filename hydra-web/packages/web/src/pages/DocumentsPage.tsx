@@ -11,6 +11,7 @@ import { useBatchedDocumentPaths } from "../features/documents/useBatchedDocumen
 import { useDocumentCount } from "../features/documents/useDocumentCount";
 import { useUncategorizedDocuments } from "../features/documents/useUncategorizedDocuments";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import styles from "./DocumentsPage.module.css";
 
 const ROOT_PATH = "/";
@@ -50,17 +51,16 @@ export function DocumentsPage() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>KNOWLEDGE · {totalLabel}</span>
-          <h1 className={styles.pageTitle}>Documents</h1>
-        </div>
-        <span className={styles.headSpacer} />
-        <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-          <Icons.IconPlus />
-          New document
-        </Button>
-      </div>
+      <PageHead
+        eyebrow={`KNOWLEDGE · ${totalLabel}`}
+        title="Documents"
+        actions={
+          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+            <Icons.IconPlus />
+            New document
+          </Button>
+        }
+      />
 
       {error && <div className={styles.errorBanner}>Failed to load documents: {error.message}</div>}
 
