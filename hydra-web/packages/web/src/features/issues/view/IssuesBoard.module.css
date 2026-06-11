@@ -61,10 +61,6 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
-  /* Stick to the left edge of the scrolling viewport so the project chip
-     and counts stay visible while the columns scroll horizontally. */
-  position: sticky;
-  left: 10px;
 }
 
 .projectCollapseToggle {
@@ -138,10 +134,6 @@
   align-items: center;
   gap: 6px;
   min-height: 22px;
-  /* Stick to the right edge of the scrolling viewport so the settings
-     button stays reachable regardless of horizontal scroll position. */
-  position: sticky;
-  right: 10px;
 }
 
 .projectSettingsButton {
@@ -558,11 +550,10 @@
     background var(--tx-fast),
     border-color var(--tx-fast),
     color var(--tx-fast);
-  /* Stay anchored to the left edge of the scrolling viewport so the
-     button doesn't stretch to the kanban's full max-content width when
-     project rows extend beyond the viewport. */
-  position: sticky;
-  left: 20px;
+  /* Sized to fit content (with a sensible minimum) and anchored to the
+     start of the kanban so it sits at the left and scrolls horizontally
+     with the project rows below it, rather than stretching to the
+     kanban's full max-content width. */
   align-self: flex-start;
   min-width: 240px;
 }
@@ -591,15 +582,10 @@
     flex-wrap: wrap;
   }
 
-  .projectBarLeft {
-    position: static;
-  }
-
   .projectBarRight {
     margin-left: 0;
     flex-basis: 100%;
     justify-content: flex-end;
-    position: static;
   }
 
   .projectColumns {
@@ -623,6 +609,5 @@
     width: 82vw;
     min-width: 0;
     align-self: center;
-    position: static;
   }
 }

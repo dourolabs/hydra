@@ -111,6 +111,10 @@ select {
   background: var(--line-strong);
 }
 
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Pulsing dot keyframe — shared by status and cluster-status */
 @keyframes hydra-pulse {
   50% {
