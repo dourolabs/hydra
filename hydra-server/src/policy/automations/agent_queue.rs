@@ -454,6 +454,15 @@ pub(crate) async fn agent_task_state(
     Ok(task_state)
 }
 
+/// Returns `true` if any `ChildOf` parent of `issue` has a *headless*
+/// session in `Pending`/`Running` state.
+///
+/// Interactive parent sessions are explicitly exempted: an
+/// `Interactive`-mode session represents user-facing chat work (e.g. a PM
+/// agent chatting with a user on a `specification`-status issue) and
+/// should not gate child issues from spawning. Headless sessions still
+/// gate, since they represent autonomous work that must serialize
+/// against children.
 pub(crate) async fn parent_has_running_task(
     state: &AppState,
     issue: &Issue,
@@ -464,10 +473,11 @@ pub(crate) async fn parent_has_running_task(
         .filter(|dependency| dependency.dependency_type == IssueDependencyType::ChildOf)
     {
         for task_id in state.get_sessions_for_issue(&dependency.issue_id).await? {
-            if matches!(
-                state.get_session(&task_id).await?.status,
-                Status::Pending | Status::Running
-            ) {
+            let session = state.get_session(&task_id).await?;
+            if session.is_interactive() {
+                continue;
+            }
+            if matches!(session.status, Status::Pending | Status::Running) {
                 return Ok(true);
             }
         }
@@ -1117,6 +1127,229 @@ mod tests {
             .spawn_for_issue(&handles.state, &child_issue_id, &issue_item, &task_state)
             .await?;
         assert!(!result.is_spawned());
+
+        Ok(())
+    }
+
+    /// Add a session for `parent_id`, optionally rewriting its mode to
+    /// `SessionMode::Interactive`, and transition it to the requested
+    /// status (`Pending` or `Running`). Returns the session id so a
+    /// caller can mix multiple parent sessions in one test.
+    async fn seed_parent_session(
+        handles: &TestStateHandles,
+        parent_id: &IssueId,
+        interactive: bool,
+        target_status: Status,
+    ) -> anyhow::Result<SessionId> {
+        use crate::domain::sessions::SessionMode;
+
+        let mut session = task(
+            "Parent task",
+            Bundle::None,
+            Some(parent_id.clone()),
+            Some("hydra-worker:latest"),
+            HashMap::from([
+                (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
+                (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
+            ]),
+        );
+        if interactive {
+            session.mode = SessionMode::Interactive {
+                conversation_id: ConversationId::new(),
+                idle_timeout_secs: None,
+                greet_user: false,
+            };
+        }
+
+        let (task_id, _) = handles
+            .store
+            .add_session(session, Utc::now(), &ActorRef::test())
+            .await?;
+        match target_status {
+            Status::Pending => {
+                handles
+                    .state
+                    .transition_task_to_pending(&task_id, ActorRef::test())
+                    .await?;
+            }
+            Status::Running => {
+                handles
+                    .state
+                    .transition_task_to_running(&task_id, ActorRef::test())
+                    .await?;
+            }
+            other => panic!("seed_parent_session only supports Pending/Running, got {other:?}"),
+        }
+        Ok(task_id)
+    }
+
+    async fn add_parent_and_child(
+        handles: &TestStateHandles,
+        repo_name: &RepoName,
+        parent_title: &str,
+        child_title: &str,
+    ) -> anyhow::Result<(IssueId, IssueId)> {
+        let (parent_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    parent_title,
+                    status("open"),
+                    Some("agent-a"),
+                    vec![],
+                    repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let (child_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    child_title,
+                    status("open"),
+                    Some("agent-a"),
+                    vec![IssueDependency::new(
+                        IssueDependencyType::ChildOf,
+                        parent_id.clone(),
+                    )],
+                    repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        Ok((parent_id, child_id))
+    }
+
+    #[tokio::test]
+    async fn parent_has_running_task_blocks_when_parent_headless_pending() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, child_id) =
+            add_parent_and_child(&handles, &repo_name, "Parent", "Child").await?;
+        seed_parent_session(&handles, &parent_id, false, Status::Pending).await?;
+
+        let child = handles.store.get_issue(&child_id, false).await?.item;
+        assert!(parent_has_running_task(&handles.state, &child).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parent_has_running_task_blocks_when_parent_headless_running() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, child_id) =
+            add_parent_and_child(&handles, &repo_name, "Parent", "Child").await?;
+        seed_parent_session(&handles, &parent_id, false, Status::Running).await?;
+
+        let child = handles.store.get_issue(&child_id, false).await?.item;
+        assert!(parent_has_running_task(&handles.state, &child).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parent_has_running_task_ignores_interactive_pending() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, child_id) =
+            add_parent_and_child(&handles, &repo_name, "Parent", "Child").await?;
+        seed_parent_session(&handles, &parent_id, true, Status::Pending).await?;
+
+        let child = handles.store.get_issue(&child_id, false).await?.item;
+        assert!(!parent_has_running_task(&handles.state, &child).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parent_has_running_task_ignores_interactive_running() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, child_id) =
+            add_parent_and_child(&handles, &repo_name, "Parent", "Child").await?;
+        seed_parent_session(&handles, &parent_id, true, Status::Running).await?;
+
+        let child = handles.store.get_issue(&child_id, false).await?.item;
+        assert!(!parent_has_running_task(&handles.state, &child).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parent_has_running_task_blocks_when_headless_and_interactive_running()
+    -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (parent_id, child_id) =
+            add_parent_and_child(&handles, &repo_name, "Parent", "Child").await?;
+        seed_parent_session(&handles, &parent_id, false, Status::Running).await?;
+        seed_parent_session(&handles, &parent_id, true, Status::Running).await?;
+
+        let child = handles.store.get_issue(&child_id, false).await?.item;
+        assert!(parent_has_running_task(&handles.state, &child).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parent_has_running_task_blocks_when_any_parent_has_headless_running()
+    -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+
+        let (interactive_parent_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Interactive parent",
+                    status("open"),
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let (headless_parent_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Headless parent",
+                    status("open"),
+                    Some("agent-a"),
+                    vec![],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        seed_parent_session(&handles, &interactive_parent_id, true, Status::Running).await?;
+        seed_parent_session(&handles, &headless_parent_id, false, Status::Running).await?;
+
+        let (child_id, _) = handles
+            .store
+            .add_issue(
+                issue(
+                    "Child of both",
+                    status("open"),
+                    Some("agent-a"),
+                    vec![
+                        IssueDependency::new(
+                            IssueDependencyType::ChildOf,
+                            interactive_parent_id.clone(),
+                        ),
+                        IssueDependency::new(
+                            IssueDependencyType::ChildOf,
+                            headless_parent_id.clone(),
+                        ),
+                    ],
+                    &repo_name,
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let child = handles.store.get_issue(&child_id, false).await?.item;
+        assert!(parent_has_running_task(&handles.state, &child).await?);
 
         Ok(())
     }
