@@ -36,6 +36,7 @@ pub struct KubernetesJobEngine {
     pub server_hostname: String,
     pub client: Client,
     pub image_pull_secrets: Vec<String>,
+    pub ttl_seconds_after_finished: i32,
 }
 
 fn merge_env_vars(
@@ -560,6 +561,7 @@ impl JobEngine for KubernetesJobEngine {
                     }),
                 },
                 backoff_limit: Some(0),
+                ttl_seconds_after_finished: Some(self.ttl_seconds_after_finished),
                 ..Default::default()
             }),
             ..Default::default()

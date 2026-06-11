@@ -566,6 +566,8 @@ pub struct KubernetesSection {
     pub api_server: String,
     #[serde(default)]
     pub image_pull_secrets: Vec<String>,
+    #[serde(default = "default_ttl_seconds_after_finished")]
+    pub ttl_seconds_after_finished: i32,
 }
 
 impl Default for KubernetesSection {
@@ -577,6 +579,7 @@ impl Default for KubernetesSection {
             cluster_name: String::new(),
             api_server: String::new(),
             image_pull_secrets: Vec::new(),
+            ttl_seconds_after_finished: default_ttl_seconds_after_finished(),
         }
     }
 }
@@ -836,6 +839,12 @@ const fn default_interactive_idle_timeout_secs() -> u64 {
 
 fn default_kubeconfig_path() -> String {
     "~/.kube/config".to_string()
+}
+
+const fn default_ttl_seconds_after_finished() -> i32 {
+    // 7 days — finished Jobs and their Pods are GCed by the K8s job
+    // controller after this many seconds.
+    604_800
 }
 
 fn default_github_api_base_url() -> String {

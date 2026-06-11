@@ -63,6 +63,10 @@ job_engine: "local"
 #   api_server: ""
 #   # image_pull_secrets:
 #   #   - "ghcr-credentials"
+#   # Seconds after a Job reaches Complete/Failed before the K8s job
+#   # controller GCs the Job and its Pods. Defaults to 604800 (7 days).
+#   # Set to 0 to delete immediately on completion.
+#   ttl_seconds_after_finished: 604800
 
 # Authentication mode: "local" or "github".
 # - local: auto-creates a default user actor on startup. Requires github_token
