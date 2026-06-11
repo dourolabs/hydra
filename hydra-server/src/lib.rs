@@ -160,6 +160,7 @@ pub async fn build_app_state(app_config: AppConfig) -> anyhow::Result<AppState> 
                 server_hostname: app_config.hydra.server_hostname.clone(),
                 client: kube_client,
                 image_pull_secrets: kubernetes.image_pull_secrets.clone(),
+                ttl_seconds_after_finished: kubernetes.ttl_seconds_after_finished,
             };
             info!("using Kubernetes job engine");
             Arc::new(engine)
