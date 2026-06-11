@@ -7,6 +7,7 @@ pub mod conversations;
 pub mod documents;
 pub mod events;
 pub mod github;
+pub mod issue_comments;
 pub mod issue_response;
 pub mod issues;
 pub mod labels;

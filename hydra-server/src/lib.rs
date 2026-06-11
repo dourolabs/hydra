@@ -252,6 +252,11 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             post(routes::issues::submit_feedback),
         )
         .route(
+            "/v1/issues/:issue_id/comments",
+            get(routes::issue_comments::list_issue_comments)
+                .post(routes::issue_comments::add_issue_comment),
+        )
+        .route(
             "/v1/patches",
             get(routes::patches::list_patches).post(routes::patches::create_patch),
         )

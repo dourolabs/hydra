@@ -3089,6 +3089,17 @@ impl ReadOnlyStore for SqliteStore {
         Ok(tasks.into_iter().map(|(id, _)| id).collect())
     }
 
+    async fn list_comments(
+        &self,
+        _issue_id: &IssueId,
+        _limit: u32,
+        _before_sequence: Option<u64>,
+    ) -> Result<crate::domain::comments::ListCommentsPage, StoreError> {
+        Err(StoreError::Unsupported(
+            "list_comments not yet implemented for SqliteStore",
+        ))
+    }
+
     async fn get_patch(
         &self,
         id: &PatchId,
@@ -6344,6 +6355,17 @@ impl Store for SqliteStore {
 
         tx.commit().await.map_err(map_sqlx_error)?;
         Ok(next_version)
+    }
+
+    async fn add_comment(
+        &self,
+        _issue_id: &IssueId,
+        _body: String,
+        _actor: &ActorRef,
+    ) -> Result<crate::domain::comments::Comment, StoreError> {
+        Err(StoreError::Unsupported(
+            "add_comment not yet implemented for SqliteStore",
+        ))
     }
 }
 

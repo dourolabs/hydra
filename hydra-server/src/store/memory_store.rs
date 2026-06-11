@@ -13,6 +13,7 @@ use crate::domain::conversations::Conversation;
 use crate::domain::{
     actors::ActorRef,
     agents::Agent,
+    comments::{Comment, ListCommentsPage},
     documents::Document,
     issues::{Issue, IssueDependency, IssueType},
     labels::Label,
@@ -164,6 +165,11 @@ pub struct MemoryStore {
     /// a process-wide insertion order across sessions. Mirrors the postgres
     /// BIGSERIAL / sqlite ROWID used by the SQL backends for the same purpose.
     next_session_event_seq: AtomicU64,
+    /// Per-issue append-only comment log. Held under a single mutex so
+    /// sequence allocation in `add_comment` is atomic against concurrent
+    /// reads/writes targeting the same issue. Comments are stored in
+    /// insertion order; `sequence` corresponds to `vec_index + 1`.
+    comments: Mutex<HashMap<IssueId, Vec<Comment>>>,
 }
 
 impl MemoryStore {
@@ -212,6 +218,7 @@ impl MemoryStore {
             session_events: DashMap::new(),
             session_state: DashMap::new(),
             next_session_event_seq: AtomicU64::new(1),
+            comments: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1103,6 +1110,42 @@ impl ReadOnlyStore for MemoryStore {
             .get(issue_id)
             .map(|entry| entry.value().clone())
             .unwrap_or_default())
+    }
+
+    async fn list_comments(
+        &self,
+        issue_id: &IssueId,
+        limit: u32,
+        before_sequence: Option<u64>,
+    ) -> Result<ListCommentsPage, StoreError> {
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
+        }
+
+        let clamped_limit = limit.clamp(1, 200) as usize;
+        let cutoff = before_sequence.unwrap_or(u64::MAX);
+
+        let comments = self.comments.lock().expect("comments mutex poisoned");
+        let raw = comments.get(issue_id).cloned().unwrap_or_default();
+        drop(comments);
+
+        // Stored in insertion order (sequence ascending). Walk back from
+        // the highest qualifying sequence to produce a most-recent-first
+        // batch.
+        let filtered: Vec<Comment> = raw
+            .into_iter()
+            .rev()
+            .filter(|c| c.sequence < cutoff)
+            .take(clamped_limit)
+            .collect();
+
+        let next_before_sequence = if filtered.len() == clamped_limit {
+            filtered.last().map(|c| c.sequence)
+        } else {
+            None
+        };
+
+        Ok(ListCommentsPage::new(filtered, next_before_sequence))
     }
 
     async fn get_patch(
@@ -3104,6 +3147,24 @@ impl Store for MemoryStore {
         let next_version = Self::next_version(versions);
         versions.push(Self::versioned_now_with_actor(project, next_version, actor));
         Ok(next_version)
+    }
+
+    async fn add_comment(
+        &self,
+        issue_id: &IssueId,
+        body: String,
+        actor: &ActorRef,
+    ) -> Result<Comment, StoreError> {
+        if !self.issues.contains_key(issue_id) {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
+        }
+
+        let mut comments = self.comments.lock().expect("comments mutex poisoned");
+        let bucket = comments.entry(issue_id.clone()).or_default();
+        let sequence = bucket.len() as u64 + 1;
+        let comment = Comment::new(issue_id.clone(), sequence, body, actor.clone(), Utc::now());
+        bucket.push(comment.clone());
+        Ok(comment)
     }
 }
 

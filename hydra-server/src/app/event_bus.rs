@@ -1271,6 +1271,17 @@ impl StoreWithEvents {
         self.inner.delete_status(id, status_key, actor).await
     }
 
+    // ---- Comment mutations ----
+
+    pub async fn add_comment(
+        &self,
+        issue_id: &IssueId,
+        body: String,
+        actor: &ActorRef,
+    ) -> Result<crate::domain::comments::Comment, StoreError> {
+        self.inner.add_comment(issue_id, body, actor).await
+    }
+
     // ---- Label association mutations ----
 
     pub async fn add_label_association(
@@ -1538,6 +1549,17 @@ impl ReadOnlyStore for StoreWithEvents {
         issue_id: &IssueId,
     ) -> Result<Vec<SessionId>, StoreError> {
         self.inner.get_sessions_for_issue(issue_id).await
+    }
+
+    async fn list_comments(
+        &self,
+        issue_id: &IssueId,
+        limit: u32,
+        before_sequence: Option<u64>,
+    ) -> Result<crate::domain::comments::ListCommentsPage, StoreError> {
+        self.inner
+            .list_comments(issue_id, limit, before_sequence)
+            .await
     }
 
     // ---- Patch (read-only) ----

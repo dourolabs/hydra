@@ -28,9 +28,9 @@ pub use activity_log::{
 };
 pub use actor_ref::{ActorId, ActorRef, parse_actor_name};
 pub use api::v1::{
-    agents, analytics, conversations, documents, events, form, issues, labels, login, logs,
-    merge_check, merge_queues, patches, projects, relay, repositories, secrets, session_status,
-    sessions, task_status, triggers, users, version, whoami,
+    agents, analytics, comments, conversations, documents, events, form, issues, labels, login,
+    logs, merge_check, merge_queues, patches, projects, relay, repositories, secrets,
+    session_status, sessions, task_status, triggers, users, version, whoami,
 };
 pub use build_cache::{BuildCacheContext, BuildCacheSettings, BuildCacheStorageConfig};
 pub use document_path::{DocumentPath, DocumentPathError};
@@ -224,6 +224,13 @@ mod ts_export {
         crate::issues::ListIssuesResponse::export_all(&cfg).expect("ListIssuesResponse");
         crate::issues::ListIssueVersionsResponse::export_all(&cfg)
             .expect("ListIssueVersionsResponse");
+
+        // API v1: comments
+        crate::comments::Comment::export_all(&cfg).expect("Comment");
+        crate::comments::AddCommentRequest::export_all(&cfg).expect("AddCommentRequest");
+        crate::comments::AddCommentResponse::export_all(&cfg).expect("AddCommentResponse");
+        crate::comments::ListCommentsQuery::export_all(&cfg).expect("ListCommentsQuery");
+        crate::comments::ListCommentsResponse::export_all(&cfg).expect("ListCommentsResponse");
 
         // API v1: triggers
         crate::triggers::Trigger::export_all(&cfg).expect("Trigger");
