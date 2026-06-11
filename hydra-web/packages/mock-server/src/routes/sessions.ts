@@ -447,9 +447,9 @@ export function createSessionRoutes(store: Store): Hono {
     const task = entry.data;
     const modeKind =
       task.mode.type === "interactive" ? "interactive" : "headless";
-    const idleTimeoutSecs =
+    const idleTimeout =
       task.mode.type === "interactive"
-        ? (task.mode.idle_timeout_secs ?? null)
+        ? (task.mode.idle_timeout ?? null)
         : null;
     const resp: WorkerContext = {
       session_id: id,
@@ -458,7 +458,7 @@ export function createSessionRoutes(store: Store): Hono {
       working_dir: task.mount_spec.working_dir,
       model: task.agent_config.model ?? null,
       mcp_config: task.agent_config.mcp_config ?? null,
-      idle_timeout_secs: idleTimeoutSecs,
+      idle_timeout: idleTimeout,
       resolved_env: task.env_vars ?? {},
       github_token: null,
     };
