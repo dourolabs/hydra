@@ -139,6 +139,7 @@ the catalog stays in sync.
 - `@mobile:documents-single-pane` — At ≤768px the documents page collapses to a single pane (the reader pane); the left document tree (`aside[aria-label="Document tree"]`) is hidden via `display: none`
 - `@mobile:chat-header-meta` — At mobile widths the chat-details subheading renders "started Xm ago" with a visible space and the meta row wraps cleanly (no separator at line edges, no overlapping characters)
 - `@mobile:issues-row-overflow` — At 320, 360, and 375 px viewports the issues list has no document-level, `<main>`-level, or per-row horizontal overflow, even when a row's title is an unbreakable long token
+- `@mobile:session-detail` — At mobile widths the session detail header collapses Kill Session into a `⋯` overflow menu (status badge stays inline); for completed sessions the trigger is absent. The kill action wired through the overflow menu uses the same confirm-modal mutation as desktop.
 
 ## Responsive Layout
 

@@ -103,6 +103,40 @@ vi.mock("../../components/DeleteConfirmModal/DeleteConfirmModal", () => ({
   DeleteConfirmModal: () => null,
 }));
 
+const useIsMobileMock = vi.fn(() => false);
+vi.mock("../../hooks/useIsMobile", () => ({
+  useIsMobile: () => useIsMobileMock(),
+}));
+
+interface OverflowMenuItemMock {
+  key: string;
+  label: string;
+  testId?: string;
+  onSelect: () => void;
+}
+vi.mock("../../components/OverflowMenu", () => ({
+  OverflowMenu: ({
+    items,
+    triggerTestId,
+  }: {
+    items: OverflowMenuItemMock[];
+    triggerTestId?: string;
+  }) => (
+    <div data-testid={triggerTestId ?? "overflow-menu"}>
+      {items.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          data-testid={item.testId}
+          onClick={item.onSelect}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  ),
+}));
+
 vi.mock("../../api/client", () => ({
   apiClient: {
     killSession: vi.fn(),
@@ -179,6 +213,8 @@ function reset() {
 beforeEach(() => {
   reset();
   useBreadcrumbsMock.mockReset();
+  useIsMobileMock.mockReset();
+  useIsMobileMock.mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -245,5 +281,53 @@ describe("SessionLogPage", () => {
       (a) => a.getAttribute("href") === "/issues/i-1",
     );
     expect(issueLinks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders an inline Kill Session button on desktop for a running session", () => {
+    useIsMobileMock.mockReturnValue(false);
+    params.issueId = "i-1";
+    params.sessionId = "t-1";
+    sessionState.data = makeRecord("t-1", "running");
+
+    render(<SessionLogPage />);
+
+    // The inline button is the only place Kill Session appears on desktop.
+    const inlineKill = document.querySelector(
+      'button:not([data-testid="session-overflow-kill"])',
+    );
+    expect(inlineKill?.textContent).toContain("Kill Session");
+    // No overflow trigger should render on desktop.
+    expect(
+      document.querySelector('[data-testid="session-overflow-trigger"]'),
+    ).toBeNull();
+  });
+
+  it("collapses Kill Session into the overflow menu on mobile for a running session", () => {
+    useIsMobileMock.mockReturnValue(true);
+    params.issueId = "i-1";
+    params.sessionId = "t-1";
+    sessionState.data = makeRecord("t-1", "running");
+
+    render(<SessionLogPage />);
+
+    expect(
+      document.querySelector('[data-testid="session-overflow-trigger"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="session-overflow-kill"]'),
+    ).not.toBeNull();
+  });
+
+  it("does not render the overflow menu for a complete session on mobile", () => {
+    useIsMobileMock.mockReturnValue(true);
+    params.issueId = "i-1";
+    params.sessionId = "t-1";
+    sessionState.data = makeRecord("t-1", "complete");
+
+    render(<SessionLogPage />);
+
+    expect(
+      document.querySelector('[data-testid="session-overflow-trigger"]'),
+    ).toBeNull();
   });
 });

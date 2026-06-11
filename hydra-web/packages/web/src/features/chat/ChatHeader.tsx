@@ -8,12 +8,9 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({ conversation }: ChatHeaderProps) {
-  const title = conversation.title || "Untitled conversation";
-
   return (
-    <div className={styles.header}>
+    <div className={styles.header} data-testid="chat-header">
       <div className={styles.inner}>
-        <h1 className={styles.title}>{title}</h1>
         <div className={styles.meta} data-testid="chat-header-meta">
           {conversation.agent_name && (
             <>

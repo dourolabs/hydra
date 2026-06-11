@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button, Textarea, CopyButton } from "@hydra/ui";
+import { Button, Textarea, CopyButton, Icons } from "@hydra/ui";
 import { Markdown } from "../../components/Markdown";
 import type { DocumentVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -19,9 +19,6 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-
-  const displayTitle =
-    record.document.title || record.document.path || record.document_id;
 
   const handleEdit = useCallback(() => {
     setDraft(record.document.body_markdown);
@@ -71,16 +68,30 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
 
   return (
     <div className={styles.inner}>
-      <div className={styles.titleRow}>
-        <h1 className={styles.title}>{displayTitle}</h1>
-        <div className={styles.actions}>
-          {!editing && (
-            <Button variant="secondary" size="sm" onClick={handleEdit}>
+      {!editing && (
+        <div className={styles.actionsRow}>
+          {isMobile ? (
+            <button
+              type="button"
+              className={styles.iconButton}
+              onClick={handleEdit}
+              aria-label="Edit document"
+              data-testid="document-edit-button"
+            >
+              <Icons.IconEdit />
+            </button>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleEdit}
+              data-testid="document-edit-button"
+            >
               Edit
             </Button>
           )}
         </div>
-      </div>
+      )}
 
       <div className={styles.metaRow}>
         {record.document.path && (

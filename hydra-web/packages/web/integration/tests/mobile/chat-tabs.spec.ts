@@ -129,9 +129,15 @@ test.describe("Mobile chat tabs @mobile:chat-tabs", () => {
       await expect(relatedTab).toHaveAttribute("aria-selected", "false");
       await expect(detailsTab).toHaveAttribute("aria-selected", "false");
 
-      const title = page.getByRole("heading", { name: "Long conversation" });
-      await expect(title).toBeVisible();
-      await expect(title).toBeInViewport();
+      // The chat-chrome H1 was removed in the mobile chrome-reduction pass;
+      // the conversation title now lives in the breadcrumb. Assert that the
+      // header chrome (breadcrumb + meta row) is what's visible in the
+      // viewport, not that an H1 is present.
+      const breadcrumb = page.locator('nav[aria-label="Breadcrumb"]');
+      await expect(breadcrumb.getByText("Long conversation")).toBeVisible();
+      const headerMeta = page.getByTestId("chat-header-meta");
+      await expect(headerMeta).toBeVisible();
+      await expect(headerMeta).toBeInViewport();
 
       const messageList = page.getByTestId("chat-message-list");
       await expect(messageList).toBeVisible();

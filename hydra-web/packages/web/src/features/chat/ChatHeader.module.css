@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 22px 28px;
+  padding: 12px 28px;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
@@ -15,19 +15,6 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-}
-
-.title {
-  font-family: var(--f-sans);
-  font-size: var(--t-xl);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--fg-0);
-  margin: 0;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .meta {
@@ -64,7 +51,7 @@
 
 @media (max-width: 768px) {
   .header {
-    padding: 14px 16px;
+    padding: 10px 16px;
   }
 
   /* Stack the meta row vertically at narrow widths so the `·` separators
