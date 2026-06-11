@@ -3,6 +3,13 @@
   flex-direction: column;
   gap: 18px;
   padding: 14px 20px;
+  /* All project rows share one horizontal scrollbar at the bottom of the
+     scrolling ancestor (IssuesView's .body). Sizing the kanban to
+     max-content makes every row stretch to the widest project's column
+     count, so the rows scroll in lockstep — projects with fewer columns
+     leave empty space on the right rather than getting their own bar. */
+  width: max-content;
+  min-width: 100%;
 }
 
 .projectGroup {
@@ -54,6 +61,10 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
+  /* Stick to the left edge of the scrolling viewport so the project chip
+     and counts stay visible while the columns scroll horizontally. */
+  position: sticky;
+  left: 10px;
 }
 
 .projectCollapseToggle {
@@ -127,6 +138,10 @@
   align-items: center;
   gap: 6px;
   min-height: 22px;
+  /* Stick to the right edge of the scrolling viewport so the settings
+     button stays reachable regardless of horizontal scroll position. */
+  position: sticky;
+  right: 10px;
 }
 
 .projectSettingsButton {
@@ -168,7 +183,6 @@
   display: flex;
   flex-direction: row;
   gap: 12px;
-  overflow-x: auto;
   padding-bottom: 4px;
 }
 
@@ -532,7 +546,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
   padding: 14px 16px;
   background: transparent;
   border: 1px dashed var(--line);
@@ -545,6 +558,13 @@
     background var(--tx-fast),
     border-color var(--tx-fast),
     color var(--tx-fast);
+  /* Stay anchored to the left edge of the scrolling viewport so the
+     button doesn't stretch to the kanban's full max-content width when
+     project rows extend beyond the viewport. */
+  position: sticky;
+  left: 20px;
+  align-self: flex-start;
+  min-width: 240px;
 }
 
 .newProjectGhost:hover {
@@ -559,17 +579,31 @@
 }
 
 @media (max-width: 768px) {
+  /* Mobile keeps per-project horizontal scrolling: each project's 82vw
+     columns scroll within the project, so a single page-wide scrollbar
+     would force the entire viewport to slide for every column change. */
+  .kanban {
+    width: auto;
+    min-width: 0;
+  }
+
   .projectBar {
     flex-wrap: wrap;
+  }
+
+  .projectBarLeft {
+    position: static;
   }
 
   .projectBarRight {
     margin-left: 0;
     flex-basis: 100%;
     justify-content: flex-end;
+    position: static;
   }
 
   .projectColumns {
+    overflow-x: auto;
     scroll-snap-type: x mandatory;
   }
 
@@ -587,6 +621,8 @@
 
   .newProjectGhost {
     width: 82vw;
+    min-width: 0;
     align-self: center;
+    position: static;
   }
 }
