@@ -17,7 +17,7 @@ Test the full agent coordination flow through the dashboard: create a high-level
 3. Fill in the issue creation form:
    - Title: "Make a small improvement to the hydra-test-fixture repo"
    - Description: "Find something in the dourolabs/hydra-test-fixture repo that could be improved and make the change. Use your judgment to decide what to improve — for example, documentation, code quality, configuration, or project structure."
-4. Submit the issue form (do not assign to a specific agent -- let PM handle it)
+4. Submit the issue form, explicitly setting the assignee to `agents/pm` so the PM agent picks it up. (The default-project `open` status has no `on_enter` auto-routing, so unassigned issues do not get dispatched.)
 5. Click on the newly created issue to open the issue detail page
 
 **Phase 1: PM Breakdown**

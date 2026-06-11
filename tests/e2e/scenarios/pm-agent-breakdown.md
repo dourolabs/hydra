@@ -17,7 +17,7 @@ Create a high-level issue in the dashboard and verify that the PM agent picks it
 3. Fill in the issue creation form:
    - Title: "Make a small improvement to the hydra-test-fixture repo"
    - Description: "Find something in the dourolabs/hydra-test-fixture repo that could be improved and make the change. Pick any file and make a minor quality improvement — for example, improving documentation, fixing formatting, or adding helpful comments. Use your judgment to decide what to change."
-4. Submit the issue form (do not assign to a specific agent -- let PM handle it)
+4. Submit the issue form, explicitly setting the assignee to `agents/pm` so the PM agent picks it up. (The default-project `open` status has no `on_enter` auto-routing, so unassigned issues do not get dispatched.)
 5. Click on the newly created issue to open the issue detail page
 6. Wait for the PM agent to pick up the issue (poll the issue detail page for session activity)
 7. Monitor the issue detail page for child issues to appear
