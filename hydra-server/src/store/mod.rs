@@ -421,6 +421,22 @@ pub trait ReadOnlyStore: Send + Sync {
         limit: u32,
     ) -> Result<Vec<IssueId>, StoreError>;
 
+    /// Counts non-terminal sessions whose `spawned_from` issue is
+    /// currently in `(project_id, status_key)`.
+    ///
+    /// "Active" matches the spawn-side definition in
+    /// [`crate::policy::automations::agent_queue::agent_task_state`]:
+    /// sessions in `Created`, `Pending`, or `Running`. Both
+    /// conversation-backed (interactive) and headless sessions count.
+    /// Deleted sessions and deleted issues are excluded. Used by the
+    /// status-cap enforcement in `spawn_for_issue` /
+    /// `spawn_conversation_sessions::spawn_session`.
+    async fn count_active_sessions_in_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+    ) -> Result<u64, StoreError>;
+
     /// Lists all issues that declare the provided issue as a parent via `child-of`.
     async fn get_issue_children(&self, issue_id: &IssueId) -> Result<Vec<IssueId>, StoreError>;
 

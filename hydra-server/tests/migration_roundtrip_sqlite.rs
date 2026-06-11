@@ -182,6 +182,11 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     create_issue_comments_schema_invariants(&pool).await?;
     create_issue_comments_migration_is_idempotent(&pool).await?;
 
+    add_statuses_max_simultaneous_sessions_schema_invariants(&pool).await?;
+    add_statuses_max_simultaneous_sessions_defaults_to_null(&pool).await?;
+    add_statuses_max_simultaneous_sessions_domain_roundtrip(&pool).await?;
+    add_statuses_max_simultaneous_sessions_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -3452,5 +3457,103 @@ async fn reserve_hydra_id_shape_migration_is_idempotent(pool: &SqlitePool) -> Re
     reserve_hydra_id_shape_rewrites_project_keys(pool).await?;
     reserve_hydra_id_shape_rewrites_status_keys(pool).await?;
     reserve_hydra_id_shape_no_reserved_shape_remains(pool).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260712000000_add_statuses_max_simultaneous_sessions. Adds
+// `max_simultaneous_sessions INTEGER NULL` to `statuses` — the
+// per-status cap on simultaneously-active sessions (interactive +
+// headless, across all agents). `NULL` (the column default) leaves the
+// cap off for the row.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_max_simultaneous_sessions_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "statuses", "max_simultaneous_sessions").await? {
+        bail!("expected `statuses.max_simultaneous_sessions` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "statuses", "max_simultaneous_sessions").await? {
+        bail!("expected `statuses.max_simultaneous_sessions` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_statuses_max_simultaneous_sessions_defaults_to_null(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT project_id, sequence, max_simultaneous_sessions FROM statuses")
+        .fetch_all(pool)
+        .await
+        .context("read statuses for max_simultaneous_sessions default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert default against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: Option<i64> = row.try_get("max_simultaneous_sessions")?;
+        if value.is_some() {
+            bail!(
+                "statuses({project_id}, sequence={sequence}): expected NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_max_simultaneous_sessions_domain_roundtrip(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("SqliteStore::get_project(j-defaul) post-max-simultaneous-sessions migration")?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for (idx, status) in fetched.item.statuses.iter().enumerate() {
+        if status.max_simultaneous_sessions.is_some() {
+            bail!(
+                "j-defaul.statuses[{idx}] ({key:?}): expected max_simultaneous_sessions=None; got {got:?}",
+                key = status.key,
+                got = status.max_simultaneous_sessions,
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_max_simultaneous_sessions_migration_is_idempotent(
+    pool: &SqlitePool,
+) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT project_id, sequence, max_simultaneous_sessions FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses before max_simultaneous_sessions idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm max_simultaneous_sessions idempotency")?;
+    let snapshot_after = sqlx::query(
+        "SELECT project_id, sequence, max_simultaneous_sessions FROM statuses ORDER BY project_id, sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot statuses after max_simultaneous_sessions idempotency rerun")?;
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across max_simultaneous_sessions idempotency rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_val: Option<i64> = before.try_get("max_simultaneous_sessions")?;
+        let after_val: Option<i64> = after.try_get("max_simultaneous_sessions")?;
+        if before_val != after_val {
+            bail!(
+                "max_simultaneous_sessions changed across rerun: {before_val:?} -> {after_val:?}"
+            );
+        }
+    }
     Ok(())
 }

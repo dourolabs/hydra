@@ -170,6 +170,60 @@ async fn spawn_session(
         return Ok(());
     }
 
+    // Status-cap check for issue-backed conversations: if the parent
+    // issue's status carries a `max_simultaneous_sessions` cap and it is
+    // already saturated, defer the spawn. The conversation stays Active
+    // without a session until either the cap drops (and a new
+    // `ConversationUpdated` Idle/Closed → Active transition retriggers
+    // us) or the user explicitly closes/reopens. Legacy `/chat`
+    // conversations (`spawned_from = None`) bypass the cap — they are not
+    // tied to any project status.
+    if let Some(issue_id) = conversation.spawned_from.as_ref() {
+        let issue = match ctx.store.get_issue(issue_id, false).await {
+            Ok(versioned) => versioned.item,
+            Err(err) => {
+                return Err(AutomationError::Other(anyhow::anyhow!(
+                    "[{AUTOMATION_NAME}] failed to load spawned_from issue \
+                     {issue_id} for conversation {conversation_id}: {err}"
+                )));
+            }
+        };
+        let status_def = match ctx.app_state.resolve_status(&issue).await {
+            Ok(def) => def,
+            Err(err) => {
+                return Err(AutomationError::Other(anyhow::anyhow!(
+                    "[{AUTOMATION_NAME}] failed to resolve status for issue \
+                     {issue_id} on conversation {conversation_id}: {err}"
+                )));
+            }
+        };
+        if let Some(cap) = status_def.max_simultaneous_sessions {
+            let in_status = ctx
+                .store
+                .count_active_sessions_in_status(&issue.project_id, &status_def.key)
+                .await
+                .map_err(|err| {
+                    AutomationError::Other(anyhow::anyhow!(
+                        "[{AUTOMATION_NAME}] failed to count active sessions for \
+                         status cap on conversation {conversation_id}: {err}"
+                    ))
+                })?;
+            if in_status >= cap as u64 {
+                tracing::info!(
+                    automation = AUTOMATION_NAME,
+                    conversation_id = %conversation_id,
+                    issue_id = %issue_id,
+                    project_id = %issue.project_id,
+                    status = %status_def.key,
+                    cap,
+                    in_status,
+                    "deferring conversation session spawn: per-status cap saturated"
+                );
+                return Ok(());
+            }
+        }
+    }
+
     let agent = match ctx
         .app_state
         .resolve_conversation_agent(conversation.agent_name.as_ref().map(|n| n.as_str()))
@@ -1523,5 +1577,101 @@ mod tests {
             prompt.contains("STATUS SLICE — backlog"),
             "expected status slice in system_prompt; got {prompt:?}"
         );
+    }
+
+    /// When the spawned_from issue's status carries a saturated
+    /// `max_simultaneous_sessions` cap, the spawn is deferred (no
+    /// session is created). The conversation stays Active without a
+    /// session until another active session in the status terminates
+    /// and the user re-engages it.
+    #[tokio::test]
+    async fn defers_spawn_when_status_cap_saturated() {
+        use crate::app::test_helpers::issue_with_status;
+        use crate::domain::projects::default_project_id;
+        use crate::domain::sessions::{AgentConfig, SessionMode as DomainSessionMode};
+        use crate::domain::task_status::Status as DomainStatus;
+        use crate::store::ReadOnlyStore;
+
+        let state = state_with_default_model("default-model");
+        register_agent(&state, "swe", "prompt", false).await;
+
+        // Set cap = 1 on the default project's `open` status.
+        let project_id = default_project_id();
+        let mut project = state
+            .store
+            .get_project(&project_id, false)
+            .await
+            .unwrap()
+            .item;
+        let open_status = project
+            .statuses
+            .iter_mut()
+            .find(|s| s.key.as_str() == "open")
+            .expect("open status");
+        let mut updated = open_status.clone();
+        updated.max_simultaneous_sessions = Some(1);
+        let key = updated.key.clone();
+        state
+            .store
+            .update_status(&project_id, &key, updated, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Seed a saturating active session attached to a separate
+        // issue in the same status.
+        let saturating_issue = issue_with_status("saturating", status("open"), vec![]);
+        let (saturating_id, _) = state
+            .store
+            .add_issue_with_actor(saturating_issue, ActorRef::test())
+            .await
+            .unwrap();
+        let saturating_session = Session::new(
+            Username::from("creator"),
+            Some(saturating_id),
+            None,
+            AgentConfig::default(),
+            mount_spec_from_create_request(hydra_common::api::v1::sessions::Bundle::None, None),
+            None,
+            std::collections::HashMap::new(),
+            None,
+            None,
+            None,
+            DomainSessionMode::Headless,
+            DomainStatus::Running,
+            None,
+            None,
+        );
+        state
+            .add_session(saturating_session, Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+
+        // Now drive the spawn: issue-backed conversation in the same
+        // status. The cap is saturated, so the spawn must defer.
+        let issue = issue_with_status("capped", status("open"), vec![]);
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+        let mut conversation = make_conversation(Some("swe"));
+        conversation.spawned_from = Some(issue_id);
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        // No session was spawned for this conversation — the cap blocked it.
+        assert_eq!(sessions_for_conversation(&state, &conversation_id).await, 0);
     }
 }

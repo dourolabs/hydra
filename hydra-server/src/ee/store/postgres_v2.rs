@@ -1362,6 +1362,15 @@ impl PostgresStoreV2 {
         def.prompt_path = row.prompt_path.clone();
         def.interactive = row.interactive;
         def.auto_archive_after_seconds = row.auto_archive_after_seconds;
+        def.max_simultaneous_sessions = row
+            .max_simultaneous_sessions
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|e| {
+                StoreError::Internal(format!(
+                    "invalid max_simultaneous_sessions stored for status: {e}"
+                ))
+            })?;
         def.suppress_sessions = row.suppress_sessions;
         def.position = row.position;
         Ok(def)
@@ -1375,7 +1384,7 @@ impl PostgresStoreV2 {
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position \
              FROM metis.statuses WHERE project_id = $1 ORDER BY position, sequence",
         )
         .bind(project_id)
@@ -1397,7 +1406,7 @@ impl PostgresStoreV2 {
             out.entry(id.clone()).or_default();
         }
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position \
              FROM metis.statuses WHERE project_id = ANY($1) ORDER BY project_id, position, sequence",
         )
         .bind(project_ids)
@@ -1430,8 +1439,8 @@ impl PostgresStoreV2 {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, suppress_sessions, position) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(project_id)
         .bind(sequence)
@@ -1445,6 +1454,7 @@ impl PostgresStoreV2 {
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
         .bind(status.auto_archive_after_seconds)
+        .bind(status.max_simultaneous_sessions.map(i64::from))
         .bind(status.suppress_sessions)
         .bind(status.position)
         .execute(&mut **tx)
@@ -1896,6 +1906,7 @@ struct StatusRow {
     prompt_path: Option<String>,
     interactive: bool,
     auto_archive_after_seconds: Option<i64>,
+    max_simultaneous_sessions: Option<i64>,
     suppress_sessions: bool,
     // No `#[sqlx(default)]`: forces every SELECT site on
     // `metis.statuses` to project `position`. A missing column should
@@ -2757,6 +2768,28 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .await
             .map_err(map_sqlx_error)?;
 
+        Ok(count as u64)
+    }
+
+    async fn count_active_sessions_in_status(
+        &self,
+        project_id: &ProjectId,
+        status_key: &StatusKey,
+    ) -> Result<u64, StoreError> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM {TABLE_TASKS_V2} t \
+             INNER JOIN {TABLE_ISSUES_V2} i ON i.id = t.spawned_from AND i.is_latest = true AND i.deleted = false \
+             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
+             WHERE t.is_latest = true AND t.deleted = false \
+               AND t.status IN ('created', 'pending', 'running') \
+               AND i.project_id = $1 AND s.key = $2"
+        );
+        let count: i64 = sqlx::query_scalar(&sql)
+            .bind(project_id.as_ref())
+            .bind(status_key.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
         Ok(count as u64)
     }
 
@@ -6032,8 +6065,8 @@ impl Store for PostgresStoreV2 {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
         sqlx::query(
-            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, suppress_sessions = $11, position = $12 \
-             WHERE project_id = $13 AND sequence = $14",
+            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, max_simultaneous_sessions = $11, suppress_sessions = $12, position = $13 \
+             WHERE project_id = $14 AND sequence = $15",
         )
         .bind(status.key.as_str())
         .bind(&status.label)
@@ -6045,6 +6078,7 @@ impl Store for PostgresStoreV2 {
         .bind(status.prompt_path.as_deref())
         .bind(status.interactive)
         .bind(status.auto_archive_after_seconds)
+        .bind(status.max_simultaneous_sessions.map(i64::from))
         .bind(status.suppress_sessions)
         .bind(status.position)
         .bind(id.as_ref())

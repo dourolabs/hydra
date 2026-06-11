@@ -150,6 +150,12 @@ pub struct CreateStatusArgs {
     #[arg(long = "auto-archive-after-seconds", value_name = "SECONDS")]
     pub auto_archive_after_seconds: Option<i64>,
 
+    /// Cap on the number of simultaneously-active sessions
+    /// (interactive + headless, across all agents) for issues in this
+    /// status. Omit to leave the cap off.
+    #[arg(long = "max-simultaneous-sessions", value_name = "COUNT")]
+    pub max_simultaneous_sessions: Option<u32>,
+
     /// Doc-store path for the per-status prompt slice.
     #[arg(long = "prompt-path", value_name = "DOC_PATH")]
     pub prompt_path: Option<String>,
@@ -272,6 +278,19 @@ pub struct UpdateStatusArgs {
     /// Clear the auto-archive threshold.
     #[arg(long = "clear-auto-archive-after-seconds")]
     pub clear_auto_archive_after_seconds: bool,
+
+    /// Set the per-status cap on simultaneously-active sessions.
+    /// Mutually exclusive with `--clear-max-simultaneous-sessions`.
+    #[arg(
+        long = "max-simultaneous-sessions",
+        value_name = "COUNT",
+        conflicts_with = "clear_max_simultaneous_sessions"
+    )]
+    pub max_simultaneous_sessions: Option<u32>,
+
+    /// Clear the per-status simultaneously-active sessions cap.
+    #[arg(long = "clear-max-simultaneous-sessions")]
+    pub clear_max_simultaneous_sessions: bool,
 
     /// On-enter: set the issue's assignee to this principal. Accepts the
     /// canonical path form: `users/<name>`, `agents/<name>`, or
@@ -573,6 +592,7 @@ fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefin
     def.interactive = args.interactive;
     def.suppress_sessions = args.suppress_sessions;
     def.auto_archive_after_seconds = args.auto_archive_after_seconds;
+    def.max_simultaneous_sessions = args.max_simultaneous_sessions;
     def.position = args.position.unwrap_or(0.0);
     Ok(def)
 }
@@ -589,6 +609,7 @@ async fn build_update_status_definition(
         bail!(
             "no updates specified; use --key, --label, --color, --prompt-path, --position, \
              --auto-archive-after-seconds, --clear-auto-archive-after-seconds, \
+             --max-simultaneous-sessions, --clear-max-simultaneous-sessions, \
              --unblocks-parents=<bool>, --unblocks-dependents=<bool>, \
              --cascades-to-children=<bool>, --interactive=<bool>, \
              --suppress-sessions=<bool>, --on-enter-*, or --clear-on-enter"
@@ -632,6 +653,8 @@ fn update_has_any_direct_flag(args: &UpdateStatusArgs) -> bool {
         || args.position.is_some()
         || args.auto_archive_after_seconds.is_some()
         || args.clear_auto_archive_after_seconds
+        || args.max_simultaneous_sessions.is_some()
+        || args.clear_max_simultaneous_sessions
         || args.on_enter_assign_to.is_some()
         || args.on_enter_attach_form.is_some()
         || args.on_enter_clear_assignee
@@ -680,6 +703,11 @@ fn apply_update_overlay(
         def.auto_archive_after_seconds = None;
     } else if let Some(v) = args.auto_archive_after_seconds {
         def.auto_archive_after_seconds = Some(v);
+    }
+    if args.clear_max_simultaneous_sessions {
+        def.max_simultaneous_sessions = None;
+    } else if let Some(v) = args.max_simultaneous_sessions {
+        def.max_simultaneous_sessions = Some(v);
     }
     def.on_enter = overlay_on_enter(args, def.on_enter)?;
     Ok(def)
@@ -1212,6 +1240,66 @@ mod tests {
         let args = parse_update(&["--clear-auto-archive-after-seconds"]).unwrap();
         let def = build_update_status_definition_sync(&args).unwrap();
         assert!(def.auto_archive_after_seconds.is_none());
+    }
+
+    #[test]
+    fn create_max_simultaneous_sessions_flag_parses() {
+        let args = parse_create(&[
+            "--key",
+            "inbox",
+            "--label",
+            "Inbox",
+            "--color",
+            "#aabbcc",
+            "--max-simultaneous-sessions",
+            "5",
+        ])
+        .unwrap();
+        let def = build_create_status_definition(&args).unwrap();
+        assert_eq!(def.max_simultaneous_sessions, Some(5));
+    }
+
+    #[test]
+    fn create_max_simultaneous_sessions_defaults_to_none() {
+        let args =
+            parse_create(&["--key", "inbox", "--label", "Inbox", "--color", "#aabbcc"]).unwrap();
+        let def = build_create_status_definition(&args).unwrap();
+        assert_eq!(def.max_simultaneous_sessions, None);
+    }
+
+    #[test]
+    fn update_overlay_set_max_simultaneous_sessions() {
+        let args = parse_update(&["--max-simultaneous-sessions", "7"]).unwrap();
+        let def = build_update_status_definition_sync(&args).unwrap();
+        assert_eq!(def.max_simultaneous_sessions, Some(7));
+    }
+
+    #[test]
+    fn update_overlay_clear_max_simultaneous_sessions() {
+        let mut base = current_status_with_on_enter();
+        base.max_simultaneous_sessions = Some(3);
+        let args = parse_update(&["--clear-max-simultaneous-sessions"]).unwrap();
+        let def = apply_update_overlay(&args, base).unwrap();
+        assert!(def.max_simultaneous_sessions.is_none());
+    }
+
+    #[test]
+    fn update_clear_max_simultaneous_sessions_conflicts_with_setter() {
+        let err = parse_update_failure(&[
+            "--max-simultaneous-sessions",
+            "5",
+            "--clear-max-simultaneous-sessions",
+        ]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn update_overlay_max_simultaneous_sessions_preserved_when_flag_absent() {
+        let mut base = current_status_with_on_enter();
+        base.max_simultaneous_sessions = Some(4);
+        let args = parse_update(&["--label", "Refreshed"]).unwrap();
+        let def = apply_update_overlay(&args, base).unwrap();
+        assert_eq!(def.max_simultaneous_sessions, Some(4));
     }
 
     #[test]

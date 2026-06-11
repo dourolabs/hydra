@@ -311,6 +311,22 @@ async fn migration_roundtrip() -> Result<()> {
             "add_statuses_suppress_sessions: existing rows backfill to FALSE via column default",
         )?;
 
+    add_statuses_max_simultaneous_sessions_schema_invariants(&pool)
+        .await
+        .context(
+            "add_statuses_max_simultaneous_sessions: column is BIGINT NULL on metis.statuses",
+        )?;
+    add_statuses_max_simultaneous_sessions_defaults_to_null(&pool)
+        .await
+        .context(
+            "add_statuses_max_simultaneous_sessions: existing rows default to NULL (no backfill)",
+        )?;
+    add_statuses_max_simultaneous_sessions_domain_roundtrip(&pool)
+        .await
+        .context(
+            "add_statuses_max_simultaneous_sessions: Store::get_project reads field as None",
+        )?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -339,6 +355,9 @@ async fn migration_roundtrip() -> Result<()> {
     add_statuses_suppress_sessions_defaults_to_false(&pool)
         .await
         .context("add_statuses_suppress_sessions: idempotent rerun keeps existing FALSE values")?;
+    add_statuses_max_simultaneous_sessions_defaults_to_null(&pool)
+        .await
+        .context("add_statuses_max_simultaneous_sessions: idempotent rerun keeps existing NULLs")?;
 
     Ok(())
 }
@@ -564,6 +583,69 @@ async fn add_statuses_auto_archive_after_seconds_domain_roundtrip(pool: &PgPool)
                 "j-defaul.statuses[{idx}] ({key:?}): expected auto_archive_after_seconds=None; got {got:?}",
                 key = status.key,
                 got = status.auto_archive_after_seconds,
+            );
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260712000000_add_statuses_max_simultaneous_sessions. Adds
+// `max_simultaneous_sessions BIGINT NULL` to `metis.statuses` — the
+// per-status cap on simultaneously-active sessions (interactive +
+// headless, across all agents). `NULL` (the default) leaves the cap
+// off for the row.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_max_simultaneous_sessions_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "statuses", "max_simultaneous_sessions").await? {
+        bail!(
+            "expected `metis.statuses.max_simultaneous_sessions` column to exist post-rollforward"
+        );
+    }
+    if !column_is_nullable(pool, "statuses", "max_simultaneous_sessions").await? {
+        bail!("expected `metis.statuses.max_simultaneous_sessions` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_statuses_max_simultaneous_sessions_defaults_to_null(pool: &PgPool) -> Result<()> {
+    let rows =
+        sqlx::query("SELECT project_id, sequence, max_simultaneous_sessions FROM metis.statuses")
+            .fetch_all(pool)
+            .await
+            .context("read metis.statuses for max_simultaneous_sessions default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert default against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: Option<i64> = row.try_get("max_simultaneous_sessions")?;
+        if value.is_some() {
+            bail!(
+                "metis.statuses({project_id}, sequence={sequence}): expected NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_max_simultaneous_sessions_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    let store = PostgresStoreV2::new(pool.clone());
+    let project_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let fetched = store.get_project(&project_id, false).await.context(
+        "PostgresStoreV2::get_project(j-defaul) post-max-simultaneous-sessions migration",
+    )?;
+    if fetched.item.statuses.is_empty() {
+        bail!("expected j-defaul to have statuses post-rollforward");
+    }
+    for (idx, status) in fetched.item.statuses.iter().enumerate() {
+        if status.max_simultaneous_sessions.is_some() {
+            bail!(
+                "j-defaul.statuses[{idx}] ({key:?}): expected max_simultaneous_sessions=None; got {got:?}",
+                key = status.key,
+                got = status.max_simultaneous_sessions,
             );
         }
     }

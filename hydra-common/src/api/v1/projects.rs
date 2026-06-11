@@ -227,6 +227,14 @@ pub struct StatusDefinition {
     /// default) leaves the feature off for the status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_archive_after_seconds: Option<i64>,
+    /// When `Some(N)`, at most `N` active sessions (counting both
+    /// interactive and headless, across all agents) may be associated
+    /// with issues currently in this status. New spawns block until the
+    /// active count drops below the cap. `None` (the default) leaves the
+    /// cap off. Existing sessions above a freshly-lowered cap are not
+    /// torn down — enforcement is only on new spawns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_simultaneous_sessions: Option<u32>,
     /// Sort key for status ordering within a project. Smaller values
     /// appear earlier. Default 0.0; drag-and-drop UI sets explicit
     /// values to reorder. Mirrors the existing [`Project::priority`]
@@ -257,6 +265,7 @@ impl StatusDefinition {
             prompt_path: None,
             interactive: false,
             auto_archive_after_seconds: None,
+            max_simultaneous_sessions: None,
             position: 0.0,
         }
     }
@@ -943,6 +952,40 @@ mod tests {
         });
         let parsed: StatusDefinition = serde_json::from_value(legacy).unwrap();
         assert!(parsed.auto_archive_after_seconds.is_none());
+    }
+
+    #[test]
+    fn status_definition_omits_max_simultaneous_sessions_when_none() {
+        let def = status("open", "Open");
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(
+            !json.contains("max_simultaneous_sessions"),
+            "max_simultaneous_sessions should be skipped when None; got {json}"
+        );
+    }
+
+    #[test]
+    fn status_definition_round_trips_max_simultaneous_sessions() {
+        let mut def = status("open", "Open");
+        def.max_simultaneous_sessions = Some(5);
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"max_simultaneous_sessions\":5"));
+        let parsed: StatusDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.max_simultaneous_sessions, Some(5));
+    }
+
+    #[test]
+    fn status_definition_defaults_max_simultaneous_sessions_when_field_absent() {
+        let legacy = serde_json::json!({
+            "key": "open",
+            "label": "Open",
+            "color": "#abcdef",
+            "unblocks_parents": false,
+            "unblocks_dependents": false,
+            "cascades_to_children": false,
+        });
+        let parsed: StatusDefinition = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.max_simultaneous_sessions.is_none());
     }
 
     #[test]
