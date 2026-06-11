@@ -71,7 +71,20 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
 
   return (
     <div className={styles.inner}>
-      <h1 className={styles.title}>{displayTitle}</h1>
+      <div className={styles.titleRow}>
+        <h1 className={styles.title}>{displayTitle}</h1>
+        {!isMobile && !editing && (
+          <button
+            type="button"
+            className={styles.iconButton}
+            onClick={handleEdit}
+            aria-label="Edit document"
+            data-testid="document-edit-button"
+          >
+            <Icons.IconEdit />
+          </button>
+        )}
+      </div>
 
       <div className={styles.metaRow}>
         {record.document.path && (
@@ -127,8 +140,8 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
         </div>
       ) : (
         <div className={styles.proseWrap}>
-          <div className={styles.floatingActions}>
-            {isMobile ? (
+          {isMobile && (
+            <div className={styles.floatingActions}>
               <button
                 type="button"
                 className={styles.iconButton}
@@ -138,17 +151,8 @@ export function DocumentDetail({ record }: DocumentDetailProps) {
               >
                 <Icons.IconEdit />
               </button>
-            ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleEdit}
-                data-testid="document-edit-button"
-              >
-                Edit
-              </Button>
-            )}
-          </div>
+            </div>
+          )}
           <div className={styles.prose}>
             <Markdown content={record.document.body_markdown} />
           </div>

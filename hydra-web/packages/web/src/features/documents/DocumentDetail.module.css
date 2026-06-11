@@ -9,6 +9,12 @@
 }
 
 /* ── Header ── */
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .title {
   font-family: var(--f-sans);
   font-size: var(--t-2xl);
@@ -17,6 +23,8 @@
   color: var(--fg-0);
   margin: 0;
   line-height: 1.2;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -76,6 +84,7 @@
   width: 32px;
   height: 32px;
   padding: 0;
+  flex-shrink: 0;
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
