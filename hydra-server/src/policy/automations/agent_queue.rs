@@ -197,12 +197,18 @@ impl AgentQueue {
             worker_name: "agent_queue".into(),
             on_behalf_of: None,
         };
+        let title = if issue.title.is_empty() {
+            None
+        } else {
+            Some(issue.title.clone())
+        };
         let (conversation_id, _versioned) = state
             .create_conversation(
                 None,
                 Some(agent_name),
                 session_settings,
                 Some(issue_id.clone()),
+                title,
                 system_actor,
                 issue.creator.clone(),
             )
@@ -2933,6 +2939,11 @@ mod tests {
             .item;
         assert_eq!(conversation.spawned_from, Some(issue_id.clone()));
         assert_eq!(conversation.creator.as_str(), default_user().as_str());
+        assert_eq!(
+            conversation.title.as_deref(),
+            Some("Test Title"),
+            "conversation title should mirror the issue title"
+        );
         assert!(
             conversation
                 .agent_name
@@ -2948,6 +2959,41 @@ mod tests {
             !task_state_after.existing_issue_ids.contains(&issue_id),
             "interactive branch should not register a headless session for this issue \
              via AGENT_NAME env var"
+        );
+
+        Ok(())
+    }
+
+    /// Empty issue title → conversation is created with `title: None`
+    /// (rather than `Some("")`) so the UI's untitled-placeholder still
+    /// shows.
+    #[tokio::test]
+    async fn empty_issue_title_yields_none_conversation_title() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, _backlog) = seed_interactive_project(&handles).await;
+
+        let mut issue = interactive_issue(&project_id, &interactive_key, &repo_name, "empty title");
+        issue.title = String::new();
+        let (issue_id, _) = handles.store.add_issue(issue, &ActorRef::test()).await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let conversation_id = result.into_conversation_id().unwrap();
+
+        let conversation = handles
+            .state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await?
+            .item;
+        assert_eq!(
+            conversation.title, None,
+            "empty issue title should map to conversation.title = None"
         );
 
         Ok(())

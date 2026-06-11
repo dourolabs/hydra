@@ -55,6 +55,7 @@ pub async fn create_conversation(
             payload.agent_name,
             session_settings,
             None,
+            None,
             actor_ref,
             creator,
         )

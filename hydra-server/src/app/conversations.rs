@@ -75,6 +75,7 @@ impl AppState {
         agent_name: Option<AgentName>,
         session_settings: crate::domain::issues::SessionSettings,
         spawned_from: Option<IssueId>,
+        title: Option<String>,
         actor_ref: ActorRef,
         creator: Username,
     ) -> Result<(ConversationId, Versioned<Conversation>), CreateConversationError> {
@@ -106,7 +107,7 @@ impl AppState {
         // (in `policy/automations/spawn_conversation_sessions.rs`) when the
         // ConversationCreated event lands on the bus.
         let conversation = Conversation {
-            title: None,
+            title,
             agent_name,
             status: ConversationStatus::Active,
             creator: creator.clone(),
@@ -777,6 +778,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_conversation_persists_title() {
+        let state = state_with_default_model("default-model");
+        let _runner = start_test_automation_runner(&state);
+        register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
+        let settings = SessionSettings::default();
+
+        let (conversation_id, versioned) = state
+            .create_conversation(
+                None,
+                None,
+                settings,
+                None,
+                Some("My title".to_string()),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(versioned.item.title.as_deref(), Some("My title"));
+        let stored = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(stored.item.title.as_deref(), Some("My title"));
+    }
+
+    #[tokio::test]
     async fn create_conversation_applies_session_settings_model() {
         let state = state_with_default_model("default-model");
         let _runner = start_test_automation_runner(&state);
@@ -792,6 +822,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -819,6 +850,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -849,6 +881,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -893,6 +926,7 @@ mod tests {
                 None,
                 settings,
                 None,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -915,6 +949,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -946,6 +981,7 @@ mod tests {
                 None,
                 None,
                 settings,
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -996,6 +1032,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1073,6 +1110,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 settings,
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1173,6 +1211,7 @@ mod tests {
                 None,
                 settings,
                 None,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1238,6 +1277,7 @@ mod tests {
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
                 None,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1267,6 +1307,7 @@ mod tests {
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
                 None,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1292,6 +1333,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 SessionSettings::default(),
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1333,6 +1375,7 @@ mod tests {
                 None,
                 SessionSettings::default(),
                 None,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1372,6 +1415,7 @@ mod tests {
                 Some("hello".to_string()),
                 Some(hydra_common::api::v1::agents::AgentName::try_new("does-not-exist").unwrap()),
                 SessionSettings::default(),
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1428,6 +1472,7 @@ mod tests {
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 settings,
                 None,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1458,6 +1503,7 @@ mod tests {
                 Some(hydra_common::api::v1::agents::AgentName::try_new("swe").unwrap()),
                 SessionSettings::default(),
                 None,
+                None,
                 ActorRef::test(),
                 Username::from("creator"),
             )
@@ -1486,6 +1532,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 SessionSettings::default(),
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1540,6 +1587,7 @@ mod tests {
                 Some("hello".to_string()),
                 None,
                 SessionSettings::default(),
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
@@ -1922,6 +1970,7 @@ mod tests {
                 None,
                 None,
                 SessionSettings::default(),
+                None,
                 None,
                 ActorRef::test(),
                 Username::from("creator"),
