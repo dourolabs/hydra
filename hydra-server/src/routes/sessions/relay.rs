@@ -521,7 +521,11 @@ async fn handle_ready(
                     .unwrap_or_default()
             };
 
-            if session.mode.greet_user() {
+            // `greet_user` is meaningful only on a fresh session — the
+            // prior session already produced the initial agent-first
+            // turn, and the resume is typically triggered by a new user
+            // POST that the fold-first-user-message path picks up.
+            if session.mode.greet_user() && session.resumed_from.is_none() {
                 let first = ServerMessage::FirstMessage {
                     agent_prompt,
                     user_message: String::new(),
