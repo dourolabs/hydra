@@ -5,7 +5,6 @@ import type { Issue, IssueVersionRecord } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useProjects } from "../projects/useProjects";
 import { useToast } from "../toast/useToast";
-import { ProjectChip } from "../projects/ProjectChip";
 import styles from "./IssueProjectPicker.module.css";
 
 interface IssueProjectPickerProps {
@@ -89,10 +88,7 @@ export function IssueProjectPicker({
       value={
         selectedProject ? (
           <span className={styles.pillContent}>
-            <ProjectChip
-              projectKey={selectedProject.project.key}
-              name={selectedProject.project.name}
-            />
+            <code className={styles.pillCode}>{selectedProject.project.key}</code>
           </span>
         ) : (
           <span className={styles.pillEmpty}>No project</span>

@@ -4,6 +4,12 @@
   gap: 6px;
 }
 
+.pillCode {
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-0);
+}
+
 .pillEmpty {
   font-family: var(--f-mono);
   font-size: var(--t-xs);
@@ -14,17 +20,14 @@
 .popCode {
   font-family: var(--f-mono);
   font-size: var(--t-xs);
-  color: var(--fg-1);
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
+  color: var(--fg-0);
 }
 
 .popSub {
-  font-family: var(--f-sans);
-  font-size: var(--t-sm);
+  font-size: var(--t-xs);
   color: var(--fg-2);
+  margin-left: auto;
+  padding-left: 8px;
 }
 
 .popSpacer {

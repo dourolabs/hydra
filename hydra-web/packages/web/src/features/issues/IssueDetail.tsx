@@ -200,9 +200,9 @@ export function IssueDetail({ record }: IssueDetailProps) {
           </div>
 
           <div className={styles.metaRow}>
-            <IssueProjectPicker issueId={issueId} issue={issue} />
-            <IssueStatusPicker issueId={issueId} issue={issue} />
-            <IssueAssigneePicker issueId={issueId} issue={issue} />
+            <IssueProjectPicker issueId={issueId} issue={issue} hideLabel />
+            <IssueStatusPicker issueId={issueId} issue={issue} hideLabel />
+            <IssueAssigneePicker issueId={issueId} issue={issue} hideLabel />
           </div>
 
           {blockedOnIds.length > 0 && (
