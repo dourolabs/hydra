@@ -34,6 +34,16 @@
   border-radius: var(--radius-sm);
 }
 
+.title {
+  font-family: var(--f-sans);
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--fg-0);
+  margin: 0;
+  line-height: 1.2;
+}
+
 /* ── Key-vals grid ── */
 .keyvals {
   display: grid;
@@ -281,5 +291,10 @@
   }
   .keyvals {
     grid-template-columns: 1fr;
+  }
+  /* On mobile the title lives in the breadcrumb trailing crumb — hide the
+     in-body H1 to avoid duplicating it on narrow viewports. */
+  .title {
+    display: none;
   }
 }

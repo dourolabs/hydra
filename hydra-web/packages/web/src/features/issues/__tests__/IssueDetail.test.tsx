@@ -331,11 +331,12 @@ describe("IssueDetail archived badge", () => {
 describe("IssueDetail title and overflow menu", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("does not render an h1 title heading", () => {
+  it("renders the issue title as an h1 heading", () => {
     render(<IssueDetail record={makeRecord({})} />, { wrapper: makeWrapper() });
-    // The title moved to the breadcrumb; the detail body no longer renders an
-    // <h1>. Sample / Sample-record's title must not appear as a heading role.
-    expect(screen.queryByRole("heading", { name: "Sample" })).toBeNull();
+    // The H1 stays in the detail body for desktop; CSS hides it on mobile
+    // (where the breadcrumb's trailing crumb shows the title instead).
+    const heading = screen.getByRole("heading", { name: "Sample" });
+    expect(heading.tagName).toBe("H1");
   });
 
   it("renders an overflow trigger and feedback / archive menu items", () => {

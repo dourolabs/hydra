@@ -42,6 +42,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
           <span className={styles.titleId}>{record.patch_id}</span>
           <Badge status={status} />
         </div>
+        <h1 className={styles.title}>{patch.title || record.patch_id}</h1>
 
         {/* Key-vals grid */}
         <div className={styles.keyvals}>
