@@ -15,10 +15,12 @@ import type {
   StatusDefinition,
   Trigger,
   UserSummary,
+  ActorRef,
 } from "@hydra/api";
 import { clearAssociations, addAssociation } from "./routes/labels.js";
 import { clearSessionEvents, setSessionEvents } from "./routes/sessions.js";
 import { clearSeededRelations, addSeededRelation } from "./routes/relations.js";
+import { clearIssueComments, seedIssueComment } from "./routes/issues.js";
 
 interface LabelData {
   name: string;
@@ -72,6 +74,12 @@ interface RelationSeed {
 
 type TriggerFixture = Trigger & { last_updated_at?: string };
 
+interface CommentSeed {
+  body: string;
+  actor: ActorRef;
+  created_at: string;
+}
+
 interface SeedData {
   issues: Record<string, IssueFixture>;
   sessions: Record<string, SessionFixture>;
@@ -87,6 +95,7 @@ interface SeedData {
   triggers?: Record<string, TriggerFixture>;
   relations?: RelationSeed[];
   projects?: Record<string, Project>;
+  issue_comments?: Record<string, CommentSeed[]>;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -211,6 +220,7 @@ export function loadSeedData(store: Store): void {
   clearAssociations();
   clearSessionEvents();
   clearSeededRelations();
+  clearIssueComments();
 
   const seed = loadFixture();
 
@@ -303,6 +313,16 @@ export function loadSeedData(store: Store): void {
     }
   }
 
+  let commentCount = 0;
+  if (seed.issue_comments) {
+    for (const [issueId, comments] of Object.entries(seed.issue_comments)) {
+      for (const comment of comments) {
+        seedIssueComment(issueId, comment.body, comment.actor, comment.created_at);
+        commentCount += 1;
+      }
+    }
+  }
+
   const labelCount = seed.labels ? Object.keys(seed.labels).length : 0;
   const conversationCount = seed.conversations ? Object.keys(seed.conversations).length : 0;
   const triggerCount = seed.triggers ? Object.keys(seed.triggers).length : 0;
@@ -320,6 +340,7 @@ export function loadSeedData(store: Store): void {
     `${sessionEventCount} session events, ` +
     `${triggerCount} triggers, ` +
     `${relationCount} relations, ` +
-    `${projectCount} projects`,
+    `${projectCount} projects, ` +
+    `${commentCount} issue comments`,
   );
 }

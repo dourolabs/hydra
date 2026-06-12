@@ -49,6 +49,9 @@ import type { MergeQueue } from "./generated/MergeQueue";
 import type { EnqueueMergePatchRequest } from "./generated/EnqueueMergePatchRequest";
 import type { DeleteRepositoryResponse } from "./generated/DeleteRepositoryResponse";
 import type { IssueVersionRecord as SubmitFormResponse } from "./generated/IssueVersionRecord";
+import type { AddCommentRequest } from "./generated/AddCommentRequest";
+import type { AddCommentResponse } from "./generated/AddCommentResponse";
+import type { ListCommentsResponse } from "./generated/ListCommentsResponse";
 import type { UpsertLabelRequest } from "./generated/UpsertLabelRequest";
 import type { UpsertLabelResponse } from "./generated/UpsertLabelResponse";
 import type { SearchLabelsQuery } from "./generated/SearchLabelsQuery";
@@ -372,6 +375,27 @@ export class HydraApiClient {
   /** POST /v1/issues/:issueId/feedback */
   submitFeedback(issueId: string, feedback: string): Promise<IssueVersionRecord> {
     return this.post(`/v1/issues/${encodeURIComponent(issueId)}/feedback`, { feedback });
+  }
+
+  /** GET /v1/issues/:issueId/comments — list comments most-recent-first. */
+  listIssueComments(
+    issueId: string,
+    opts?: { limit?: number; beforeSequence?: bigint | number },
+  ): Promise<ListCommentsResponse> {
+    const query: Record<string, unknown> = {};
+    if (opts?.limit !== undefined) query.limit = opts.limit;
+    if (opts?.beforeSequence !== undefined) {
+      query.before_sequence = String(opts.beforeSequence);
+    }
+    return this.get(`/v1/issues/${encodeURIComponent(issueId)}/comments`, query);
+  }
+
+  /** POST /v1/issues/:issueId/comments — add a new comment. */
+  addIssueComment(
+    issueId: string,
+    body: AddCommentRequest,
+  ): Promise<AddCommentResponse> {
+    return this.post(`/v1/issues/${encodeURIComponent(issueId)}/comments`, body);
   }
 
   // ---------------------------------------------------------------------------
