@@ -16,17 +16,36 @@ interface IssueStatusPickerProps {
    * is still wired through to the trigger's `aria-label`.
    */
   hideLabel?: boolean;
+  /**
+   * When set, the picker switches into "pending project" mode:
+   * — statuses are sourced from the pending project,
+   * — the trigger shows a "Select a status…" placeholder rather than the
+   *   persisted status chip,
+   * — picking a status fires a SINGLE `updateIssue` mutation that
+   *   commits both the new `project_id` and the new `status` atomically.
+   */
+  pendingProjectId?: string | null;
+  /**
+   * Called after the atomic status+project mutation succeeds in pending
+   * mode, so the parent can clear its pending state.
+   */
+  onPendingResolved?: () => void;
 }
 
 export function IssueStatusPicker({
   issueId,
   issue,
   hideLabel,
+  pendingProjectId,
+  onPendingResolved,
 }: IssueStatusPickerProps) {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const { addToast } = useToast();
-  const { data: projectStatuses } = useProjectStatuses(issue.project_id);
+
+  const pending = pendingProjectId != null;
+  const effectiveProjectId = pendingProjectId ?? issue.project_id;
+  const { data: projectStatuses } = useProjectStatuses(effectiveProjectId);
 
   const statusEntries = projectStatuses?.statuses ?? [];
   const current = issue.status.key;
@@ -42,6 +61,7 @@ export function IssueStatusPicker({
         issue: {
           ...issue,
           status: statusKey,
+          project_id: effectiveProjectId,
         },
         session_id: null,
       }),
@@ -59,7 +79,11 @@ export function IssueStatusPicker({
           };
         queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
           ...previous,
-          issue: { ...previous.issue, status: optimisticStatus },
+          issue: {
+            ...previous.issue,
+            status: optimisticStatus,
+            project_id: effectiveProjectId,
+          },
         });
       }
       return { previous };
@@ -70,6 +94,11 @@ export function IssueStatusPicker({
       }
       addToast(err.message || "Failed to update status", "error");
     },
+    onSuccess: () => {
+      if (pending) {
+        onPendingResolved?.();
+      }
+    },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
       queryClient.invalidateQueries({ queryKey: ["issues"] });
@@ -78,7 +107,10 @@ export function IssueStatusPicker({
 
   const choose = (next: StatusKey) => {
     setOpen(false);
-    if (next === current) return;
+    // In pending mode any pick fires the atomic mutation — even if
+    // `next === current` (the new project may genuinely declare the same
+    // key, but we still need the project_id field to be persisted).
+    if (!pending && next === current) return;
     mutation.mutate(next);
   };
 
@@ -90,7 +122,13 @@ export function IssueStatusPicker({
       onToggle={() => setOpen((v) => !v)}
       wide
       data-testid="issue-status-picker"
-      value={<StatusChip status={issue.status} />}
+      value={
+        pending ? (
+          <span className={styles.pillEmpty}>Select a status…</span>
+        ) : (
+          <StatusChip status={issue.status} />
+        )
+      }
     >
       {statusEntries.length === 0 ? (
         <div className={styles.popEmpty}>No statuses</div>
@@ -98,7 +136,7 @@ export function IssueStatusPicker({
         statusEntries.map((s) => (
           <PickerRow
             key={s.key}
-            active={current === s.key}
+            active={!pending && current === s.key}
             onClick={() => choose(s.key)}
             data-testid={`issue-status-option-${s.key}`}
           >

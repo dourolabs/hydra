@@ -15,20 +15,39 @@ interface IssueProjectPickerProps {
    * is still wired through to the trigger's `aria-label`.
    */
   hideLabel?: boolean;
+  /**
+   * When provided, the picker switches into "coordinated" mode: the
+   * trigger pill reflects `pendingProjectId ?? issue.project_id`, and
+   * picking a row calls `onPendingChange(nextId)` instead of firing the
+   * mutation. The parent is responsible for clearing the pending state
+   * by passing `null` when the user re-picks the persisted project; this
+   * picker forwards the raw selection verbatim.
+   */
+  pendingProjectId?: string | null;
+  /**
+   * Set together with `pendingProjectId`. Called whenever the user picks
+   * a row in coordinated mode; `null` means "no pending change".
+   */
+  onPendingChange?: (projectId: string | null) => void;
 }
 
 export function IssueProjectPicker({
   issueId,
   issue,
   hideLabel,
+  pendingProjectId,
+  onPendingChange,
 }: IssueProjectPickerProps) {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const { addToast } = useToast();
   const { data: projects } = useProjects();
 
-  const current = issue.project_id;
-  const selectedProject = projects?.find((p) => p.project_id === current);
+  const coordinated = onPendingChange !== undefined;
+  const activeProjectId = pendingProjectId ?? issue.project_id;
+  const selectedProject = projects?.find(
+    (p) => p.project_id === activeProjectId,
+  );
 
   const mutation = useMutation<
     unknown,
@@ -73,7 +92,11 @@ export function IssueProjectPicker({
 
   const choose = (next: string) => {
     setOpen(false);
-    if (next === current) return;
+    if (next === activeProjectId) return;
+    if (coordinated) {
+      onPendingChange(next === issue.project_id ? null : next);
+      return;
+    }
     mutation.mutate(next);
   };
 
@@ -98,7 +121,7 @@ export function IssueProjectPicker({
       {(projects ?? []).map((p) => (
         <PickerRow
           key={p.project_id}
-          active={current === p.project_id}
+          active={activeProjectId === p.project_id}
           onClick={() => choose(p.project_id)}
           data-testid={`issue-project-option-${p.project.key}`}
         >
