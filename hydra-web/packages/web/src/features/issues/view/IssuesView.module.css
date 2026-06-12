@@ -157,6 +157,8 @@
 @media (max-width: 768px) {
   .toolbar {
     padding: 8px 16px;
+    gap: 6px;
+    align-items: center;
   }
 
   /* Drop the "Table" / "Board" labels on the narrow mobile bar so the

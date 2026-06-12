@@ -70,6 +70,10 @@ export interface ProjectSectionProps {
   onAddStatus: (projectId: string) => void;
   onAddIssue: (projectId: string, statusKey: string) => void;
   onIssueDrop: IssueDropHandler;
+  // Suppress the project bar entirely. Used by the mobile single-board view,
+  // where the picker above the board already shows the project's key and
+  // name and reordering / collapsing don't apply.
+  hideBar?: boolean;
 }
 
 interface SortableSectionHandleProps {
@@ -152,6 +156,7 @@ export function ProjectSection({
   onAddStatus,
   onAddIssue,
   onIssueDrop,
+  hideBar,
   sortableSetNodeRef,
   sortableStyle,
   sortableIsDragging,
@@ -301,6 +306,7 @@ export function ProjectSection({
       className={sectionClasses.join(" ")}
       data-testid={`board-project-${project.key}`}
     >
+      {!hideBar && (
       <div
         className={barClasses.join(" ")}
         data-testid={`board-project-bar-${project.key}`}
@@ -364,6 +370,7 @@ export function ProjectSection({
           </Button>
         </div>
       </div>
+      )}
       {/* While any project is being dragged, every section collapses to just
           the bar above. This keeps the reorder list a row of uniform-height
           headers (reliable drop targets) and hides the body of the section
@@ -371,12 +378,12 @@ export function ProjectSection({
       {!dragActive && (
         <div
           className={
-            collapsed
+            collapsed && !hideBar
               ? `${styles.projectGroupBody} ${styles.projectGroupBodyCollapsed}`
               : styles.projectGroupBody
           }
           data-testid={`board-project-body-${project.key}`}
-          aria-hidden={collapsed}
+          aria-hidden={collapsed && !hideBar}
         >
           <div className={styles.projectGroupBodyInner}>
             <DndContext

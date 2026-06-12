@@ -693,6 +693,7 @@ export function IssuesBoard({
       onAddStatus: setNewStatusProjectId,
       onAddIssue: handleAddIssueClick,
       onIssueDrop: handleIssueDrop,
+      hideBar: showMobilePicker,
     };
     return allowProjectReorder ? (
       <SortableProjectSection key={project.project_id} {...sectionProps} />
@@ -724,6 +725,7 @@ export function IssuesBoard({
             <div className={styles.mobilePicker}>
               <Picker
                 label="Board"
+                hideLabel
                 open={mobilePickerOpen}
                 onToggle={() => setMobilePickerOpen((v) => !v)}
                 wide

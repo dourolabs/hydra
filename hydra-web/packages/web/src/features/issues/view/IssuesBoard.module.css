@@ -646,6 +646,8 @@
   .kanban {
     width: auto;
     min-width: 0;
+    gap: 10px;
+    padding: 10px 16px;
   }
 
   .mobilePicker {
