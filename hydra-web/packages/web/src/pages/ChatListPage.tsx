@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Badge, Button, Icons } from "@hydra/ui";
-import type { Conversation } from "@hydra/api";
 import { useAuth } from "../features/auth/useAuth";
 import { actorDisplayName } from "../api/auth";
 import { useConversations } from "../features/chat/useConversations";
@@ -18,12 +16,12 @@ import {
   SEARCH_URL_PARAM,
 } from "../features/chat/conversationFilterUrlSync";
 import { filtersToConversationsQuery } from "../features/chat/filtersToConversationsQuery";
+import { useChatCreateModal } from "../features/chat/useChatCreateModal";
 import { FilterBar, type Filter } from "../features/filters";
 import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
 import { AgoTime } from "../components/Runtime/Runtime";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { ChatRailRow } from "../features/related/RailRow";
-import { apiClient } from "../api/client";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
 import styles from "./ChatListPage.module.css";
@@ -45,7 +43,7 @@ function filtersCanonicalRepr(filters: Filter[]): string {
 export function ChatListPage() {
   useBreadcrumbs([{ label: "Workspace", to: "/" }], "Chats");
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  const { open: openChatCreate } = useChatCreateModal();
   const { user } = useAuth();
   const displayName = user ? actorDisplayName(user.actor) : null;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -141,14 +139,6 @@ export function ChatListPage() {
 
   const { data, isLoading, error } = useConversations(query);
 
-  const createMutation = useMutation({
-    mutationFn: () => apiClient.createConversation({}),
-    onSuccess: (conversation: Conversation) => {
-      queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      navigate(`/chat/${conversation.conversation_id}`);
-    },
-  });
-
   const sorted = useMemo(() => {
     if (!data) return [];
     return [...data].sort(compareConversationsByBucketThenUpdated);
@@ -162,14 +152,9 @@ export function ChatListPage() {
         eyebrow={`WORK · ${totalLabel}`}
         title="Chats"
         actions={
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => createMutation.mutate()}
-            disabled={createMutation.isPending}
-          >
+          <Button variant="primary" size="sm" onClick={openChatCreate}>
             <Icons.IconPlus />
-            {createMutation.isPending ? "Creating…" : "New chat"}
+            New chat
           </Button>
         }
       />
@@ -196,12 +181,6 @@ export function ChatListPage() {
           total={sorted.length}
         />
       </div>
-
-      {createMutation.error && (
-        <div className={styles.errorBanner}>
-          Failed to create conversation: {createMutation.error.message}
-        </div>
-      )}
 
       {error && (
         <div className={styles.errorBanner}>Failed to load conversations: {error.message}</div>

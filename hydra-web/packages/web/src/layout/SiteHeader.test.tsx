@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 
@@ -41,31 +41,12 @@ vi.mock("../features/dashboard/useIssueCreateModal", () => ({
   }),
 }));
 
-const mockCreateConversation = vi.fn();
-vi.mock("../api/client", () => ({
-  apiClient: {
-    createConversation: (...args: unknown[]) => mockCreateConversation(...args),
-  },
-}));
-
-const mockInvalidateQueries = vi.fn();
-vi.mock("@tanstack/react-query", () => ({
-  useMutation: ({
-    mutationFn,
-    onSuccess,
-  }: {
-    mutationFn: () => Promise<unknown>;
-    onSuccess?: (data: unknown) => void;
-  }) => ({
-    mutate: () => {
-      mutationFn().then((data) => {
-        onSuccess?.(data);
-      });
-    },
-    isPending: false,
-  }),
-  useQueryClient: () => ({
-    invalidateQueries: mockInvalidateQueries,
+const openChatCreateModalMock = vi.fn();
+vi.mock("../features/chat/useChatCreateModal", () => ({
+  useChatCreateModal: () => ({
+    isOpen: false,
+    open: openChatCreateModalMock,
+    close: vi.fn(),
   }),
 }));
 
@@ -164,8 +145,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   openIssueCreateModalMock.mockReset();
-  mockCreateConversation.mockReset();
-  mockInvalidateQueries.mockReset();
+  openChatCreateModalMock.mockReset();
 });
 
 describe("SiteHeader", () => {
@@ -222,21 +202,11 @@ describe("SiteHeader", () => {
     expect(screen.queryByTestId("site-header-create-menu")).toBeNull();
   });
 
-  it("selecting New conversation creates a conversation and navigates", async () => {
-    mockCreateConversation.mockResolvedValue({ conversation_id: "c-abc" });
+  it("selecting New conversation opens the chat-create modal and closes the menu", () => {
     renderHeader();
     fireEvent.click(screen.getByTestId("site-header-create"));
     fireEvent.click(screen.getByTestId("site-header-new-conversation"));
-
-    await waitFor(() => {
-      expect(mockCreateConversation).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["conversations"] });
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("location-pathname").textContent).toBe("/chat/c-abc");
-    });
+    expect(openChatCreateModalMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("site-header-create-menu")).toBeNull();
   });
 

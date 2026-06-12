@@ -47,36 +47,12 @@ vi.mock("react-router-dom", () => ({
   ),
 }));
 
-const mockInvalidateQueries = vi.fn();
-
-type MutationState = {
-  isPending: boolean;
-  error: Error | null;
-};
-
-const mutationState: MutationState = {
-  isPending: false,
-  error: null,
-};
-
-vi.mock("@tanstack/react-query", () => ({
-  useMutation: ({
-    mutationFn,
-    onSuccess,
-  }: {
-    mutationFn: () => Promise<unknown>;
-    onSuccess?: (data: unknown) => void;
-  }) => ({
-    mutate: () => {
-      mutationFn().then((data) => {
-        onSuccess?.(data);
-      });
-    },
-    isPending: mutationState.isPending,
-    error: mutationState.error,
-  }),
-  useQueryClient: () => ({
-    invalidateQueries: mockInvalidateQueries,
+const openChatCreateMock = vi.fn();
+vi.mock("../../features/chat/useChatCreateModal", () => ({
+  useChatCreateModal: () => ({
+    isOpen: false,
+    open: openChatCreateMock,
+    close: vi.fn(),
   }),
 }));
 
@@ -106,13 +82,6 @@ vi.mock("../../features/auth/useAuth", () => ({
 vi.mock("../../api/auth", () => ({
   actorDisplayName: (actor: { type: string; username?: string }) =>
     actor.type === "user" ? actor.username : "",
-}));
-
-const mockCreateConversation = vi.fn();
-vi.mock("../../api/client", () => ({
-  apiClient: {
-    createConversation: (...args: unknown[]) => mockCreateConversation(...args),
-  },
 }));
 
 // The ChatListPage now imports FilterBar from features/filters. Stub it to a
@@ -196,16 +165,10 @@ const { ChatListPage } = await import("../ChatListPage");
 
 // --- Helpers ---
 
-function resetMutationState() {
-  mutationState.isPending = false;
-  mutationState.error = null;
-}
-
 function resetState() {
   vi.clearAllMocks();
   mockConversations = [];
-  resetMutationState();
-  mockCreateConversation.mockReset();
+  openChatCreateMock.mockReset();
   useBreadcrumbsMock.mockReset();
   useConversationsMock.mockReset();
   setSearchParamsMock.mockClear();
@@ -227,45 +190,13 @@ describe("ChatListPage New Chat button", () => {
     cleanup();
   });
 
-  it("creates a conversation and navigates on click", async () => {
-    mockCreateConversation.mockResolvedValue({ conversation_id: "c-new123" });
+  it("opens the chat-create modal on click instead of creating directly", () => {
     render(<ChatListPage />);
 
     const button = screen.getByRole("button", { name: /new chat/i });
     fireEvent.click(button);
 
-    expect(mockCreateConversation).toHaveBeenCalledTimes(1);
-    expect(mockCreateConversation).toHaveBeenCalledWith({});
-
-    // Allow the promise chain in the mocked mutate() to settle.
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(mockInvalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["conversations"],
-    });
-    expect(mockNavigate).toHaveBeenCalledWith("/chat/c-new123");
-
-    cleanup();
-  });
-
-  it("shows Creating… and disables the button while the mutation is pending", () => {
-    mutationState.isPending = true;
-    render(<ChatListPage />);
-
-    const button = screen.getByRole("button", { name: /creating/i });
-    expect(button).toBeDefined();
-    expect((button as HTMLButtonElement).disabled).toBe(true);
-
-    cleanup();
-  });
-
-  it("renders an error banner when the create mutation has an error", () => {
-    mutationState.error = new Error("network down");
-    render(<ChatListPage />);
-
-    expect(screen.getByText(/network down/)).toBeDefined();
-
+    expect(openChatCreateMock).toHaveBeenCalledTimes(1);
     cleanup();
   });
 
