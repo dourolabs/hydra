@@ -6,7 +6,9 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
-    api::v1::comments::{AddCommentRequest, AddCommentResponse, ListCommentsResponse},
+    api::v1::comments::{
+        AddCommentRequest, AddCommentResponse, ListCommentsQuery, ListCommentsResponse,
+    },
     api::v1::conversations::{
         Conversation as ApiConversation, CreateConversationRequest, ListConversationsResponse,
         SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
@@ -382,8 +384,7 @@ pub trait HydraClientInterface: Send + Sync {
     async fn list_issue_comments(
         &self,
         issue_id: &IssueId,
-        limit: Option<u32>,
-        before_sequence: Option<u64>,
+        query: &ListCommentsQuery,
     ) -> Result<ListCommentsResponse>;
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
@@ -1142,24 +1143,18 @@ impl HydraClient {
     }
 
     /// Call `GET /v1/issues/:issue_id/comments` to list comments on an
-    /// issue, most recent first. `limit` is clamped server-side to
-    /// `[1, 200]`; `before_sequence` is the cursor for paging.
+    /// issue, most recent first. `query.limit` is clamped server-side
+    /// to `[1, 200]`; `query.before_sequence` is the cursor for paging.
     pub async fn list_issue_comments(
         &self,
         issue_id: &IssueId,
-        limit: Option<u32>,
-        before_sequence: Option<u64>,
+        query: &ListCommentsQuery,
     ) -> Result<ListCommentsResponse> {
         let path = format!("/v1/issues/{issue_id}/comments");
         let url = self.endpoint(&path)?;
-        let mut builder = self.authed(self.http.get(url));
-        if let Some(limit) = limit {
-            builder = builder.query(&[("limit", limit.to_string())]);
-        }
-        if let Some(before_sequence) = before_sequence {
-            builder = builder.query(&[("before_sequence", before_sequence.to_string())]);
-        }
-        let response = builder
+        let response = self
+            .authed(self.http.get(url))
+            .query(query)
             .send()
             .await
             .context("failed to fetch issue comments")?
@@ -3202,10 +3197,9 @@ impl HydraClientInterface for HydraClient {
     async fn list_issue_comments(
         &self,
         issue_id: &IssueId,
-        limit: Option<u32>,
-        before_sequence: Option<u64>,
+        query: &ListCommentsQuery,
     ) -> Result<ListCommentsResponse> {
-        HydraClient::list_issue_comments(self, issue_id, limit, before_sequence).await
+        HydraClient::list_issue_comments(self, issue_id, query).await
     }
 
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {

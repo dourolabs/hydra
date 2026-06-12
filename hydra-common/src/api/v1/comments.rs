@@ -84,6 +84,15 @@ pub struct ListCommentsQuery {
     pub before_sequence: Option<u64>,
 }
 
+impl ListCommentsQuery {
+    pub fn new(limit: Option<u32>, before_sequence: Option<u64>) -> Self {
+        Self {
+            limit,
+            before_sequence,
+        }
+    }
+}
+
 /// Response body for `GET /v1/issues/:issue_id/comments`. Comments are
 /// ordered most-recent-first (DESC by `sequence`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

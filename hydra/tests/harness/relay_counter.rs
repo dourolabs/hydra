@@ -22,7 +22,9 @@ use hydra::client::sse::SseEventStream;
 use hydra::client::{HydraClientInterface, LogStream, RelayWebSocket};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
-    api::v1::comments::{AddCommentRequest, AddCommentResponse, ListCommentsResponse},
+    api::v1::comments::{
+        AddCommentRequest, AddCommentResponse, ListCommentsQuery, ListCommentsResponse,
+    },
     api::v1::conversations::{
         Conversation as ApiConversation, CreateConversationRequest, ListConversationsResponse,
         SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
@@ -476,12 +478,9 @@ impl HydraClientInterface for RelayCallCountingClient {
     async fn list_issue_comments(
         &self,
         issue_id: &IssueId,
-        limit: Option<u32>,
-        before_sequence: Option<u64>,
+        query: &ListCommentsQuery,
     ) -> Result<ListCommentsResponse> {
-        self.inner
-            .list_issue_comments(issue_id, limit, before_sequence)
-            .await
+        self.inner.list_issue_comments(issue_id, query).await
     }
 
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {

@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
-    api::v1::comments::AddCommentRequest,
+    api::v1::comments::{AddCommentRequest, ListCommentsQuery},
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     api::v1::projects::{ProjectRef, StatusKey},
     constants::ENV_HYDRA_ISSUE_ID,
@@ -939,8 +939,9 @@ async fn list_comments(
     before_sequence: Option<u64>,
     output_format: ResolvedOutputFormat,
 ) -> Result<()> {
+    let query = ListCommentsQuery::new(limit, before_sequence);
     let response = client
-        .list_issue_comments(&id, limit, before_sequence)
+        .list_issue_comments(&id, &query)
         .await
         .with_context(|| format!("failed to list comments for issue '{id}'"))?;
 
