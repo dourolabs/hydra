@@ -1019,66 +1019,69 @@ function StatusForm({
           className={styles.idleTimeout}
           data-testid="status-settings-idle-timeout"
         >
-          <Picker
-            label="Idle timeout"
-            open={idleTimeoutPickerOpen}
-            onToggle={() => setIdleTimeoutPickerOpen((v) => !v)}
-            value={
-              idleTimeoutMode === "default" ? (
-                <span className={styles.pillEmpty}>Server default</span>
-              ) : idleTimeoutMode === "infinite" ? (
-                <span>Never</span>
-              ) : (
-                <span>
-                  {idleTimeoutSeconds || "0"} seconds
-                </span>
-              )
-            }
-            data-testid="status-settings-idle-timeout-mode"
-          >
-            <PickerRow
-              active={idleTimeoutMode === "default"}
-              onClick={() => {
-                setIdleTimeoutMode("default");
-                setIdleTimeoutPickerOpen(false);
-              }}
-            >
-              <span>Server default</span>
-              <span className={styles.popSpacer} />
-            </PickerRow>
-            <PickerRow
-              active={idleTimeoutMode === "seconds"}
-              onClick={() => {
-                setIdleTimeoutMode("seconds");
-                setIdleTimeoutPickerOpen(false);
-              }}
-            >
-              <span>Custom (seconds)</span>
-              <span className={styles.popSpacer} />
-            </PickerRow>
-            <PickerRow
-              active={idleTimeoutMode === "infinite"}
-              onClick={() => {
-                setIdleTimeoutMode("infinite");
-                setIdleTimeoutPickerOpen(false);
-              }}
-            >
-              <span>Never</span>
-              <span className={styles.popSpacer} />
-            </PickerRow>
-          </Picker>
-          {idleTimeoutMode === "seconds" && (
+          <label className={styles.label}>Idle timeout</label>
+          <div className={styles.idleTimeoutInputs}>
             <Input
               type="number"
               min={1}
               step={1}
               value={idleTimeoutSeconds}
               onChange={(e) => setIdleTimeoutSeconds(e.target.value)}
-              placeholder="Seconds"
+              disabled={idleTimeoutMode !== "seconds"}
+              placeholder={
+                idleTimeoutMode === "infinite" ? "Never" : "Seconds"
+              }
               aria-label="Idle timeout seconds"
               data-testid="status-settings-idle-timeout-seconds"
             />
-          )}
+            <Picker
+              label="Idle timeout"
+              hideLabel
+              open={idleTimeoutPickerOpen}
+              onToggle={() => setIdleTimeoutPickerOpen((v) => !v)}
+              value={
+                idleTimeoutMode === "default" ? (
+                  <span className={styles.pillEmpty}>Server default</span>
+                ) : idleTimeoutMode === "infinite" ? (
+                  <span>Never</span>
+                ) : (
+                  <span>Custom</span>
+                )
+              }
+              data-testid="status-settings-idle-timeout-mode"
+            >
+              <PickerRow
+                active={idleTimeoutMode === "default"}
+                onClick={() => {
+                  setIdleTimeoutMode("default");
+                  setIdleTimeoutPickerOpen(false);
+                }}
+              >
+                <span>Server default</span>
+                <span className={styles.popSpacer} />
+              </PickerRow>
+              <PickerRow
+                active={idleTimeoutMode === "seconds"}
+                onClick={() => {
+                  setIdleTimeoutMode("seconds");
+                  setIdleTimeoutPickerOpen(false);
+                }}
+              >
+                <span>Custom (seconds)</span>
+                <span className={styles.popSpacer} />
+              </PickerRow>
+              <PickerRow
+                active={idleTimeoutMode === "infinite"}
+                onClick={() => {
+                  setIdleTimeoutMode("infinite");
+                  setIdleTimeoutPickerOpen(false);
+                }}
+              >
+                <span>Never</span>
+                <span className={styles.popSpacer} />
+              </PickerRow>
+            </Picker>
+          </div>
           <span className={styles.helpText}>
             Per-session idle timeout for sessions spawned for this status.
             "Server default" falls back to the global config; "Never" lets

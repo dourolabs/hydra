@@ -1695,10 +1695,13 @@ describe("StatusSettingsModal", () => {
       expect(
         screen.getByLabelText("Idle timeout").textContent,
       ).toContain("Server default");
-      // The inline seconds input is only rendered in the "seconds" mode.
-      expect(
-        screen.queryByTestId("status-settings-idle-timeout-seconds"),
-      ).toBeNull();
+      // The seconds input is always rendered, but disabled outside the
+      // "Custom (seconds)" mode.
+      const secondsInput = screen.getByTestId(
+        "status-settings-idle-timeout-seconds",
+      ) as HTMLInputElement;
+      expect(secondsInput.disabled).toBe(true);
+      expect(secondsInput.value).toBe("");
     });
 
     it("seeds inputs from an existing session_settings override", () => {
@@ -1743,9 +1746,11 @@ describe("StatusSettingsModal", () => {
       expect(
         (screen.getByTestId("status-settings-max-retries") as HTMLInputElement).value,
       ).toBe("3");
+      // Mode pill shows "Custom"; the actual seconds value lives in the
+      // adjacent input.
       expect(
         screen.getByLabelText("Idle timeout").textContent,
-      ).toContain("600 seconds");
+      ).toContain("Custom");
       expect(
         (screen.getByTestId(
           "status-settings-idle-timeout-seconds",
@@ -1912,7 +1917,7 @@ describe("StatusSettingsModal", () => {
         expect(payload.nextStatuses[0].session_settings).toBeUndefined();
       });
 
-      it("inline seconds input only renders in Custom mode", () => {
+      it("seconds input is always visible and only enabled in Custom mode", () => {
         const project = makeProject([makeStatus("in-progress")]);
         render(
           <StatusSettingsModal
@@ -1924,18 +1929,16 @@ describe("StatusSettingsModal", () => {
           />,
         );
         openSessionSettings();
-        // Default mode: no seconds input.
-        expect(
-          screen.queryByTestId("status-settings-idle-timeout-seconds"),
-        ).toBeNull();
+        const secondsInput = () =>
+          screen.getByTestId(
+            "status-settings-idle-timeout-seconds",
+          ) as HTMLInputElement;
+        // Default mode: rendered but disabled.
+        expect(secondsInput().disabled).toBe(true);
         pickIdleTimeoutRow("Custom");
-        expect(
-          screen.getByTestId("status-settings-idle-timeout-seconds"),
-        ).toBeDefined();
+        expect(secondsInput().disabled).toBe(false);
         pickIdleTimeoutRow("Never");
-        expect(
-          screen.queryByTestId("status-settings-idle-timeout-seconds"),
-        ).toBeNull();
+        expect(secondsInput().disabled).toBe(true);
       });
     });
   });
