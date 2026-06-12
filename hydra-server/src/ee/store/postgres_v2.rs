@@ -2016,6 +2016,37 @@ struct AgentRow {
     updated_at: DateTime<Utc>,
 }
 
+#[derive(sqlx::FromRow)]
+struct CommentRowPg {
+    issue_id: String,
+    sequence: i64,
+    body: String,
+    actor: Value,
+    created_at: DateTime<Utc>,
+}
+
+fn row_to_comment_pg(row: CommentRowPg) -> Result<crate::domain::comments::Comment, StoreError> {
+    let issue_id = row.issue_id.parse::<IssueId>().map_err(|err| {
+        StoreError::Internal(format!("invalid issue_id in issue_comments: {err}"))
+    })?;
+    let sequence = u64::try_from(row.sequence).map_err(|_| {
+        StoreError::Internal(format!(
+            "negative sequence in issue_comments: {}",
+            row.sequence
+        ))
+    })?;
+    let actor: ActorRef = serde_json::from_value(row.actor).map_err(|e| {
+        StoreError::Internal(format!("failed to parse actor JSON in issue_comments: {e}"))
+    })?;
+    Ok(crate::domain::comments::Comment {
+        issue_id,
+        sequence,
+        body: row.body,
+        actor,
+        created_at: row.created_at,
+    })
+}
+
 /// Build WHERE predicates and bindings for issues queries (PostgreSQL `$N` placeholders).
 /// Build WHERE predicates and bindings for issues queries. Issue
 /// columns are qualified with `i.`; the joined `statuses` row is
@@ -2917,12 +2948,56 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_comments(
         &self,
-        _issue_id: &IssueId,
-        _limit: u32,
-        _before_sequence: Option<u64>,
+        issue_id: &IssueId,
+        limit: u32,
+        before_sequence: Option<u64>,
     ) -> Result<crate::domain::comments::ListCommentsPage, StoreError> {
-        Err(StoreError::Unsupported(
-            "list_comments not yet implemented for PostgresStoreV2",
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM metis.issues_v2 \
+             WHERE id = $1 AND is_latest = TRUE)",
+        )
+        .bind(issue_id.as_ref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+        if !exists {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
+        }
+
+        let clamped_limit = limit.clamp(1, 200) as i64;
+        let cutoff_i64: i64 = match before_sequence {
+            Some(s) => i64::try_from(s).unwrap_or(i64::MAX),
+            None => i64::MAX,
+        };
+
+        let rows = sqlx::query_as::<_, CommentRowPg>(
+            "SELECT issue_id, sequence, body, actor, created_at \
+             FROM metis.issue_comments \
+             WHERE issue_id = $1 AND sequence < $2 \
+             ORDER BY sequence DESC \
+             LIMIT $3",
+        )
+        .bind(issue_id.as_ref())
+        .bind(cutoff_i64)
+        .bind(clamped_limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let comments: Vec<crate::domain::comments::Comment> = rows
+            .into_iter()
+            .map(row_to_comment_pg)
+            .collect::<Result<_, _>>()?;
+
+        let next_before_sequence = if (comments.len() as i64) == clamped_limit {
+            comments.last().map(|c| c.sequence)
+        } else {
+            None
+        };
+
+        Ok(crate::domain::comments::ListCommentsPage::new(
+            comments,
+            next_before_sequence,
         ))
     }
 
@@ -6198,13 +6273,65 @@ impl Store for PostgresStoreV2 {
 
     async fn add_comment(
         &self,
-        _issue_id: &IssueId,
-        _body: String,
-        _actor: &ActorRef,
+        issue_id: &IssueId,
+        body: String,
+        actor: &ActorRef,
     ) -> Result<crate::domain::comments::Comment, StoreError> {
-        Err(StoreError::Unsupported(
-            "add_comment not yet implemented for PostgresStoreV2",
-        ))
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM metis.issues_v2 \
+             WHERE id = $1 AND is_latest = TRUE)",
+        )
+        .bind(issue_id.as_ref())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        if !exists {
+            return Err(StoreError::IssueNotFound(issue_id.clone()));
+        }
+
+        // Per-issue high-water-mark + 1. Read + insert inside the same
+        // transaction; the PK (issue_id, sequence) guarantees uniqueness
+        // even if two writers race outside the lock.
+        let next_seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 \
+             FROM metis.issue_comments WHERE issue_id = $1",
+        )
+        .bind(issue_id.as_ref())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let actor_json = actor_to_json(actor);
+
+        let created_at: DateTime<Utc> = sqlx::query_scalar(
+            "INSERT INTO metis.issue_comments (issue_id, sequence, body, actor) \
+             VALUES ($1, $2, $3, $4) RETURNING created_at",
+        )
+        .bind(issue_id.as_ref())
+        .bind(next_seq)
+        .bind(&body)
+        .bind(&actor_json)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+
+        let sequence = u64::try_from(next_seq).map_err(|_| {
+            StoreError::Internal(format!(
+                "negative sequence allocated for issue_comments: {next_seq}"
+            ))
+        })?;
+
+        Ok(crate::domain::comments::Comment {
+            issue_id: issue_id.clone(),
+            sequence,
+            body,
+            actor: actor.clone(),
+            created_at,
+        })
     }
 }
 
@@ -11970,5 +12097,212 @@ mod tests {
             .find_status(&StatusKey::try_new("frontend").unwrap())
             .unwrap();
         assert_eq!(frontend_after2.max_simultaneous_sessions, Some(3));
+    }
+
+    // ---- Issue comments ----
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_comment_returns_sequence_one_for_first_comment_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let comment = store
+            .add_comment(&issue_id, "hello".to_string(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        assert_eq!(comment.sequence, 1);
+        assert_eq!(comment.issue_id, issue_id);
+        assert_eq!(comment.body, "hello");
+        assert_eq!(comment.actor, ActorRef::test());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_comment_allocates_per_issue_monotonic_sequence_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (issue_a, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+        let (issue_b, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let a1 = store
+            .add_comment(&issue_a, "a1".into(), &ActorRef::test())
+            .await
+            .unwrap();
+        let a2 = store
+            .add_comment(&issue_a, "a2".into(), &ActorRef::test())
+            .await
+            .unwrap();
+        let a3 = store
+            .add_comment(&issue_a, "a3".into(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!([a1.sequence, a2.sequence, a3.sequence], [1, 2, 3]);
+
+        // Independent sequence space per issue.
+        let b1 = store
+            .add_comment(&issue_b, "b1".into(), &ActorRef::test())
+            .await
+            .unwrap();
+        let b2 = store
+            .add_comment(&issue_b, "b2".into(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!([b1.sequence, b2.sequence], [1, 2]);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn add_comment_returns_issue_not_found_for_unknown_issue_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let unknown = IssueId::from_str("i-noexist").unwrap();
+        let err = store
+            .add_comment(&unknown, "hi".into(), &ActorRef::test())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(ref id) if id == &unknown));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_comments_returns_desc_order_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        for i in 1..=5 {
+            store
+                .add_comment(&issue_id, format!("body-{i}"), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+
+        let page = store.list_comments(&issue_id, 10, None).await.unwrap();
+        let seqs: Vec<u64> = page.comments.iter().map(|c| c.sequence).collect();
+        assert_eq!(seqs, vec![5, 4, 3, 2, 1]);
+        assert_eq!(page.next_before_sequence, None);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_comments_paginates_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        for i in 1..=25 {
+            store
+                .add_comment(&issue_id, format!("body-{i}"), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+
+        let page1 = store.list_comments(&issue_id, 10, None).await.unwrap();
+        assert_eq!(page1.comments.len(), 10);
+        let page1_seqs: Vec<u64> = page1.comments.iter().map(|c| c.sequence).collect();
+        assert_eq!(page1_seqs, (16..=25).rev().collect::<Vec<_>>());
+        assert_eq!(page1.next_before_sequence, Some(16));
+
+        let page2 = store
+            .list_comments(&issue_id, 10, page1.next_before_sequence)
+            .await
+            .unwrap();
+        assert_eq!(page2.comments.len(), 10);
+        let page2_seqs: Vec<u64> = page2.comments.iter().map(|c| c.sequence).collect();
+        assert_eq!(page2_seqs, (6..=15).rev().collect::<Vec<_>>());
+        assert_eq!(page2.next_before_sequence, Some(6));
+
+        let page3 = store
+            .list_comments(&issue_id, 10, page2.next_before_sequence)
+            .await
+            .unwrap();
+        assert_eq!(page3.comments.len(), 5);
+        let page3_seqs: Vec<u64> = page3.comments.iter().map(|c| c.sequence).collect();
+        assert_eq!(page3_seqs, vec![5, 4, 3, 2, 1]);
+        assert_eq!(page3.next_before_sequence, None);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_comments_clamps_limit_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Insert 201 comments so we can actually exercise the 200-cap upper
+        // bound, not just confirm the request doesn't error.
+        for i in 1..=201 {
+            store
+                .add_comment(&issue_id, format!("body-{i}"), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+
+        let page = store.list_comments(&issue_id, 9999, None).await.unwrap();
+        assert_eq!(page.comments.len(), 200);
+        assert_eq!(page.comments.first().map(|c| c.sequence), Some(201));
+        assert_eq!(page.comments.last().map(|c| c.sequence), Some(2));
+        assert_eq!(page.next_before_sequence, Some(2));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_comments_returns_issue_not_found_for_unknown_issue_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let unknown = IssueId::from_str("i-noexist").unwrap();
+        let err = store.list_comments(&unknown, 10, None).await.unwrap_err();
+        assert!(matches!(err, StoreError::IssueNotFound(ref id) if id == &unknown));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_comments_round_trips_actor_kind_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::agents::AgentName;
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let store = PostgresStoreV2::new(pool);
+        let (issue_id, _) = store
+            .add_issue(sample_issue(vec![]), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let user_actor = ActorRef::Authenticated {
+            actor_id: ActorId::User(ApiUsername::try_new("alice").unwrap()),
+            session_id: None,
+        };
+        let agent_actor = ActorRef::Authenticated {
+            actor_id: ActorId::Agent(AgentName::try_new("swe".to_string()).unwrap()),
+            session_id: None,
+        };
+
+        store
+            .add_comment(&issue_id, "user comment".into(), &user_actor)
+            .await
+            .unwrap();
+        store
+            .add_comment(&issue_id, "agent comment".into(), &agent_actor)
+            .await
+            .unwrap();
+
+        let page = store.list_comments(&issue_id, 10, None).await.unwrap();
+        assert_eq!(page.comments.len(), 2);
+        // DESC by sequence — agent comment was inserted second, so it's first.
+        assert_eq!(page.comments[0].actor, agent_actor);
+        assert_eq!(page.comments[1].actor, user_actor);
     }
 }
