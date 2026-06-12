@@ -4,15 +4,17 @@
 }
 
 .empty {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-2);
 }
 
 .callouts {
   display: flex;
   gap: var(--space-4);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
   margin-bottom: var(--space-2);
 }
 
@@ -27,7 +29,7 @@
 }
 
 .calloutValue {
-  color: var(--color-text-primary);
+  color: var(--fg-0);
   font-variant-numeric: tabular-nums;
 }
 
@@ -53,17 +55,19 @@
 }
 
 .donutCenterValue {
-  font-size: var(--font-size-xl);
+  font-family: var(--f-sans);
+  font-size: var(--t-xl);
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--fg-0);
   font-variant-numeric: tabular-nums;
 }
 
 .donutCenterLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
 }
 
 .legend {
@@ -71,8 +75,9 @@
   flex-wrap: wrap;
   gap: var(--space-3);
   margin-top: var(--space-2);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
 }
 
 .legendItem {
@@ -98,7 +103,7 @@
 }
 
 .legendValue {
-  color: var(--color-text-primary);
+  color: var(--fg-0);
   font-variant-numeric: tabular-nums;
 }
 
@@ -108,7 +113,7 @@
   height: 28px;
   border-radius: var(--radius-sm);
   overflow: hidden;
-  background: var(--color-border);
+  background: var(--line);
   margin-bottom: var(--space-2);
 }
 
@@ -133,17 +138,18 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: var(--color-bg-input);
+  background: var(--bg-input);
 }
 
 .statusCardHead {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
   font-weight: 500;
   margin-bottom: var(--space-1);
 }
@@ -159,34 +165,37 @@
 .statusCardStat {
   display: flex;
   justify-content: space-between;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
 }
 
 .statusCardStatLabel {
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
 .statusCardStatValue {
-  color: var(--color-text-primary);
+  color: var(--fg-0);
   font-variant-numeric: tabular-nums;
 }
 
 .scatterTooltip {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--fg-0);
 }
 
 .scatterTooltipId {
-  color: var(--color-text-secondary);
+  color: var(--fg-2);
 }
 
 .scatterTooltipValue {
-  color: var(--color-text-primary);
+  color: var(--fg-0);
   font-variant-numeric: tabular-nums;
 }
 
@@ -206,7 +215,7 @@
   align-items: baseline;
   gap: var(--space-2);
   padding: var(--space-1) 0;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--line);
 }
 
 .topIssuesRow:last-child {
@@ -214,14 +223,16 @@
 }
 
 .topIssuesRank {
-  color: var(--color-text-secondary);
+  color: var(--fg-2);
   font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-sm);
+  font-family: var(--f-mono);
+  font-size: var(--t-sm);
 }
 
 .topIssuesTitle {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -232,12 +243,14 @@
 }
 
 .topIssuesCost {
-  color: var(--color-text-primary);
+  color: var(--fg-0);
   font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-sm);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
 }
 
 .topIssuesCount {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  color: var(--fg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
 }
