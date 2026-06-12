@@ -37,21 +37,23 @@ pub async fn kill_session(
         }
     };
 
-    // Attempt synchronous K8s job kill. Whatever the outcome, we still
-    // mark the DB session Failed below — this keeps the kill button
-    // reliable when the K8s job is stuck or absent (e.g. `Created`
-    // sessions whose job hasn't been created yet). Non-NotFound engine
-    // errors get logged and left to the reaper.
-    let cleanup_pending = match state.job_engine.kill_job(&session_id).await {
+    // Attempt synchronous K8s pod stop (exec SIGTERM → grace → SIGKILL).
+    // Whatever the outcome, we still mark the DB session Failed below —
+    // this keeps the kill button reliable when the K8s job is stuck or
+    // absent (e.g. `Created` sessions whose job hasn't been created
+    // yet). Non-NotFound engine errors get logged and left to the
+    // reaper. `stop_job` deliberately leaves the Pod object intact so
+    // post-mortem logs survive.
+    let cleanup_pending = match state.job_engine.stop_job(&session_id).await {
         Ok(()) => false,
         Err(JobEngineError::NotFound(_)) => {
-            info!(session_id = %session_id, "no K8s job to kill; proceeding to DB transition");
+            info!(session_id = %session_id, "no K8s pod to stop; proceeding to DB transition");
             false
         }
         Err(JobEngineError::MultipleFound(_)) => {
             warn!(
                 session_id = %session_id,
-                "multiple K8s jobs found while killing session; reaper will clean up"
+                "multiple K8s pods found while stopping session; reaper will clean up"
             );
             true
         }
@@ -59,7 +61,7 @@ pub async fn kill_session(
             error!(
                 session_id = %session_id,
                 error = %err,
-                "K8s kill_job failed; marking DB Failed and leaving cleanup to reaper"
+                "K8s stop_job failed; marking DB Failed and leaving cleanup to reaper"
             );
             true
         }
@@ -83,9 +85,9 @@ pub async fn kill_session(
         {
             Ok(_) => {
                 if cleanup_pending {
-                    "killed_pending_cleanup"
+                    "stop_pending_cleanup"
                 } else {
-                    "killed"
+                    "stopped"
                 }
             }
             Err(StoreError::SessionNotFound(_)) => {

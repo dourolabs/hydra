@@ -229,6 +229,74 @@ impl LocalJobEngine {
             .await?;
         Ok(())
     }
+
+    /// SIGTERM the worker, wait the grace, then SIGKILL if it's still
+    /// running. Returns the worker PID (or `None` for entries that were
+    /// inserted by tests with `pid = None`) so callers can include it
+    /// in their own log messages. Leaves the tracking entry intact —
+    /// `delete_job` removes it on top of this helper, while `stop_job`
+    /// preserves it so post-mortem `get_logs` keeps working.
+    async fn signal_running_worker(
+        &self,
+        hydra_id: &SessionId,
+    ) -> Result<Option<u32>, JobEngineError> {
+        let info = self
+            .processes
+            .get(hydra_id)
+            .ok_or_else(|| JobEngineError::NotFound(hydra_id.clone()))?;
+
+        let pid = info.pid;
+        let mut status_rx = info.status_rx.clone();
+        let is_running = *status_rx.borrow() == ProcessStatus::Running;
+        drop(info);
+
+        if let Some(pid) = pid {
+            if is_running {
+                // Send SIGTERM for graceful shutdown.
+                let _ = Self::send_signal(pid, "-TERM").await;
+
+                // Wait for the worker to actually exit, bounded by the grace.
+                // Common case: emit_suspend finishes and the watch flips to
+                // Complete/Failed well before the deadline, so we short-circuit
+                // without burning the full grace. The `wait_for` result holds
+                // a `RwLockReadGuard` (non-Send), so we discard it eagerly to
+                // keep this future `Send`.
+                let wait_result = tokio::time::timeout(
+                    GRACEFUL_SHUTDOWN_GRACE,
+                    status_rx.wait_for(|s| *s != ProcessStatus::Running),
+                )
+                .await
+                .map(|r| r.map(|_| ()));
+
+                match wait_result {
+                    Ok(Ok(())) => {
+                        info!(hydra_id = %hydra_id, pid, "stop_job graceful exit");
+                    }
+                    Ok(Err(_)) => {
+                        // Watch sender dropped without ever flipping out of
+                        // Running — unexpected; SIGKILL as a safety net.
+                        warn!(
+                            hydra_id = %hydra_id,
+                            pid,
+                            "stop_job status channel closed without exit status, sending SIGKILL"
+                        );
+                        let _ = Self::send_signal(pid, "-KILL").await;
+                    }
+                    Err(_) => {
+                        warn!(
+                            hydra_id = %hydra_id,
+                            pid,
+                            grace_secs = GRACEFUL_SHUTDOWN_GRACE.as_secs(),
+                            "stop_job grace expired, sending SIGKILL"
+                        );
+                        let _ = Self::send_signal(pid, "-KILL").await;
+                    }
+                }
+            }
+        }
+
+        Ok(pid)
+    }
 }
 
 #[async_trait]
@@ -461,65 +529,15 @@ impl JobEngine for LocalJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
-        let info = self
-            .processes
-            .get(hydra_id)
-            .ok_or_else(|| JobEngineError::NotFound(hydra_id.clone()))?;
+    async fn stop_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        self.signal_running_worker(hydra_id).await?;
+        Ok(())
+    }
 
-        let pid = info.pid;
-        let mut status_rx = info.status_rx.clone();
-        let is_running = *status_rx.borrow() == ProcessStatus::Running;
-        drop(info);
-
-        if let Some(pid) = pid {
-            if is_running {
-                // Send SIGTERM for graceful shutdown.
-                let _ = Self::send_signal(pid, "-TERM").await;
-
-                // Wait for the worker to actually exit, bounded by the grace.
-                // Common case: emit_suspend finishes and the watch flips to
-                // Complete/Failed well before the deadline, so we short-circuit
-                // without burning the full grace. The `wait_for` result holds
-                // a `RwLockReadGuard` (non-Send), so we discard it eagerly to
-                // keep this future `Send`.
-                let wait_result = tokio::time::timeout(
-                    GRACEFUL_SHUTDOWN_GRACE,
-                    status_rx.wait_for(|s| *s != ProcessStatus::Running),
-                )
-                .await
-                .map(|r| r.map(|_| ()));
-
-                match wait_result {
-                    Ok(Ok(())) => {
-                        info!(hydra_id = %hydra_id, pid, "kill_job graceful exit");
-                    }
-                    Ok(Err(_)) => {
-                        // Watch sender dropped without ever flipping out of
-                        // Running — unexpected; SIGKILL as a safety net.
-                        warn!(
-                            hydra_id = %hydra_id,
-                            pid,
-                            "kill_job status channel closed without exit status, sending SIGKILL"
-                        );
-                        let _ = Self::send_signal(pid, "-KILL").await;
-                    }
-                    Err(_) => {
-                        warn!(
-                            hydra_id = %hydra_id,
-                            pid,
-                            grace_secs = GRACEFUL_SHUTDOWN_GRACE.as_secs(),
-                            "kill_job grace expired, sending SIGKILL"
-                        );
-                        let _ = Self::send_signal(pid, "-KILL").await;
-                    }
-                }
-            }
-        }
-
+    async fn delete_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        let pid = self.signal_running_worker(hydra_id).await?;
         self.processes.remove(hydra_id);
-        info!(hydra_id = %hydra_id, pid = ?pid, "local subprocess killed");
-
+        info!(hydra_id = %hydra_id, pid = ?pid, "local subprocess deleted");
         Ok(())
     }
 
@@ -725,33 +743,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn kill_job_removes_process() {
+    async fn delete_job_removes_process() {
         let engine = make_engine();
         let hydra_id = SessionId::new();
         // Use None pid to avoid actually sending signals.
         insert_process(&engine, &hydra_id, ProcessStatus::Running, None);
 
-        engine.kill_job(&hydra_id).await.unwrap();
+        engine.delete_job(&hydra_id).await.unwrap();
         assert!(engine.processes.get(&hydra_id).is_none());
     }
 
     #[tokio::test]
-    async fn kill_job_with_none_pid_does_not_send_signals() {
+    async fn stop_job_preserves_tracking_entry() {
+        let engine = make_engine();
+        let hydra_id = SessionId::new();
+        // Insert a Complete entry so `signal_running_worker` short-
+        // circuits without touching real PIDs but the tracking entry
+        // is still present for the assertion below.
+        insert_process(&engine, &hydra_id, ProcessStatus::Complete, None);
+
+        engine.stop_job(&hydra_id).await.unwrap();
+
+        assert!(
+            engine.processes.get(&hydra_id).is_some(),
+            "stop_job must not remove the tracking entry (logs survive)"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_job_with_none_pid_does_not_send_signals() {
         let engine = make_engine();
         let hydra_id = SessionId::new();
         insert_process(&engine, &hydra_id, ProcessStatus::Running, None);
 
         // Should succeed without attempting to signal PID 0.
-        let result = engine.kill_job(&hydra_id).await;
+        let result = engine.delete_job(&hydra_id).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn kill_job_returns_not_found_for_unknown_id() {
+    async fn delete_job_returns_not_found_for_unknown_id() {
         let engine = make_engine();
         let hydra_id = SessionId::new();
 
-        let result = engine.kill_job(&hydra_id).await;
+        let result = engine.delete_job(&hydra_id).await;
+        assert!(matches!(result, Err(JobEngineError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn stop_job_returns_not_found_for_unknown_id() {
+        let engine = make_engine();
+        let hydra_id = SessionId::new();
+
+        let result = engine.stop_job(&hydra_id).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
     }
 
@@ -1183,8 +1227,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn kill_job_returns_immediately_after_graceful_exit() {
-        // Child traps SIGTERM and exits cleanly. kill_job should observe the
+    async fn stop_job_returns_immediately_after_graceful_exit() {
+        // Child traps SIGTERM and exits cleanly. stop_job should observe the
         // status flip via the watch channel and return well under the grace.
         let engine = LocalJobEngine::new(
             "http://localhost:0".to_string(),
@@ -1223,18 +1267,18 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         let start = std::time::Instant::now();
-        engine.kill_job(&hydra_id).await.unwrap();
+        engine.stop_job(&hydra_id).await.unwrap();
         let elapsed = start.elapsed();
 
         assert!(
             elapsed < std::time::Duration::from_secs(5),
-            "kill_job took {elapsed:?}; should short-circuit on graceful SIGTERM exit, not wait the full grace"
+            "stop_job took {elapsed:?}; should short-circuit on graceful SIGTERM exit, not wait the full grace"
         );
     }
 
     #[tokio::test]
-    async fn kill_job_sigkills_after_grace_when_process_ignores_sigterm() {
-        // Child ignores SIGTERM; kill_job must wait the grace and then SIGKILL.
+    async fn stop_job_sigkills_after_grace_when_process_ignores_sigterm() {
+        // Child ignores SIGTERM; stop_job must wait the grace and then SIGKILL.
         let engine = LocalJobEngine::new(
             "http://localhost:0".to_string(),
             std::env::temp_dir().join("hydra-local-jobs-test"),
@@ -1262,7 +1306,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Capture the PID before kill_job removes the entry.
+        // Capture the PID before signalling — `stop_job` leaves the
+        // tracking entry intact, but `pid` is still convenient to
+        // capture before the child exits.
         let pid = engine
             .processes
             .get(&hydra_id)
@@ -1274,16 +1320,16 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         let start = std::time::Instant::now();
-        engine.kill_job(&hydra_id).await.unwrap();
+        engine.stop_job(&hydra_id).await.unwrap();
         let elapsed = start.elapsed();
 
         assert!(
             elapsed >= GRACEFUL_SHUTDOWN_GRACE,
-            "kill_job returned in {elapsed:?}, expected at least the full {GRACEFUL_SHUTDOWN_GRACE:?} grace"
+            "stop_job returned in {elapsed:?}, expected at least the full {GRACEFUL_SHUTDOWN_GRACE:?} grace"
         );
         assert!(
             elapsed < GRACEFUL_SHUTDOWN_GRACE + std::time::Duration::from_secs(3),
-            "kill_job returned in {elapsed:?}, should not have lingered far beyond the grace"
+            "stop_job returned in {elapsed:?}, should not have lingered far beyond the grace"
         );
 
         // Allow time for SIGKILL delivery + the child to actually exit before
@@ -1307,7 +1353,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integration_kill_job_removes_from_tracking() {
+    async fn integration_delete_job_removes_from_tracking() {
         let engine = make_failing_engine();
         let hydra_id = SessionId::new();
         let (actor, token) = make_actor();
@@ -1330,21 +1376,21 @@ mod tests {
 
         assert!(engine.find_job_by_hydra_id(&hydra_id).await.is_ok());
 
-        engine.kill_job(&hydra_id).await.unwrap();
+        engine.delete_job(&hydra_id).await.unwrap();
 
         let result = engine.find_job_by_hydra_id(&hydra_id).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
     }
 
     #[tokio::test]
-    async fn integration_kill_job_not_found_for_unknown_id() {
+    async fn integration_delete_job_returns_not_found_for_unknown_id() {
         let engine = make_failing_engine();
-        let result = engine.kill_job(&SessionId::new()).await;
+        let result = engine.delete_job(&SessionId::new()).await;
         assert!(matches!(result, Err(JobEngineError::NotFound(_))));
     }
 
     #[tokio::test]
-    async fn integration_kill_job_removes_from_list() {
+    async fn integration_delete_job_removes_from_list() {
         let engine = make_failing_engine();
         let id1 = SessionId::new();
         let id2 = SessionId::new();
@@ -1381,7 +1427,7 @@ mod tests {
             .await
             .unwrap();
 
-        engine.kill_job(&id1).await.unwrap();
+        engine.delete_job(&id1).await.unwrap();
 
         let jobs = engine.list_jobs().await.unwrap();
         assert_eq!(jobs.len(), 1);

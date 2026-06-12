@@ -170,8 +170,8 @@ async fn failure_cascade_drops_all_descendants_and_kills_tasks() -> Result<()> {
         "grandchild D should be Dropped (recursive cascade)"
     );
 
-    // ── Step 7: Verify teardown_issue_work killed jobs in the engine ───────
-    // teardown_issue_work calls job_engine.kill_job() which marks
+    // ── Step 7: Verify teardown_issue_work stopped jobs in the engine ──────
+    // teardown_issue_work calls job_engine.stop_job() which marks
     // engine jobs as Failed. Check the engine directly.
     use hydra_server::job_engine::JobEngine;
     let engine_job_a = harness

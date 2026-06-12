@@ -198,7 +198,7 @@ where
                         // `input_tx`). If we already saw EndSession and
                         // the WS dropped, returning here skips the
                         // cleanup messages — there is no WS to send them
-                        // on, and the existing server fallback (`kill_job`)
+                        // on, and the existing server fallback (`stop_job`)
                         // catches the disconnect.
                         let reconnect_result = match input_tx.as_ref() {
                             Some(tx) => attempt_reconnect(

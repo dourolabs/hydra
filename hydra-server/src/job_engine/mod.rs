@@ -184,11 +184,32 @@ pub trait JobEngine: Send + Sync {
         follow: bool,
     ) -> Result<futures::channel::mpsc::UnboundedReceiver<String>, JobEngineError>;
 
-    /// Terminates a job if it exists.
+    /// Stops a running job without deleting its underlying execution
+    /// resources, so post-mortem logs remain available.
     ///
-    /// Implementations should delete the underlying job and any associated
-    /// resources necessary to stop execution.
-    async fn kill_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError>;
+    /// For Kubernetes this signals the container's PID 1 via the pod
+    /// exec API and leaves the Job/Pod objects in place; eventual GC is
+    /// handled by `ttl_seconds_after_finished`. For local engines, the
+    /// worker subprocess/container is signalled (SIGTERM, then SIGKILL
+    /// after a grace period) but tracking metadata — and any log file
+    /// or container needed to serve `get_logs` — is preserved.
+    ///
+    /// Returns `JobEngineError::NotFound` when no job exists for the
+    /// given id; callers typically treat that as a no-op success.
+    async fn stop_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError>;
+
+    /// Hard-removes a job and any associated execution resources.
+    ///
+    /// Intended for reconciliation paths that need to GC orphans whose
+    /// owning state has already vanished (e.g. the reaper's
+    /// "missing from store" arm). Implementations should both stop the
+    /// execution AND drop the underlying objects (Kubernetes Job + Pod,
+    /// Docker container, local tracking entry). Post-deletion `get_logs`
+    /// calls will not succeed.
+    ///
+    /// Returns `JobEngineError::NotFound` when no job exists for the
+    /// given id.
+    async fn delete_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError>;
 
     /// Proxy an HTTP request to `port` on the worker's container/pod/process.
     ///
