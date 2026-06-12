@@ -26,6 +26,7 @@ mod secrets;
 mod sessions;
 mod triggers;
 mod users;
+mod wake_conversation_on_child_unblock;
 mod whoami;
 
 pub(crate) use crate::test_utils::*;

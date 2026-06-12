@@ -64,6 +64,7 @@ pub fn default_policy_config() -> crate::policy::config::PolicyConfig {
                 PolicyEntry::Name("spawn_conversation_sessions".to_string()),
                 PolicyEntry::Name("close_conversations_on_interactive_exit".to_string()),
                 PolicyEntry::Name("start_created_sessions".to_string()),
+                PolicyEntry::Name("wake_conversation_on_child_unblock".to_string()),
             ],
         },
     }
