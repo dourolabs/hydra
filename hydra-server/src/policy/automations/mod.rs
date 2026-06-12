@@ -8,6 +8,7 @@ pub mod spawn_conversation_sessions;
 pub mod spawn_sessions;
 pub mod start_created_sessions;
 pub mod teardown_issue_work;
+pub mod wake_conversation_on_child_unblock;
 
 pub use apply_status_on_enter::ApplyStatusOnEnterAutomation;
 pub use cascade_issue_status::CascadeIssueStatusAutomation;
@@ -18,3 +19,4 @@ pub use spawn_conversation_sessions::SpawnConversationSessionsAutomation;
 pub use spawn_sessions::SpawnSessionsAutomation;
 pub use start_created_sessions::StartCreatedSessionsAutomation;
 pub use teardown_issue_work::TeardownIssueWorkAutomation;
+pub use wake_conversation_on_child_unblock::WakeConversationOnChildUnblockAutomation;

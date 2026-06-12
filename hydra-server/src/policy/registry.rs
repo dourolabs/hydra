@@ -206,6 +206,11 @@ pub fn build_default_registry() -> PolicyRegistry {
     registry.register_automation("start_created_sessions", |params| {
         Ok(Box::new(StartCreatedSessionsAutomation::new(params)?))
     });
+    registry.register_automation("wake_conversation_on_child_unblock", |params| {
+        Ok(Box::new(WakeConversationOnChildUnblockAutomation::new(
+            params,
+        )?))
+    });
 
     registry
 }
