@@ -16,13 +16,15 @@
 
 .label {
   display: block;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
 }
 
 .hint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--fg-2);
 }
 
 .checklist {
@@ -42,13 +44,15 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
   cursor: pointer;
 }
 
 .empty {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-2);
   font-style: italic;
 }
