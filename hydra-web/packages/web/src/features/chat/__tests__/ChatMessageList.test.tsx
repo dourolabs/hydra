@@ -20,6 +20,18 @@ vi.mock("../ChatMessageList.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+vi.mock("../SystemEventBubble", () => ({
+  SystemEventBubble: ({
+    kind,
+    timestamp,
+  }: {
+    kind: { kind: string };
+    timestamp: string;
+  }) => (
+    <div data-testid="system-event-bubble" data-kind={kind.kind} data-ts={timestamp} />
+  ),
+}));
+
 const { ChatMessageList } = await import("../ChatMessageList");
 
 function userMessage(content: string, ts = "2026-05-14T00:00:00Z"): SessionEvent {
@@ -304,6 +316,33 @@ describe("ChatMessageList avatars and author labels", () => {
     expect(avatars.length).toBe(2);
     expect(avatars[0]?.getAttribute("data-kind")).toBe("human");
     expect(avatars[1]?.getAttribute("data-kind")).toBe("agent");
+  });
+});
+
+describe("ChatMessageList system_event renderer wiring", () => {
+  beforeEach(() => {
+    Element.prototype.scrollTo =
+      vi.fn() as unknown as typeof Element.prototype.scrollTo;
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("delegates `system_event` entries to SystemEventBubble (not a silent drop, not a user_message bubble)", () => {
+    const systemEvent: SessionEvent = {
+      type: "system_event",
+      kind: { kind: "child_unblocked", child_id: "i-childex", new_status: "closed" },
+      timestamp: "2026-05-16T13:42:00Z",
+    };
+    const { container } = render(
+      <ChatMessageList events={[userMessage("hi"), systemEvent]} />,
+    );
+    const bubbles = container.querySelectorAll('[data-testid="system-event-bubble"]');
+    expect(bubbles.length).toBe(1);
+    expect(bubbles[0]?.getAttribute("data-kind")).toBe("child_unblocked");
+    expect(bubbles[0]?.getAttribute("data-ts")).toBe("2026-05-16T13:42:00Z");
   });
 });
 

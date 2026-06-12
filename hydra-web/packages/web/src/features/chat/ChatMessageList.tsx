@@ -6,6 +6,7 @@ import { formatTimestamp } from "../../utils/time";
 import { AgoTime } from "../../components/Runtime/Runtime";
 import { MessageReferencesPreview } from "./MessageReferencesPreview";
 import { ChatActivityLine } from "./ChatActivityLine";
+import { SystemEventBubble } from "./SystemEventBubble";
 import type { ActivityRun } from "./deriveActivitySteps";
 import styles from "./ChatMessageList.module.css";
 
@@ -69,9 +70,19 @@ function renderEvent(event: SessionEvent, index: number, ctx: RenderContext) {
       return <SystemEvent key={index} text="Session resumed" timestamp={event.timestamp} />;
     case "closed":
       return <SystemEvent key={index} text="Session ended" timestamp={event.timestamp} />;
+    case "system_event":
+      return <SystemEventBubble key={index} kind={event.kind} timestamp={event.timestamp} />;
     case "tool_use":
     case "unknown":
       return null;
+    default: {
+      // Exhaustiveness guard — a new `SessionEvent` variant must be handled
+      // here or the call site will surface a TypeScript error rather than
+      // silently dropping the event from the transcript.
+      const _exhaustive: never = event;
+      void _exhaustive;
+      return null;
+    }
   }
 }
 

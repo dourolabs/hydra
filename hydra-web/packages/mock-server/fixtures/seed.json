@@ -1313,6 +1313,18 @@
         },
         "submitted_at": "2026-05-15T19:05:00.000Z"
       }
+    },
+    "i-sysevch": {
+      "type": "task",
+      "title": "Re-index search corpus",
+      "description": "Child task spawned to regenerate the search index after the v2 schema migration. Used as the seed fixture for the `SystemEvent::ChildUnblocked` chip in the conversation timeline.",
+      "creator": "swe",
+      "progress": "Index rebuild finished; verification passed.",
+      "status": "closed",
+      "assignee": { "Agent": { "name": "swe" } },
+      "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
+      "patches": [],
+      "last_updated_at": "2026-05-16T13:42:00.000Z"
     }
   },
   "sessions": {
@@ -1683,6 +1695,17 @@
       "status": "running",
       "creation_time": "2026-05-13T11:00:15.000Z",
       "start_time": "2026-05-13T11:00:20.000Z"
+    },
+    "t-sysev01": {
+      "prompt": "Interactive session for the wake-on-child-complete demo conversation.",
+      "context": { "type": "none" },
+      "interactive": {
+        "conversation_id": "c-sysev01"
+      },
+      "creator": "dev-user",
+      "status": "running",
+      "creation_time": "2026-05-16T13:30:00.000Z",
+      "start_time": "2026-05-16T13:30:05.000Z"
     }
   },
   "patches": {
@@ -2395,6 +2418,16 @@
       "spawned_from": "i-seed00006",
       "created_at": "2026-05-15T09:00:00.000Z",
       "updated_at": "2026-05-15T10:30:00.000Z"
+    },
+    "c-sysev01": {
+      "conversation_id": "c-sysev01",
+      "title": "Platform v2.0 — search re-index wake demo",
+      "agent_name": "swe",
+      "status": "active",
+      "creator": "dev-user",
+      "spawned_from": "i-seed00001",
+      "created_at": "2026-05-16T13:30:00.000Z",
+      "updated_at": "2026-05-16T13:45:00.000Z"
     }
   },
   "session_events": {
@@ -2950,6 +2983,32 @@
         "content": "Step 2 is to roll out the CRDT persistence adapter, monitoring Redis Stream lag.",
         "timestamp": "2026-04-01T10:10:00.000Z"
       }
+    ],
+    "t-sysev01": [
+      {
+        "type": "user_message",
+        "content": "Kick off the search re-index task and wait until it finishes before continuing the v2 migration writeup.",
+        "timestamp": "2026-05-16T13:30:30.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Spawned child task `i-sysevch` (Re-index search corpus). I'll pause until it reaches a terminal status.",
+        "timestamp": "2026-05-16T13:31:00.000Z"
+      },
+      {
+        "type": "system_event",
+        "kind": {
+          "kind": "child_unblocked",
+          "child_id": "i-sysevch",
+          "new_status": "closed"
+        },
+        "timestamp": "2026-05-16T13:42:00.000Z"
+      },
+      {
+        "type": "assistant_message",
+        "content": "Child task closed — index rebuild completed. Resuming the v2 migration writeup.",
+        "timestamp": "2026-05-16T13:43:30.000Z"
+      }
     ]
   },
   "triggers": {
@@ -3166,6 +3225,9 @@
     { "source_id": "c-seed00006", "target_id": "i-seed00016", "rel_type": "refers-to" },
     { "source_id": "c-seed00006", "target_id": "i-seed00018", "rel_type": "refers-to" },
     { "source_id": "c-seed00006", "target_id": "p-seed00006", "rel_type": "refers-to" },
-    { "source_id": "c-seed00006", "target_id": "d-seed00002", "rel_type": "refers-to" }
+    { "source_id": "c-seed00006", "target_id": "d-seed00002", "rel_type": "refers-to" },
+
+    { "source_id": "c-sysev01", "target_id": "i-seed00001", "rel_type": "refers-to" },
+    { "source_id": "c-sysev01", "target_id": "i-sysevch", "rel_type": "refers-to" }
   ]
 }
