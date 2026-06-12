@@ -1,7 +1,7 @@
 use crate::{
     BuildCacheContext, ConversationId, IssueId, RepoName, SessionId, VersionNumber,
     actor_ref::ActorRef,
-    api::v1::{agents::AgentName, timeout::Timeout},
+    api::v1::{agents::AgentName, projects::StatusKey, timeout::Timeout},
     task_status::{Status, TaskError},
     users::Username,
 };
@@ -1039,6 +1039,14 @@ pub enum SessionEvent {
     },
     /// Session is closed — no further events will be appended.
     Closed { timestamp: DateTime<Utc> },
+    /// System-originated event surfaced to the agent (e.g. a child issue
+    /// reaching an unblocking status). The worker re-injects this as a
+    /// user-shaped input by calling [`SystemEventKind::render`]; the
+    /// frontend renders the structured form distinctly.
+    SystemEvent {
+        kind: SystemEventKind,
+        timestamp: DateTime<Utc>,
+    },
     /// Forward-compat fallback. Old clients reading an event whose `type` tag
     /// is unrecognized deserialize it as `Unknown` rather than erroring.
     #[serde(other)]
@@ -1055,8 +1063,41 @@ impl SessionEvent {
             | SessionEvent::ToolUse { timestamp, .. }
             | SessionEvent::Suspending { timestamp, .. }
             | SessionEvent::Resumed { timestamp, .. }
-            | SessionEvent::Closed { timestamp } => Some(*timestamp),
+            | SessionEvent::Closed { timestamp }
+            | SessionEvent::SystemEvent { timestamp, .. } => Some(*timestamp),
             SessionEvent::Unknown => None,
+        }
+    }
+}
+
+/// Structured kinds for [`SessionEvent::SystemEvent`]. Each variant has
+/// exactly one canonical [`Self::render`] string — callers MUST NOT
+/// compose their own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SystemEventKind {
+    /// A child issue transitioned into a status that unblocks its parent;
+    /// the parent's conversation surface is being woken so the agent can
+    /// continue.
+    ChildUnblocked {
+        child_id: IssueId,
+        new_status: StatusKey,
+    },
+}
+
+impl SystemEventKind {
+    /// Canonical string rendering for projection into a model's input
+    /// stream. One canonical form per variant — callers MUST NOT compose
+    /// their own.
+    pub fn render(&self) -> String {
+        match self {
+            Self::ChildUnblocked {
+                child_id,
+                new_status,
+            } => format!("Child {child_id} reached status {new_status}; please continue."),
         }
     }
 }
@@ -2145,6 +2186,37 @@ mod tests {
         let json = r#"{"type":"future_kind","whatever":42}"#;
         let parsed: SessionEvent = serde_json::from_str(json).unwrap();
         assert_eq!(parsed, SessionEvent::Unknown);
+    }
+
+    #[test]
+    fn session_event_system_event_child_unblocked_round_trip() {
+        let child_id = IssueId::new();
+        let event = SessionEvent::SystemEvent {
+            kind: SystemEventKind::ChildUnblocked {
+                child_id: child_id.clone(),
+                new_status: crate::api::v1::projects::StatusKey::try_new("in-review").unwrap(),
+            },
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let parsed: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, parsed);
+        assert!(json.contains(r#""type":"system_event""#));
+        assert!(json.contains(r#""kind":"child_unblocked""#));
+        assert!(json.contains(child_id.as_ref()));
+    }
+
+    #[test]
+    fn system_event_kind_child_unblocked_render_is_canonical() {
+        let child_id = IssueId::try_from("i-abcdef".to_string()).unwrap();
+        let kind = SystemEventKind::ChildUnblocked {
+            child_id,
+            new_status: crate::api::v1::projects::StatusKey::try_new("complete").unwrap(),
+        };
+        assert_eq!(
+            kind.render(),
+            "Child i-abcdef reached status complete; please continue."
+        );
     }
 
     #[test]

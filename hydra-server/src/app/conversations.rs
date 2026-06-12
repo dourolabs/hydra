@@ -10,7 +10,10 @@ use crate::{
 };
 use hydra_common::{
     ConversationId, IssueId, Versioned,
-    api::v1::{agents::AgentName, sessions as api_sessions, sessions::SearchSessionsQuery},
+    api::v1::{
+        agents::AgentName,
+        sessions::{self as api_sessions, SearchSessionsQuery, SystemEventKind},
+    },
 };
 use std::time::Duration;
 use thiserror::Error;
@@ -57,6 +60,27 @@ pub enum SendMessageError {
     },
     #[error("principal '{principal}' is not the conversation creator")]
     Forbidden { principal: Username },
+}
+
+#[derive(Debug, Error)]
+pub enum AppendSystemEventError {
+    #[error("failed to access conversation store")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
+}
+
+/// Internal error returned by [`AppState::deliver_session_event`]. Each
+/// public caller maps this into its own outward-facing error type so the
+/// public signatures don't leak.
+#[derive(Debug, Error)]
+enum DeliveryError {
+    #[error("failed to access conversation store")]
+    Store {
+        #[source]
+        source: StoreError,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -177,38 +201,88 @@ impl AppState {
         // Creator-only gate: a conversation may only be appended to by the
         // user that created it. The check lives here (rather than in the
         // route handler) so any future internal caller of `send_message` is
-        // also covered.
+        // also covered. Keeping this gate at the only callsite that wraps
+        // `SessionEvent::UserMessage` preserves it as a compile-time
+        // invariant — `deliver_session_event` is private and takes a
+        // pre-wrapped `SessionEvent`, so internal callers that synthesize
+        // a non-`UserMessage` (e.g. [`AppState::append_system_event`])
+        // skip this gate by construction.
         if versioned.item.creator != principal {
             return Err(SendMessageError::Forbidden { principal });
         }
 
-        // If not Active, transparently flip to Active before recording the
-        // new message. The companion session — and the corresponding Resumed
-        // event — are produced asynchronously by
-        // `SpawnConversationSessionsAutomation` when the ConversationUpdated
-        // event lands on the bus.
-        if versioned.item.status != ConversationStatus::Active {
-            let mut updated = versioned.item;
-            updated.status = ConversationStatus::Active;
-            self.store
-                .update_conversation_with_actor(conversation_id, updated, actor_ref.clone())
-                .await
-                .map_err(|source| SendMessageError::Store { source })?;
-        }
-
-        // Hand the UserMessage off to the chat-relay layer. When a worker
-        // is connected, the relay both dual-writes to the session event
-        // log AND forwards over the per-conversation channel. When no
-        // worker is connected yet (a brand-new or just-reactivated
-        // conversation whose companion session is still being spawned by
-        // `SpawnConversationSessionsAutomation`), the event is queued
-        // and delivered atomically when the worker connects — preserving
-        // the Phase E invariant that UserMessage lives on the session
-        // log without forcing this path to block on a session lookup.
         let event = SessionEvent::UserMessage {
             content,
             timestamp: chrono::Utc::now(),
         };
+        self.deliver_session_event(conversation_id, versioned.item, event, actor_ref)
+            .await
+            .map_err(|err| match err {
+                DeliveryError::Store { source } => SendMessageError::Store { source },
+            })
+    }
+
+    /// Append a [`SessionEvent::SystemEvent`] to a conversation. Mirrors
+    /// [`Self::send_message`]'s relay routing and Idle/Closed → Active
+    /// flip, but skips the creator-gate — system events originate from
+    /// internal automations, not human input.
+    pub async fn append_system_event(
+        &self,
+        conversation_id: &ConversationId,
+        kind: SystemEventKind,
+        actor_ref: ActorRef,
+    ) -> Result<api_sessions::SessionEvent, AppendSystemEventError> {
+        let versioned = self
+            .store()
+            .get_conversation(conversation_id, false)
+            .await
+            .map_err(|source| AppendSystemEventError::Store { source })?;
+
+        let event = SessionEvent::SystemEvent {
+            kind,
+            timestamp: chrono::Utc::now(),
+        };
+        self.deliver_session_event(conversation_id, versioned.item, event, actor_ref)
+            .await
+            .map_err(|err| match err {
+                DeliveryError::Store { source } => AppendSystemEventError::Store { source },
+            })
+    }
+
+    /// Shared body of [`Self::send_message`] and
+    /// [`Self::append_system_event`]: flip Idle/Closed → Active and hand
+    /// the event to the chat-relay layer. When a worker is connected, the
+    /// relay both dual-writes to the session event log AND forwards over
+    /// the per-conversation channel. When no worker is connected yet (a
+    /// brand-new or just-reactivated conversation whose companion session
+    /// is still being spawned by `SpawnConversationSessionsAutomation`),
+    /// the event is queued and delivered atomically when the worker
+    /// connects.
+    ///
+    /// Private and `SessionEvent`-typed so the creator-gate stays at the
+    /// `send_message` callsite as a compile-time invariant — see that
+    /// method's doc comment.
+    async fn deliver_session_event(
+        &self,
+        conversation_id: &ConversationId,
+        conversation: Conversation,
+        event: SessionEvent,
+        actor_ref: ActorRef,
+    ) -> Result<api_sessions::SessionEvent, DeliveryError> {
+        // If not Active, transparently flip to Active before recording the
+        // new event. The companion session — and the corresponding Resumed
+        // event — are produced asynchronously by
+        // `SpawnConversationSessionsAutomation` when the ConversationUpdated
+        // event lands on the bus.
+        if conversation.status != ConversationStatus::Active {
+            let mut updated = conversation;
+            updated.status = ConversationStatus::Active;
+            self.store
+                .update_conversation_with_actor(conversation_id, updated, actor_ref.clone())
+                .await
+                .map_err(|source| DeliveryError::Store { source })?;
+        }
+
         let api_event: api_sessions::SessionEvent = event.into();
         match self
             .chat_relay_map
@@ -216,13 +290,12 @@ impl AppState {
             .await
         {
             Ok(()) => {
-                info!(conversation_id = %conversation_id, "send_message accepted");
+                info!(conversation_id = %conversation_id, "deliver_session_event accepted");
             }
             Err(err) => {
-                warn!(conversation_id = %conversation_id, error = %err, "send_message: relay forward failed");
+                warn!(conversation_id = %conversation_id, error = %err, "deliver_session_event: relay forward failed");
             }
         }
-
         Ok(api_event)
     }
 
@@ -2000,5 +2073,207 @@ mod tests {
             sessions.is_empty(),
             "no session should exist when no agent and no default are registered"
         );
+    }
+
+    #[tokio::test]
+    async fn append_system_event_appends_to_session_log_and_keeps_active() {
+        use crate::domain::sessions::SessionEvent as DomainSessionEvent;
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        let state = state_with_default_model("default-model");
+        let _runner = start_test_automation_runner(&state);
+        register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                SessionSettings::default(),
+                None,
+                None,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+        let _initial = session_for_conversation(&state, &conversation_id).await;
+        let session_id = session_id_for_conversation(&state, &conversation_id).await;
+        // Simulate the worker connecting so the dual-write on the next
+        // call lands on the session log synchronously.
+        let _worker_rx = simulate_worker_connect(&state, &conversation_id, &session_id).await;
+
+        let events_before = state.store().get_session_events(&session_id).await.unwrap();
+        let count_before = events_before.len();
+
+        let child_id = IssueId::new();
+        let kind = SystemEventKind::ChildUnblocked {
+            child_id: child_id.clone(),
+            new_status: StatusKey::try_new("in-review").unwrap(),
+        };
+        state
+            .append_system_event(&conversation_id, kind.clone(), ActorRef::test())
+            .await
+            .expect("append_system_event must accept the event");
+
+        let events_after = poll_until(POLL_TIMEOUT, || async {
+            let events = state.store().get_session_events(&session_id).await.unwrap();
+            (events.len() > count_before).then_some(events)
+        })
+        .await
+        .expect("expected the new SystemEvent to be appended to the session log");
+        let last = events_after.last().expect("expected at least one event");
+        match &last.item {
+            DomainSessionEvent::SystemEvent { kind: stored, .. } => assert_eq!(stored, &kind),
+            other => panic!("expected trailing SystemEvent, got {other:?}"),
+        }
+
+        let versioned = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(versioned.item.status, ConversationStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn append_system_event_flips_closed_conversation_to_active() {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        let state = state_with_default_model("default-model");
+        let _runner = start_test_automation_runner(&state);
+        register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                SessionSettings::default(),
+                None,
+                None,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+        let _initial = session_for_conversation(&state, &conversation_id).await;
+
+        state
+            .close_conversation(&conversation_id, ActorRef::test())
+            .await
+            .unwrap();
+
+        let kind = SystemEventKind::ChildUnblocked {
+            child_id: IssueId::new(),
+            new_status: StatusKey::try_new("complete").unwrap(),
+        };
+        state
+            .append_system_event(&conversation_id, kind, ActorRef::test())
+            .await
+            .expect("append_system_event must succeed on a closed conversation");
+
+        let versioned = state
+            .store()
+            .get_conversation(&conversation_id, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            versioned.item.status,
+            ConversationStatus::Active,
+            "append_system_event must flip Closed → Active"
+        );
+    }
+
+    /// Both `send_message` and `append_system_event` route through the
+    /// shared `deliver_session_event` helper. Verify that by exercising
+    /// each in turn and observing both arrive on the same per-conversation
+    /// worker channel via the chat relay.
+    #[tokio::test]
+    async fn send_message_and_append_system_event_share_relay_routing() {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::relay::ServerMessage;
+        use hydra_common::api::v1::sessions::{SessionEvent as ApiSessionEvent, SystemEventKind};
+        let state = state_with_default_model("default-model");
+        let _runner = start_test_automation_runner(&state);
+        register_agent_with_prompt(&state, "swe", "you are an SWE", true, vec![]).await;
+
+        let (conversation_id, _) = state
+            .create_conversation(
+                Some("hello".to_string()),
+                None,
+                SessionSettings::default(),
+                None,
+                None,
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+        let _initial = session_for_conversation(&state, &conversation_id).await;
+        let session_id = session_id_for_conversation(&state, &conversation_id).await;
+        let mut worker_rx = simulate_worker_connect(&state, &conversation_id, &session_id).await;
+        // The create_conversation seed message is queued during set_active;
+        // mark the connection Ready so subsequent live events are forwarded.
+        state.chat_relay_map.mark_ready(&conversation_id, None);
+        // Drain whatever the initial seed produced before exercising the
+        // two paths we care about.
+        let _ = drain_pending(&mut worker_rx).await;
+
+        state
+            .send_message(
+                &conversation_id,
+                "user-input".to_string(),
+                ActorRef::test(),
+                Username::from("creator"),
+            )
+            .await
+            .unwrap();
+        state
+            .append_system_event(
+                &conversation_id,
+                SystemEventKind::ChildUnblocked {
+                    child_id: IssueId::new(),
+                    new_status: StatusKey::try_new("complete").unwrap(),
+                },
+                ActorRef::test(),
+            )
+            .await
+            .unwrap();
+
+        let forwarded = drain_pending(&mut worker_rx).await;
+        let mut saw_user = false;
+        let mut saw_system = false;
+        for msg in forwarded {
+            if let ServerMessage::Event { event, .. } = msg {
+                match event {
+                    ApiSessionEvent::UserMessage { content, .. } if content == "user-input" => {
+                        saw_user = true;
+                    }
+                    ApiSessionEvent::SystemEvent { .. } => {
+                        saw_system = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            saw_user && saw_system,
+            "both send_message and append_system_event must route through the shared relay path"
+        );
+    }
+
+    /// Drain everything currently waiting on the worker receiver.
+    async fn drain_pending(
+        rx: &mut tokio::sync::mpsc::Receiver<hydra_common::api::v1::relay::ServerMessage>,
+    ) -> Vec<hydra_common::api::v1::relay::ServerMessage> {
+        let mut out = Vec::new();
+        // Give async sends a chance to land before we poll.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        while let Ok(msg) = rx.try_recv() {
+            out.push(msg);
+        }
+        out
     }
 }

@@ -660,6 +660,17 @@ fn primer_to_text(events: &[SessionEvent]) -> String {
                 out.push_str("Assistant: ");
                 out.push_str(content);
             }
+            // SystemEvents are user-shaped in the model's input stream
+            // (see `relay_adapter::project_to_input_text`), so they
+            // re-enter the primer the same way `UserMessage` does, via
+            // `SystemEventKind::render()`.
+            SessionEvent::SystemEvent { kind, .. } => {
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str("User: ");
+                out.push_str(&kind.render());
+            }
             _ => {}
         }
     }
@@ -933,6 +944,37 @@ mod tests {
         }];
         let out = concat_first_message(&primer, &agent_prompt, "new turn");
         assert_eq!(out, "User: earlier\n\nyou are helpful\n\nnew turn");
+    }
+
+    /// SystemEvent primer rendering: a transcript-replay primer
+    /// containing a SystemEvent must surface its canonical render in the
+    /// model's input — same shape as a UserMessage — so a resumed worker
+    /// sees the wake-up event re-injected verbatim.
+    #[test]
+    fn primer_to_text_projects_system_event_as_user_via_canonical_render() {
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        use hydra_common::IssueId;
+        let kind = SystemEventKind::ChildUnblocked {
+            child_id: IssueId::try_from("i-abcdef".to_string()).unwrap(),
+            new_status: StatusKey::try_new("complete").unwrap(),
+        };
+        let primer = vec![
+            SessionEvent::AssistantMessage {
+                content: "earlier".to_string(),
+                timestamp: chrono::Utc::now(),
+            },
+            SessionEvent::SystemEvent {
+                kind: kind.clone(),
+                timestamp: chrono::Utc::now(),
+            },
+        ];
+        let out = concat_first_message(&primer, "agent", "new turn");
+        let expected = format!(
+            "Assistant: earlier\n\nUser: {render}\n\nagent\n\nnew turn",
+            render = kind.render()
+        );
+        assert_eq!(out, expected);
     }
 
     /// Fresh-path invariant: with no transcript-borne prompt, the
