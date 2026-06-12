@@ -305,6 +305,10 @@ vi.mock("@hydra/ui", () => ({
   ColorPicker: ({ value }: { value: string }) => (
     <span data-testid={`color-${value}`}>{value}</span>
   ),
+  Icons: {
+    IconChevronRight: () => <span aria-hidden="true">▶</span>,
+    IconChevronDown: () => <span aria-hidden="true">▼</span>,
+  },
 }));
 
 const updateProjectSpy = vi.fn(async (_id: string, req: unknown) => req);
@@ -452,6 +456,16 @@ function makeProject(statuses: StatusDefinition[]): ProjectRecord {
       priority: 0,
     },
   };
+}
+
+// The Session-settings and On-enter blocks render as collapsible sections —
+// closed by default to keep the modal compact. Tests that interact with their
+// inner controls call these helpers first to expand the relevant block.
+function openSessionSettings() {
+  fireEvent.click(screen.getByTestId("status-settings-session-settings-toggle"));
+}
+function openOnEnter() {
+  fireEvent.click(screen.getByTestId("status-settings-on-enter-toggle"));
 }
 
 describe("StatusSettingsModal", () => {
@@ -810,6 +824,9 @@ describe("StatusSettingsModal", () => {
 
       // The Name field and advanced controls mirror the edit modal.
       expect(screen.getByTestId("status-settings-label")).toBeDefined();
+      // Assignee lives inside the On enter collapsible (closed by default in
+      // both new and edit modes).
+      openOnEnter();
       expect(screen.getByTestId("status-settings-assignee")).toBeDefined();
       // Prompt is the same inline markdown editor as edit mode, always visible.
       expect(screen.getByTestId("status-settings-prompt-body")).toBeDefined();
@@ -1484,6 +1501,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       // useAgents/useUsers are mocked to return [] above, so opening the
       // picker should surface only the Unassigned row — no agent/user
       // sections.
@@ -1512,6 +1530,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       // The pill renders the avatar (mocked) + name, so the trigger button's
       // aria-label is the picker caption and its text content is the name.
       expect(screen.getByLabelText("Assign to").textContent).toContain("swe");
@@ -1535,6 +1554,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByLabelText("Assign to"));
       const menu = screen.getByRole("menu");
       const rows = within(menu).getAllByRole("menuitem");
@@ -1544,6 +1564,382 @@ describe("StatusSettingsModal", () => {
         nextStatuses: StatusDefinition[];
       };
       expect(payload.nextStatuses[0].on_enter).toBeNull();
+    });
+  });
+
+  describe("max simultaneous sessions", () => {
+    it("renders empty when the status has no cap", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      const input = screen.getByTestId(
+        "status-settings-max-simultaneous-sessions",
+      ) as HTMLInputElement;
+      expect(input.value).toBe("");
+    });
+
+    it("renders the existing cap when set", () => {
+      const project = makeProject([
+        makeStatus("in-progress", {
+          max_simultaneous_sessions: 4,
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      const input = screen.getByTestId(
+        "status-settings-max-simultaneous-sessions",
+      ) as HTMLInputElement;
+      expect(input.value).toBe("4");
+    });
+
+    it("Save persists the new cap as a number", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      fireEvent.change(
+        screen.getByTestId("status-settings-max-simultaneous-sessions"),
+        { target: { value: "7" } },
+      );
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(payload.nextStatuses[0].max_simultaneous_sessions).toBe(7);
+    });
+
+    it("Clearing the input persists max_simultaneous_sessions: null", () => {
+      const project = makeProject([
+        makeStatus("in-progress", { max_simultaneous_sessions: 3 }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      fireEvent.change(
+        screen.getByTestId("status-settings-max-simultaneous-sessions"),
+        { target: { value: "" } },
+      );
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(
+        payload.nextStatuses[0].max_simultaneous_sessions ?? null,
+      ).toBeNull();
+    });
+  });
+
+  describe("session_settings", () => {
+    it("renders all session_settings inputs as empty when the status has no overrides", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      expect(
+        (screen.getByTestId("status-settings-cpu-limit") as HTMLInputElement).value,
+      ).toBe("");
+      expect(
+        (screen.getByTestId("status-settings-memory-limit") as HTMLInputElement).value,
+      ).toBe("");
+      expect(
+        (screen.getByTestId("status-settings-image") as HTMLInputElement).value,
+      ).toBe("");
+      expect(
+        (screen.getByTestId("status-settings-model") as HTMLInputElement).value,
+      ).toBe("");
+      expect(
+        (screen.getByTestId("status-settings-branch") as HTMLInputElement).value,
+      ).toBe("");
+      expect(
+        (screen.getByTestId("status-settings-max-retries") as HTMLInputElement).value,
+      ).toBe("");
+      // Idle timeout uses the design-system Picker — verify the pill content
+      // rather than reaching for a hidden `value` attribute.
+      expect(
+        screen.getByLabelText("Idle timeout").textContent,
+      ).toContain("Server default");
+      // The seconds input is always rendered, but disabled outside the
+      // "Custom (seconds)" mode.
+      const secondsInput = screen.getByTestId(
+        "status-settings-idle-timeout-seconds",
+      ) as HTMLInputElement;
+      expect(secondsInput.disabled).toBe(true);
+      expect(secondsInput.value).toBe("");
+    });
+
+    it("seeds inputs from an existing session_settings override", () => {
+      const project = makeProject([
+        makeStatus("in-progress", {
+          session_settings: {
+            cpu_limit: "500m",
+            memory_limit: "1Gi",
+            image: "ghcr.io/org/img:v1",
+            model: "claude-opus-4-7",
+            branch: "main",
+            max_retries: 3,
+            idle_timeout: { kind: "seconds", value: 600 as unknown as bigint },
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      expect(
+        (screen.getByTestId("status-settings-cpu-limit") as HTMLInputElement).value,
+      ).toBe("500m");
+      expect(
+        (screen.getByTestId("status-settings-memory-limit") as HTMLInputElement).value,
+      ).toBe("1Gi");
+      expect(
+        (screen.getByTestId("status-settings-image") as HTMLInputElement).value,
+      ).toBe("ghcr.io/org/img:v1");
+      expect(
+        (screen.getByTestId("status-settings-model") as HTMLInputElement).value,
+      ).toBe("claude-opus-4-7");
+      expect(
+        (screen.getByTestId("status-settings-branch") as HTMLInputElement).value,
+      ).toBe("main");
+      expect(
+        (screen.getByTestId("status-settings-max-retries") as HTMLInputElement).value,
+      ).toBe("3");
+      // Mode pill shows "Custom"; the actual seconds value lives in the
+      // adjacent input.
+      expect(
+        screen.getByLabelText("Idle timeout").textContent,
+      ).toContain("Custom");
+      expect(
+        (screen.getByTestId(
+          "status-settings-idle-timeout-seconds",
+        ) as HTMLInputElement).value,
+      ).toBe("600");
+    });
+
+    it("Save persists the edited session_settings fields", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      fireEvent.change(screen.getByTestId("status-settings-cpu-limit"), {
+        target: { value: "750m" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-memory-limit"), {
+        target: { value: "2Gi" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-model"), {
+        target: { value: "claude-sonnet-4-6" },
+      });
+      fireEvent.change(screen.getByTestId("status-settings-max-retries"), {
+        target: { value: "5" },
+      });
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      const ss = payload.nextStatuses[0].session_settings;
+      expect(ss?.cpu_limit).toBe("750m");
+      expect(ss?.memory_limit).toBe("2Gi");
+      expect(ss?.model).toBe("claude-sonnet-4-6");
+      expect(ss?.max_retries).toBe(5);
+    });
+
+    it("clearing every session_settings field collapses session_settings back to undefined", () => {
+      const project = makeProject([
+        makeStatus("in-progress", {
+          session_settings: {
+            cpu_limit: "500m",
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      fireEvent.change(screen.getByTestId("status-settings-cpu-limit"), {
+        target: { value: "" },
+      });
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      expect(payload.nextStatuses[0].session_settings).toBeUndefined();
+    });
+
+    describe("idle timeout", () => {
+      // Helper: click the Idle timeout picker open, then click the row whose
+      // visible text matches `rowLabel`. Mirrors the assignee-picker test
+      // pattern — pickers are disambiguated by their `aria-label`.
+      function pickIdleTimeoutRow(rowLabel: string) {
+        fireEvent.click(screen.getByLabelText("Idle timeout"));
+        const menu = screen.getByRole("menu");
+        const rows = within(menu).getAllByRole("menuitem");
+        const row = rows.find((r) => r.textContent?.includes(rowLabel));
+        if (!row) throw new Error(`No row matching '${rowLabel}'`);
+        fireEvent.click(row);
+      }
+
+      it("switching to Never persists a Timeout::Infinite", () => {
+        const project = makeProject([makeStatus("in-progress")]);
+        render(
+          <StatusSettingsModal
+            open={true}
+            onClose={() => {}}
+            projectRecord={project}
+            statusKey="in-progress"
+            issueCount={0}
+          />,
+        );
+        openSessionSettings();
+        pickIdleTimeoutRow("Never");
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+        const payload = mutateSpy.mock.calls[0][0] as {
+          nextStatuses: StatusDefinition[];
+        };
+        expect(
+          payload.nextStatuses[0].session_settings?.idle_timeout,
+        ).toEqual({ kind: "infinite" });
+      });
+
+      it("switching to Custom and entering a value persists Timeout::Seconds", () => {
+        const project = makeProject([makeStatus("in-progress")]);
+        render(
+          <StatusSettingsModal
+            open={true}
+            onClose={() => {}}
+            projectRecord={project}
+            statusKey="in-progress"
+            issueCount={0}
+          />,
+        );
+        openSessionSettings();
+        pickIdleTimeoutRow("Custom");
+        fireEvent.change(
+          screen.getByTestId("status-settings-idle-timeout-seconds"),
+          { target: { value: "300" } },
+        );
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+        const payload = mutateSpy.mock.calls[0][0] as {
+          nextStatuses: StatusDefinition[];
+        };
+        const t = payload.nextStatuses[0].session_settings?.idle_timeout;
+        expect(t?.kind).toBe("seconds");
+        if (t?.kind === "seconds") {
+          expect(Number(t.value)).toBe(300);
+        }
+      });
+
+      it("switching back to Server default clears idle_timeout (and collapses session_settings)", () => {
+        const project = makeProject([
+          makeStatus("in-progress", {
+            session_settings: {
+              idle_timeout: {
+                kind: "seconds",
+                value: 600 as unknown as bigint,
+              },
+            },
+          }),
+        ]);
+        render(
+          <StatusSettingsModal
+            open={true}
+            onClose={() => {}}
+            projectRecord={project}
+            statusKey="in-progress"
+            issueCount={0}
+          />,
+        );
+        openSessionSettings();
+        pickIdleTimeoutRow("Server default");
+        fireEvent.click(screen.getByTestId("status-settings-save"));
+        const payload = mutateSpy.mock.calls[0][0] as {
+          nextStatuses: StatusDefinition[];
+        };
+        // Only idle_timeout was set, so the whole session_settings collapses
+        // back to undefined to keep the wire body slim.
+        expect(payload.nextStatuses[0].session_settings).toBeUndefined();
+      });
+
+      it("seconds input is always visible and only enabled in Custom mode", () => {
+        const project = makeProject([makeStatus("in-progress")]);
+        render(
+          <StatusSettingsModal
+            open={true}
+            onClose={() => {}}
+            projectRecord={project}
+            statusKey="in-progress"
+            issueCount={0}
+          />,
+        );
+        openSessionSettings();
+        const secondsInput = () =>
+          screen.getByTestId(
+            "status-settings-idle-timeout-seconds",
+          ) as HTMLInputElement;
+        // Default mode: rendered but disabled.
+        expect(secondsInput().disabled).toBe(true);
+        pickIdleTimeoutRow("Custom");
+        expect(secondsInput().disabled).toBe(false);
+        pickIdleTimeoutRow("Never");
+        expect(secondsInput().disabled).toBe(true);
+      });
     });
   });
 
@@ -1618,6 +2014,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-teardown-work"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -1641,6 +2038,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-clear-assignee"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -1669,6 +2067,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       expect(
         (screen.getByTestId(
           "status-settings-clear-assignee",
@@ -1701,6 +2100,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-teardown-work"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -1727,6 +2127,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-clear-assignee"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -1758,6 +2159,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       // Sanity: the on_enter starts with clear_assignee set.
       expect(
         (screen.getByTestId(
@@ -1777,6 +2179,62 @@ describe("StatusSettingsModal", () => {
       const onEnter = payload.nextStatuses[0].on_enter;
       expect(onEnter?.clear_assignee).toBe(false);
       expect(onEnter?.assign_to).toEqual({ Agent: { name: "swe" } });
+    });
+  });
+
+  describe("collapsible sections", () => {
+    it("Session settings and On enter both start collapsed", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      expect(
+        screen.queryByTestId("status-settings-session-settings-content"),
+      ).toBeNull();
+      expect(
+        screen.queryByTestId("status-settings-on-enter-content"),
+      ).toBeNull();
+    });
+
+    it("clicking the toggle expands and re-collapses each section independently", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      expect(
+        screen.getByTestId("status-settings-session-settings-content"),
+      ).toBeDefined();
+      // Opening Session settings does not also open On enter.
+      expect(
+        screen.queryByTestId("status-settings-on-enter-content"),
+      ).toBeNull();
+
+      openOnEnter();
+      expect(
+        screen.getByTestId("status-settings-on-enter-content"),
+      ).toBeDefined();
+
+      // Clicking again re-collapses Session settings (without touching On enter).
+      openSessionSettings();
+      expect(
+        screen.queryByTestId("status-settings-session-settings-content"),
+      ).toBeNull();
+      expect(
+        screen.getByTestId("status-settings-on-enter-content"),
+      ).toBeDefined();
     });
   });
 });
