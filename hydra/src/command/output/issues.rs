@@ -2,6 +2,7 @@ use std::io::Write;
 
 use anyhow::Result;
 use hydra_common::{
+    api::v1::comments::{AddCommentResponse, Comment, ListCommentsResponse},
     issues::{Issue, IssueSummary, IssueSummaryRecord, IssueVersionRecord, SubmitFormResponse},
     IssueId,
 };
@@ -16,6 +17,62 @@ pub struct IssueSummaryRecords<'a>(pub &'a [IssueSummaryRecord]);
 pub struct SubmitFormOutcome<'a>(pub &'a SubmitFormResponse);
 
 pub struct DeletedIssueOutcome<'a>(pub &'a IssueId);
+
+pub struct AddCommentOutcome<'a>(pub &'a AddCommentResponse);
+
+pub struct IssueCommentsList<'a>(pub &'a ListCommentsResponse);
+
+fn render_comment_pretty<W: Write>(writer: &mut W, comment: &Comment) -> Result<()> {
+    let first_line = comment.body.lines().next().unwrap_or("").trim();
+    writeln!(
+        writer,
+        "[{}] {} ({}): {}",
+        comment.sequence,
+        comment.actor.display_name(),
+        comment.created_at.to_rfc3339(),
+        first_line,
+    )?;
+    Ok(())
+}
+
+impl Render for AddCommentOutcome<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(&mut *writer, self.0)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        render_comment_pretty(writer, &self.0.comment)?;
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+impl Render for IssueCommentsList<'_> {
+    fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
+        serde_json::to_writer(&mut *writer, self.0)?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
+        if self.0.comments.is_empty() {
+            writeln!(writer, "No comments.")?;
+        } else {
+            for comment in &self.0.comments {
+                render_comment_pretty(writer, comment)?;
+            }
+            if let Some(next) = self.0.next_before_sequence {
+                writeln!(writer, "Next page cursor: --before-sequence {next}")?;
+            }
+        }
+        writer.flush()?;
+        Ok(())
+    }
+}
 
 impl Render for DeletedIssueOutcome<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {

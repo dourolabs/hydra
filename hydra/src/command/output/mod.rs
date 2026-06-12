@@ -22,7 +22,10 @@ pub use conversations::{ConversationSummaryRecords, ConversationView};
 pub use documents::{
     DeletedDocumentOutcome, DocumentRecordsView, DocumentSummaryRecords, SyncEvent, SyncSummary,
 };
-pub use issues::{DeletedIssueOutcome, IssueRecords, IssueSummaryRecords, SubmitFormOutcome};
+pub use issues::{
+    AddCommentOutcome, DeletedIssueOutcome, IssueCommentsList, IssueRecords, IssueSummaryRecords,
+    SubmitFormOutcome,
+};
 pub use patches::{
     ApplyOutcome, DeletedPatchOutcome, MergeOutcome, PatchRecords, PatchSummaryRecords,
     ReviewSubmittedOutcome,
