@@ -613,45 +613,30 @@
   display: none;
 }
 
-.mobilePickerLabel {
+.mobilePickerValue {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobilePickerKey {
   font-family: var(--f-mono);
   font-size: var(--t-xxs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   color: var(--fg-2);
 }
 
-.mobilePickerSelect {
-  /* Native <select> on iOS / Android renders as a sheet — which is the
-     "picker that hides away" UX called for: the chooser only appears when
-     tapped, and dismisses on selection. Styled to blend with the project
-     bar so it reads as part of the board chrome. */
-  appearance: none;
-  width: 100%;
-  padding: 8px 32px 8px 10px;
-  background-color: var(--bg-1);
-  background-image: linear-gradient(45deg, transparent 50%, var(--fg-2) 50%),
-    linear-gradient(135deg, var(--fg-2) 50%, transparent 50%);
-  background-position:
-    calc(100% - 16px) 50%,
-    calc(100% - 11px) 50%;
-  background-size:
-    5px 5px,
-    5px 5px;
-  background-repeat: no-repeat;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
-  color: var(--fg-0);
-  /* 16px font-size keeps iOS Safari from auto-zooming when the sheet opens. */
+.mobilePickerName {
   font-family: var(--f-sans);
-  font-size: 16px;
-  line-height: 1.2;
-  cursor: pointer;
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mobilePickerSelect:focus-visible {
-  outline: 1px solid var(--line-strong);
-  outline-offset: 1px;
+.mobilePickerEmpty {
+  color: var(--fg-3);
 }
 
 @media (max-width: 768px) {
@@ -664,9 +649,7 @@
   }
 
   .mobilePicker {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    display: block;
   }
 
   .projectBar {

@@ -222,6 +222,48 @@ vi.mock("@hydra/ui", () => ({
     const { variant: _variant, size: _size, ...rest } = props;
     return <button {...rest}>{children}</button>;
   },
+  Picker: ({
+    label,
+    open,
+    onToggle,
+    value,
+    children,
+    "data-testid": testId,
+  }: {
+    label: string;
+    open: boolean;
+    onToggle: () => void;
+    value: React.ReactNode;
+    children: React.ReactNode;
+    "data-testid"?: string;
+  }) => (
+    <div data-testid={testId}>
+      <button type="button" aria-label={label} onClick={onToggle}>
+        {value}
+      </button>
+      {open ? <div>{children}</div> : null}
+    </div>
+  ),
+  PickerRow: ({
+    active,
+    onClick,
+    children,
+    "data-testid": testId,
+  }: {
+    active?: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+    "data-testid"?: string;
+  }) => (
+    <button
+      type="button"
+      data-testid={testId}
+      data-active={active ? "true" : undefined}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  ),
   Icons: {
     IconSettings: () => <span data-testid="icon-settings" />,
     IconSpark: () => <span data-testid="icon-spark" />,
@@ -1699,9 +1741,10 @@ describe("IssuesBoard mobile single-board view", () => {
   it("switching the picker swaps which project section is rendered", () => {
     renderBoard();
 
-    fireEvent.change(screen.getByTestId("board-mobile-picker"), {
-      target: { value: "j-design" },
-    });
+    fireEvent.click(
+      screen.getByTestId("board-mobile-picker").querySelector("button")!,
+    );
+    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
 
     expect(screen.queryByTestId("board-project-engineering")).toBeNull();
     expect(screen.getByTestId("board-project-design")).toBeDefined();
@@ -1710,9 +1753,10 @@ describe("IssuesBoard mobile single-board view", () => {
   it("persists the picker selection in localStorage", () => {
     renderBoard();
 
-    fireEvent.change(screen.getByTestId("board-mobile-picker"), {
-      target: { value: "j-design" },
-    });
+    fireEvent.click(
+      screen.getByTestId("board-mobile-picker").querySelector("button")!,
+    );
+    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
 
     expect(
       window.localStorage.getItem("hydra:board-mobile-selected-project"),

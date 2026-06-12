@@ -29,6 +29,7 @@ import type {
   ProjectRecord,
   StatusKey,
 } from "@hydra/api";
+import { Picker, PickerRow } from "@hydra/ui";
 import { ProjectSettingsModal } from "../../projects/ProjectSettingsModal";
 import { ProjectCreateModal } from "../../projects/ProjectCreateModal";
 import { StatusSettingsModal } from "../../projects/StatusSettingsModal";
@@ -161,6 +162,7 @@ export function IssuesBoard({
   const [mobileSelectedProjectId, setMobileSelectedProjectIdState] = useState<
     string | null
   >(() => loadMobileSelectedProjectId());
+  const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
 
   const setMobileSelectedProjectId = useCallback((id: string | null) => {
     setMobileSelectedProjectIdState(id);
@@ -711,33 +713,50 @@ export function IssuesBoard({
 
   return (
     <div className={styles.kanban}>
-      {showMobilePicker && (
-        <div className={styles.mobilePicker}>
-          <label
-            htmlFor="board-mobile-project-picker"
-            className={styles.mobilePickerLabel}
-          >
-            Board
-          </label>
-          <select
-            id="board-mobile-project-picker"
-            className={styles.mobilePickerSelect}
-            value={
-              mobileSelectedProjectId ??
-              allProjectDescriptors[0]?.project_id ??
-              ""
-            }
-            onChange={(e) => setMobileSelectedProjectId(e.target.value)}
-            data-testid="board-mobile-picker"
-          >
-            {allProjectDescriptors.map((p) => (
-              <option key={p.project_id} value={p.project_id}>
-                {p.key} — {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      {showMobilePicker &&
+        (() => {
+          const activeId =
+            mobileSelectedProjectId ?? allProjectDescriptors[0]?.project_id;
+          const active = allProjectDescriptors.find(
+            (p) => p.project_id === activeId,
+          );
+          return (
+            <div className={styles.mobilePicker}>
+              <Picker
+                label="Board"
+                open={mobilePickerOpen}
+                onToggle={() => setMobilePickerOpen((v) => !v)}
+                wide
+                data-testid="board-mobile-picker"
+                value={
+                  active ? (
+                    <span className={styles.mobilePickerValue}>
+                      <span className={styles.mobilePickerKey}>{active.key}</span>
+                      <span className={styles.mobilePickerName}>{active.name}</span>
+                    </span>
+                  ) : (
+                    <span className={styles.mobilePickerEmpty}>Select board</span>
+                  )
+                }
+              >
+                {allProjectDescriptors.map((p) => (
+                  <PickerRow
+                    key={p.project_id}
+                    active={p.project_id === activeId}
+                    onClick={() => {
+                      setMobileSelectedProjectId(p.project_id);
+                      setMobilePickerOpen(false);
+                    }}
+                    data-testid={`board-mobile-picker-option-${p.key}`}
+                  >
+                    <span className={styles.mobilePickerKey}>{p.key}</span>
+                    <span className={styles.mobilePickerName}>{p.name}</span>
+                  </PickerRow>
+                ))}
+              </Picker>
+            </div>
+          );
+        })()}
       {allowProjectReorder ? (
         <DndContext
           sensors={projectSensors}

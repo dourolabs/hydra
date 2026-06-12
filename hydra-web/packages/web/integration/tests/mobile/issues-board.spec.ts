@@ -35,23 +35,32 @@ test.describe("Mobile Issues Board @mobile:issues-board", () => {
     const picker = page.getByTestId("board-mobile-picker");
     await expect(picker).toBeVisible();
 
-    // Pick the second option so we can confirm round-tripping isn't trivially
-    // matched by the default.
-    const optionValues = await picker.locator("option").evaluateAll((els) =>
-      (els as HTMLOptionElement[]).map((o) => o.value),
+    // Open the picker and pick the second option so we can confirm
+    // round-tripping isn't trivially matched by the default.
+    await picker.getByRole("button", { name: "Board" }).click();
+    const options = page.locator(
+      '[data-testid^="board-mobile-picker-option-"]',
     );
-    if (optionValues.length < 2) {
+    const count = await options.count();
+    if (count < 2) {
       test.skip(true, "Need at least two seeded projects for this assertion");
     }
-    await picker.selectOption(optionValues[1]);
+    const secondTestId = await options.nth(1).getAttribute("data-testid");
+    if (!secondTestId) throw new Error("missing data-testid on picker row");
+    await options.nth(1).click();
+    const initiallySelectedLabel = (
+      await page.getByTestId(secondTestId).textContent()
+    )?.trim();
 
     // Navigate away and back; the selection should be restored.
     await page.goto("/sessions");
     await page.goto("/");
     await page.getByTestId("issues-layout-board").click();
 
-    await expect(page.getByTestId("board-mobile-picker")).toHaveValue(
-      optionValues[1],
-    );
+    // The picker trigger shows the currently selected board — its text
+    // should match the option we picked before navigating away.
+    await expect(
+      page.getByTestId("board-mobile-picker").getByRole("button"),
+    ).toContainText(initiallySelectedLabel ?? "");
   });
 });
