@@ -136,6 +136,11 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Establishes an inline-size query container so the board's sticky
+     project bars and new-project button can size themselves to the
+     visible scroller width via 100cqi, regardless of the kanban's
+     max-content width. */
+  container-type: inline-size;
 }
 
 /* ─── Empty ─── */

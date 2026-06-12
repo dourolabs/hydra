@@ -3,6 +3,13 @@
   flex-direction: column;
   gap: 18px;
   padding: 14px 20px;
+  /* All project rows share one horizontal scrollbar at the bottom of the
+     scrolling ancestor (IssuesView's .body). Sizing the kanban to
+     max-content makes every row stretch to the widest project's column
+     count, so the rows scroll in lockstep — projects with fewer columns
+     leave empty space on the right rather than getting their own bar. */
+  width: max-content;
+  min-width: 100%;
 }
 
 .projectGroup {
@@ -23,6 +30,17 @@
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
+  /* Inset 20px from each visible-scroller edge so the whole rectangle
+     (borders included) stays fully within the viewport. The bar sticks
+     at left: 20px and is sized to the visible scroller width minus 40px
+     of total inset, so the columns scroll underneath while the bar's
+     entire rectangle — chevron, chip, gear, and all four borders — stays
+     anchored. 100cqi references IssuesView's .body (the inline-size
+     container). */
+  position: sticky;
+  left: 20px;
+  width: calc(100cqi - 40px);
+  z-index: 1;
 }
 
 .projectBarDraggable {
@@ -168,7 +186,6 @@
   display: flex;
   flex-direction: row;
   gap: 12px;
-  overflow-x: auto;
   padding-bottom: 4px;
 }
 
@@ -589,7 +606,6 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
   padding: 14px 16px;
   background: transparent;
   border: 1px dashed var(--line);
@@ -602,6 +618,13 @@
     background var(--tx-fast),
     border-color var(--tx-fast),
     color var(--tx-fast);
+  /* Matches the project bars: inset 20px from each visible-scroller edge
+     so the whole rectangle stays sticky inside the viewport while the
+     columns scroll underneath. Content stays centered via
+     justify-content: center. */
+  position: sticky;
+  left: 20px;
+  width: calc(100cqi - 40px);
 }
 
 .newProjectGhost:hover {
@@ -616,8 +639,21 @@
 }
 
 @media (max-width: 768px) {
+  /* Mobile keeps per-project horizontal scrolling: each project's 82vw
+     columns scroll within the project, so a single page-wide scrollbar
+     would force the entire viewport to slide for every column change. */
+  .kanban {
+    width: auto;
+    min-width: 0;
+  }
+
   .projectBar {
     flex-wrap: wrap;
+    /* Mobile uses per-project scrolling, so the bar doesn't need to be
+       a sticky viewport-wide header — let it sit at its natural width
+       inside the project section. */
+    position: static;
+    width: auto;
   }
 
   .projectBarRight {
@@ -627,6 +663,7 @@
   }
 
   .projectColumns {
+    overflow-x: auto;
     scroll-snap-type: x mandatory;
   }
 
@@ -643,7 +680,10 @@
   }
 
   .newProjectGhost {
+    position: static;
     width: 82vw;
+    min-width: 0;
     align-self: center;
+    justify-content: center;
   }
 }
