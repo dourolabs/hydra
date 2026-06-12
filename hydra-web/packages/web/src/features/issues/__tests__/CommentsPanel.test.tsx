@@ -44,6 +44,19 @@ vi.mock("../CommentsPanel.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+vi.mock("../../auth/useAuth", () => ({
+  useAuth: () => ({
+    user: { actor: { type: "user", username: "alice" } },
+    loading: false,
+    error: null,
+    loginWithDevice: () => Promise.resolve(),
+    cancelDeviceFlow: () => {},
+    logout: () => Promise.resolve(),
+    githubAuthAvailable: true,
+    deviceFlowInfo: null,
+  }),
+}));
+
 const { CommentsPanel } = await import("../CommentsPanel");
 
 function makeComment(seq: number, body: string): Comment {
@@ -182,5 +195,71 @@ describe("CommentsPanel", () => {
     expect(mockAddIssueComment).toHaveBeenCalledWith("i-1", { body: "hello world" });
     expect(textarea.value).toBe("");
     expect(mockListIssueComments).toHaveBeenCalledTimes(2);
+  });
+
+  it("optimistically prepends a comment before the server responds", async () => {
+    mockListIssueComments.mockResolvedValueOnce({
+      comments: [makeComment(3, "existing")],
+      next_before_sequence: null,
+    } satisfies ListCommentsResponse);
+    // The POST never resolves during this test — the optimistic row must
+    // appear before we ever hear back from the server.
+    const pending: { resolve: () => void } = { resolve: () => {} };
+    mockAddIssueComment.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          pending.resolve = () => resolve();
+        }),
+    );
+
+    render(<CommentsPanel issueId="i-1" />, { wrapper: makeWrapper() });
+
+    await screen.findByText("existing");
+
+    const textarea = screen.getByTestId(
+      "comments-composer-textarea",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "draft body" } });
+    fireEvent.click(screen.getByTestId("comments-composer-submit"));
+
+    await flush();
+
+    // The optimistic comment shows up immediately at the top of the list,
+    // without waiting for the in-flight POST.
+    const bodies = screen.getAllByTestId("comment-body-md");
+    expect(bodies[0].textContent).toBe("draft body");
+    expect(bodies[1].textContent).toBe("existing");
+    expect(mockListIssueComments).toHaveBeenCalledTimes(1);
+
+    // Cleanly resolve the in-flight POST so React Query doesn't leak.
+    pending.resolve();
+  });
+
+  it("rolls back the optimistic comment when the mutation fails", async () => {
+    mockListIssueComments.mockResolvedValue({
+      comments: [makeComment(3, "existing")],
+      next_before_sequence: null,
+    } satisfies ListCommentsResponse);
+    mockAddIssueComment.mockRejectedValue(new Error("server rejected"));
+
+    render(<CommentsPanel issueId="i-1" />, { wrapper: makeWrapper() });
+
+    await screen.findByText("existing");
+
+    const textarea = screen.getByTestId(
+      "comments-composer-textarea",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "doomed" } });
+    fireEvent.click(screen.getByTestId("comments-composer-submit"));
+
+    await flush();
+    await screen.findByTestId("comments-composer-error");
+
+    // After rollback the optimistic comment is gone; only the pre-existing
+    // row remains. The composer keeps the draft so the user can retry.
+    const bodies = screen.getAllByTestId("comment-body-md");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].textContent).toBe("existing");
+    expect(textarea.value).toBe("doomed");
   });
 });
