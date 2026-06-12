@@ -18,8 +18,10 @@ import type {
   ListProjectsResponse,
   Principal,
   ProjectRecord,
+  SessionSettings,
   StatusDefinition,
   StatusOnEnter,
+  Timeout,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
@@ -657,6 +659,101 @@ function StatusForm({
     patchAutoArchiveSeconds(autoArchiveValue, unit);
   };
 
+  // u32 on the wire; empty input clears the cap (None).
+  const maxSimultaneousValue =
+    draft.max_simultaneous_sessions == null
+      ? ""
+      : String(draft.max_simultaneous_sessions);
+  const onMaxSimultaneousChange = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      patch({ max_simultaneous_sessions: null });
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return;
+    patch({ max_simultaneous_sessions: n });
+  };
+
+  const session = draft.session_settings ?? {};
+
+  // Trimmed-empty falls back to clearing the field so the wire doesn't carry a
+  // stray "" override. `patch({ session_settings: ... })` collapses to undefined
+  // when every field is null so the JSON stays slim.
+  const patchSession = (updates: Partial<SessionSettings>) => {
+    const merged: SessionSettings = { ...session, ...updates };
+    const allEmpty =
+      (merged.repo_name ?? null) == null &&
+      (merged.remote_url ?? null) == null &&
+      (merged.image ?? null) == null &&
+      (merged.model ?? null) == null &&
+      (merged.branch ?? null) == null &&
+      (merged.max_retries ?? null) == null &&
+      (merged.cpu_limit ?? null) == null &&
+      (merged.memory_limit ?? null) == null &&
+      (merged.idle_timeout ?? null) == null &&
+      !(merged.secrets && merged.secrets.length > 0);
+    patch({ session_settings: allEmpty ? undefined : merged });
+  };
+
+  const setSessionString = (key: keyof SessionSettings, raw: string) => {
+    patchSession({ [key]: raw === "" ? null : raw } as Partial<SessionSettings>);
+  };
+
+  const setSessionMaxRetries = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      patchSession({ max_retries: null });
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return;
+    patchSession({ max_retries: n });
+  };
+
+  // Idle timeout has three discrete modes: Default (None), Infinite, or an
+  // explicit seconds count. The select picks the mode; the seconds input is
+  // only meaningful in the "seconds" mode and converts on the fly.
+  const idleTimeoutMode: "default" | "infinite" | "seconds" = (() => {
+    const t = session.idle_timeout;
+    if (t == null) return "default";
+    if (t.kind === "infinite") return "infinite";
+    return "seconds";
+  })();
+  const idleTimeoutSeconds =
+    session.idle_timeout?.kind === "seconds"
+      ? String(session.idle_timeout.value)
+      : "";
+
+  const setIdleTimeoutMode = (mode: "default" | "infinite" | "seconds") => {
+    if (mode === "default") {
+      patchSession({ idle_timeout: null });
+      return;
+    }
+    if (mode === "infinite") {
+      patchSession({ idle_timeout: { kind: "infinite" } });
+      return;
+    }
+    const current =
+      session.idle_timeout?.kind === "seconds"
+        ? session.idle_timeout.value
+        : (60n as unknown as bigint);
+    patchSession({ idle_timeout: { kind: "seconds", value: current } });
+  };
+
+  const setIdleTimeoutSeconds = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      patchSession({ idle_timeout: null });
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) return;
+    patchSession({
+      idle_timeout: { kind: "seconds", value: n as unknown as bigint } as Timeout,
+    });
+  };
+
   // The new flat picker doesn't model External, so legacy External
   // assignments render as "Unassigned" in the trigger pill until the user
   // re-picks (the underlying value stays put unless they pick a new row).
@@ -811,6 +908,131 @@ function StatusForm({
           Issues in this status untouched for longer than this duration are
           archived automatically (by inactivity, not by completion).
         </span>
+      </div>
+
+      <div className={styles.row}>
+        <Input
+          label="Max simultaneous sessions"
+          type="number"
+          min={0}
+          step={1}
+          value={maxSimultaneousValue}
+          onChange={(e) => onMaxSimultaneousChange(e.target.value)}
+          placeholder="No cap"
+          aria-label="Max simultaneous sessions"
+          data-testid="status-settings-max-simultaneous-sessions"
+        />
+        <span className={styles.helpText}>
+          Cap on simultaneously-active sessions (interactive + headless, across
+          all agents) for issues in this status. Leave blank for no cap. New
+          spawns block until the active count drops below the cap.
+        </span>
+      </div>
+
+      <div className={styles.sessionSettings}>
+        <span className={styles.onEnterTitle}>Session settings</span>
+        <span className={styles.helpText}>
+          Per-status overrides applied when spawning sessions for issues in
+          this status. Issue-level settings still win over these. Leave blank
+          to inherit the global / issue defaults.
+        </span>
+
+        <div className={styles.statusInputs}>
+          <Input
+            label="CPU limit"
+            value={session.cpu_limit ?? ""}
+            onChange={(e) => setSessionString("cpu_limit", e.target.value)}
+            placeholder="e.g. 500m, 2"
+            data-testid="status-settings-cpu-limit"
+          />
+          <Input
+            label="Memory limit"
+            value={session.memory_limit ?? ""}
+            onChange={(e) => setSessionString("memory_limit", e.target.value)}
+            placeholder="e.g. 1Gi, 512Mi"
+            data-testid="status-settings-memory-limit"
+          />
+        </div>
+
+        <div className={styles.statusInputs}>
+          <Input
+            label="Container image"
+            value={session.image ?? ""}
+            onChange={(e) => setSessionString("image", e.target.value)}
+            placeholder="ghcr.io/org/image:tag"
+            data-testid="status-settings-image"
+          />
+          <Input
+            label="Model"
+            value={session.model ?? ""}
+            onChange={(e) => setSessionString("model", e.target.value)}
+            placeholder="e.g. claude-opus-4-7"
+            data-testid="status-settings-model"
+          />
+        </div>
+
+        <div className={styles.statusInputs}>
+          <Input
+            label="Branch"
+            value={session.branch ?? ""}
+            onChange={(e) => setSessionString("branch", e.target.value)}
+            placeholder="default branch"
+            data-testid="status-settings-branch"
+          />
+          <Input
+            label="Max retries"
+            type="number"
+            min={0}
+            step={1}
+            value={session.max_retries == null ? "" : String(session.max_retries)}
+            onChange={(e) => setSessionMaxRetries(e.target.value)}
+            placeholder="Inherit"
+            data-testid="status-settings-max-retries"
+          />
+        </div>
+
+        <div className={styles.autoArchive}>
+          <label className={styles.label}>Idle timeout (interactive)</label>
+          <div className={styles.autoArchiveInputs}>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              value={idleTimeoutSeconds}
+              onChange={(e) => setIdleTimeoutSeconds(e.target.value)}
+              disabled={idleTimeoutMode !== "seconds"}
+              placeholder={
+                idleTimeoutMode === "default"
+                  ? "Server default"
+                  : idleTimeoutMode === "infinite"
+                  ? "Never"
+                  : "Seconds"
+              }
+              aria-label="Idle timeout seconds"
+              data-testid="status-settings-idle-timeout-seconds"
+            />
+            <Select
+              options={[
+                { value: "default", label: "Server default" },
+                { value: "seconds", label: "seconds" },
+                { value: "infinite", label: "never" },
+              ]}
+              value={idleTimeoutMode}
+              onChange={(e) =>
+                setIdleTimeoutMode(
+                  e.target.value as "default" | "infinite" | "seconds",
+                )
+              }
+              aria-label="Idle timeout mode"
+              data-testid="status-settings-idle-timeout-mode"
+            />
+          </div>
+          <span className={styles.helpText}>
+            Per-session idle timeout for interactive sessions spawned for this
+            status. "Server default" falls back to the global config;
+            "never" lets long-running dev-preview sessions stay alive.
+          </span>
+        </div>
       </div>
 
       <div className={styles.onEnter}>
