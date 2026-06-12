@@ -259,42 +259,18 @@ describe("IssueDetailsTab", () => {
     });
   });
 
-  describe("BLOCKED tag", () => {
-    it("appears when a blocked-on target is not closed", () => {
-      useIssuesByIdsMock.mockReturnValue(
-        new Map([["i-blocker", makeDepRecord("i-blocker", "open")]]),
-      );
-      render(
-        <IssueDetailsTab
-          record={makeRecord({
-            dependencies: [{ type: "blocked-on", issue_id: "i-blocker" }],
-          })}
-          onOpenStatusModal={() => {}}
-        />,
-      );
-      expect(screen.getByTestId("blocked-tag").textContent).toBe("BLOCKED");
-    });
-
-    it("does NOT appear when the only blocked-on target is closed", () => {
-      useIssuesByIdsMock.mockReturnValue(
-        new Map([["i-blocker", makeDepRecord("i-blocker", "closed")]]),
-      );
-      render(
-        <IssueDetailsTab
-          record={makeRecord({
-            dependencies: [{ type: "blocked-on", issue_id: "i-blocker" }],
-          })}
-          onOpenStatusModal={() => {}}
-        />,
-      );
-      expect(screen.queryByTestId("blocked-tag")).toBeNull();
-    });
-
-    it("does NOT appear when there are no blocked-on deps", () => {
-      render(
-        <IssueDetailsTab record={makeRecord({})} onOpenStatusModal={() => {}} />,
-      );
-      expect(screen.queryByTestId("blocked-tag")).toBeNull();
-    });
+  it("never renders a BLOCKED tag on the Details tab, even when a blocked-on dep is open", () => {
+    useIssuesByIdsMock.mockReturnValue(
+      new Map([["i-blocker", makeDepRecord("i-blocker", "open")]]),
+    );
+    render(
+      <IssueDetailsTab
+        record={makeRecord({
+          dependencies: [{ type: "blocked-on", issue_id: "i-blocker" }],
+        })}
+        onOpenStatusModal={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("blocked-tag")).toBeNull();
   });
 });

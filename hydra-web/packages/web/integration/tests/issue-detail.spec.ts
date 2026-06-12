@@ -1,6 +1,6 @@
 import { test, expect } from "../fixtures/auth";
 
-test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:navigate-tabs @issues:blocked-tag @projects:details-rail-project-block @errors:404", () => {
+test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:navigate-tabs @projects:details-rail-project-block @errors:404", () => {
   test("displays issue description and metadata @issues:view-detail", async ({
     authenticatedPage: page,
   }) => {
@@ -70,25 +70,6 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
     await page.getByTestId("issue-rail-tab-details").click();
     await expect(page.getByText("Project", { exact: true })).toBeVisible();
     await expect(page.getByText("Default", { exact: true })).toBeVisible();
-  });
-
-  test("Details tab shows BLOCKED tag when blocked-on dep is open @issues:blocked-tag", async ({
-    authenticatedPage: page,
-  }) => {
-    // i-seed00012 has a blocked-on dep on i-seed00006 (in-progress).
-    await page.goto("/issues/i-seed00012");
-    await page.getByTestId("issue-rail-tab-details").click();
-    await expect(page.getByTestId("blocked-tag")).toBeVisible();
-    await expect(page.getByTestId("blocked-tag")).toHaveText("BLOCKED");
-  });
-
-  test("Details tab omits BLOCKED tag for issues with no open blockers @issues:blocked-tag", async ({
-    authenticatedPage: page,
-  }) => {
-    // i-seed00001 has no blocked-on deps.
-    await page.goto("/issues/i-seed00001");
-    await page.getByTestId("issue-rail-tab-details").click();
-    await expect(page.getByTestId("blocked-tag")).toHaveCount(0);
   });
 
   test("shows 404 for non-existent issue @errors:404", async ({
