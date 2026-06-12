@@ -298,7 +298,7 @@ describe("IssuesTable status pips", () => {
 });
 
 describe("IssuesTable BLOCKED tag", () => {
-  it("renders BLOCKED on a row with an open blocked-on dep", () => {
+  it("never renders a BLOCKED tag on issue rows, even when a blocked-on dep is open", () => {
     const blocker = makeIssue("i-blocker", {
       project_id: "j-defaul",
       status: "open",
@@ -311,24 +311,8 @@ describe("IssuesTable BLOCKED tag", () => {
 
     renderTable({ issues: [blocker, blocked] });
 
-    expect(screen.getByTestId("issues-row-blocked-i-blocked")).toBeDefined();
+    expect(screen.queryByTestId("issues-row-blocked-i-blocked")).toBeNull();
     expect(screen.queryByTestId("issues-row-blocked-i-blocker")).toBeNull();
-  });
-
-  it("does NOT render BLOCKED when the blocked-on target is closed", () => {
-    const closer = makeIssue("i-closer", {
-      project_id: "j-defaul",
-      status: "closed",
-    });
-    const candidate = makeIssue("i-cand", {
-      project_id: "j-defaul",
-      status: "open",
-      dependencies: [{ type: "blocked-on", issue_id: "i-closer" }],
-    });
-
-    renderTable({ issues: [closer, candidate] });
-
-    expect(screen.queryByTestId("issues-row-blocked-i-cand")).toBeNull();
   });
 });
 

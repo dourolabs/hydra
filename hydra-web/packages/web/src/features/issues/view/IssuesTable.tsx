@@ -16,7 +16,6 @@ import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
 import { useSessionDuration } from "../../dashboard/useSessionDuration";
 import { IssueRailRow } from "../../related/RailRow";
-import { computeBlockedStatus } from "../blockedStatus";
 import { computeFlowPillState, type IssueNeighborhood } from "../flowPill";
 import { RestoreIssueButton } from "../RestoreIssueButton";
 import { ArchiveIssueButton } from "../ArchiveIssueButton";
@@ -55,12 +54,6 @@ export function IssuesTable({
       from: "dashboard",
       filter: filterRootId ?? "everything",
     }).toString();
-
-  const issueMap = useMemo(() => {
-    const m = new Map<string, IssueSummaryRecord>();
-    for (const rec of issues) m.set(rec.issue_id, rec);
-    return m;
-  }, [issues]);
 
   const { sections, flat } = useMemo(
     () => buildSections(issues, projects),
@@ -133,7 +126,6 @@ export function IssuesTable({
               <IssueDataRow
                 key={rec.issue_id}
                 rec={rec}
-                blocked={computeBlockedStatus(rec, issueMap).blocked}
                 neighborhoodMap={neighborhoodMap}
                 sessionsByIssue={sessionsByIssue}
                 onClick={handleRowClick}
@@ -158,7 +150,6 @@ export function IssuesTable({
                 section={section}
                 collapsed={isCollapsed}
                 onToggle={() => toggle(section.groupKey)}
-                issueMap={issueMap}
                 neighborhoodMap={neighborhoodMap}
                 sessionsByIssue={sessionsByIssue}
                 onRowClick={handleRowClick}
@@ -191,7 +182,6 @@ interface SectionRowsProps {
   section: ProjectSection;
   collapsed: boolean;
   onToggle: () => void;
-  issueMap: Map<string, IssueSummaryRecord>;
   neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   onRowClick: (id: string) => void;
@@ -201,7 +191,6 @@ function SectionRows({
   section,
   collapsed,
   onToggle,
-  issueMap,
   neighborhoodMap,
   sessionsByIssue,
   onRowClick,
@@ -225,7 +214,6 @@ function SectionRows({
           <IssueDataRow
             key={rec.issue_id}
             rec={rec}
-            blocked={computeBlockedStatus(rec, issueMap).blocked}
             neighborhoodMap={neighborhoodMap}
             sessionsByIssue={sessionsByIssue}
             onClick={onRowClick}
@@ -301,7 +289,6 @@ function StatusPipRow({ section }: { section: ProjectSection }) {
 
 interface IssueDataRowProps {
   rec: IssueSummaryRecord;
-  blocked: boolean;
   neighborhoodMap: Map<string, IssueNeighborhood>;
   sessionsByIssue: Map<string, SessionSummaryRecord[]>;
   onClick: (id: string) => void;
@@ -309,7 +296,6 @@ interface IssueDataRowProps {
 
 function IssueDataRow({
   rec,
-  blocked,
   neighborhoodMap,
   sessionsByIssue,
   onClick,
@@ -319,7 +305,6 @@ function IssueDataRow({
   const pill = computeFlowPillState(neighborhoodMap.get(id));
   const archived = issue.deleted === true;
   const rowClasses = [styles.dataRow];
-  if (blocked) rowClasses.push(styles.blocked);
   if (archived) rowClasses.push(styles.archived);
 
   return (
@@ -358,14 +343,6 @@ function IssueDataRow({
       <td className={styles.colStatus}>
         <div className={styles.statusCell}>
           <StatusChip status={issue.status} />
-          {blocked && (
-            <span
-              className={styles.blockedTag}
-              data-testid={`issues-row-blocked-${id}`}
-            >
-              BLOCKED
-            </span>
-          )}
         </div>
       </td>
       <td className={styles.colType}>
