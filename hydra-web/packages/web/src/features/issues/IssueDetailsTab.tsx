@@ -11,7 +11,6 @@ import { StatusChip } from "../projects/StatusChip";
 import { useProject } from "../projects/useProjects";
 import { formatTimestamp } from "../../utils/time";
 import { useIssuesByIds } from "./useIssue";
-import { computeBlockedStatus } from "./blockedStatus";
 import { IssueLabelEditor } from "./IssueLabelEditor";
 import styles from "./IssueDetailsTab.module.css";
 
@@ -52,10 +51,6 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
   );
 
   const depRecords = useIssuesByIds(blockedOnIds);
-  const blocked = useMemo(() => {
-    if (blockedOnIds.length === 0) return false;
-    return computeBlockedStatus(record, depRecords).blocked;
-  }, [record, depRecords, blockedOnIds]);
 
   return (
     <div className={styles.side}>
@@ -77,11 +72,6 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
               />
             </svg>
           </button>
-          {blocked && (
-            <span className={styles.blockedTag} data-testid="blocked-tag">
-              BLOCKED
-            </span>
-          )}
         </span>
       </div>
 

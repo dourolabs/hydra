@@ -61,20 +61,6 @@
   align-self: flex-start;
 }
 
-.blockedTag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
-  font-family: var(--f-mono);
-  font-size: var(--t-xxs);
-  letter-spacing: 0.12em;
-  line-height: 1.4;
-  color: var(--fg-2);
-  background: transparent;
-}
-
 .statusButton:hover {
   background: var(--bg-3);
   border-color: var(--line-strong);
