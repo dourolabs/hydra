@@ -25,6 +25,12 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "settings", label: "Settings" },
 ];
 
+const KILLABLE_SESSION_STATUSES: readonly string[] = [
+  "created",
+  "pending",
+  "running",
+];
+
 export function SessionLogPage() {
   const { issueId, sessionId } = useParams<{
     issueId?: string;
@@ -127,7 +133,7 @@ export function SessionLogPage() {
                 </span>
                 <Badge status={normalizeSessionStatus(record.session.status)} />
                 <span className={styles.headerSpacer} />
-                {record.session.status === "running" &&
+                {KILLABLE_SESSION_STATUSES.includes(record.session.status) &&
                   (killRequested ? (
                     <span className={styles.terminating}>
                       <Spinner size="sm" />
