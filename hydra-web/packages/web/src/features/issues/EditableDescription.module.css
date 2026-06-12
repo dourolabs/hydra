@@ -1,0 +1,66 @@
+.wrapper {
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  color: var(--fg-1);
+  line-height: 1.65;
+}
+
+.display {
+  cursor: text;
+  padding: 8px 12px;
+  margin: -8px -12px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast);
+}
+
+.display:hover {
+  background: var(--bg-1);
+  border-color: var(--line);
+}
+
+.empty {
+  color: var(--fg-3);
+  font-style: italic;
+}
+
+.editContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--acc);
+  border-radius: var(--radius-md);
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
+  line-height: 1.6;
+  min-height: 240px;
+  resize: vertical;
+  outline: none;
+}
+
+.textarea::placeholder {
+  color: var(--fg-3);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hint {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  margin-left: auto;
+}

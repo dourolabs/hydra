@@ -46,6 +46,24 @@ vi.mock("../useArchiveIssue", () => ({
   useArchiveIssue: () => ({ archive: () => {}, isPending: false }),
 }));
 
+vi.mock("../EditableTitle", () => ({
+  EditableTitle: ({
+    issue,
+    issueId,
+    className,
+  }: {
+    issue: { title: string };
+    issueId: string;
+    className?: string;
+  }) => <h1 className={className}>{issue.title || issueId}</h1>,
+}));
+
+vi.mock("../EditableDescription", () => ({
+  EditableDescription: ({ issue }: { issue: { description: string } }) => (
+    <div data-testid="editable-description-stub">{issue.description}</div>
+  ),
+}));
+
 vi.mock("../IssueAssigneePicker", () => ({
   IssueAssigneePicker: ({
     issue,

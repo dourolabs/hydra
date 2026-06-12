@@ -6,6 +6,8 @@ import type { IssueVersionRecord } from "@hydra/api";
 import { StatusChip } from "../projects/StatusChip";
 import { useConversations } from "../chat/useConversations";
 import { useIssue } from "./useIssue";
+import { EditableTitle } from "./EditableTitle";
+import { EditableDescription } from "./EditableDescription";
 import { IssueAssigneePicker } from "./IssueAssigneePicker";
 import { IssueProjectPicker } from "./IssueProjectPicker";
 import { IssueStatusPicker } from "./IssueStatusPicker";
@@ -208,7 +210,11 @@ export function IssueDetail({ record }: IssueDetailProps) {
             </div>
           </div>
 
-          <h1 className={styles.title}>{issue.title || issueId}</h1>
+          <EditableTitle
+            issueId={issueId}
+            issue={issue}
+            className={styles.title}
+          />
 
           <div className={styles.metaRow}>
             <IssueProjectPicker
@@ -237,11 +243,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
           )}
 
           <div className={styles.description}>
-            {issue.description ? (
-              <Markdown content={issue.description} />
-            ) : (
-              <p className={styles.descriptionEmpty}>No description.</p>
-            )}
+            <EditableDescription issueId={issueId} issue={issue} />
           </div>
 
           {issue.progress && (
