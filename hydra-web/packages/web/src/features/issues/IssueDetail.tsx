@@ -61,6 +61,14 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const [rightPanelTab, setRightPanelTab] = useState<IssueRightPanelTabKey>("related");
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  // Local-only coordination state for the project/status pickers. When
+  // the user picks a different project from the project picker we DO NOT
+  // auto-commit — instead we stash the pending id here and force the
+  // status picker into "Select a status…" mode. The combined change is
+  // committed atomically when the user picks a status. Not persisted
+  // across reloads or navigation — same trade-off as the right-rail
+  // IssueUpdateModal.
+  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
 
   const { data: sessions } = useSessionsByIssue(issueId);
   const { durationText, isRunning } = useSessionDuration(sessions);
@@ -203,8 +211,20 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <h1 className={styles.title}>{issue.title || issueId}</h1>
 
           <div className={styles.metaRow}>
-            <IssueProjectPicker issueId={issueId} issue={issue} hideLabel />
-            <IssueStatusPicker issueId={issueId} issue={issue} hideLabel />
+            <IssueProjectPicker
+              issueId={issueId}
+              issue={issue}
+              hideLabel
+              pendingProjectId={pendingProjectId}
+              onPendingChange={setPendingProjectId}
+            />
+            <IssueStatusPicker
+              issueId={issueId}
+              issue={issue}
+              hideLabel
+              pendingProjectId={pendingProjectId}
+              onPendingResolved={() => setPendingProjectId(null)}
+            />
             <IssueAssigneePicker issueId={issueId} issue={issue} hideLabel />
           </div>
 
