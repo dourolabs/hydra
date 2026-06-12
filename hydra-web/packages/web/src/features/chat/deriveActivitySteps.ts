@@ -223,6 +223,7 @@ export function deriveActivitySteps(
         current = steps[steps.length - 1] ?? null;
         break;
       case "user_message":
+      case "system_event":
         current = {
           category: "think",
           verb: "Thinking…",
@@ -250,6 +251,11 @@ export function deriveActivitySteps(
       case "closed":
         current = null;
         break;
+      default: {
+        const _exhaustive: never = tail;
+        void _exhaustive;
+        break;
+      }
     }
   }
 

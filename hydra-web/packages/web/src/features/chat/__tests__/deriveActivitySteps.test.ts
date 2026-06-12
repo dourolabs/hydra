@@ -52,6 +52,13 @@ function closedEv(ts = T0): SessionEvent {
 function unknownEv(): SessionEvent {
   return { type: "unknown" };
 }
+function systemEvent(ts = T0, childId = "i-child01"): SessionEvent {
+  return {
+    type: "system_event",
+    kind: { kind: "child_unblocked", child_id: childId, new_status: "in-progress" },
+    timestamp: ts,
+  };
+}
 
 describe("deriveActivitySteps — tail mapping (display compat)", () => {
   const open: ConversationStatus = "active";
@@ -203,6 +210,38 @@ describe("deriveActivitySteps — tail mapping (display compat)", () => {
     expect(detail.length).toBe(TOOL_DESCRIPTION_MAX_CHARS + 1);
     expect(detail.endsWith("…")).toBe(true);
     expect(detail.startsWith("A".repeat(TOOL_DESCRIPTION_MAX_CHARS))).toBe(true);
+  });
+
+  it("SystemEvent tail → 'Thinking…' current step (think category)", () => {
+    const run = deriveActivitySteps([systemEvent(T0)], open, NOW);
+    expect(run.current).toMatchObject({
+      category: "think",
+      verb: "Thinking…",
+      detail: null,
+      toolName: null,
+      startTs: N0,
+      endTs: null,
+    });
+    expect(run.state).toBe("live");
+  });
+
+  it("SystemEvent mid-history does not dirty steps accumulator", () => {
+    const run = deriveActivitySteps(
+      [
+        userMessage(T0),
+        toolUse("Bash", null, T1),
+        systemEvent(T2),
+        toolUse("Read", null, T3),
+      ],
+      open,
+      NOW,
+    );
+    // Only the two tool_use events accumulate as steps; the SystemEvent must
+    // not surface as a phantom step.
+    expect(run.steps).toHaveLength(2);
+    expect(run.steps[0]).toMatchObject({ verb: "Running command", startTs: N1, endTs: N2 });
+    expect(run.steps[1]).toMatchObject({ verb: "Reading file", startTs: N3, endTs: null });
+    expect(run.current).toBe(run.steps[1]);
   });
 
   it("Resumed tail → 'Resuming session…' current step", () => {
