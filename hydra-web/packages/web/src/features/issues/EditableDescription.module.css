@@ -43,7 +43,7 @@
   font-family: var(--f-sans);
   font-size: var(--t-md);
   line-height: 1.6;
-  min-height: 210px;
+  min-height: 240px;
   resize: vertical;
   outline: none;
 }
