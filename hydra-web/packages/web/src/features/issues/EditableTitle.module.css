@@ -1,0 +1,40 @@
+.display {
+  cursor: text;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast);
+}
+
+.display:hover {
+  background: var(--bg-1);
+  border-color: var(--line);
+}
+
+.display:focus-visible {
+  outline: none;
+  background: var(--bg-1);
+  border-color: var(--line);
+}
+
+.placeholder {
+  color: var(--fg-3);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.input {
+  width: 100%;
+  font: inherit;
+  color: var(--fg-0);
+  background: var(--bg-input);
+  border: 1px solid var(--acc);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  margin: -5px -9px;
+  outline: none;
+  box-sizing: border-box;
+}

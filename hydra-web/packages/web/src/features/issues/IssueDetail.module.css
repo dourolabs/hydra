@@ -120,11 +120,6 @@
   font-size: var(--t-md);
 }
 
-.descriptionEmpty {
-  color: var(--fg-3);
-  font-style: italic;
-}
-
 /* ── Section blocks (Progress, Feedback, etc.) ── */
 .section {
   display: flex;
