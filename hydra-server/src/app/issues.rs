@@ -774,13 +774,13 @@ impl AppState {
                 session.item.status,
                 Status::Created | Status::Pending | Status::Running
             ) {
-                if let Err(source) = self.job_engine.kill_job(&session_id).await {
-                    // Log but don't fail the whole operation if a kill fails
+                if let Err(source) = self.job_engine.stop_job(&session_id).await {
+                    // Log but don't fail the whole operation if a stop fails
                     tracing::warn!(
                         issue_id = %issue_id,
                         session_id = %session_id,
                         error = %source,
-                        "failed to kill session while submitting feedback"
+                        "failed to stop session while submitting feedback"
                     );
                 }
             }

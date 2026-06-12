@@ -756,7 +756,7 @@ where
     use crate::domain::task_status::TaskError;
 
     // Scenario 1: `Created` session with no K8s job — engine returns
-    // `NotFound`, kill should still mark DB Failed and respond "killed".
+    // `NotFound`, kill should still mark DB Failed and respond "stopped".
     {
         let store = make_store().await?;
         let engine = Arc::new(MockJobEngine::new());
@@ -777,13 +777,13 @@ where
             .await?;
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         let body: v1::sessions::KillSessionResponse = response.json().await?;
-        assert_eq!(body.status, "killed");
+        assert_eq!(body.status, "stopped");
         assert_eq!(body.session_id, session_id);
         assert_killed_state(&store, &session_id).await?;
     }
 
-    // Scenario 2: `Pending` session with a live K8s job — engine kill
-    // succeeds, kill responds "killed", DB Failed.
+    // Scenario 2: `Pending` session with a live K8s job — engine stop
+    // succeeds, kill responds "stopped", DB Failed.
     {
         let store = make_store().await?;
         let engine = Arc::new(MockJobEngine::new());
@@ -805,21 +805,22 @@ where
             .await?;
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         let body: v1::sessions::KillSessionResponse = response.json().await?;
-        assert_eq!(body.status, "killed");
+        assert_eq!(body.status, "stopped");
         assert_killed_state(&store, &session_id).await?;
         // The job should now be marked Failed in the engine — confirms the
-        // synchronous K8s kill path actually ran.
+        // synchronous K8s stop path actually ran. The entry must still
+        // exist (stop_job preserves it so post-mortem logs survive).
         let job = engine.find_job_by_hydra_id(&session_id).await?;
         assert_eq!(job.status, JobStatus::Failed);
     }
 
-    // Scenario 3: `Running` session where the engine kill fails — the DB
-    // still transitions Failed, but the response reports `killed_pending_cleanup`
+    // Scenario 3: `Running` session where the engine stop fails — the DB
+    // still transitions Failed, but the response reports `stop_pending_cleanup`
     // so the reaper knows to retry K8s teardown.
     {
         let store = make_store().await?;
         let engine = Arc::new(MockJobEngine::new());
-        engine.set_kill_job_error(Some("simulated kube API timeout".to_string()));
+        engine.set_stop_job_error(Some("simulated kube API timeout".to_string()));
         let handles =
             crate::test_utils::test_state_with_store_and_engine(store.clone(), engine.clone());
         let (session_id, _) = store
@@ -837,7 +838,7 @@ where
             .await?;
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         let body: v1::sessions::KillSessionResponse = response.json().await?;
-        assert_eq!(body.status, "killed_pending_cleanup");
+        assert_eq!(body.status, "stop_pending_cleanup");
         assert_killed_state(&store, &session_id).await?;
     }
 

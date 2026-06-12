@@ -533,7 +533,42 @@ impl JobEngine for LocalDockerJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+    async fn stop_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        let info = self
+            .containers
+            .get(hydra_id)
+            .ok_or_else(|| JobEngineError::NotFound(hydra_id.clone()))?;
+        let container_id = info.container_id.clone();
+        drop(info);
+
+        // `docker stop` is SIGTERM → 10s grace → SIGKILL by default,
+        // preserving the container object so `docker logs` keeps working.
+        match self.docker.stop_container(&container_id, None).await {
+            Ok(()) => {}
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 304, ..
+            }) => {
+                // Container already stopped — desired end state.
+            }
+            Err(bollard::errors::Error::DockerResponseServerError {
+                status_code: 404, ..
+            }) => {
+                self.containers.remove(hydra_id);
+                return Err(JobEngineError::NotFound(hydra_id.clone()));
+            }
+            Err(e) => {
+                return Err(JobEngineError::Internal(format!(
+                    "Docker stop container error: {e}"
+                )));
+            }
+        }
+
+        info!(hydra_id = %hydra_id, container_id = %container_id, "container stopped");
+
+        Ok(())
+    }
+
+    async fn delete_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
         let info = self
             .containers
             .get(hydra_id)
@@ -586,7 +621,7 @@ impl JobEngine for LocalDockerJobEngine {
 
         self.containers.remove(hydra_id);
 
-        info!(hydra_id = %hydra_id, container_id = %container_id, "container killed and removed");
+        info!(hydra_id = %hydra_id, container_id = %container_id, "container deleted");
 
         Ok(())
     }
@@ -952,7 +987,7 @@ mod tests {
 
     /// Clean up the container created during a test.
     async fn cleanup_container(engine: &LocalDockerJobEngine, hydra_id: &SessionId) {
-        let _ = engine.kill_job(hydra_id).await;
+        let _ = engine.delete_job(hydra_id).await;
     }
 
     #[tokio::test]

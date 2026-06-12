@@ -17,10 +17,10 @@ use k8s_openapi::{
 };
 use kube::{
     Api, Client,
-    api::{DeleteParams, ListParams, LogParams, PostParams},
+    api::{AttachParams, DeleteParams, ListParams, LogParams, PostParams},
 };
 use tokio::time::{Duration, sleep};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::domain::actors::Actor;
 use crate::job_engine::{
@@ -30,6 +30,15 @@ use crate::job_engine::{
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::http::{Request, Response};
+
+/// Name of the worker container inside the Kubernetes Pod; must match
+/// the `Container::name` used in `create_job`.
+const WORKER_CONTAINER_NAME: &str = "hydra-worker";
+
+/// Grace period between SIGTERM and SIGKILL inside `stop_job`. Aligned with
+/// the worker's per-model SIGTERM_WAIT and the worker_run reaper grace so the
+/// container has the same budget to exit on its own that local workers get.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 pub struct KubernetesJobEngine {
     pub namespace: String,
@@ -322,6 +331,27 @@ impl KubernetesJobEngine {
 
     async fn resolve_pod_name(&self, job_id: &SessionId) -> Result<String, JobEngineError> {
         resolve_pod_name_impl(&self.client, &self.namespace, job_id).await
+    }
+
+    /// Exec `kill -<signal> 1` inside the worker container. Used by
+    /// `stop_job` to deliver SIGTERM / SIGKILL to PID 1 without
+    /// touching the Pod or Job objects (so logs survive).
+    async fn exec_kill_signal(&self, pod_name: &str, signal: &str) -> Result<(), JobEngineError> {
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
+        let ap = AttachParams::default().container(WORKER_CONTAINER_NAME);
+        let signal_arg = format!("-{signal}");
+        let cmd = vec!["kill", signal_arg.as_str(), "1"];
+        let mut attached = pods
+            .exec(pod_name, cmd, &ap)
+            .await
+            .map_err(JobEngineError::Kubernetes)?;
+
+        if let Some(status_fut) = attached.take_status() {
+            let _ = status_fut.await;
+        }
+        let _ = attached.join().await;
+
+        Ok(())
     }
 
     async fn kill_pods_by_hydra_id(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
@@ -755,7 +785,77 @@ impl JobEngine for KubernetesJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+    async fn stop_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        // Look up the Pod (not the Job) — `stop_job` operates at the
+        // container level and intentionally leaves both Job and Pod
+        // objects intact so post-mortem `kubectl logs` keeps working.
+        let pod = self.find_kubernetes_pod_by_hydra_id(hydra_id).await?;
+        let pod_name = pod.metadata.name.clone().ok_or_else(|| {
+            JobEngineError::Internal(format!(
+                "Pod for '{hydra_id}' is missing a Kubernetes name."
+            ))
+        })?;
+
+        info!(
+            hydra_id = %hydra_id,
+            pod_name = %pod_name,
+            namespace = %self.namespace,
+            "stop_job: sending SIGTERM to container PID 1"
+        );
+
+        if let Err(err) = self.exec_kill_signal(&pod_name, "TERM").await {
+            // exec fails when the container has already terminated
+            // (kubelet 400/404 on `/exec`). For `stop_job` the desired
+            // end state is "container not running" — treat this as
+            // success rather than propagating noise.
+            warn!(
+                hydra_id = %hydra_id,
+                pod_name = %pod_name,
+                error = ?err,
+                "stop_job: SIGTERM exec failed; container may already be terminated"
+            );
+            return Ok(());
+        }
+
+        sleep(STOP_GRACE).await;
+
+        let still_running = match self.find_kubernetes_pod_by_hydra_id(hydra_id).await {
+            Ok(pod) => matches!(
+                Self::pod_status(&pod),
+                JobStatus::Running | JobStatus::Pending
+            ),
+            Err(JobEngineError::NotFound(_)) => false,
+            Err(err) => {
+                warn!(
+                    hydra_id = %hydra_id,
+                    error = ?err,
+                    "stop_job: failed to re-check pod status after grace; skipping SIGKILL"
+                );
+                false
+            }
+        };
+
+        if still_running {
+            info!(
+                hydra_id = %hydra_id,
+                pod_name = %pod_name,
+                grace_secs = STOP_GRACE.as_secs(),
+                "stop_job: container still running after grace, sending SIGKILL"
+            );
+            if let Err(err) = self.exec_kill_signal(&pod_name, "KILL").await {
+                warn!(
+                    hydra_id = %hydra_id,
+                    pod_name = %pod_name,
+                    error = ?err,
+                    "stop_job: SIGKILL exec failed"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn delete_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
         match self.find_kubernetes_job_by_hydra_id(hydra_id).await {
             Ok(job) => {
                 let job_name = job.metadata.name.ok_or_else(|| {

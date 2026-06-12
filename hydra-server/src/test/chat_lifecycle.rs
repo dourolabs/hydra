@@ -2992,7 +2992,7 @@ async fn reconnecting_returns_catch_up_strictly_after_supplied_index() -> anyhow
 /// at the time of `/v1/conversations/:id/close`, the server must
 ///
 /// 1. push `ServerMessage::EndSession` onto the worker's relay channel
-///    (instead of immediately calling `job_engine.kill_job`),
+///    (instead of immediately calling `job_engine.stop_job`),
 /// 2. wait until the worker completes its unified end-of-session sequence
 ///    (`SessionStateUpload` → `Closed` event → `EndSessionAck` → WS close),
 /// 3. observe the WS close as the implicit ack (relay map entry drops),

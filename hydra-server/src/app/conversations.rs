@@ -25,7 +25,7 @@ use super::app_state::AppState;
 /// [`AppState::close_conversation`]. After sending `ServerMessage::EndSession`
 /// the server waits up to this long for the worker to upload its session
 /// state, ack, and close the WS (observed as the relay entry going away).
-/// On timeout it falls back to `job_engine.kill_job` so a stuck worker
+/// On timeout it falls back to `job_engine.stop_job` so a stuck worker
 /// cannot block End Chat.
 const GRACEFUL_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -379,13 +379,13 @@ impl AppState {
         // Send `ServerMessage::EndSession` over the relay and await the
         // worker's clean WS close (which `AppState::disconnect_chat_relay`
         // mirrors as the relay entry being dropped). If the worker doesn't disconnect
-        // within `GRACEFUL_CLOSE_TIMEOUT`, fall back to `kill_job` — the
+        // within `GRACEFUL_CLOSE_TIMEOUT`, fall back to `stop_job` — the
         // pre-graceful behavior — so stuck workers can't block End Chat.
         //
         // If the relay is inactive (worker never reached Ready, or briefly
         // disconnected) but `resolved_session_id` is `Some`, skip the
         // graceful poll — there's no `to_worker` channel to send
-        // `EndSession` on — and go directly to `kill_job` + token revoke.
+        // `EndSession` on — and go directly to `stop_job` + token revoke.
         // Without this fallback the spawned job lingers indefinitely and
         // the session row stays `Running`, which blocks
         // `AgentQueue::has_active_session` on re-entry to the interactive
@@ -402,7 +402,7 @@ impl AppState {
                 warn!(
                     conversation_id = %conversation_id,
                     session_id = %session_id,
-                    "send_end_session found no live to_worker channel; will fall back to kill_job"
+                    "send_end_session found no live to_worker channel; will fall back to stop_job"
                 );
             }
             let exited_cleanly = sent && {
@@ -432,7 +432,7 @@ impl AppState {
                 // `kill_session` does this in its own success branch; the
                 // natural-exit path has no automation that does the
                 // equivalent, so we explicitly do it here to keep parity
-                // with the `kill_job` fallback below.
+                // with the `stop_job` fallback below.
                 if let Err(err) = self.store.revoke_auth_tokens_for_session(&session_id).await {
                     warn!(
                         conversation_id = %conversation_id,
@@ -445,14 +445,14 @@ impl AppState {
                 warn!(
                     conversation_id = %conversation_id,
                     session_id = %session_id,
-                    "worker did not exit within {GRACEFUL_CLOSE_TIMEOUT:?} after EndSession; falling back to kill_job"
+                    "worker did not exit within {GRACEFUL_CLOSE_TIMEOUT:?} after EndSession; falling back to stop_job"
                 );
-                match self.job_engine.kill_job(&session_id).await {
+                match self.job_engine.stop_job(&session_id).await {
                     Ok(()) => {
-                        info!(conversation_id = %conversation_id, session_id = %session_id, "killed active session");
+                        info!(conversation_id = %conversation_id, session_id = %session_id, "stopped active session");
                     }
                     Err(err) => {
-                        warn!(conversation_id = %conversation_id, session_id = %session_id, error = %err, "failed to kill session (may already be stopped)");
+                        warn!(conversation_id = %conversation_id, session_id = %session_id, error = %err, "failed to stop session (may already be stopped)");
                     }
                 }
                 if let Err(err) = self.store.revoke_auth_tokens_for_session(&session_id).await {
@@ -460,14 +460,14 @@ impl AppState {
                         conversation_id = %conversation_id,
                         session_id = %session_id,
                         error = %err,
-                        "failed to revoke session tokens after kill_job fallback"
+                        "failed to revoke session tokens after stop_job fallback"
                     );
                 }
             }
         } else if let Some(session_id) = resolved_session_id.as_ref() {
             // Relay inactive but the store knows about a session for this
             // conversation. The worker may have spawned but not reached
-            // Ready, or it may have briefly disconnected. Drive `kill_job`
+            // Ready, or it may have briefly disconnected. Drive `stop_job`
             // directly so the job doesn't linger and the
             // `monitor_running_sessions` reconciler can move the session
             // row out of Running on its next tick. Revoke tokens
@@ -475,14 +475,14 @@ impl AppState {
             info!(
                 conversation_id = %conversation_id,
                 session_id = %session_id,
-                "no active relay; driving kill_job directly to terminate the linked session"
+                "no active relay; driving stop_job directly to terminate the linked session"
             );
-            match self.job_engine.kill_job(session_id).await {
+            match self.job_engine.stop_job(session_id).await {
                 Ok(()) => {
                     info!(
                         conversation_id = %conversation_id,
                         session_id = %session_id,
-                        "killed linked session via relay-inactive fallback"
+                        "stopped linked session via relay-inactive fallback"
                     );
                 }
                 Err(err) => {
@@ -493,7 +493,7 @@ impl AppState {
                         conversation_id = %conversation_id,
                         session_id = %session_id,
                         error = %err,
-                        "kill_job on relay-inactive fallback returned error (may already be stopped)"
+                        "stop_job on relay-inactive fallback returned error (may already be stopped)"
                     );
                 }
             }
@@ -805,7 +805,7 @@ mod tests {
     /// the active-state filter on the chat_relay resolver, a prior session
     /// that is still in `Created`/`Pending`/`Running` would otherwise be
     /// returned by the resolver instead of waiting for the new spawn. In
-    /// production this transition happens via the kill_job + monitor flow;
+    /// production this transition happens via the stop_job + monitor flow;
     /// in unit tests we simulate it directly.
     async fn mark_session_terminal(
         state: &AppState,
@@ -1201,7 +1201,7 @@ mod tests {
         // Drive the prior session terminal so
         // `SpawnConversationSessionsAutomation` will spawn a fresh
         // resumed session rather than considering the initial one still
-        // "active". In production the kill_job + monitor_running_sessions
+        // "active". In production the stop_job + monitor_running_sessions
         // flow drives this transition.
         //
         // The SessionUpdated event fired here drives the
@@ -1740,7 +1740,7 @@ mod tests {
 
     /// Construct an `AppState` paired with a clone of its
     /// [`MockJobEngine`]. The test code uses the clone to seed jobs and to
-    /// assert `kill_job` side effects (running → failed), without going
+    /// assert `stop_job` side effects (running → failed), without going
     /// through the abstract `JobEngine` trait.
     fn state_with_mock_engine() -> (AppState, std::sync::Arc<crate::test_utils::MockJobEngine>) {
         use crate::test_utils::{MockJobEngine, test_app_config, test_secret_manager};
@@ -1804,11 +1804,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_conversation_kills_session_when_relay_inactive() {
+    async fn close_conversation_stops_session_when_relay_inactive() {
         // Regression test for [[i-jjbcjlix]]: when the chat relay shows no
         // active connection for a conversation (worker hasn't reached
         // Ready, or has briefly disconnected), `close_conversation` must
-        // still drive `kill_job` on the linked session so the job doesn't
+        // still drive `stop_job` on the linked session so the job doesn't
         // linger and re-entry spawn gates aren't blocked by a session row
         // that stays Running indefinitely.
         use crate::domain::conversations::{Conversation, ConversationStatus};
@@ -1852,7 +1852,7 @@ mod tests {
             .expect("close_conversation must succeed under the relay-inactive fallback");
         assert_eq!(closed.item.status, ConversationStatus::Closed);
 
-        // `kill_job` on MockJobEngine transitions the job's status from
+        // `stop_job` on MockJobEngine transitions the job's status from
         // Running to Failed. Observing Failed here is the same signal the
         // production `monitor_running_sessions` reconciler uses to drive
         // the session row out of Running.
@@ -1860,11 +1860,11 @@ mod tests {
         let job = engine
             .find_job_by_hydra_id(&session_id)
             .await
-            .expect("seeded job must still be present after kill_job");
+            .expect("seeded job must still be present after stop_job");
         assert_eq!(
             job.status,
             JobStatus::Failed,
-            "kill_job must have been invoked on the linked session"
+            "stop_job must have been invoked on the linked session"
         );
 
         // The session row itself is unchanged by `close_conversation`;
@@ -1924,10 +1924,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_conversation_handles_kill_job_not_found_after_relay_inactive() {
+    async fn close_conversation_handles_stop_job_not_found_after_relay_inactive() {
         // The job linked to the session may already have exited by the
         // time `close_conversation` runs (worker crashed, container OOMed,
-        // etc.). `MockJobEngine::kill_job` returns `JobEngineError::NotFound`
+        // etc.). `MockJobEngine::stop_job` returns `JobEngineError::NotFound`
         // in that case; `close_conversation` must still transition the
         // conversation to Closed and not propagate the error.
         use crate::domain::conversations::{Conversation, ConversationStatus};
@@ -1951,13 +1951,13 @@ mod tests {
             .unwrap();
 
         let session_id = seed_interactive_session(&state, &conversation_id, &issue_id).await;
-        // Deliberately omit `engine.insert_job(...)`: `kill_job` against
+        // Deliberately omit `engine.insert_job(...)`: `stop_job` against
         // this session id will return `NotFound`.
 
         let closed = state
             .close_conversation(&conversation_id, ActorRef::test())
             .await
-            .expect("close_conversation must tolerate kill_job NotFound");
+            .expect("close_conversation must tolerate stop_job NotFound");
         assert_eq!(closed.item.status, ConversationStatus::Closed);
 
         // Sanity: the job engine still has no job for this session id.
@@ -1973,7 +1973,7 @@ mod tests {
     async fn close_conversation_then_reconcile_drives_session_to_failed() {
         // End-to-end check that the relay-inactive fallback dovetails
         // with `monitor_running_sessions::reconcile_running_task`: after
-        // `close_conversation` drives `kill_job`, the next reconcile pass
+        // `close_conversation` drives `stop_job`, the next reconcile pass
         // observes `JobStatus::Failed` and transitions the session row to
         // `Status::Failed`. This is the chain the parent issue's
         // user-visible-outcome paragraph requires.
@@ -2022,7 +2022,7 @@ mod tests {
         assert_eq!(
             session.item.status,
             Status::Failed,
-            "reconcile must observe the Failed job status that kill_job produced and drive the session out of Running"
+            "reconcile must observe the Failed job status that stop_job produced and drive the session out of Running"
         );
     }
 

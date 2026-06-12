@@ -875,31 +875,40 @@ impl AppState {
         if !missing_from_store.is_empty() {
             info!(
                 count = missing_from_store.len(),
-                "killing K8s jobs with no DB session"
+                "deleting K8s jobs with no DB session"
             );
         }
         if !terminal_in_store.is_empty() {
             info!(
                 count = terminal_in_store.len(),
-                "killing K8s jobs whose DB session is terminal"
+                "stopping K8s jobs whose DB session is terminal"
             );
         }
 
-        for (job, is_terminal) in missing_from_store.into_iter().chain(terminal_in_store) {
-            match self.job_engine.kill_job(&job.id).await {
+        // Missing-from-store jobs are true orphans — the DB row that owns
+        // their logs is gone, so we hard-delete the Job + Pod via
+        // `delete_job`. Terminal-in-store jobs still have a DB row that
+        // may reference their logs, so we use `stop_job` to keep the Pod
+        // object (and its logs) around until ttl_seconds_after_finished
+        // GC's it.
+        for (job, _) in missing_from_store {
+            match self.job_engine.delete_job(&job.id).await {
                 Ok(()) => {
-                    if is_terminal {
-                        info!(hydra_id = %job.id, "killed K8s job whose DB session is terminal");
-                    } else {
-                        info!(hydra_id = %job.id, "killed K8s job with no DB session");
-                    }
+                    info!(hydra_id = %job.id, "deleted K8s job with no DB session");
                 }
                 Err(err) => {
-                    if is_terminal {
-                        warn!(hydra_id = %job.id, error = %err, "failed to kill K8s job whose DB session is terminal");
-                    } else {
-                        warn!(hydra_id = %job.id, error = %err, "failed to kill K8s job with no DB session");
-                    }
+                    warn!(hydra_id = %job.id, error = %err, "failed to delete K8s job with no DB session");
+                }
+            }
+        }
+
+        for (job, _) in terminal_in_store {
+            match self.job_engine.stop_job(&job.id).await {
+                Ok(()) => {
+                    info!(hydra_id = %job.id, "stopped K8s job whose DB session is terminal");
+                }
+                Err(err) => {
+                    warn!(hydra_id = %job.id, error = %err, "failed to stop K8s job whose DB session is terminal");
                 }
             }
         }
@@ -968,11 +977,11 @@ impl AppState {
                 versioned_task.item.status,
                 Status::Pending | Status::Running
             ) {
-                if let Err(err) = self.job_engine.kill_job(&session_id).await {
+                if let Err(err) = self.job_engine.stop_job(&session_id).await {
                     warn!(
                         hydra_id = %session_id,
                         error = %err,
-                        "failed to kill job for orphaned task"
+                        "failed to stop job for orphaned task"
                     );
                 }
             }
@@ -1405,7 +1414,7 @@ mod tests {
         domain::actors::ActorRef,
         domain::issues::{Issue, IssueType, SessionSettings},
         domain::users::Username,
-        job_engine::{JobEngine, JobStatus},
+        job_engine::{JobEngine, JobEngineError, JobStatus},
         store::{ReadOnlyStore, Status, StoreError, TaskError},
         test_utils::{MockJobEngine, test_state_with_engine},
     };
@@ -2254,7 +2263,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reap_orphaned_jobs_kills_jobs_missing_from_store() {
+    async fn reap_orphaned_jobs_deletes_jobs_missing_from_store() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
         let (tracked_session_id, _) = {
@@ -2282,16 +2291,18 @@ mod tests {
             .status;
         assert_eq!(tracked_status, JobStatus::Running);
 
-        let orphan_status = job_engine
-            .find_job_by_hydra_id(&orphan_session_id)
-            .await
-            .expect("orphan job should exist")
-            .status;
-        assert_eq!(orphan_status, JobStatus::Failed);
+        // The orphan branch uses `delete_job` (hard-removes the Job/Pod
+        // because the DB row that owned it is gone), so the engine no
+        // longer tracks the entry.
+        let orphan_lookup = job_engine.find_job_by_hydra_id(&orphan_session_id).await;
+        assert!(
+            matches!(orphan_lookup, Err(JobEngineError::NotFound(_))),
+            "orphan job should be deleted by reaper, got {orphan_lookup:?}"
+        );
     }
 
     #[tokio::test]
-    async fn reap_orphaned_jobs_kills_jobs_whose_session_is_terminal() {
+    async fn reap_orphaned_jobs_stops_jobs_whose_session_is_terminal() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
 
@@ -2306,7 +2317,7 @@ mod tests {
             .transition_task_to_completion(
                 &failed_session_id,
                 Err(TaskError::JobEngineError {
-                    reason: "kill_job failed; reaper should clean up".to_string(),
+                    reason: "kill failed; reaper should clean up".to_string(),
                 }),
                 None,
                 None,

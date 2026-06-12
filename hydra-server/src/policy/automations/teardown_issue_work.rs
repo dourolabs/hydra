@@ -57,14 +57,14 @@ impl TeardownIssueWorkAutomation {
                 session.item.status,
                 Status::Created | Status::Pending | Status::Running
             ) {
-                match ctx.app_state.job_engine.kill_job(&session_id).await {
+                match ctx.app_state.job_engine.stop_job(&session_id).await {
                     Ok(()) => {
                         killed += 1;
                         tracing::info!(
                             automation = AUTOMATION_NAME,
                             issue_id = %issue_id,
                             session_id = %session_id,
-                            "killed session"
+                            "stopped session"
                         );
                     }
                     Err(crate::job_engine::JobEngineError::NotFound(_)) => {
@@ -72,12 +72,12 @@ impl TeardownIssueWorkAutomation {
                             automation = AUTOMATION_NAME,
                             issue_id = %issue_id,
                             session_id = %session_id,
-                            "session already missing while killing"
+                            "session already missing while stopping"
                         );
                     }
                     Err(e) => {
                         return Err(AutomationError::Other(anyhow::anyhow!(
-                            "failed to kill session {session_id} for issue {issue_id}: {e}"
+                            "failed to stop session {session_id} for issue {issue_id}: {e}"
                         )));
                     }
                 }
@@ -340,7 +340,7 @@ mod tests {
             store: store.as_ref(),
         };
 
-        // MockJobEngine will succeed on kill_job
+        // MockJobEngine will succeed on stop_job
         automation.execute(&ctx).await.unwrap();
     }
 

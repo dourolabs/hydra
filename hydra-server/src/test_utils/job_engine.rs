@@ -21,10 +21,10 @@ pub struct MockJobEngine {
     resource_requests: Arc<Mutex<HashMap<SessionId, (String, String)>>>,
     /// When set, `create_job` returns this error instead of creating the job.
     create_job_error: Arc<Mutex<Option<String>>>,
-    /// When set, `kill_job` returns this error instead of killing the job.
+    /// When set, `stop_job` returns this error instead of stopping the job.
     /// Used to simulate transient K8s API failures (e.g. timeouts) so we can
     /// exercise the kill-route's "DB transition first, reaper cleans up" path.
-    kill_job_error: Arc<Mutex<Option<String>>>,
+    stop_job_error: Arc<Mutex<Option<String>>>,
 }
 
 impl MockJobEngine {
@@ -98,12 +98,12 @@ impl MockJobEngine {
         *self.create_job_error.lock().unwrap() = error_message;
     }
 
-    /// Configure `kill_job` to fail with an `Internal` error containing the
+    /// Configure `stop_job` to fail with an `Internal` error containing the
     /// given message. Used to simulate K8s API failures so tests can exercise
-    /// the kill-route's "mark DB Failed even when K8s kill fails" path.
+    /// the kill-route's "mark DB Failed even when K8s stop fails" path.
     /// Pass `None` to restore normal behavior.
-    pub fn set_kill_job_error(&self, error_message: Option<String>) {
-        *self.kill_job_error.lock().unwrap() = error_message;
+    pub fn set_stop_job_error(&self, error_message: Option<String>) {
+        *self.stop_job_error.lock().unwrap() = error_message;
     }
 }
 
@@ -236,8 +236,8 @@ impl JobEngine for MockJobEngine {
         Ok(rx)
     }
 
-    async fn kill_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
-        if let Some(msg) = self.kill_job_error.lock().unwrap().clone() {
+    async fn stop_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        if let Some(msg) = self.stop_job_error.lock().unwrap().clone() {
             return Err(JobEngineError::Internal(msg));
         }
         let mut jobs = self.jobs.lock().unwrap();
@@ -256,6 +256,26 @@ impl JobEngine for MockJobEngine {
                     job.status = JobStatus::Failed;
                     job.completion_time = Some(Utc::now());
                 }
+                Ok(())
+            }
+            _ => Err(JobEngineError::MultipleFound(hydra_id.clone())),
+        }
+    }
+
+    async fn delete_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        let mut jobs = self.jobs.lock().unwrap();
+        let matching_indices: Vec<_> = jobs
+            .iter()
+            .enumerate()
+            .filter(|(_, job)| &job.id == hydra_id)
+            .map(|(idx, _)| idx)
+            .collect();
+
+        match matching_indices.len() {
+            0 => Err(JobEngineError::NotFound(hydra_id.clone())),
+            1 => {
+                let idx = matching_indices[0];
+                jobs.remove(idx);
                 Ok(())
             }
             _ => Err(JobEngineError::MultipleFound(hydra_id.clone())),
