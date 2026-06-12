@@ -4,6 +4,7 @@ import {
   Avatar,
   Button,
   ColorPicker,
+  Icons,
   Input,
   Modal,
   Picker,
@@ -609,6 +610,8 @@ function StatusForm({
   const attachForm = onEnter?.attach_form ?? "";
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [idleTimeoutPickerOpen, setIdleTimeoutPickerOpen] = useState(false);
+  const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
+  const [onEnterOpen, setOnEnterOpen] = useState(false);
 
   // Local display state for the Auto-archive control. Initialized from the
   // draft's persisted seconds via inverse-rendering (largest whole-unit
@@ -911,34 +914,54 @@ function StatusForm({
         </span>
       </div>
 
-      <div className={styles.row}>
-        <Input
-          label="Max simultaneous sessions"
-          type="number"
-          min={0}
-          step={1}
-          value={maxSimultaneousValue}
-          onChange={(e) => onMaxSimultaneousChange(e.target.value)}
-          placeholder="No cap"
-          aria-label="Max simultaneous sessions"
-          data-testid="status-settings-max-simultaneous-sessions"
-        />
-        <span className={styles.helpText}>
-          Cap on simultaneously-active sessions (interactive + headless, across
-          all agents) for issues in this status. Leave blank for no cap. New
-          spawns block until the active count drops below the cap.
-        </span>
-      </div>
-
       <div className={styles.sessionSettings}>
-        <span className={styles.onEnterTitle}>Session settings</span>
-        <span className={styles.helpText}>
-          Per-status overrides applied when spawning sessions for issues in
-          this status. Issue-level settings still win over these. Leave blank
-          to inherit the global / issue defaults.
-        </span>
+        <button
+          type="button"
+          className={styles.collapsibleSummary}
+          aria-expanded={sessionSettingsOpen}
+          onClick={() => setSessionSettingsOpen((v) => !v)}
+          data-testid="status-settings-session-settings-toggle"
+        >
+          <span className={styles.collapsibleChevron} aria-hidden="true">
+            {sessionSettingsOpen ? (
+              <Icons.IconChevronDown size={10} />
+            ) : (
+              <Icons.IconChevronRight size={10} />
+            )}
+          </span>
+          <span className={styles.onEnterTitle}>Session settings</span>
+        </button>
+        {sessionSettingsOpen && (
+          <div
+            className={styles.collapsibleContent}
+            data-testid="status-settings-session-settings-content"
+          >
+            <span className={styles.helpText}>
+              Per-status overrides applied when spawning sessions for issues
+              in this status. Issue-level settings still win over these.
+              Leave blank to inherit the global / issue defaults.
+            </span>
 
-        <div className={styles.statusInputs}>
+            <div className={styles.row}>
+              <Input
+                label="Max simultaneous sessions"
+                type="number"
+                min={0}
+                step={1}
+                value={maxSimultaneousValue}
+                onChange={(e) => onMaxSimultaneousChange(e.target.value)}
+                placeholder="No cap"
+                aria-label="Max simultaneous sessions"
+                data-testid="status-settings-max-simultaneous-sessions"
+              />
+              <span className={styles.helpText}>
+                Cap on simultaneously-active sessions (interactive + headless,
+                across all agents) for issues in this status. New spawns
+                block until the active count drops below the cap.
+              </span>
+            </div>
+
+            <div className={styles.statusInputs}>
           <Input
             label="CPU limit"
             value={session.cpu_limit ?? ""}
@@ -1062,11 +1085,33 @@ function StatusForm({
             long-running dev-preview sessions stay alive.
           </span>
         </div>
+          </div>
+        )}
       </div>
 
       <div className={styles.onEnter}>
-        <span className={styles.onEnterTitle}>On enter</span>
-        <div data-testid="status-settings-assignee">
+        <button
+          type="button"
+          className={styles.collapsibleSummary}
+          aria-expanded={onEnterOpen}
+          onClick={() => setOnEnterOpen((v) => !v)}
+          data-testid="status-settings-on-enter-toggle"
+        >
+          <span className={styles.collapsibleChevron} aria-hidden="true">
+            {onEnterOpen ? (
+              <Icons.IconChevronDown size={10} />
+            ) : (
+              <Icons.IconChevronRight size={10} />
+            )}
+          </span>
+          <span className={styles.onEnterTitle}>On enter</span>
+        </button>
+        {onEnterOpen && (
+          <div
+            className={styles.collapsibleContent}
+            data-testid="status-settings-on-enter-content"
+          >
+            <div data-testid="status-settings-assignee">
           <Picker
             label="Assign to"
             open={assigneePickerOpen}
@@ -1175,6 +1220,8 @@ function StatusForm({
           "Clear assignee" and "Assign to" are mutually exclusive — picking one
           clears the other.
         </span>
+          </div>
+        )}
       </div>
 
       <div className={styles.row}>

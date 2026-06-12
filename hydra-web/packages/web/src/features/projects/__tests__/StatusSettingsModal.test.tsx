@@ -305,6 +305,10 @@ vi.mock("@hydra/ui", () => ({
   ColorPicker: ({ value }: { value: string }) => (
     <span data-testid={`color-${value}`}>{value}</span>
   ),
+  Icons: {
+    IconChevronRight: () => <span aria-hidden="true">▶</span>,
+    IconChevronDown: () => <span aria-hidden="true">▼</span>,
+  },
 }));
 
 const updateProjectSpy = vi.fn(async (_id: string, req: unknown) => req);
@@ -452,6 +456,16 @@ function makeProject(statuses: StatusDefinition[]): ProjectRecord {
       priority: 0,
     },
   };
+}
+
+// The Session-settings and On-enter blocks render as collapsible sections —
+// closed by default to keep the modal compact. Tests that interact with their
+// inner controls call these helpers first to expand the relevant block.
+function openSessionSettings() {
+  fireEvent.click(screen.getByTestId("status-settings-session-settings-toggle"));
+}
+function openOnEnter() {
+  fireEvent.click(screen.getByTestId("status-settings-on-enter-toggle"));
 }
 
 describe("StatusSettingsModal", () => {
@@ -810,6 +824,9 @@ describe("StatusSettingsModal", () => {
 
       // The Name field and advanced controls mirror the edit modal.
       expect(screen.getByTestId("status-settings-label")).toBeDefined();
+      // Assignee lives inside the On enter collapsible (closed by default in
+      // both new and edit modes).
+      openOnEnter();
       expect(screen.getByTestId("status-settings-assignee")).toBeDefined();
       // Prompt is the same inline markdown editor as edit mode, always visible.
       expect(screen.getByTestId("status-settings-prompt-body")).toBeDefined();
@@ -1484,6 +1501,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       // useAgents/useUsers are mocked to return [] above, so opening the
       // picker should surface only the Unassigned row — no agent/user
       // sections.
@@ -1512,6 +1530,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       // The pill renders the avatar (mocked) + name, so the trigger button's
       // aria-label is the picker caption and its text content is the name.
       expect(screen.getByLabelText("Assign to").textContent).toContain("swe");
@@ -1535,6 +1554,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByLabelText("Assign to"));
       const menu = screen.getByRole("menu");
       const rows = within(menu).getAllByRole("menuitem");
@@ -1559,6 +1579,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       const input = screen.getByTestId(
         "status-settings-max-simultaneous-sessions",
       ) as HTMLInputElement;
@@ -1580,6 +1601,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       const input = screen.getByTestId(
         "status-settings-max-simultaneous-sessions",
       ) as HTMLInputElement;
@@ -1597,6 +1619,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       fireEvent.change(
         screen.getByTestId("status-settings-max-simultaneous-sessions"),
         { target: { value: "7" } },
@@ -1621,6 +1644,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       fireEvent.change(
         screen.getByTestId("status-settings-max-simultaneous-sessions"),
         { target: { value: "" } },
@@ -1647,6 +1671,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       expect(
         (screen.getByTestId("status-settings-cpu-limit") as HTMLInputElement).value,
       ).toBe("");
@@ -1699,6 +1724,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       expect(
         (screen.getByTestId("status-settings-cpu-limit") as HTMLInputElement).value,
       ).toBe("500m");
@@ -1738,6 +1764,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       fireEvent.change(screen.getByTestId("status-settings-cpu-limit"), {
         target: { value: "750m" },
       });
@@ -1779,6 +1806,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openSessionSettings();
       fireEvent.change(screen.getByTestId("status-settings-cpu-limit"), {
         target: { value: "" },
       });
@@ -1814,6 +1842,7 @@ describe("StatusSettingsModal", () => {
             issueCount={0}
           />,
         );
+        openSessionSettings();
         pickIdleTimeoutRow("Never");
         fireEvent.click(screen.getByTestId("status-settings-save"));
         const payload = mutateSpy.mock.calls[0][0] as {
@@ -1835,6 +1864,7 @@ describe("StatusSettingsModal", () => {
             issueCount={0}
           />,
         );
+        openSessionSettings();
         pickIdleTimeoutRow("Custom");
         fireEvent.change(
           screen.getByTestId("status-settings-idle-timeout-seconds"),
@@ -1871,6 +1901,7 @@ describe("StatusSettingsModal", () => {
             issueCount={0}
           />,
         );
+        openSessionSettings();
         pickIdleTimeoutRow("Server default");
         fireEvent.click(screen.getByTestId("status-settings-save"));
         const payload = mutateSpy.mock.calls[0][0] as {
@@ -1892,6 +1923,7 @@ describe("StatusSettingsModal", () => {
             issueCount={0}
           />,
         );
+        openSessionSettings();
         // Default mode: no seconds input.
         expect(
           screen.queryByTestId("status-settings-idle-timeout-seconds"),
@@ -1979,6 +2011,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-teardown-work"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -2002,6 +2035,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-clear-assignee"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -2030,6 +2064,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       expect(
         (screen.getByTestId(
           "status-settings-clear-assignee",
@@ -2062,6 +2097,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-teardown-work"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -2088,6 +2124,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       fireEvent.click(screen.getByTestId("status-settings-clear-assignee"));
       fireEvent.click(screen.getByTestId("status-settings-save"));
       const payload = mutateSpy.mock.calls[0][0] as {
@@ -2119,6 +2156,7 @@ describe("StatusSettingsModal", () => {
           issueCount={0}
         />,
       );
+      openOnEnter();
       // Sanity: the on_enter starts with clear_assignee set.
       expect(
         (screen.getByTestId(
@@ -2138,6 +2176,62 @@ describe("StatusSettingsModal", () => {
       const onEnter = payload.nextStatuses[0].on_enter;
       expect(onEnter?.clear_assignee).toBe(false);
       expect(onEnter?.assign_to).toEqual({ Agent: { name: "swe" } });
+    });
+  });
+
+  describe("collapsible sections", () => {
+    it("Session settings and On enter both start collapsed", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      expect(
+        screen.queryByTestId("status-settings-session-settings-content"),
+      ).toBeNull();
+      expect(
+        screen.queryByTestId("status-settings-on-enter-content"),
+      ).toBeNull();
+    });
+
+    it("clicking the toggle expands and re-collapses each section independently", () => {
+      const project = makeProject([makeStatus("in-progress")]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="in-progress"
+          issueCount={0}
+        />,
+      );
+      openSessionSettings();
+      expect(
+        screen.getByTestId("status-settings-session-settings-content"),
+      ).toBeDefined();
+      // Opening Session settings does not also open On enter.
+      expect(
+        screen.queryByTestId("status-settings-on-enter-content"),
+      ).toBeNull();
+
+      openOnEnter();
+      expect(
+        screen.getByTestId("status-settings-on-enter-content"),
+      ).toBeDefined();
+
+      // Clicking again re-collapses Session settings (without touching On enter).
+      openSessionSettings();
+      expect(
+        screen.queryByTestId("status-settings-session-settings-content"),
+      ).toBeNull();
+      expect(
+        screen.getByTestId("status-settings-on-enter-content"),
+      ).toBeDefined();
     });
   });
 });
