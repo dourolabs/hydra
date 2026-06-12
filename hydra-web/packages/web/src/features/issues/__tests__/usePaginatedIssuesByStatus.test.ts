@@ -93,7 +93,7 @@ describe("useBoardIssuesByProject", () => {
     vi.clearAllMocks();
   });
 
-  it("fires one paginated query per (project, status) cell with limit=50", async () => {
+  it("fires one paginated query per (project, status) cell with limit=7", async () => {
     mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) =>
       Promise.resolve(page([issue(`i-${query.status}`, query.status as string)])),
     );
@@ -118,7 +118,7 @@ describe("useBoardIssuesByProject", () => {
     }
     for (const call of mockListIssues.mock.calls) {
       const arg = call[0] as Partial<SearchIssuesQuery>;
-      expect(arg.limit).toBe(50);
+      expect(arg.limit).toBe(7);
       expect(arg.cursor).toBeUndefined();
     }
   });

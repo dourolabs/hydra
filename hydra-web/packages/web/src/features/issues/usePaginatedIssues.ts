@@ -14,6 +14,10 @@ import type {
 import { apiClient } from "../../api/client";
 
 const PAGE_SIZE = 50;
+// The board view packs many (project × status) cells onto one screen, so it
+// loads a much shorter first page per cell to save real estate. "Load more"
+// then walks the cursor a page at a time. The table view keeps PAGE_SIZE.
+const BOARD_PAGE_SIZE = 7;
 
 export interface IssueFilters {
   status?: string | null;
@@ -34,9 +38,10 @@ export interface IssueFilters {
 function buildQuery(
   filters: IssueFilters,
   cursor?: string | null,
+  limit: number = PAGE_SIZE,
 ): Partial<SearchIssuesQuery> {
   const query: Partial<SearchIssuesQuery> = {
-    limit: PAGE_SIZE,
+    limit,
   };
   // `SearchIssuesQuery.status` is now `string` (StatusKey) on the wire after
   // backend [[i-dlcqjubx]]; no cast required.
@@ -170,7 +175,7 @@ export function useBoardIssuesByProject(
           let cursor: string | undefined;
           for (let i = 0; i < depth; i++) {
             const page = await apiClient.listIssues(
-              buildQuery(filtersForKey, cursor),
+              buildQuery(filtersForKey, cursor, BOARD_PAGE_SIZE),
             );
             pages.push(page);
             if (!page.next_cursor) break;
