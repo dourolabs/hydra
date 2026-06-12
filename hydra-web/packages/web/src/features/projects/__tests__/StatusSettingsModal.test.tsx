@@ -1665,11 +1665,15 @@ describe("StatusSettingsModal", () => {
       expect(
         (screen.getByTestId("status-settings-max-retries") as HTMLInputElement).value,
       ).toBe("");
+      // Idle timeout uses the design-system Picker — verify the pill content
+      // rather than reaching for a hidden `value` attribute.
       expect(
-        (screen.getByTestId(
-          "status-settings-idle-timeout-mode",
-        ) as HTMLSelectElement).value,
-      ).toBe("default");
+        screen.getByLabelText("Idle timeout").textContent,
+      ).toContain("Server default");
+      // The inline seconds input is only rendered in the "seconds" mode.
+      expect(
+        screen.queryByTestId("status-settings-idle-timeout-seconds"),
+      ).toBeNull();
     });
 
     it("seeds inputs from an existing session_settings override", () => {
@@ -1714,10 +1718,8 @@ describe("StatusSettingsModal", () => {
         (screen.getByTestId("status-settings-max-retries") as HTMLInputElement).value,
       ).toBe("3");
       expect(
-        (screen.getByTestId(
-          "status-settings-idle-timeout-mode",
-        ) as HTMLSelectElement).value,
-      ).toBe("seconds");
+        screen.getByLabelText("Idle timeout").textContent,
+      ).toContain("600 seconds");
       expect(
         (screen.getByTestId(
           "status-settings-idle-timeout-seconds",
@@ -1789,7 +1791,19 @@ describe("StatusSettingsModal", () => {
     });
 
     describe("idle timeout", () => {
-      it("switching to infinite persists a Timeout::Infinite", () => {
+      // Helper: click the Idle timeout picker open, then click the row whose
+      // visible text matches `rowLabel`. Mirrors the assignee-picker test
+      // pattern — pickers are disambiguated by their `aria-label`.
+      function pickIdleTimeoutRow(rowLabel: string) {
+        fireEvent.click(screen.getByLabelText("Idle timeout"));
+        const menu = screen.getByRole("menu");
+        const rows = within(menu).getAllByRole("menuitem");
+        const row = rows.find((r) => r.textContent?.includes(rowLabel));
+        if (!row) throw new Error(`No row matching '${rowLabel}'`);
+        fireEvent.click(row);
+      }
+
+      it("switching to Never persists a Timeout::Infinite", () => {
         const project = makeProject([makeStatus("in-progress")]);
         render(
           <StatusSettingsModal
@@ -1800,10 +1814,7 @@ describe("StatusSettingsModal", () => {
             issueCount={0}
           />,
         );
-        fireEvent.change(
-          screen.getByTestId("status-settings-idle-timeout-mode"),
-          { target: { value: "infinite" } },
-        );
+        pickIdleTimeoutRow("Never");
         fireEvent.click(screen.getByTestId("status-settings-save"));
         const payload = mutateSpy.mock.calls[0][0] as {
           nextStatuses: StatusDefinition[];
@@ -1813,7 +1824,7 @@ describe("StatusSettingsModal", () => {
         ).toEqual({ kind: "infinite" });
       });
 
-      it("switching to seconds and entering a value persists Timeout::Seconds", () => {
+      it("switching to Custom and entering a value persists Timeout::Seconds", () => {
         const project = makeProject([makeStatus("in-progress")]);
         render(
           <StatusSettingsModal
@@ -1824,10 +1835,7 @@ describe("StatusSettingsModal", () => {
             issueCount={0}
           />,
         );
-        fireEvent.change(
-          screen.getByTestId("status-settings-idle-timeout-mode"),
-          { target: { value: "seconds" } },
-        );
+        pickIdleTimeoutRow("Custom");
         fireEvent.change(
           screen.getByTestId("status-settings-idle-timeout-seconds"),
           { target: { value: "300" } },
@@ -1843,7 +1851,7 @@ describe("StatusSettingsModal", () => {
         }
       });
 
-      it("switching back to default clears idle_timeout (and collapses session_settings)", () => {
+      it("switching back to Server default clears idle_timeout (and collapses session_settings)", () => {
         const project = makeProject([
           makeStatus("in-progress", {
             session_settings: {
@@ -1863,10 +1871,7 @@ describe("StatusSettingsModal", () => {
             issueCount={0}
           />,
         );
-        fireEvent.change(
-          screen.getByTestId("status-settings-idle-timeout-mode"),
-          { target: { value: "default" } },
-        );
+        pickIdleTimeoutRow("Server default");
         fireEvent.click(screen.getByTestId("status-settings-save"));
         const payload = mutateSpy.mock.calls[0][0] as {
           nextStatuses: StatusDefinition[];
@@ -1874,6 +1879,31 @@ describe("StatusSettingsModal", () => {
         // Only idle_timeout was set, so the whole session_settings collapses
         // back to undefined to keep the wire body slim.
         expect(payload.nextStatuses[0].session_settings).toBeUndefined();
+      });
+
+      it("inline seconds input only renders in Custom mode", () => {
+        const project = makeProject([makeStatus("in-progress")]);
+        render(
+          <StatusSettingsModal
+            open={true}
+            onClose={() => {}}
+            projectRecord={project}
+            statusKey="in-progress"
+            issueCount={0}
+          />,
+        );
+        // Default mode: no seconds input.
+        expect(
+          screen.queryByTestId("status-settings-idle-timeout-seconds"),
+        ).toBeNull();
+        pickIdleTimeoutRow("Custom");
+        expect(
+          screen.getByTestId("status-settings-idle-timeout-seconds"),
+        ).toBeDefined();
+        pickIdleTimeoutRow("Never");
+        expect(
+          screen.queryByTestId("status-settings-idle-timeout-seconds"),
+        ).toBeNull();
       });
     });
   });

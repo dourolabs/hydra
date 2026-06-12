@@ -608,6 +608,7 @@ function StatusForm({
   const principal = onEnter?.assign_to ?? null;
   const attachForm = onEnter?.attach_form ?? "";
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
+  const [idleTimeoutPickerOpen, setIdleTimeoutPickerOpen] = useState(false);
 
   // Local display state for the Auto-archive control. Initialized from the
   // draft's persisted seconds via inverse-rendering (largest whole-unit
@@ -991,46 +992,74 @@ function StatusForm({
           />
         </div>
 
-        <div className={styles.autoArchive}>
-          <label className={styles.label}>Idle timeout (interactive)</label>
-          <div className={styles.autoArchiveInputs}>
+        <div
+          className={styles.idleTimeout}
+          data-testid="status-settings-idle-timeout"
+        >
+          <Picker
+            label="Idle timeout"
+            open={idleTimeoutPickerOpen}
+            onToggle={() => setIdleTimeoutPickerOpen((v) => !v)}
+            value={
+              idleTimeoutMode === "default" ? (
+                <span className={styles.pillEmpty}>Server default</span>
+              ) : idleTimeoutMode === "infinite" ? (
+                <span>Never</span>
+              ) : (
+                <span>
+                  {idleTimeoutSeconds || "0"} seconds
+                </span>
+              )
+            }
+            data-testid="status-settings-idle-timeout-mode"
+          >
+            <PickerRow
+              active={idleTimeoutMode === "default"}
+              onClick={() => {
+                setIdleTimeoutMode("default");
+                setIdleTimeoutPickerOpen(false);
+              }}
+            >
+              <span>Server default</span>
+              <span className={styles.popSpacer} />
+            </PickerRow>
+            <PickerRow
+              active={idleTimeoutMode === "seconds"}
+              onClick={() => {
+                setIdleTimeoutMode("seconds");
+                setIdleTimeoutPickerOpen(false);
+              }}
+            >
+              <span>Custom (seconds)</span>
+              <span className={styles.popSpacer} />
+            </PickerRow>
+            <PickerRow
+              active={idleTimeoutMode === "infinite"}
+              onClick={() => {
+                setIdleTimeoutMode("infinite");
+                setIdleTimeoutPickerOpen(false);
+              }}
+            >
+              <span>Never</span>
+              <span className={styles.popSpacer} />
+            </PickerRow>
+          </Picker>
+          {idleTimeoutMode === "seconds" && (
             <Input
               type="number"
               min={1}
               step={1}
               value={idleTimeoutSeconds}
               onChange={(e) => setIdleTimeoutSeconds(e.target.value)}
-              disabled={idleTimeoutMode !== "seconds"}
-              placeholder={
-                idleTimeoutMode === "default"
-                  ? "Server default"
-                  : idleTimeoutMode === "infinite"
-                  ? "Never"
-                  : "Seconds"
-              }
+              placeholder="Seconds"
               aria-label="Idle timeout seconds"
               data-testid="status-settings-idle-timeout-seconds"
             />
-            <Select
-              options={[
-                { value: "default", label: "Server default" },
-                { value: "seconds", label: "seconds" },
-                { value: "infinite", label: "never" },
-              ]}
-              value={idleTimeoutMode}
-              onChange={(e) =>
-                setIdleTimeoutMode(
-                  e.target.value as "default" | "infinite" | "seconds",
-                )
-              }
-              aria-label="Idle timeout mode"
-              data-testid="status-settings-idle-timeout-mode"
-            />
-          </div>
+          )}
           <span className={styles.helpText}>
-            Per-session idle timeout for interactive sessions spawned for this
-            status. "Server default" falls back to the global config;
-            "never" lets long-running dev-preview sessions stay alive.
+            Per-session idle timeout for sessions spawned for this status.
+            "Server default" falls back to the global config; "Never" lets
+            long-running dev-preview sessions stay alive.
           </span>
         </div>
       </div>
