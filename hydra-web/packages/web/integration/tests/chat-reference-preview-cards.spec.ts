@@ -184,7 +184,7 @@ async function mockChatRoutes(page: Page) {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([conversationSummary]),
+      body: JSON.stringify({ conversations: [conversationSummary] }),
     });
   });
   await page.route(new RegExp(`/api/v1/conversations/${CONVERSATION_ID}$`), (route) => {
@@ -225,7 +225,9 @@ async function mockChatRoutes(page: Page) {
   });
   // Issue / patch / document GETs. Match any id under each collection so the
   // mocks also cover fall-through assertions (e.g. unused fenced/label ids).
-  await page.route(/\/api\/v1\/issues\/([^/?]+)$/, (route) => {
+  // `useIssue` appends `?include_deleted=true` to the URL, so the issue
+  // matcher tolerates either bare `/<id>` or a trailing query string.
+  await page.route(/\/api\/v1\/issues\/[^/?]+(?:\?|$)/, (route) => {
     const id = new URL(route.request().url()).pathname.split("/").pop() ?? "";
     route.fulfill({
       status: 200,
