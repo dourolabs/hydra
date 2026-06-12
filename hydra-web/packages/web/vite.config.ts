@@ -12,6 +12,7 @@ export default defineConfig({
   ],
   server: {
     port: 3000,
+    allowedHosts: [".ngrok.pizza", ".ngrok.io", ".ngrok.app"],
     proxy: {
       "/auth": "http://localhost:8080",
       "/api": "http://localhost:8080",
