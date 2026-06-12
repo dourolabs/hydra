@@ -212,11 +212,10 @@ export function IssueDetail({ record }: IssueDetailProps) {
 
           <div className={styles.metaRow}>
             <IssueProjectPicker
-              issueId={issueId}
-              issue={issue}
-              hideLabel
+              projectId={issue.project_id}
               pendingProjectId={pendingProjectId}
               onPendingChange={setPendingProjectId}
+              hideLabel
             />
             <IssueStatusPicker
               issueId={issueId}
