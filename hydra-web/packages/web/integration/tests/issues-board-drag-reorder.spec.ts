@@ -67,6 +67,16 @@ test.describe("Issues board drag-to-reorder @issues:board-drag-reorder", () => {
     // Drag engineering-v2's bar above default's. Aim a few pixels above the
     // top edge of the default bar's box so dnd-kit's collision detection
     // resolves engineering-v2 as the new first item.
+    //
+    // The default project's seed has 23 issues across 5 status columns, so
+    // engineering-v2's bar sits well below the 720px viewport on first paint
+    // and `mouse.move` at its native y never lands on it. Scroll it into view
+    // before measuring so the drag origin is inside the viewport — once the
+    // drag activates, every section's body collapses (see ProjectSection's
+    // `!dragActive` guard) and the document shrinks back to a tight column of
+    // bars, so the browser auto-snaps scroll to 0 and the cursor passes over
+    // the default bar's new (visible) position during the step-through.
+    await engBar.scrollIntoViewIfNeeded();
     const srcBox = await engBar.boundingBox();
     const tgtBox = await defaultBar.boundingBox();
     expect(srcBox && tgtBox).toBeTruthy();

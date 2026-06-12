@@ -57,7 +57,7 @@ test.describe("Chat list defaults to current user @chat:default-mine", () => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ conversations: body }),
       });
     });
 
@@ -98,7 +98,7 @@ test.describe("Chat list defaults to current user @chat:default-mine", () => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ conversations: body }),
       });
     });
 

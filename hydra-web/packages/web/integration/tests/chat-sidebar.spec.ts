@@ -44,7 +44,7 @@ test.describe("Sidebar Chats section @chat:sidebar", () => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(conversationsFixture),
+        body: JSON.stringify({ conversations: conversationsFixture }),
       });
     });
 

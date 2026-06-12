@@ -66,7 +66,7 @@ test.describe("Chats page FilterBar @chat:filter-bar", () => {
       route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ conversations: body }),
       });
     });
 
