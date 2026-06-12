@@ -32,6 +32,26 @@ use crate::{
 const SUBMIT_SESSION_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Maximum number of attempts when submitting the final session status.
 const SUBMIT_SESSION_STATUS_MAX_ATTEMPTS: u32 = 3;
+/// Outer wall-clock cap on the entire `submit_session_status` retry loop.
+/// Without this, three back-to-back 30s per-attempt timeouts plus their
+/// exponential backoff sleeps could spin past the post-agent shutdown
+/// budget under e.g. DNS retries.
+const SUBMIT_SESSION_STATUS_OUTER_TIMEOUT: Duration = Duration::from_secs(60);
+/// Wall-clock budget for everything that happens after the agent phase
+/// completes (reap orphans, mount saves, status submission). When the
+/// budget fires the worker `std::process::exit`s rather than returning to
+/// main and letting the tokio runtime drop, because the wedge cases we
+/// guard against (sessions stuck in `Running` for hours after the agent
+/// finished) typically involve a held resource or a backgrounded task
+/// that prevents the runtime drop from completing.
+const POST_AGENT_SHUTDOWN_BUDGET: Duration = Duration::from_secs(90);
+/// Exit code on clean post-agent shutdown.
+const WORKER_EXIT_OK: i32 = 0;
+/// Exit code when the post-agent shutdown collected at least one error
+/// or exceeded its wall-clock budget.
+const WORKER_EXIT_FAILED: i32 = 1;
+/// Exit code on receiving SIGTERM (matches the shell `128 + 15` convention).
+const WORKER_EXIT_SIGTERM: i32 = 143;
 
 pub async fn run(
     client: Arc<dyn HydraClientInterface>,
@@ -47,6 +67,10 @@ pub async fn run(
         )
         .with_writer(std::io::stderr)
         .try_init();
+
+    // Scoped to the worker subcommand only — CLI commands like
+    // `hydra issues create` keep default SIGTERM behavior.
+    install_worker_sigterm_handler();
 
     let job = session;
 
@@ -212,55 +236,118 @@ pub async fn run(
         }
     };
 
-    log_status("Phase: reap orphans — starting");
-    let reap_start = Instant::now();
-    let reap_summary = reap_other_processes().await;
-    let reap_elapsed = reap_start.elapsed().as_secs_f64();
-    if reap_summary.skipped_not_pid1 {
-        log_status(format!(
-            "Phase: reap orphans — skipped (worker is not PID 1) ({reap_elapsed:.2}s)"
-        ));
-    } else {
-        log_status(format!(
-            "Phase: reap orphans — completed ({} victims, {} survived to SIGKILL) ({reap_elapsed:.2}s)",
-            reap_summary.sigterm_sent, reap_summary.sigkill_sent
-        ));
-    }
+    let shutdown_start = Instant::now();
+    let outcome = run_with_shutdown_budget(POST_AGENT_SHUTDOWN_BUDGET, || async {
+        let mut errors = errors;
+        log_status("Phase: reap orphans — starting");
+        let reap_start = Instant::now();
+        let reap_summary = reap_other_processes().await;
+        let reap_elapsed = reap_start.elapsed().as_secs_f64();
+        if reap_summary.skipped_not_pid1 {
+            log_status(format!(
+                "Phase: reap orphans — skipped (worker is not PID 1) ({reap_elapsed:.2}s)"
+            ));
+        } else {
+            log_status(format!(
+                "Phase: reap orphans — completed ({} victims, {} survived to SIGKILL) ({reap_elapsed:.2}s)",
+                reap_summary.sigterm_sent, reap_summary.sigkill_sent
+            ));
+        }
 
-    for mount in mounts.iter_mut() {
-        let Some(phase) = mount.save_phase() else {
-            continue;
+        for mount in mounts.iter_mut() {
+            let Some(phase) = mount.save_phase() else {
+                continue;
+            };
+            // A fatal save error is downgraded to a tracked error inside
+            // the shutdown block: we still want status submission to run
+            // and then `std::process::exit` to fire deterministically.
+            if let Err(err) = run_phase(phase, || mount.save(), &mut errors).await {
+                errors.push(err);
+            }
+        }
+
+        let status_update = if errors.is_empty() {
+            SessionStatusUpdate::Complete {
+                last_message: Some(last_message.clone()),
+                usage: run_usage.clone(),
+            }
+        } else {
+            SessionStatusUpdate::Failed {
+                reason: errors
+                    .first()
+                    .map(|err| err.to_string())
+                    .unwrap_or_else(|| "worker run failed for unknown reasons".to_string()),
+            }
         };
-        run_phase(phase, || mount.save(), &mut errors).await?;
-    }
 
-    let status_update = if errors.is_empty() {
-        SessionStatusUpdate::Complete {
-            last_message: Some(last_message.clone()),
-            usage: run_usage.clone(),
+        log_status("Phase: status submission — starting");
+        let status_start = Instant::now();
+        let submit_fut = submit_session_status(client.as_ref(), &job, status_update);
+        match tokio::time::timeout(SUBMIT_SESSION_STATUS_OUTER_TIMEOUT, submit_fut).await {
+            Ok(Ok(())) => {
+                let elapsed = status_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: status submission — completed ({elapsed:.2}s)"
+                ));
+            }
+            Ok(Err(err)) => {
+                let elapsed = status_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: status submission — failed ({elapsed:.2}s): {err}"
+                ));
+                errors.push(err);
+            }
+            Err(_) => {
+                let elapsed = status_start.elapsed().as_secs_f64();
+                log_status(format!(
+                    "Phase: status submission — outer timeout after {}s ({elapsed:.2}s elapsed)",
+                    SUBMIT_SESSION_STATUS_OUTER_TIMEOUT.as_secs()
+                ));
+                errors.push(anyhow!(
+                    "status submission exceeded outer wall-clock cap of {}s",
+                    SUBMIT_SESSION_STATUS_OUTER_TIMEOUT.as_secs()
+                ));
+            }
         }
-    } else {
-        SessionStatusUpdate::Failed {
-            reason: errors
-                .first()
-                .map(|err| err.to_string())
-                .unwrap_or_else(|| "worker run failed for unknown reasons".to_string()),
-        }
-    };
 
-    log_status("Phase: status submission — starting");
-    let status_start = Instant::now();
-    if let Err(err) = submit_session_status(client.as_ref(), &job, status_update).await {
-        let elapsed = status_start.elapsed().as_secs_f64();
-        log_status(format!("Phase: status submission — failed ({elapsed:.2}s)"));
-        errors.push(err);
-    } else {
-        let elapsed = status_start.elapsed().as_secs_f64();
+        errors
+    })
+    .await;
+
+    let shutdown_elapsed = shutdown_start.elapsed().as_secs_f64();
+    let exit_code = outcome.exit_code();
+    if outcome.timed_out {
         log_status(format!(
-            "Phase: status submission — completed ({elapsed:.2}s)"
+            "Post-agent shutdown — exceeded budget of {}s ({shutdown_elapsed:.2}s); nuclear-exiting with code {exit_code}",
+            POST_AGENT_SHUTDOWN_BUDGET.as_secs()
+        ));
+    } else {
+        log_status(format!(
+            "Post-agent shutdown — completed within budget ({shutdown_elapsed:.2}s, {} errors); exiting with code {exit_code}",
+            outcome.errors.len()
         ));
     }
 
+    // Bypass tokio runtime drop on purpose: if a spawned task or held
+    // resource is what's wedging the process, runtime drop blocks
+    // forever. `std::process::exit` kills it dead, the worker's PID 1
+    // in the k8s namespace exits, and the kernel reaps everything else.
+    //
+    // Gated on PID 1 to match the reaper's safety boundary — see
+    // [`worker_is_pid1`] for why. Outside that boundary we fall through
+    // and return errors the way the pre-budget code did.
+    if worker_is_pid1() {
+        std::process::exit(exit_code);
+    }
+    let PostAgentShutdownOutcome {
+        timed_out, errors, ..
+    } = outcome;
+    if timed_out {
+        return Err(anyhow!(
+            "post-agent shutdown exceeded budget of {}s",
+            POST_AGENT_SHUTDOWN_BUDGET.as_secs()
+        ));
+    }
     if let Some(err) = errors.into_iter().next() {
         Err(err)
     } else {
@@ -373,6 +460,102 @@ where
 
 fn log_status(message: impl std::fmt::Display) {
     println!("{message}");
+}
+
+/// Outcome of [`run_with_shutdown_budget`]. Factored out so unit tests can
+/// drive the wedge case without `std::process::exit` actually firing.
+#[derive(Debug)]
+struct PostAgentShutdownOutcome {
+    /// `true` iff the wall-clock budget elapsed before the inner future
+    /// resolved. The inner future was cancelled and any errors it had
+    /// already pushed are lost (but were already logged inline).
+    timed_out: bool,
+    /// Errors collected by the inner future. Always empty when
+    /// `timed_out` is `true` (the cancelled future's accumulator was
+    /// dropped).
+    errors: Vec<anyhow::Error>,
+}
+
+impl PostAgentShutdownOutcome {
+    /// Process exit code: `0` on a clean shutdown with no errors, `1`
+    /// otherwise (any collected error OR a budget timeout).
+    fn exit_code(&self) -> i32 {
+        if self.timed_out || !self.errors.is_empty() {
+            WORKER_EXIT_FAILED
+        } else {
+            WORKER_EXIT_OK
+        }
+    }
+}
+
+/// Run `body` under a wall-clock `budget`. The body collects errors and
+/// returns the final `Vec<anyhow::Error>` (a partial-failure list, *not*
+/// a `Result`) so a tracked failure inside one phase doesn't short-circuit
+/// the rest of the shutdown (status submission must still run).
+async fn run_with_shutdown_budget<F, Fut>(budget: Duration, body: F) -> PostAgentShutdownOutcome
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Vec<anyhow::Error>>,
+{
+    match tokio::time::timeout(budget, body()).await {
+        Ok(errors) => PostAgentShutdownOutcome {
+            timed_out: false,
+            errors,
+        },
+        Err(_) => PostAgentShutdownOutcome {
+            timed_out: true,
+            errors: Vec::new(),
+        },
+    }
+}
+
+/// Returns `true` iff the worker owns its PID namespace (PID 1). The
+/// nuclear-exit path is gated on this for the same reason the reaper is:
+/// in production both the K8s and local-Docker job engines launch the
+/// worker as the container's PID 1, but the integration test harness
+/// (`hydra/tests/harness/worker.rs`) calls `run` directly from inside
+/// cargo-nextest, where exiting would terminate the whole test binary.
+/// Outside PID 1 we fall through to the original `Result`-returning
+/// behavior so tests can assert on the returned error.
+fn worker_is_pid1() -> bool {
+    std::process::id() == 1
+}
+
+/// Register a SIGTERM listener that immediately `std::process::exit`s the
+/// worker. Only called from `worker_run::run`, never from CLI command
+/// dispatch — `hydra issues create` and friends keep kernel-default
+/// SIGTERM behavior.
+///
+/// This races *with* whatever shutdown work is in flight: if the worker
+/// is mid-`mount.save()` when K8s sends SIGTERM (e.g. from session-kill
+/// in [[i-cmwkufff]]), the handler wins and the worker exits 143 instead
+/// of finishing the in-flight phase. That is intentional — by the time a
+/// SIGTERM reaches us, we've already lost the bet on graceful shutdown.
+#[cfg(unix)]
+fn install_worker_sigterm_handler() {
+    tokio::spawn(async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut stream) => {
+                let _ = stream.recv().await;
+                log_status(format!(
+                    "Worker received SIGTERM — exiting with code {WORKER_EXIT_SIGTERM}"
+                ));
+                std::process::exit(WORKER_EXIT_SIGTERM);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "hydra::worker_run",
+                    "failed to register SIGTERM handler: {err}"
+                );
+            }
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn install_worker_sigterm_handler() {
+    // SIGTERM is unix-only; no-op on other platforms.
 }
 
 fn resolve_worker_home_dir() -> Option<PathBuf> {
@@ -613,5 +796,71 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn shutdown_outcome_clean_returns_exit_zero() {
+        let outcome = run_with_shutdown_budget(Duration::from_secs(60), || async {
+            Vec::<anyhow::Error>::new()
+        })
+        .await;
+
+        assert!(!outcome.timed_out);
+        assert!(outcome.errors.is_empty());
+        assert_eq!(outcome.exit_code(), WORKER_EXIT_OK);
+    }
+
+    #[tokio::test]
+    async fn shutdown_outcome_with_errors_returns_exit_one() {
+        let outcome = run_with_shutdown_budget(Duration::from_secs(60), || async {
+            vec![anyhow!("save phase failed")]
+        })
+        .await;
+
+        assert!(!outcome.timed_out);
+        assert_eq!(outcome.errors.len(), 1);
+        assert_eq!(outcome.exit_code(), WORKER_EXIT_FAILED);
+    }
+
+    /// Regression test for the nuclear-exit guarantee: when the inner
+    /// shutdown future wedges (`pending().await` simulates a hung
+    /// `mount.save()`), the outer budget MUST fire and the outcome MUST
+    /// signal `exit_code == 1`. Production calls `std::process::exit`
+    /// based on this; tests can't observe the exit itself, so they pin
+    /// the outcome that drives the exit decision.
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_outcome_times_out_when_inner_future_hangs() {
+        let outcome = run_with_shutdown_budget(Duration::from_secs(90), || async {
+            std::future::pending::<Vec<anyhow::Error>>().await
+        })
+        .await;
+
+        assert!(
+            outcome.timed_out,
+            "outer budget must fire when the inner future never resolves"
+        );
+        assert!(
+            outcome.errors.is_empty(),
+            "timed-out outcome carries no errors (the cancelled future's accumulator was dropped)"
+        );
+        assert_eq!(outcome.exit_code(), WORKER_EXIT_FAILED);
+    }
+
+    /// SIGTERM handler smoke test: registration must complete without
+    /// panicking and without blocking the caller. The actual SIGTERM
+    /// receive path is not exercised here because triggering it would
+    /// terminate the test binary; the production handler is structured
+    /// as a one-shot spawn so this test pins that the spawn itself is
+    /// non-blocking.
+    #[tokio::test]
+    async fn install_worker_sigterm_handler_is_non_blocking() {
+        let result = tokio::time::timeout(Duration::from_millis(100), async {
+            install_worker_sigterm_handler();
+        })
+        .await;
+        assert!(
+            result.is_ok(),
+            "install_worker_sigterm_handler must return immediately"
+        );
     }
 }
