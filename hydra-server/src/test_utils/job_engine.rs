@@ -21,6 +21,10 @@ pub struct MockJobEngine {
     resource_requests: Arc<Mutex<HashMap<SessionId, (String, String)>>>,
     /// When set, `create_job` returns this error instead of creating the job.
     create_job_error: Arc<Mutex<Option<String>>>,
+    /// When set, `kill_job` returns this error instead of killing the job.
+    /// Used to simulate transient K8s API failures (e.g. timeouts) so we can
+    /// exercise the kill-route's "DB transition first, reaper cleans up" path.
+    kill_job_error: Arc<Mutex<Option<String>>>,
 }
 
 impl MockJobEngine {
@@ -92,6 +96,14 @@ impl MockJobEngine {
     /// given message. Pass `None` to restore normal behavior.
     pub fn set_create_job_error(&self, error_message: Option<String>) {
         *self.create_job_error.lock().unwrap() = error_message;
+    }
+
+    /// Configure `kill_job` to fail with an `Internal` error containing the
+    /// given message. Used to simulate K8s API failures so tests can exercise
+    /// the kill-route's "mark DB Failed even when K8s kill fails" path.
+    /// Pass `None` to restore normal behavior.
+    pub fn set_kill_job_error(&self, error_message: Option<String>) {
+        *self.kill_job_error.lock().unwrap() = error_message;
     }
 }
 
@@ -225,6 +237,9 @@ impl JobEngine for MockJobEngine {
     }
 
     async fn kill_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        if let Some(msg) = self.kill_job_error.lock().unwrap().clone() {
+            return Err(JobEngineError::Internal(msg));
+        }
         let mut jobs = self.jobs.lock().unwrap();
         let matching_indices: Vec<_> = jobs
             .iter()
