@@ -1,11 +1,9 @@
-import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Conversation } from "@hydra/api";
+import { Link } from "react-router-dom";
 import { Icons, Kbd, Tooltip } from "@hydra/ui";
-import { apiClient } from "../api/client";
 import { actorDisplayName } from "../api/auth";
 import { useAuth } from "../features/auth/useAuth";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
+import { useChatCreateModal } from "../features/chat/useChatCreateModal";
 import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { useBreadcrumbsState } from "./useBreadcrumbs";
@@ -25,16 +23,7 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
   const displayName = user ? actorDisplayName(user.actor) : null;
   const { data: activeSessionCount = 0 } = useActiveSessionCount(displayName);
   const { open: openIssueCreate } = useIssueCreateModal();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-
-  const createConversation = useMutation({
-    mutationFn: () => apiClient.createConversation({}),
-    onSuccess: (conversation: Conversation) => {
-      queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      navigate(`/chat/${conversation.conversation_id}`);
-    },
-  });
+  const { open: openChatCreate } = useChatCreateModal();
 
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
@@ -111,9 +100,8 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
               key: "new-conversation",
               label: "New conversation",
               icon: <Icons.IconChat size={14} />,
-              onSelect: () => createConversation.mutate(),
+              onSelect: openChatCreate,
               testId: "site-header-new-conversation",
-              disabled: createConversation.isPending,
             },
           ]}
         />

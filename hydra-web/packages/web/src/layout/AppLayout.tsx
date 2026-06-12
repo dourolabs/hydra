@@ -11,6 +11,9 @@ import { useGlobalSearchShortcut } from "../features/search/useGlobalSearchShort
 import { IssueCreateModal } from "../features/dashboard/IssueCreateModal";
 import { IssueCreateModalProvider } from "../features/dashboard/IssueCreateModalProvider";
 import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
+import { ChatCreateModal } from "../features/chat/ChatCreateModal";
+import { ChatCreateModalProvider } from "../features/chat/ChatCreateModalProvider";
+import { useChatCreateModal } from "../features/chat/useChatCreateModal";
 import { Sidebar } from "./Sidebar";
 import { SiteHeader } from "./SiteHeader";
 import { BreadcrumbsProvider } from "./BreadcrumbsProvider";
@@ -40,6 +43,11 @@ function GlobalIssueCreateModal() {
       initial={initial}
     />
   );
+}
+
+function GlobalChatCreateModal() {
+  const { isOpen, close } = useChatCreateModal();
+  return <ChatCreateModal open={isOpen} onClose={close} />;
 }
 
 export function AppLayout() {
@@ -90,32 +98,35 @@ export function AppLayout() {
   return (
     <BreadcrumbsProvider>
       <IssueCreateModalProvider>
-        <div className={styles.layout} data-sidebar={sidebarMode}>
-          {isMobile && !hidden && (
-            <div
-              className={styles.backdrop}
-              onClick={hide}
-              aria-hidden="true"
-              data-testid="sidebar-backdrop"
-            />
-          )}
-          <div className={styles.sidebarSlot}>
-            <Sidebar
-              connectionState={sseState}
-              hidden={hidden}
-              onHide={hide}
-              onOpenSearch={openSearch}
-            />
+        <ChatCreateModalProvider>
+          <div className={styles.layout} data-sidebar={sidebarMode}>
+            {isMobile && !hidden && (
+              <div
+                className={styles.backdrop}
+                onClick={hide}
+                aria-hidden="true"
+                data-testid="sidebar-backdrop"
+              />
+            )}
+            <div className={styles.sidebarSlot}>
+              <Sidebar
+                connectionState={sseState}
+                hidden={hidden}
+                onHide={hide}
+                onOpenSearch={openSearch}
+              />
+            </div>
+            <div className={styles.contentColumn}>
+              <SiteHeader hidden={hidden} onHide={hide} onShow={show} onOpenSearch={openSearch} />
+              <main className={styles.main}>
+                <Outlet />
+              </main>
+            </div>
+            <GlobalSearchModal open={searchOpen} onClose={closeSearch} />
+            <GlobalIssueCreateModal />
+            <GlobalChatCreateModal />
           </div>
-          <div className={styles.contentColumn}>
-            <SiteHeader hidden={hidden} onHide={hide} onShow={show} onOpenSearch={openSearch} />
-            <main className={styles.main}>
-              <Outlet />
-            </main>
-          </div>
-          <GlobalSearchModal open={searchOpen} onClose={closeSearch} />
-          <GlobalIssueCreateModal />
-        </div>
+        </ChatCreateModalProvider>
       </IssueCreateModalProvider>
     </BreadcrumbsProvider>
   );
