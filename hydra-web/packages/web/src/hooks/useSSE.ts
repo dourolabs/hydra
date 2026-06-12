@@ -127,21 +127,47 @@ function upsertBatchSession(qc: QueryClient, entityId: string, record: SessionSu
   upsertInList(qc, ["sessions", "batch"], sessionList, wrapSessions, sessionRecordId, entityId, record);
 }
 
-// Conversation list is a flat ConversationSummary[] (no wrapper object)
 const conversationRecordId = (r: ConversationSummary) => r.conversation_id;
 
-/** Upsert a conversation summary into the conversations list cache. */
+/**
+ * Upsert a conversation summary into the conversations list caches. Two
+ * cache shapes live under the `["conversations"]` prefix:
+ * - `useConversations` (`["conversations", query]`) caches a flat
+ *   `ConversationSummary[]`.
+ * - `useActiveConversationsByIssue` (`["conversations", "batch", ids]`)
+ *   caches the wrapped `ListConversationsResponse`. The batch shape needs
+ *   to be patched too, or the board view's chat affordance won't appear
+ *   until the user refreshes the page.
+ */
 function upsertBatchConversation(qc: QueryClient, entityId: string, record: ConversationSummary) {
-  qc.setQueriesData<ConversationSummary[]>({ queryKey: ["conversations"] }, (old) => {
-    if (!old) return old;
-    const idx = old.findIndex((c) => conversationRecordId(c) === entityId);
-    if (idx >= 0) {
-      const updated = [...old];
-      updated[idx] = record;
-      return updated;
-    }
-    return [...old, record];
-  });
+  qc.setQueriesData<ConversationSummary[]>(
+    { queryKey: ["conversations"], predicate: (q) => q.queryKey[1] !== "batch" },
+    (old) => {
+      if (!old) return old;
+      const idx = old.findIndex((c) => conversationRecordId(c) === entityId);
+      if (idx >= 0) {
+        const updated = [...old];
+        updated[idx] = record;
+        return updated;
+      }
+      return [...old, record];
+    },
+  );
+  qc.setQueriesData<{ conversations: ConversationSummary[]; next_cursor?: string | null }>(
+    { queryKey: ["conversations", "batch"] },
+    (old) => {
+      if (!old) return old;
+      const idx = old.conversations.findIndex((c) => conversationRecordId(c) === entityId);
+      let next: ConversationSummary[];
+      if (idx >= 0) {
+        next = [...old.conversations];
+        next[idx] = record;
+      } else {
+        next = [...old.conversations, record];
+      }
+      return { ...old, conversations: next };
+    },
+  );
 }
 
 
