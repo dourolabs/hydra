@@ -407,6 +407,12 @@ pub enum SessionEvent {
     },
     /// Session is closed — no further events will be appended.
     Closed { timestamp: DateTime<Utc> },
+    /// System-originated event surfaced to the agent. Domain twin of
+    /// [`api::sessions::SessionEvent::SystemEvent`].
+    SystemEvent {
+        kind: api::sessions::SystemEventKind,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl SessionEvent {
@@ -431,6 +437,7 @@ impl SessionEvent {
             SessionEvent::Suspending { reason, .. } => format!("Suspending: {reason}"),
             SessionEvent::Resumed { .. } => "Resumed".to_string(),
             SessionEvent::Closed { .. } => "Closed".to_string(),
+            SessionEvent::SystemEvent { kind, .. } => truncate(&kind.render(), "System: "),
         }
     }
 }
@@ -482,6 +489,9 @@ impl TryFrom<api::sessions::SessionEvent> for SessionEvent {
                 timestamp,
             },
             api::sessions::SessionEvent::Closed { timestamp } => SessionEvent::Closed { timestamp },
+            api::sessions::SessionEvent::SystemEvent { kind, timestamp } => {
+                SessionEvent::SystemEvent { kind, timestamp }
+            }
             api::sessions::SessionEvent::Unknown => return Err(UnknownSessionEventVariant),
             _ => return Err(UnknownSessionEventVariant),
         })
@@ -519,6 +529,9 @@ impl From<SessionEvent> for api::sessions::SessionEvent {
                 timestamp,
             },
             SessionEvent::Closed { timestamp } => api::sessions::SessionEvent::Closed { timestamp },
+            SessionEvent::SystemEvent { kind, timestamp } => {
+                api::sessions::SessionEvent::SystemEvent { kind, timestamp }
+            }
         }
     }
 }
@@ -724,6 +737,19 @@ mod tests {
     #[test]
     fn session_event_closed_round_trips_through_domain() {
         round_trip_session_event(api::sessions::SessionEvent::Closed {
+            timestamp: Utc::now(),
+        });
+    }
+
+    #[test]
+    fn session_event_system_event_round_trips_through_domain() {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::projects::StatusKey;
+        round_trip_session_event(api::sessions::SessionEvent::SystemEvent {
+            kind: api::sessions::SystemEventKind::ChildUnblocked {
+                child_id: IssueId::new(),
+                new_status: StatusKey::try_new("in-review").unwrap(),
+            },
             timestamp: Utc::now(),
         });
     }

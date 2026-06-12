@@ -6048,6 +6048,7 @@ impl Store for SqliteStore {
             SessionEvent::Suspending { .. } => "suspending",
             SessionEvent::Resumed { .. } => "resumed",
             SessionEvent::Closed { .. } => "closed",
+            SessionEvent::SystemEvent { .. } => "system_event",
         };
         let actor_json = actor_to_json_string(actor);
 
@@ -11959,6 +11960,37 @@ mod tests {
             events[1].item,
             SessionEvent::AssistantMessage { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn append_and_get_session_event_roundtrips_system_event() {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        let store = create_test_store().await;
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let child_id = IssueId::new();
+        let new_status = StatusKey::try_new("in-review").unwrap();
+        let event = SessionEvent::SystemEvent {
+            kind: SystemEventKind::ChildUnblocked {
+                child_id: child_id.clone(),
+                new_status: new_status.clone(),
+            },
+            timestamp: Utc::now(),
+        };
+        let version = store
+            .append_session_event(&sid, event.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(version, 1);
+
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item, event);
     }
 
     #[tokio::test]

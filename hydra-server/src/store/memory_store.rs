@@ -9291,6 +9291,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn append_and_get_session_event_roundtrips_system_event() {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        let store = MemoryStore::new();
+        let (sid, _) = store
+            .add_session(spawn_task(), Utc::now(), &test_actor())
+            .await
+            .unwrap();
+
+        let event = SessionEvent::SystemEvent {
+            kind: SystemEventKind::ChildUnblocked {
+                child_id: IssueId::new(),
+                new_status: StatusKey::try_new("in-review").unwrap(),
+            },
+            timestamp: Utc::now(),
+        };
+        let v = store
+            .append_session_event(&sid, event.clone(), &test_actor())
+            .await
+            .unwrap();
+        assert_eq!(v, 1);
+
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item, event);
+    }
+
+    #[tokio::test]
     async fn append_session_event_not_found_for_missing_session() {
         let store = MemoryStore::new();
         let missing = SessionId::generate(6).unwrap();

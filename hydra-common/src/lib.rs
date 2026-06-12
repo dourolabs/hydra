@@ -280,6 +280,9 @@ mod ts_export {
         crate::sessions::ListSessionVersionsResponse::export_all(&cfg)
             .expect("ListSessionVersionsResponse");
         crate::sessions::KillSessionResponse::export_all(&cfg).expect("KillSessionResponse");
+        crate::sessions::SessionEvent::export_all(&cfg).expect("SessionEvent");
+        crate::sessions::SystemEventKind::export_all(&cfg).expect("SystemEventKind");
+        crate::sessions::SessionEventSummary::export_all(&cfg).expect("SessionEventSummary");
 
         // API v1: login
         crate::login::LoginRequest::export_all(&cfg).expect("LoginRequest");

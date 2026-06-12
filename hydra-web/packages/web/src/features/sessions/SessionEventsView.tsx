@@ -81,6 +81,12 @@ function describeEvent(event: SessionEvent): RenderedEvent {
       };
     case "closed":
       return { kind: "CLOSED", modifier: styles.rowSystem };
+    case "system_event":
+      return {
+        kind: "SYSTEM",
+        modifier: styles.rowSystem,
+        subtitle: <code className={styles.code}>{event.kind.kind}</code>,
+      };
     case "unknown":
       return {
         kind: "UNKNOWN",
@@ -98,6 +104,7 @@ function eventTimestamp(event: SessionEvent): string | null {
     case "suspending":
     case "resumed":
     case "closed":
+    case "system_event":
       return event.timestamp;
     case "unknown":
       return null;

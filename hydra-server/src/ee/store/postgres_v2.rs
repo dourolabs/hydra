@@ -5867,6 +5867,7 @@ impl Store for PostgresStoreV2 {
             SessionEvent::Suspending { .. } => "suspending",
             SessionEvent::Resumed { .. } => "resumed",
             SessionEvent::Closed { .. } => "closed",
+            SessionEvent::SystemEvent { .. } => "system_event",
         };
         let actor_json = actor_to_json(actor);
 
@@ -10046,6 +10047,36 @@ mod tests {
         assert_eq!(events[0].version, VersionNumber::from(1u64));
         assert_eq!(events[1].version, VersionNumber::from(2u64));
         assert_eq!(events[2].version, VersionNumber::from(3u64));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn session_events_roundtrip_system_event_v2(pool: PgStorePool) {
+        use hydra_common::IssueId;
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        let store = PostgresStoreV2::new(pool);
+        let (sid, _) = store
+            .add_session(sample_session(), Utc::now(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = SessionEvent::SystemEvent {
+            kind: SystemEventKind::ChildUnblocked {
+                child_id: IssueId::new(),
+                new_status: StatusKey::try_new("in-review").unwrap(),
+            },
+            timestamp: Utc::now(),
+        };
+        let v = store
+            .append_session_event(&sid, event.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(v, VersionNumber::from(1u64));
+
+        let events = store.get_session_events(&sid).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item, event);
     }
 
     #[sqlx::test(migrations = "./migrations")]

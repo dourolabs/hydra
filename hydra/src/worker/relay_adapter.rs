@@ -150,7 +150,7 @@ where
                                 None => event_index,
                                 Some(prev) => prev.max(event_index),
                             });
-                        if let SessionEvent::UserMessage { content, .. } = event {
+                        if let Some(content) = project_to_input_text(&event) {
                             if let Some(tx) = input_tx.as_ref() {
                                 if tx.send(WorkerInputMessage { content }).await.is_err() {
                                     // Model is gone; nothing left to forward.
@@ -302,7 +302,7 @@ where
                             None => event_index,
                             Some(prev) => prev.max(event_index),
                         });
-                        if let SessionEvent::UserMessage { content, .. } = event {
+                        if let Some(content) = project_to_input_text(&event) {
                             if input_tx.send(WorkerInputMessage { content }).await.is_err() {
                                 return None;
                             }
@@ -315,7 +315,7 @@ where
                         None => event_index,
                         Some(prev) => prev.max(event_index),
                     });
-                    if let SessionEvent::UserMessage { content, .. } = event {
+                    if let Some(content) = project_to_input_text(&event) {
                         if input_tx.send(WorkerInputMessage { content }).await.is_err() {
                             return None;
                         }
@@ -348,10 +348,28 @@ where
     None
 }
 
-/// Push all `UserMessage`s in `events` onto `input_tx` in order, ignoring
-/// every other variant (the model already emitted those before the
-/// drop). Returns the highest `event_index` observed (or `None` for an
-/// empty slice). Exposed as a free function for unit tests.
+/// Extract the user-shaped input text from a `SessionEvent` for
+/// re-injection into the model. Returns `Some(text)` for `UserMessage`
+/// (verbatim content) and `SystemEvent` (canonical render via
+/// [`SystemEventKind::render`][hydra_common::api::v1::sessions::SystemEventKind::render]),
+/// `None` for every other variant.
+///
+/// `SystemEvent` is re-injected on reconnect because the model has not
+/// yet seen it — same treatment as `UserMessage`, distinct from
+/// `AssistantMessage`/`ToolUse`/`Resumed` which the model already
+/// emitted (or already consumed) before the drop.
+fn project_to_input_text(event: &SessionEvent) -> Option<String> {
+    match event {
+        SessionEvent::UserMessage { content, .. } => Some(content.clone()),
+        SessionEvent::SystemEvent { kind, .. } => Some(kind.render()),
+        _ => None,
+    }
+}
+
+/// Push all input-shaped events in `events` onto `input_tx` in order,
+/// ignoring every other variant (the model already emitted those before
+/// the drop). Returns the highest `event_index` observed (or `None` for
+/// an empty slice). Exposed as a free function for unit tests.
 #[cfg(test)]
 async fn process_catch_up_events(
     events: Vec<CatchUpEvent>,
@@ -363,7 +381,7 @@ async fn process_catch_up_events(
             None => event_index,
             Some(prev) => prev.max(event_index),
         });
-        if let SessionEvent::UserMessage { content, .. } = event {
+        if let Some(content) = project_to_input_text(&event) {
             if input_tx.send(WorkerInputMessage { content }).await.is_err() {
                 return max_index;
             }
@@ -616,6 +634,96 @@ mod tests {
             got.push(m.content);
         }
         assert_eq!(got, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn pump_forwards_system_event_via_canonical_render() {
+        // Inbound SystemEvent is projected into the model's input
+        // channel using `SystemEventKind::render()` — same treatment as
+        // a UserMessage, but the canonical string is the only way the
+        // worker hand-formats it.
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        use hydra_common::IssueId;
+        let (ws, mut server_tx, _server_rx) = duplex();
+        let session_id = SessionId::new();
+        let RelayAdapter {
+            mut input_rx,
+            output_tx,
+            pump,
+        } = spawn_relay_pump(ws, session_id, noop_reconnect::<TestStream>());
+
+        let child_id = IssueId::try_from("i-abcdef".to_string()).unwrap();
+        let kind = SystemEventKind::ChildUnblocked {
+            child_id,
+            new_status: StatusKey::try_new("complete").unwrap(),
+        };
+        let event = ServerMessage::Event {
+            event: SessionEvent::SystemEvent {
+                kind: kind.clone(),
+                timestamp: chrono::Utc::now(),
+            },
+            event_index: 1,
+        };
+        push_server_msg(&mut server_tx, &event).await;
+
+        let got = input_rx.recv().await.unwrap();
+        assert_eq!(got.content, kind.render());
+        assert_eq!(
+            got.content,
+            "Child i-abcdef reached status complete; please continue."
+        );
+
+        drop(output_tx);
+        drop(server_tx);
+        let _ = pump.await;
+    }
+
+    #[tokio::test]
+    async fn process_catch_up_re_injects_system_events_as_user_input() {
+        // SystemEvents in the catch-up slice must reach `input_rx` —
+        // the model has not yet seen them. AssistantMessages /
+        // ToolUse / Resumed are discarded.
+        use hydra_common::api::v1::projects::StatusKey;
+        use hydra_common::api::v1::sessions::SystemEventKind;
+        use hydra_common::IssueId;
+        let (input_tx, mut input_rx) = mpsc::channel::<WorkerInputMessage>(8);
+        let kind = SystemEventKind::ChildUnblocked {
+            child_id: IssueId::try_from("i-abcdef".to_string()).unwrap(),
+            new_status: StatusKey::try_new("complete").unwrap(),
+        };
+        let events = vec![
+            CatchUpEvent {
+                event: SessionEvent::AssistantMessage {
+                    content: "(prior assistant — must not re-inject)".to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+                event_index: 1,
+            },
+            CatchUpEvent {
+                event: SessionEvent::SystemEvent {
+                    kind: kind.clone(),
+                    timestamp: chrono::Utc::now(),
+                },
+                event_index: 2,
+            },
+            CatchUpEvent {
+                event: SessionEvent::UserMessage {
+                    content: "user-after".to_string(),
+                    timestamp: chrono::Utc::now(),
+                },
+                event_index: 3,
+            },
+        ];
+        let max = process_catch_up_events(events, &input_tx).await;
+        assert_eq!(max, Some(3));
+        drop(input_tx);
+
+        let mut got = Vec::new();
+        while let Some(m) = input_rx.recv().await {
+            got.push(m.content);
+        }
+        assert_eq!(got, vec![kind.render(), "user-after".to_string()]);
     }
 
     #[tokio::test]
