@@ -12,10 +12,8 @@ export interface FlowPillProps {
   "data-testid"?: string;
 }
 
-const FILL_COLOR = "var(--acc)";
-
-function FlowCoin({ level, size }: { level: number; size: number }) {
-  const color = FILL_COLOR;
+function FlowCoin({ phase, level, size }: { phase: FlowPillPhase; level: number; size: number }) {
+  const color = phase === "blocked" ? "var(--s-blocked)" : "var(--acc)";
   const cx = 12;
   const cy = 12;
   const r = 8.2;
@@ -61,13 +59,8 @@ export function FlowPill({
 }: FlowPillProps) {
   const level = den > 0 ? num / den : 0;
   return (
-    <span
-      className={styles.flowpill}
-      data-phase={phase}
-      title={title}
-      data-testid={testId}
-    >
-      <FlowCoin level={level} size={size} />
+    <span className={styles.flowpill} data-phase={phase} title={title} data-testid={testId}>
+      <FlowCoin phase={phase} level={level} size={size} />
       <span className={styles.count}>
         <span className={phase === "blocked" ? styles.num : styles.done}>{num}</span>
         <span className={styles.slash}>/</span>
