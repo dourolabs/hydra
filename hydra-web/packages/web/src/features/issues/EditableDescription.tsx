@@ -131,7 +131,7 @@ export function EditableDescription({ issueId, issue }: EditableDescriptionProps
             Cancel
           </Button>
           <span className={styles.hint}>
-            {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to save · Esc to cancel
+            {navigator.userAgent.includes("Mac") ? "⌘" : "Ctrl"}+Enter to save · Esc to cancel
           </span>
         </div>
       </div>

@@ -116,7 +116,7 @@ export function EditableTitle({ issueId, issue, className }: EditableTitleProps)
 
   const display = issue.title || issueId;
   return (
-    <h1 className={styles.title}>
+    <h1 className={className}>
       <span
         className={styles.display}
         role="button"
