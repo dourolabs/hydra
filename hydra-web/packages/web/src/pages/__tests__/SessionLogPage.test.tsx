@@ -283,51 +283,77 @@ describe("SessionLogPage", () => {
     expect(issueLinks.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders an inline Kill Session button on desktop for a running session", () => {
-    useIsMobileMock.mockReturnValue(false);
-    params.issueId = "i-1";
-    params.sessionId = "t-1";
-    sessionState.data = makeRecord("t-1", "running");
+  it.each(["created", "pending", "running"] as const)(
+    "renders an inline Kill Session button on desktop for a %s session",
+    (status) => {
+      useIsMobileMock.mockReturnValue(false);
+      params.issueId = "i-1";
+      params.sessionId = "t-1";
+      sessionState.data = makeRecord("t-1", status);
 
-    render(<SessionLogPage />);
+      render(<SessionLogPage />);
 
-    // The inline button is the only place Kill Session appears on desktop.
-    const inlineKill = document.querySelector(
-      'button:not([data-testid="session-overflow-kill"])',
-    );
-    expect(inlineKill?.textContent).toContain("Kill Session");
-    // No overflow trigger should render on desktop.
-    expect(
-      document.querySelector('[data-testid="session-overflow-trigger"]'),
-    ).toBeNull();
-  });
+      // The inline button is the only place Kill Session appears on desktop.
+      const inlineKill = document.querySelector(
+        'button:not([data-testid="session-overflow-kill"])',
+      );
+      expect(inlineKill?.textContent).toContain("Kill Session");
+      // No overflow trigger should render on desktop.
+      expect(
+        document.querySelector('[data-testid="session-overflow-trigger"]'),
+      ).toBeNull();
+    },
+  );
 
-  it("collapses Kill Session into the overflow menu on mobile for a running session", () => {
-    useIsMobileMock.mockReturnValue(true);
-    params.issueId = "i-1";
-    params.sessionId = "t-1";
-    sessionState.data = makeRecord("t-1", "running");
+  it.each(["created", "pending", "running"] as const)(
+    "collapses Kill Session into the overflow menu on mobile for a %s session",
+    (status) => {
+      useIsMobileMock.mockReturnValue(true);
+      params.issueId = "i-1";
+      params.sessionId = "t-1";
+      sessionState.data = makeRecord("t-1", status);
 
-    render(<SessionLogPage />);
+      render(<SessionLogPage />);
 
-    expect(
-      document.querySelector('[data-testid="session-overflow-trigger"]'),
-    ).not.toBeNull();
-    expect(
-      document.querySelector('[data-testid="session-overflow-kill"]'),
-    ).not.toBeNull();
-  });
+      expect(
+        document.querySelector('[data-testid="session-overflow-trigger"]'),
+      ).not.toBeNull();
+      expect(
+        document.querySelector('[data-testid="session-overflow-kill"]'),
+      ).not.toBeNull();
+    },
+  );
 
-  it("does not render the overflow menu for a complete session on mobile", () => {
-    useIsMobileMock.mockReturnValue(true);
-    params.issueId = "i-1";
-    params.sessionId = "t-1";
-    sessionState.data = makeRecord("t-1", "complete");
+  it.each(["complete", "failed"] as const)(
+    "does not render the kill button for a %s session on desktop",
+    (status) => {
+      useIsMobileMock.mockReturnValue(false);
+      params.issueId = "i-1";
+      params.sessionId = "t-1";
+      sessionState.data = makeRecord("t-1", status);
 
-    render(<SessionLogPage />);
+      render(<SessionLogPage />);
 
-    expect(
-      document.querySelector('[data-testid="session-overflow-trigger"]'),
-    ).toBeNull();
-  });
+      const buttons = Array.from(document.querySelectorAll("button"));
+      expect(buttons.some((b) => b.textContent?.includes("Kill Session"))).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each(["complete", "failed"] as const)(
+    "does not render the overflow menu for a %s session on mobile",
+    (status) => {
+      useIsMobileMock.mockReturnValue(true);
+      params.issueId = "i-1";
+      params.sessionId = "t-1";
+      sessionState.data = makeRecord("t-1", status);
+
+      render(<SessionLogPage />);
+
+      expect(
+        document.querySelector('[data-testid="session-overflow-trigger"]'),
+      ).toBeNull();
+    },
+  );
 });
