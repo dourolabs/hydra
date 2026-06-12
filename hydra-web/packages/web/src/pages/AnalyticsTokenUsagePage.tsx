@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { TokenUsageOverTimeQuery, TokenUsageQuery } from "@hydra/api";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import { TimeRangePicker } from "../features/analytics/TimeRangePicker";
 import {
   DEFAULT_TIME_RANGE,
@@ -19,6 +20,13 @@ import {
 import styles from "./AnalyticsTokenUsagePage.module.css";
 
 const RANGE_PARAM = "range";
+
+const RANGE_EYEBROW: Record<TimeRange, string> = {
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  "all-time": "All time",
+};
 
 export function AnalyticsTokenUsagePage() {
   useBreadcrumbs([{ label: "Analytics", to: "/analytics" }], "Token Usage");
@@ -65,10 +73,11 @@ export function AnalyticsTokenUsagePage() {
 
   return (
     <div className={styles.page} data-testid="analytics-token-usage-page">
-      <header className={styles.head}>
-        <h1 className={styles.title}>Token Usage</h1>
-        <TimeRangePicker value={range} onChange={onRangeChange} />
-      </header>
+      <PageHead
+        eyebrow={RANGE_EYEBROW[range]}
+        title="Token Usage"
+        actions={<TimeRangePicker value={range} onChange={onRangeChange} />}
+      />
 
       <div className={styles.body}>
         <section

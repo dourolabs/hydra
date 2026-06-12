@@ -1,31 +1,12 @@
 .page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.title {
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 0;
+  composes: page from "./adminPage.module.css";
 }
 
 .body {
+  composes: body from "./adminPage.module.css";
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  min-width: 0;
 }
 
 .section {
@@ -36,11 +17,11 @@
 
 .sectionTitle {
   margin: 0;
-  font-size: var(--font-size-sm);
+  font-family: var(--f-sans);
+  font-size: var(--t-md);
   font-weight: 600;
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: -0.005em;
+  color: var(--fg-0);
 }
 
 .grid {

@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { IssuesThroughputQuery, PatchesThroughputQuery } from "@hydra/api";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { PageHead } from "../layout/PageHead";
 import { SlicerPanel } from "../features/analytics/SlicerPanel";
 import { TimeRangePicker } from "../features/analytics/TimeRangePicker";
 import {
@@ -9,6 +10,7 @@ import {
   writeSlicerState,
   timeWindow,
   type SlicerState,
+  type TimeRange,
 } from "../features/analytics/slicerState";
 import {
   PatchesOverTimeChart,
@@ -21,6 +23,13 @@ import {
   IssuesPerStatusDistributionChart,
 } from "../features/analytics/charts";
 import styles from "./AnalyticsThroughputPage.module.css";
+
+const RANGE_EYEBROW: Record<TimeRange, string> = {
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  "all-time": "All time",
+};
 
 export function AnalyticsThroughputPage() {
   useBreadcrumbs([{ label: "Analytics", to: "/analytics" }], "Throughput");
@@ -76,10 +85,16 @@ export function AnalyticsThroughputPage() {
 
   return (
     <div className={styles.page} data-testid="analytics-throughput-page">
-      <header className={styles.head}>
-        <h1 className={styles.title}>Throughput</h1>
-        <TimeRangePicker value={state.range} onChange={(range) => onSlicerChange({ range })} />
-      </header>
+      <PageHead
+        eyebrow={RANGE_EYEBROW[state.range]}
+        title="Throughput"
+        actions={
+          <TimeRangePicker
+            value={state.range}
+            onChange={(range) => onSlicerChange({ range })}
+          />
+        }
+      />
 
       <div className={styles.body}>
         <div className={styles.main}>
