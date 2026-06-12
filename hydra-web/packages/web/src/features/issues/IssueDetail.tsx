@@ -15,6 +15,7 @@ import { FeedbackModal } from "./FeedbackModal";
 import { ArchiveIssueButton } from "./ArchiveIssueButton";
 import { useArchiveIssue } from "./useArchiveIssue";
 import { FormPanel } from "./FormPanel";
+import { CommentsPanel } from "./CommentsPanel";
 import { SessionList } from "../sessions/SessionList";
 import { useSessionsByIssue } from "../sessions/useSessionsByIssue";
 import { useSessionDuration } from "../dashboard/useSessionDuration";
@@ -241,6 +242,10 @@ export function IssueDetail({ record }: IssueDetailProps) {
               </div>
             </div>
           )}
+
+          <div className={styles.section}>
+            <CommentsPanel issueId={issueId} />
+          </div>
 
           {issue.form && (
             <div className={styles.section}>

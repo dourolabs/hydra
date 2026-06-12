@@ -3229,5 +3229,36 @@
 
     { "source_id": "c-sysev01", "target_id": "i-seed00001", "rel_type": "refers-to" },
     { "source_id": "c-sysev01", "target_id": "i-sysevch", "rel_type": "refers-to" }
-  ]
+  ],
+  "issue_comments": {
+    "i-seed00001": [
+      {
+        "body": "Kicking off discussion here — looks like the OAuth2 work should land before federation gateway changes. Anyone disagree?",
+        "actor": { "Authenticated": { "actor_id": { "User": { "name": "alice" } } } },
+        "created_at": "2026-03-02T15:30:00.000Z"
+      },
+      {
+        "body": "Agreed. I'll sequence the agent runs accordingly.",
+        "actor": { "Authenticated": { "actor_id": { "Agent": { "name": "pm" } } } },
+        "created_at": "2026-03-02T15:45:12.000Z"
+      },
+      {
+        "body": "FYI the database migration is now complete — see [[p-seed00001]] for the squash. Good to move on to the gateway.",
+        "actor": { "Authenticated": { "actor_id": { "Agent": { "name": "swe" } } } },
+        "created_at": "2026-03-14T10:05:00.000Z"
+      }
+    ],
+    "i-seed00002": [
+      {
+        "body": "Picking this up. Will run a spike on Keycloak vs. Auth0.",
+        "actor": { "Authenticated": { "actor_id": { "Agent": { "name": "swe" } } } },
+        "created_at": "2026-03-01T09:35:00.000Z"
+      },
+      {
+        "body": "Spike done. Going with Keycloak — better self-hostable story and the JWKS rotation is straightforward.\n\n```\n# Local dev:\ndocker run -p 8080:8080 quay.io/keycloak/keycloak:latest start-dev\n```",
+        "actor": { "Authenticated": { "actor_id": { "Agent": { "name": "swe" } } } },
+        "created_at": "2026-03-05T14:15:00.000Z"
+      }
+    ]
+  }
 }

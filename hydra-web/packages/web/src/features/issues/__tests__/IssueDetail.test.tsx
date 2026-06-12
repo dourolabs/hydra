@@ -30,6 +30,12 @@ vi.mock("../FeedbackModal", () => ({
   FeedbackModal: () => null,
 }));
 
+vi.mock("../CommentsPanel", () => ({
+  CommentsPanel: ({ issueId }: { issueId: string }) => (
+    <div data-testid="comments-panel-stub" data-issue-id={issueId} />
+  ),
+}));
+
 vi.mock("../ArchiveIssueButton", () => ({
   ArchiveIssueButton: () => <button data-testid="archive-button-stub">Archive</button>,
 }));
@@ -325,6 +331,17 @@ describe("IssueDetail archived badge", () => {
     });
 
     expect(screen.queryByTestId("badge-archived")).toBeNull();
+  });
+});
+
+describe("IssueDetail CommentsPanel placement", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("always renders CommentsPanel scoped to the issue id", () => {
+    render(<IssueDetail record={makeRecord({})} />, { wrapper: makeWrapper() });
+    const panel = screen.getByTestId("comments-panel-stub");
+    expect(panel).toBeDefined();
+    expect(panel.getAttribute("data-issue-id")).toBe("i-1");
   });
 });
 

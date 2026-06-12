@@ -11,6 +11,11 @@ import type {
   ListIssueVersionsResponse,
   IssueSummaryRecord,
   IssueSummary,
+  Comment,
+  AddCommentRequest,
+  AddCommentResponse,
+  ListCommentsResponse,
+  ActorRef,
 } from "@hydra/api";
 import { getLabelsForObject, resolveLabelNames } from "./labels.js";
 import { resolveStatusDef } from "../statusResolver.js";
@@ -27,6 +32,31 @@ function inputToIssue(store: Store, input: IssueInput): Issue {
 
 const COLLECTION = "issues";
 const SSE_PREFIX = "issue";
+
+// In-memory per-issue comments. Append-only, sequence starts at 1 per issue.
+const commentsByIssue: Map<string, Comment[]> = new Map();
+
+export function clearIssueComments(): void {
+  commentsByIssue.clear();
+}
+
+export function seedIssueComment(
+  issueId: string,
+  body: string,
+  actor: ActorRef,
+  createdAt: string,
+): void {
+  const list = commentsByIssue.get(issueId) ?? [];
+  const next = list.length > 0 ? Number(list[list.length - 1].sequence) + 1 : 1;
+  list.push({
+    issue_id: issueId,
+    sequence: BigInt(next),
+    body,
+    actor,
+    created_at: createdAt,
+  });
+  commentsByIssue.set(issueId, list);
+}
 
 function toVersionRecord(
   issueId: string,
@@ -288,6 +318,75 @@ export function createIssueRoutes(store: Store): Hono {
     const entry = store.delete<Issue>(COLLECTION, id, SSE_PREFIX);
     const creationTime = store.getCreationTime(COLLECTION, id)!;
     return c.json(toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime));
+  });
+
+  // GET /v1/issues/:id/comments — list comments most-recent-first
+  app.get("/v1/issues/:id/comments", (c) => {
+    const id = c.req.param("id");
+    const existing = store.get<Issue>(COLLECTION, id);
+    if (!existing) {
+      return c.json({ error: `issue '${id}' not found` }, 404);
+    }
+    const limitParam = c.req.query("limit");
+    const beforeParam = c.req.query("before_sequence");
+    const limit = Math.min(Math.max(Number(limitParam ?? 50), 1), 200);
+    const before =
+      beforeParam !== undefined && beforeParam !== null
+        ? BigInt(beforeParam)
+        : null;
+
+    const all = commentsByIssue.get(id) ?? [];
+    const desc = [...all].sort((a, b) => {
+      // bigint compare
+      if (a.sequence === b.sequence) return 0;
+      return a.sequence < b.sequence ? 1 : -1;
+    });
+    const filtered = before === null ? desc : desc.filter((c) => c.sequence < before);
+    const page = filtered.slice(0, limit);
+    const nextBefore: bigint | null =
+      page.length === limit ? page[page.length - 1].sequence : null;
+
+    const resp: ListCommentsResponse = {
+      comments: page,
+      next_before_sequence: nextBefore,
+    };
+    return c.json(resp);
+  });
+
+  // POST /v1/issues/:id/comments — add a new comment
+  app.post("/v1/issues/:id/comments", async (c) => {
+    const id = c.req.param("id");
+    const existing = store.get<Issue>(COLLECTION, id);
+    if (!existing) {
+      return c.json({ error: `issue '${id}' not found` }, 404);
+    }
+    const body = await c.req.json<AddCommentRequest>();
+    const text = (body?.body ?? "").trim();
+    if (!text) {
+      return c.json({ error: "comment body must not be empty or whitespace-only" }, 400);
+    }
+    const list = commentsByIssue.get(id) ?? [];
+    const nextSeq =
+      list.length > 0 ? Number(list[list.length - 1].sequence) + 1 : 1;
+    // Mock actor: the auth middleware injects an actor on the request context,
+    // but the mock-server's store doesn't surface it; use a generic User actor
+    // matching the seeded fixture conventions so the UI renders something.
+    const actor: ActorRef = {
+      Authenticated: {
+        actor_id: { User: { name: "alice" } },
+      },
+    };
+    const comment: Comment = {
+      issue_id: id,
+      sequence: BigInt(nextSeq),
+      body: text,
+      actor,
+      created_at: new Date().toISOString(),
+    };
+    list.push(comment);
+    commentsByIssue.set(id, list);
+    const resp: AddCommentResponse = { comment };
+    return c.json(resp, 201);
   });
 
   // POST /v1/issues/:id/feedback — submit feedback
