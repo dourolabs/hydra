@@ -76,34 +76,31 @@ export function AnalyticsTokenUsagePage() {
           className={styles.section}
           aria-label="Token usage over time"
         >
+          <h2 className={styles.sectionTitle}>Over time</h2>
           <div className={styles.grid}>
             <TokensOverTimeChart query={overTimeQuery} />
             <CostOverTimeChart query={overTimeQuery} />
           </div>
         </section>
 
-        <div className={styles.grid}>
-          <section
-            data-testid="analytics-cost-per-agent-section"
-            className={styles.section}
-            aria-label="Cost per agent"
-          >
+        <section
+          data-testid="analytics-by-agent-section"
+          className={styles.section}
+          aria-label="Cost by agent"
+        >
+          <h2 className={styles.sectionTitle}>By agent</h2>
+          <div className={styles.grid}>
             <CostPerAgentChart query={costQuery} />
-          </section>
-          <section
-            data-testid="analytics-per-session-cost-section"
-            className={styles.section}
-            aria-label="Per-session cost distribution"
-          >
             <PerSessionCostScatterChart query={costQuery} />
-          </section>
-        </div>
+          </div>
+        </section>
 
         <section
           data-testid="analytics-top-issues-section"
           className={styles.section}
           aria-label="Top 10 most expensive issues"
         >
+          <h2 className={styles.sectionTitle}>Top issues</h2>
           <TopIssuesByCostList query={costQuery} />
         </section>
       </div>
