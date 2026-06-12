@@ -199,6 +199,8 @@ export function IssueDetail({ record }: IssueDetailProps) {
             </div>
           </div>
 
+          <h1 className={styles.title}>{issue.title || issueId}</h1>
+
           <div className={styles.metaRow}>
             <IssueProjectPicker issueId={issueId} issue={issue} hideLabel />
             <IssueStatusPicker issueId={issueId} issue={issue} hideLabel />
