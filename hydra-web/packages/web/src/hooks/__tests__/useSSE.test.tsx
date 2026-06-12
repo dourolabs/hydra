@@ -403,6 +403,49 @@ describe("useSSE chatRelated cache invalidation", () => {
     expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
   });
 
+  it("upserts a conversation into the ['conversations', 'batch', ids] cache on conversation_created", () => {
+    // The board view's useActiveConversationsByIssue caches a wrapped
+    // ListConversationsResponse (`{ conversations, next_cursor }`). The prior
+    // implementation typed the cache as a flat array and silently failed to
+    // update it — leaving the user with no "Go to conversation" affordance
+    // until a manual refresh.
+    queryClient.setQueryData(["conversations", "batch", "i-a,i-b"], {
+      conversations: [],
+      next_cursor: null,
+    });
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    const newConversation = {
+      conversation_id: "c-1",
+      title: null,
+      agent_name: null,
+      status: "active",
+      event_count: 0,
+      last_event_preview: null,
+      creator: "alice",
+      spawned_from: "i-a",
+      created_at: "2026-06-09T00:00:00Z",
+      updated_at: "2026-06-09T00:00:00Z",
+    };
+
+    act(() => {
+      es.dispatch("conversation_created", {
+        entity_type: "conversation",
+        entity_id: "c-1",
+        version: 1,
+        timestamp: "2026-06-09T00:00:00Z",
+        entity: newConversation,
+      });
+    });
+
+    const cached = queryClient.getQueryData<{
+      conversations: Array<{ conversation_id: string }>;
+    }>(["conversations", "batch", "i-a,i-b"]);
+    expect(cached?.conversations.map((c) => c.conversation_id)).toEqual(["c-1"]);
+  });
+
   it("invalidates chatRelated root on resync (after first event)", async () => {
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
