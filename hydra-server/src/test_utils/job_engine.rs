@@ -25,6 +25,7 @@ pub struct MockJobEngine {
     /// Used to simulate transient K8s API failures (e.g. timeouts) so we can
     /// exercise the kill-route's "DB transition first, reaper cleans up" path.
     stop_job_error: Arc<Mutex<Option<String>>>,
+    delete_job_calls: Arc<Mutex<u32>>,
 }
 
 impl MockJobEngine {
@@ -104,6 +105,10 @@ impl MockJobEngine {
     /// Pass `None` to restore normal behavior.
     pub fn set_stop_job_error(&self, error_message: Option<String>) {
         *self.stop_job_error.lock().unwrap() = error_message;
+    }
+
+    pub async fn delete_job_call_count(&self) -> u32 {
+        *self.delete_job_calls.lock().unwrap()
     }
 }
 
@@ -263,6 +268,7 @@ impl JobEngine for MockJobEngine {
     }
 
     async fn delete_job(&self, hydra_id: &SessionId) -> Result<(), JobEngineError> {
+        *self.delete_job_calls.lock().unwrap() += 1;
         let mut jobs = self.jobs.lock().unwrap();
         let matching_indices: Vec<_> = jobs
             .iter()
