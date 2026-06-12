@@ -38,6 +38,7 @@ impl std::fmt::Display for Status {
 #[serde(rename_all = "snake_case")]
 pub enum TaskError {
     JobEngineError { reason: String },
+    Killed { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +173,7 @@ impl TryFrom<api_task_status::TaskError> for TaskError {
             api_task_status::TaskError::JobEngineError { reason } => {
                 Ok(TaskError::JobEngineError { reason })
             }
+            api_task_status::TaskError::Killed { reason } => Ok(TaskError::Killed { reason }),
             other => Err(UnsupportedVariantError {
                 variant: format!("{other:?}"),
             }),
@@ -185,6 +187,7 @@ impl From<TaskError> for api_task_status::TaskError {
             TaskError::JobEngineError { reason } => {
                 api_task_status::TaskError::JobEngineError { reason }
             }
+            TaskError::Killed { reason } => api_task_status::TaskError::Killed { reason },
         }
     }
 }

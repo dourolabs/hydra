@@ -43,6 +43,9 @@ pub enum TaskError {
     JobEngineError {
         reason: String,
     },
+    Killed {
+        reason: String,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -52,6 +55,7 @@ pub enum TaskError {
 #[serde(rename_all = "snake_case")]
 enum TaskErrorHelper {
     JobEngineError { reason: String },
+    Killed { reason: String },
 }
 
 impl<'de> Deserialize<'de> for TaskError {
@@ -64,6 +68,7 @@ impl<'de> Deserialize<'de> for TaskError {
             Ok(TaskErrorHelper::JobEngineError { reason }) => {
                 Ok(TaskError::JobEngineError { reason })
             }
+            Ok(TaskErrorHelper::Killed { reason }) => Ok(TaskError::Killed { reason }),
             Err(_) => Ok(TaskError::Unknown),
         }
     }

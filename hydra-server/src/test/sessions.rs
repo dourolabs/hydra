@@ -9,7 +9,7 @@ use crate::domain::{
 };
 use crate::routes::sessions::mount_spec_from_create_request;
 use crate::{
-    job_engine::JobStatus,
+    job_engine::{JobEngine, JobStatus},
     store::{MemoryStore, Session, Status},
     test_utils::{
         MockJobEngine, add_repository, github_user_response, spawn_test_server,
@@ -680,27 +680,256 @@ async fn kill_session_returns_not_found_for_unknown_session() -> anyhow::Result<
     Ok(())
 }
 
-#[tokio::test]
-async fn kill_session_handles_multiple_matches_conflict() -> anyhow::Result<()> {
-    let engine = Arc::new(MockJobEngine::new());
-    let job_id = task_id("s-dupe");
-    engine.insert_job(&job_id, JobStatus::Running).await;
-    engine.insert_job(&job_id, JobStatus::Running).await;
-    let handles = test_state_with_engine_handles(engine);
-    let server = spawn_test_server_with_state(handles.state, handles.store).await?;
+/// Helper that builds a Session row for the kill tests. Each test inserts a
+/// row in a chosen `status` so we can verify the kill route transitions it.
+fn kill_test_session(status: Status) -> Session {
+    use crate::domain::sessions::{AgentConfig, SessionMode};
+    Session {
+        creator: Username::from("test-creator"),
+        spawned_from: None,
+        resumed_from: None,
+        agent_config: AgentConfig::default(),
+        mount_spec: crate::routes::sessions::mount_spec_from_create_request(
+            hydra_common::api::v1::sessions::Bundle::None,
+            None,
+        ),
+        image: Some(default_image()),
+        env_vars: HashMap::new(),
+        cpu_limit: None,
+        memory_limit: None,
+        secrets: None,
+        mode: SessionMode::Headless,
+        status,
+        last_message: None,
+        error: None,
+        deleted: false,
+        creation_time: None,
+        start_time: None,
+        end_time: None,
+        usage: None,
+        proxy_targets: Vec::new(),
+    }
+}
 
-    let client = test_client();
-    let response = client
-        .delete(format!("{}/v1/sessions/{job_id}", server.base_url()))
-        .send()
+/// Asserts the post-kill DB row is `Failed` and was set by a `Killed` error
+/// (the new `TaskError::Killed` variant) — not a `JobEngineError`. Reused by
+/// the per-store scenarios below.
+async fn assert_killed_state(
+    store: &Arc<dyn crate::store::Store>,
+    session_id: &hydra_common::SessionId,
+) -> anyhow::Result<()> {
+    use crate::domain::task_status::TaskError;
+    let session = store.get_session(session_id, false).await?.item;
+    assert_eq!(session.status, Status::Failed);
+    match session.error {
+        Some(TaskError::Killed { reason }) => {
+            assert_eq!(reason, "killed by user");
+        }
+        other => panic!("expected TaskError::Killed, got {other:?}"),
+    }
+    Ok(())
+}
+
+/// Build a fresh `MemoryStore` for each kill-route scenario.
+async fn fresh_memory_store() -> anyhow::Result<Arc<dyn crate::store::Store>> {
+    Ok(Arc::new(crate::store::MemoryStore::new()))
+}
+
+/// Build a fresh in-memory `SqliteStore` for each kill-route scenario.
+async fn fresh_sqlite_store() -> anyhow::Result<Arc<dyn crate::store::Store>> {
+    use crate::store::sqlite_store::SqliteStore;
+    let pool = SqliteStore::init_pool("sqlite::memory:").await?;
+    SqliteStore::run_migrations(&pool).await?;
+    Ok(Arc::new(SqliteStore::new(pool)))
+}
+
+/// Run the full kill-route scenario suite, each scenario against a fresh
+/// store produced by `make_store`. Re-invoked once per backend so
+/// SELECT-projection bugs (e.g. a missing column in the `tasks_v2`
+/// projection that round-trips errors) get caught by SqliteStore even
+/// though MemoryStore would silently mask them.
+async fn run_kill_route_scenarios<F, Fut>(make_store: F) -> anyhow::Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Arc<dyn crate::store::Store>>>,
+{
+    use crate::domain::task_status::TaskError;
+
+    // Scenario 1: `Created` session with no K8s job — engine returns
+    // `NotFound`, kill should still mark DB Failed and respond "killed".
+    {
+        let store = make_store().await?;
+        let engine = Arc::new(MockJobEngine::new());
+        let handles =
+            crate::test_utils::test_state_with_store_and_engine(store.clone(), engine.clone());
+        let (session_id, _) = store
+            .add_session(
+                kill_test_session(Status::Created),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await?;
+        let server = spawn_test_server_with_state(handles.state, store.clone()).await?;
+        let client = test_client();
+        let response = client
+            .delete(format!("{}/v1/sessions/{session_id}", server.base_url()))
+            .send()
+            .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: v1::sessions::KillSessionResponse = response.json().await?;
+        assert_eq!(body.status, "killed");
+        assert_eq!(body.session_id, session_id);
+        assert_killed_state(&store, &session_id).await?;
+    }
+
+    // Scenario 2: `Pending` session with a live K8s job — engine kill
+    // succeeds, kill responds "killed", DB Failed.
+    {
+        let store = make_store().await?;
+        let engine = Arc::new(MockJobEngine::new());
+        let handles =
+            crate::test_utils::test_state_with_store_and_engine(store.clone(), engine.clone());
+        let (session_id, _) = store
+            .add_session(
+                kill_test_session(Status::Pending),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await?;
+        engine.insert_job(&session_id, JobStatus::Pending).await;
+        let server = spawn_test_server_with_state(handles.state, store.clone()).await?;
+        let client = test_client();
+        let response = client
+            .delete(format!("{}/v1/sessions/{session_id}", server.base_url()))
+            .send()
+            .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: v1::sessions::KillSessionResponse = response.json().await?;
+        assert_eq!(body.status, "killed");
+        assert_killed_state(&store, &session_id).await?;
+        // The job should now be marked Failed in the engine — confirms the
+        // synchronous K8s kill path actually ran.
+        let job = engine.find_job_by_hydra_id(&session_id).await?;
+        assert_eq!(job.status, JobStatus::Failed);
+    }
+
+    // Scenario 3: `Running` session where the engine kill fails — the DB
+    // still transitions Failed, but the response reports `killed_pending_cleanup`
+    // so the reaper knows to retry K8s teardown.
+    {
+        let store = make_store().await?;
+        let engine = Arc::new(MockJobEngine::new());
+        engine.set_kill_job_error(Some("simulated kube API timeout".to_string()));
+        let handles =
+            crate::test_utils::test_state_with_store_and_engine(store.clone(), engine.clone());
+        let (session_id, _) = store
+            .add_session(
+                kill_test_session(Status::Running),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await?;
+        let server = spawn_test_server_with_state(handles.state, store.clone()).await?;
+        let client = test_client();
+        let response = client
+            .delete(format!("{}/v1/sessions/{session_id}", server.base_url()))
+            .send()
+            .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: v1::sessions::KillSessionResponse = response.json().await?;
+        assert_eq!(body.status, "killed_pending_cleanup");
+        assert_killed_state(&store, &session_id).await?;
+    }
+
+    // Scenario 4: Session already terminal — kill is idempotent. The DB
+    // value (including its existing `error`) is left untouched and the
+    // response reports `already_terminal`.
+    {
+        let store = make_store().await?;
+        let engine = Arc::new(MockJobEngine::new());
+        let handles =
+            crate::test_utils::test_state_with_store_and_engine(store.clone(), engine.clone());
+        let mut terminal = kill_test_session(Status::Failed);
+        terminal.error = Some(TaskError::JobEngineError {
+            reason: "pre-existing failure".to_string(),
+        });
+        let (session_id, _) = store
+            .add_session(terminal, Utc::now(), &ActorRef::test())
+            .await?;
+        let server = spawn_test_server_with_state(handles.state, store.clone()).await?;
+        let client = test_client();
+        let response = client
+            .delete(format!("{}/v1/sessions/{session_id}", server.base_url()))
+            .send()
+            .await?;
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: v1::sessions::KillSessionResponse = response.json().await?;
+        assert_eq!(body.status, "already_terminal");
+        // The original error is preserved — we don't overwrite a terminal row.
+        let session = store.get_session(&session_id, false).await?.item;
+        assert_eq!(session.status, Status::Failed);
+        match session.error {
+            Some(TaskError::JobEngineError { reason }) => {
+                assert_eq!(reason, "pre-existing failure");
+            }
+            other => panic!("expected pre-existing JobEngineError, got {other:?}"),
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn kill_session_route_scenarios_memory_store() -> anyhow::Result<()> {
+    run_kill_route_scenarios(fresh_memory_store).await
+}
+
+#[tokio::test]
+async fn kill_session_route_scenarios_sqlite_store() -> anyhow::Result<()> {
+    run_kill_route_scenarios(fresh_sqlite_store).await
+}
+
+#[tokio::test]
+async fn kill_session_revokes_auth_tokens() -> anyhow::Result<()> {
+    let handles = test_state_handles();
+    let store = handles.store.clone();
+    let session_id = {
+        let (id, _) = store
+            .add_session(
+                kill_test_session(Status::Running),
+                Utc::now(),
+                &ActorRef::test(),
+            )
+            .await?;
+        id
+    };
+    // Mint a session-scoped auth token so we can verify the kill route
+    // revoked it.
+    let actor = crate::test_utils::test_actor();
+    let raw_token = "tok-for-kill-revoke-test";
+    let token_hash = crate::domain::actors::Actor::hash_auth_token(raw_token);
+    store
+        .add_auth_token(
+            &actor.name(),
+            &token_hash,
+            Some(&session_id),
+            &actor.creator,
+        )
         .await?;
 
-    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
-    let body: serde_json::Value = response.json().await?;
-    assert_eq!(
-        body,
-        json!({ "error": format!("Multiple sessions found for hydra-id '{job_id}'") })
-    );
+    let server = spawn_test_server_with_state(handles.state, store.clone()).await?;
+    let client = test_client();
+    let response = client
+        .delete(format!("{}/v1/sessions/{session_id}", server.base_url()))
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+    let row = store
+        .get_auth_token_by_hash(&token_hash)
+        .await?
+        .expect("token row should still exist");
+    assert!(row.is_revoked, "kill should revoke session auth tokens");
     Ok(())
 }
 
