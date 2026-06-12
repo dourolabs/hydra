@@ -849,10 +849,13 @@ impl AppState {
             return;
         }
 
-        let store_session_ids: Vec<SessionId> = {
+        let store_sessions: HashMap<SessionId, Status> = {
             let store = self.store.as_ref();
             match store.list_sessions(&SearchSessionsQuery::default()).await {
-                Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
+                Ok(tasks) => tasks
+                    .into_iter()
+                    .map(|(id, versioned)| (id, versioned.item.status))
+                    .collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list tasks from store for job reconciliation");
                     return;
@@ -860,26 +863,43 @@ impl AppState {
             }
         };
 
-        let store_task_set: HashSet<_> = store_session_ids.into_iter().collect();
-        let orphaned_jobs: Vec<_> = job_engine_jobs
+        let (missing_from_store, terminal_in_store): (Vec<_>, Vec<_>) = job_engine_jobs
             .into_iter()
-            .filter(|job| !store_task_set.contains(&job.id))
-            .collect();
+            .filter_map(|job| match store_sessions.get(&job.id) {
+                None => Some((job, false)),
+                Some(status) if status.is_terminal() => Some((job, true)),
+                Some(_) => None,
+            })
+            .partition(|(_, is_terminal)| !is_terminal);
 
-        if !orphaned_jobs.is_empty() {
+        if !missing_from_store.is_empty() {
             info!(
-                count = orphaned_jobs.len(),
-                "killing jobs present in engine but missing from store"
+                count = missing_from_store.len(),
+                "killing K8s jobs with no DB session"
+            );
+        }
+        if !terminal_in_store.is_empty() {
+            info!(
+                count = terminal_in_store.len(),
+                "killing K8s jobs whose DB session is terminal"
             );
         }
 
-        for job in orphaned_jobs {
+        for (job, is_terminal) in missing_from_store.into_iter().chain(terminal_in_store) {
             match self.job_engine.kill_job(&job.id).await {
                 Ok(()) => {
-                    info!(hydra_id = %job.id, "killed job not present in store");
+                    if is_terminal {
+                        info!(hydra_id = %job.id, "killed K8s job whose DB session is terminal");
+                    } else {
+                        info!(hydra_id = %job.id, "killed K8s job with no DB session");
+                    }
                 }
                 Err(err) => {
-                    warn!(hydra_id = %job.id, error = %err, "failed to kill job not present in store");
+                    if is_terminal {
+                        warn!(hydra_id = %job.id, error = %err, "failed to kill K8s job whose DB session is terminal");
+                    } else {
+                        warn!(hydra_id = %job.id, error = %err, "failed to kill K8s job with no DB session");
+                    }
                 }
             }
         }
@@ -2268,6 +2288,112 @@ mod tests {
             .expect("orphan job should exist")
             .status;
         assert_eq!(orphan_status, JobStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_kills_jobs_whose_session_is_terminal() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let (failed_session_id, _) = {
+            let store = state.store.as_ref();
+            store
+                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
+                .await
+                .unwrap()
+        };
+        state
+            .transition_task_to_completion(
+                &failed_session_id,
+                Err(TaskError::JobEngineError {
+                    reason: "kill_job failed; reaper should clean up".to_string(),
+                }),
+                None,
+                None,
+                ActorRef::test(),
+            )
+            .await
+            .expect("session should transition to Failed");
+
+        let (complete_session_id, _) = {
+            let store = state.store.as_ref();
+            store
+                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
+                .await
+                .unwrap()
+        };
+        state
+            .transition_task_to_pending(&complete_session_id, ActorRef::test())
+            .await
+            .expect("session should transition to Pending");
+        state
+            .transition_task_to_completion(
+                &complete_session_id,
+                Ok(()),
+                None,
+                None,
+                ActorRef::test(),
+            )
+            .await
+            .expect("session should transition to Complete");
+
+        job_engine
+            .insert_job(&failed_session_id, JobStatus::Running)
+            .await;
+        job_engine
+            .insert_job(&complete_session_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        let failed_status = job_engine
+            .find_job_by_hydra_id(&failed_session_id)
+            .await
+            .expect("failed session's job should still exist")
+            .status;
+        assert_eq!(failed_status, JobStatus::Failed);
+
+        let complete_status = job_engine
+            .find_job_by_hydra_id(&complete_session_id)
+            .await
+            .expect("complete session's job should still exist")
+            .status;
+        assert_eq!(complete_status, JobStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_leaves_running_sessions_alone() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+
+        let (running_session_id, _) = {
+            let store = state.store.as_ref();
+            store
+                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
+                .await
+                .unwrap()
+        };
+        state
+            .transition_task_to_pending(&running_session_id, ActorRef::test())
+            .await
+            .expect("session should transition to Pending");
+        state
+            .transition_task_to_running(&running_session_id, ActorRef::test())
+            .await
+            .expect("session should transition to Running");
+
+        job_engine
+            .insert_job(&running_session_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        let status = job_engine
+            .find_job_by_hydra_id(&running_session_id)
+            .await
+            .expect("running session's job should still exist")
+            .status;
+        assert_eq!(status, JobStatus::Running);
     }
 
     #[tokio::test]
