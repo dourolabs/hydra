@@ -1,22 +1,29 @@
+/* Segmented control — mirrors the Table/Board toggle in IssuesView so the
+   analytics page picker reads the same idiom as the rest of the app. */
 .group {
   display: inline-flex;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--color-bg-secondary);
+  background: var(--bg-1);
+  flex-shrink: 0;
 }
 
 .button {
-  appearance: none;
+  height: 26px;
+  padding: 0 10px;
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  color: var(--fg-1);
   background: transparent;
   border: 0;
-  border-right: 1px solid var(--color-border);
-  color: var(--color-text-primary);
-  font: inherit;
-  padding: var(--space-1) var(--space-3);
+  border-right: 1px solid var(--line);
+  display: flex;
+  align-items: center;
   cursor: pointer;
-  font-size: var(--font-size-sm);
-  transition: background var(--transition-fast);
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast);
 }
 
 .button:last-child {
@@ -24,10 +31,11 @@
 }
 
 .button:hover {
-  background: var(--color-bg-hover);
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 
 .buttonActive {
-  background: var(--color-accent-dim);
-  color: var(--acc-fg-on);
+  background: var(--bg-3);
+  color: var(--fg-0);
 }
