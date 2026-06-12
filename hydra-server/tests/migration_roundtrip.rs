@@ -341,6 +341,13 @@ async fn migration_roundtrip() -> Result<()> {
             "add_statuses_session_settings: SqliteStore-style get_project read includes the new column",
         )?;
 
+    create_issue_comments_migration_schema_invariants(&pool)
+        .await
+        .context("create_issue_comments: schema invariants on metis.issue_comments")?;
+    create_issue_comments_migration_is_idempotent(&pool)
+        .await
+        .context("create_issue_comments: re-applying body is a no-op")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -1274,6 +1281,113 @@ async fn add_statuses_session_settings_domain_roundtrip(pool: &PgPool) -> Result
             );
         }
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260714000000_create_issue_comments. Creates `metis.issue_comments`
+// as the per-issue append-only comments stream. Sister to the SQLite
+// migration `20260711000000_create_issue_comments.sql`. No backfill —
+// the table starts empty.
+// ---------------------------------------------------------------------------
+
+async fn create_issue_comments_migration_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !table_exists(pool, "issue_comments").await? {
+        bail!("expected metis.issue_comments table to exist post-rollforward");
+    }
+
+    // Every column NOT NULL with the expected PG data_type.
+    let expected_columns: &[(&str, &str)] = &[
+        ("issue_id", "text"),
+        ("sequence", "bigint"),
+        ("body", "text"),
+        ("actor", "jsonb"),
+        ("created_at", "timestamp with time zone"),
+    ];
+    for (col, want_type) in expected_columns {
+        if !column_exists(pool, "issue_comments", col).await? {
+            bail!("expected metis.issue_comments.{col} column to exist");
+        }
+        if column_is_nullable(pool, "issue_comments", col).await? {
+            bail!("expected metis.issue_comments.{col} to be NOT NULL");
+        }
+        let row = sqlx::query(
+            "SELECT data_type FROM information_schema.columns \
+             WHERE table_schema = 'metis' AND table_name = 'issue_comments' \
+               AND column_name = $1",
+        )
+        .bind(col)
+        .fetch_one(pool)
+        .await
+        .with_context(|| format!("look up data_type for metis.issue_comments.{col}"))?;
+        let data_type: String = row.try_get("data_type")?;
+        if data_type != *want_type {
+            bail!("metis.issue_comments.{col}: expected data_type={want_type}; got {data_type:?}");
+        }
+    }
+
+    // `created_at` DEFAULT must reference `now()`.
+    let row = sqlx::query(
+        "SELECT column_default FROM information_schema.columns \
+         WHERE table_schema = 'metis' AND table_name = 'issue_comments' \
+           AND column_name = 'created_at'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up column_default for metis.issue_comments.created_at")?;
+    let default: Option<String> = row.try_get("column_default")?;
+    let default = default.context("expected metis.issue_comments.created_at to carry a DEFAULT")?;
+    if !default.to_lowercase().contains("now()") {
+        bail!(
+            "metis.issue_comments.created_at: expected DEFAULT referencing now(); got {default:?}"
+        );
+    }
+
+    // Primary key is (issue_id, sequence) in that order.
+    let row = sqlx::query(
+        "SELECT array_agg(a.attname::text ORDER BY k.ord) AS cols \
+         FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indrelid \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         JOIN unnest(string_to_array(i.indkey::text, ' ')::int[]) WITH ORDINALITY AS k(attnum, ord) ON TRUE \
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum \
+         WHERE n.nspname = 'metis' AND c.relname = 'issue_comments' AND i.indisprimary",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up metis.issue_comments primary key columns")?;
+    let pk_cols: Vec<String> = row.try_get("cols")?;
+    if pk_cols != vec!["issue_id".to_string(), "sequence".to_string()] {
+        bail!("metis.issue_comments PK: expected [issue_id, sequence]; got {pk_cols:?}");
+    }
+
+    // Covering DESC-by-sequence list index exists.
+    let row = sqlx::query(
+        "SELECT EXISTS(SELECT 1 FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'metis' AND c.relname = 'issue_comments_issue_seq_desc_idx')",
+    )
+    .fetch_one(pool)
+    .await
+    .context("check for issue_comments_issue_seq_desc_idx")?;
+    let idx_exists: bool = row.try_get(0)?;
+    if !idx_exists {
+        bail!("expected metis.issue_comments_issue_seq_desc_idx to exist");
+    }
+
+    Ok(())
+}
+
+async fn create_issue_comments_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    let body = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/20260714000000_create_issue_comments.sql"),
+    )
+    .context("read create_issue_comments migration body")?;
+    sqlx::raw_sql(&body)
+        .execute(pool)
+        .await
+        .context("re-execute create_issue_comments migration body")?;
     Ok(())
 }
 
