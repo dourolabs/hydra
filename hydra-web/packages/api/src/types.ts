@@ -127,6 +127,7 @@ export type { SelectOption } from "./generated/SelectOption";
 export type { Session } from "./generated/Session";
 export type { SessionEvent } from "./generated/SessionEvent";
 export type { SessionEventSummary } from "./generated/SessionEventSummary";
+export type { SystemEventKind } from "./generated/SystemEventKind";
 export type { SessionId } from "./generated/SessionId";
 export type { SessionLogEventData } from "./generated/SessionLogEventData";
 export type { SessionMode } from "./generated/SessionMode";

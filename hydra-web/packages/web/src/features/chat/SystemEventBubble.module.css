@@ -1,0 +1,81 @@
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 4px 0;
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-3);
+}
+
+.body {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.lead {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--t-xxs);
+  color: var(--fg-3);
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-1);
+}
+
+.text {
+  font-style: italic;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-1);
+  color: var(--fg-0);
+  font-style: normal;
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  transition: border-color 80ms ease, background 80ms ease;
+}
+
+.chip:hover {
+  border-color: var(--acc);
+  background: var(--bg-2);
+}
+
+.chipTitle {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipStatus {
+  /* StatusChip provides its own padding/colour; just ensure it sits inline. */
+  flex-shrink: 0;
+}
+
+.chipStatusFallback {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  padding: 1px 6px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--fg-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.when {
+  color: var(--fg-3);
+}

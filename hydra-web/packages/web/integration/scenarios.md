@@ -94,6 +94,7 @@ the catalog stays in sync.
 - `@chat:reference-preview-cards` — A chat message containing `[[id]]` references for issues / patches / documents / sessions / conversations renders a preview card per unique referenced object at the end of the message, in source order, deduplicated. Inline `[[id]]` rendering in the message body is unchanged.
 - `@chat:proxy-tab` — The right-panel Proxy tab is hidden when the conversation's active session has no advertised `proxy_targets`. Once a worker advertises a port (via `POST /v1/sessions/<sid>/proxy-targets`), the tab appears with a per-port row and a status badge driven by `useConversationProxyStatus` (HEAD probe against `<port>-<conv-id>.proxy.<host>`). Clicking "Open in new tab" calls `POST /v1/conversations/<cid>/proxy-auth` to mint the proxy cookie, then `window.open`s the proxy URL — never iframed.
 - `@chat:list` — Chat list rows render literal Active / Idle / Closed status badges per conversation
+- `@chat:system-event` — A `SessionEvent` of variant `system_event { kind: { kind: "child_unblocked", child_id, new_status } }` in a conversation timeline renders as a `SystemEventBubble` (not a user-message bubble, not a silent drop): the structured chip resolves the child issue's title via the existing `useIssue` query, shows the child's resolved `StatusChip` label, and links to `/issues/<child_id>`. Unknown kinds fall back to a generic "System event" line.
 
 ## Analytics
 
