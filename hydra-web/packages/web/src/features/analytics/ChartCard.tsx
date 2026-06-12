@@ -37,7 +37,7 @@ export function ChartCard({
       role="region"
       aria-label={ariaLabel ?? title}
     >
-      <Panel header={title}>
+      <Panel header={title} fillHeight>
         {disabled && (
           <div
             className={`${styles.placeholder} ${styles.disabled}`}

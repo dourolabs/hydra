@@ -1,6 +1,7 @@
 .card {
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .placeholder {
@@ -8,13 +9,14 @@
   align-items: center;
   justify-content: center;
   min-height: 96px;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-2);
   text-align: center;
 }
 
 .error {
-  color: var(--color-status-failed);
+  color: var(--s-failed);
 }
 
 .disabled {
