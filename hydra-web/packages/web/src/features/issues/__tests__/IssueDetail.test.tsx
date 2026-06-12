@@ -1,48 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import type { Form, FormResponse, IssueVersionRecord, Principal } from "@hydra/api";
+import { makeWrapper } from "./issueDetailHarness";
 
-// --- Hook mocks ---
-vi.mock("../useIssue", () => ({
-  useIssue: () => ({ data: undefined }),
-}));
-
-vi.mock("../../sessions/useSessionsByIssue", () => ({
-  useSessionsByIssue: () => ({ data: [] }),
-}));
-
-vi.mock("../../dashboard/useSessionDuration", () => ({
-  useSessionDuration: () => ({ durationText: "", isRunning: false }),
-}));
-
-// --- Sibling component stubs ---
-vi.mock("../IssueRightPanel", () => ({
-  IssueRightPanel: () => <div data-testid="right-panel-stub" />,
-}));
-
-vi.mock("../IssueUpdateModal", () => ({
-  IssueUpdateModal: () => null,
-}));
-
-vi.mock("../FeedbackModal", () => ({
-  FeedbackModal: () => null,
-}));
-
-vi.mock("../CommentsPanel", () => ({
-  CommentsPanel: ({ issueId }: { issueId: string }) => (
-    <div data-testid="comments-panel-stub" data-issue-id={issueId} />
-  ),
-}));
-
-vi.mock("../ArchiveIssueButton", () => ({
-  ArchiveIssueButton: () => <button data-testid="archive-button-stub">Archive</button>,
-}));
-
-vi.mock("../useArchiveIssue", () => ({
-  useArchiveIssue: () => ({ archive: () => {}, isPending: false }),
-}));
+// --- Test-file-only stubs (not shared with sibling IssueDetail tests) ---
 
 vi.mock("../IssueProjectPicker", () => ({
   IssueProjectPicker: () => <div data-testid="issue-project-picker-stub" />,
@@ -52,52 +14,6 @@ vi.mock("../IssueStatusPicker", () => ({
   IssueStatusPicker: () => <div data-testid="issue-status-picker-stub" />,
 }));
 
-vi.mock("../IssueAssigneePicker", () => ({
-  IssueAssigneePicker: ({
-    issue,
-    hideLabel,
-  }: {
-    issue: { assignee: Principal | null };
-    hideLabel?: boolean;
-  }) => {
-    const assignee = issue.assignee;
-    let label: string | null = null;
-    let kind: "human" | "agent" | null = null;
-    if (assignee) {
-      if ("User" in assignee) {
-        label = assignee.User.name;
-        kind = "human";
-      } else if ("Agent" in assignee) {
-        label = assignee.Agent.name;
-        kind = "agent";
-      }
-    }
-    return (
-      <div
-        data-testid="issue-assignee-picker-stub"
-        data-hide-label={hideLabel ? "true" : "false"}
-      >
-        {label ? (
-          <span data-testid="avatar" data-kind={kind ?? undefined}>
-            {label}
-          </span>
-        ) : (
-          <span>Unassigned</span>
-        )}
-      </div>
-    );
-  },
-}));
-
-vi.mock("../../sessions/SessionList", () => ({
-  SessionList: () => <div data-testid="session-list-stub" />,
-}));
-
-vi.mock("../../../components/MobileTabBar", () => ({
-  MobileTabBar: () => <div data-testid="mobile-tab-bar-stub" />,
-}));
-
-// --- @hydra/ui stubs (minimal renderings sufficient for the assertions) ---
 vi.mock("@hydra/ui", () => ({
   Avatar: ({ name, kind }: { name: string; kind?: string }) => (
     <span data-testid="avatar" data-kind={kind}>
@@ -142,17 +58,6 @@ vi.mock("@hydra/ui", () => ({
       get: () => () => <span aria-hidden="true" />,
     },
   ),
-}));
-
-vi.mock("react-router-dom", () => ({
-  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
-    <a href={to}>{children}</a>
-  ),
-  useNavigate: () => () => {},
-}));
-
-vi.mock("../IssueDetail.module.css", () => ({
-  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
 vi.mock("../FormPanel.module.css", () => ({
@@ -229,14 +134,6 @@ function makeRecord(overrides: {
   } as unknown as IssueVersionRecord;
 }
 
-function makeWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
-}
-
 describe("IssueDetail FormPanel rendering", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -280,10 +177,9 @@ describe("IssueDetail assignee rendering", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("renders an avatar and name for a human assignee", () => {
-    render(
-      <IssueDetail record={makeRecord({ assignee: { User: { name: "alice" } } })} />,
-      { wrapper: makeWrapper() },
-    );
+    render(<IssueDetail record={makeRecord({ assignee: { User: { name: "alice" } } })} />, {
+      wrapper: makeWrapper(),
+    });
 
     const avatar = screen.getByTestId("avatar");
     expect(avatar).toBeDefined();
@@ -294,10 +190,9 @@ describe("IssueDetail assignee rendering", () => {
   });
 
   it("renders an avatar with agent kind for an Agent assignee", () => {
-    render(
-      <IssueDetail record={makeRecord({ assignee: { Agent: { name: "swe" } } })} />,
-      { wrapper: makeWrapper() },
-    );
+    render(<IssueDetail record={makeRecord({ assignee: { Agent: { name: "swe" } } })} />, {
+      wrapper: makeWrapper(),
+    });
 
     const avatar = screen.getByTestId("avatar");
     expect(avatar.getAttribute("data-kind")).toBe("agent");

@@ -1,13 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
-import type {
-  IssueVersionRecord,
-  ProjectRecord,
-  ProjectStatusesResponse,
-} from "@hydra/api";
+import type { IssueVersionRecord, ProjectRecord, ProjectStatusesResponse } from "@hydra/api";
+import { makeWrapper } from "./issueDetailHarness";
 
 // --- apiClient mock -----------------------------------------------------
 
@@ -25,38 +21,8 @@ vi.mock("../../../api/client", () => ({
   },
 }));
 
-// --- Sibling component stubs (unrelated to the pickers) -----------------
+// --- Test-file-only stubs (sibling-component stubs come from the harness) ---
 
-vi.mock("../useIssue", () => ({
-  useIssue: () => ({ data: undefined }),
-}));
-vi.mock("../../sessions/useSessionsByIssue", () => ({
-  useSessionsByIssue: () => ({ data: [] }),
-}));
-vi.mock("../../dashboard/useSessionDuration", () => ({
-  useSessionDuration: () => ({ durationText: "", isRunning: false }),
-}));
-vi.mock("../IssueRightPanel", () => ({
-  IssueRightPanel: () => <div data-testid="right-panel-stub" />,
-}));
-vi.mock("../IssueUpdateModal", () => ({ IssueUpdateModal: () => null }));
-vi.mock("../FeedbackModal", () => ({ FeedbackModal: () => null }));
-vi.mock("../CommentsPanel", () => ({ CommentsPanel: () => null }));
-vi.mock("../ArchiveIssueButton", () => ({
-  ArchiveIssueButton: () => <button data-testid="archive-button-stub">Archive</button>,
-}));
-vi.mock("../useArchiveIssue", () => ({
-  useArchiveIssue: () => ({ archive: () => {}, isPending: false }),
-}));
-vi.mock("../IssueAssigneePicker", () => ({
-  IssueAssigneePicker: () => <div data-testid="assignee-stub" />,
-}));
-vi.mock("../../sessions/SessionList", () => ({
-  SessionList: () => <div data-testid="session-list-stub" />,
-}));
-vi.mock("../../../components/MobileTabBar", () => ({
-  MobileTabBar: () => <div data-testid="mobile-tab-bar-stub" />,
-}));
 vi.mock("../../toast/useToast", () => ({
   useToast: () => ({ addToast: vi.fn() }),
 }));
@@ -67,13 +33,9 @@ vi.mock("@hydra/ui", () => ({
   Avatar: () => null,
   Badge: () => null,
   TypeChip: () => null,
-  Button: ({
-    children,
-    onClick,
-  }: {
-    children: React.ReactNode;
-    onClick?: () => void;
-  }) => <button onClick={onClick}>{children}</button>,
+  Button: ({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) => (
+    <button onClick={onClick}>{children}</button>
+  ),
   Icons: new Proxy(
     {},
     {
@@ -130,16 +92,6 @@ vi.mock("@hydra/ui", () => ({
   ),
 }));
 
-vi.mock("react-router-dom", () => ({
-  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
-    <a href={to}>{children}</a>
-  ),
-  useNavigate: () => () => {},
-}));
-
-vi.mock("../IssueDetail.module.css", () => ({
-  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
-}));
 vi.mock("../IssueProjectPicker.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
@@ -254,14 +206,6 @@ function makeRecord(): IssueVersionRecord {
   } as unknown as IssueVersionRecord;
 }
 
-function makeWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
-}
-
 beforeEach(() => {
   updateIssueMock.mockReset();
   updateIssueMock.mockResolvedValue({});
@@ -276,17 +220,11 @@ beforeEach(() => {
 });
 
 async function openProjectPicker() {
-  await waitFor(() =>
-    expect(
-      screen.getByTestId("issue-project-option-alpha"),
-    ).toBeDefined(),
-  );
+  await waitFor(() => expect(screen.getByTestId("issue-project-option-alpha")).toBeDefined());
 }
 
 async function openStatusPicker() {
-  await waitFor(() =>
-    expect(screen.getByTestId("issue-status-option-in-progress")).toBeDefined(),
-  );
+  await waitFor(() => expect(screen.getByTestId("issue-status-option-in-progress")).toBeDefined());
 }
 
 describe("IssueDetail project + status coordination", () => {
@@ -304,14 +242,12 @@ describe("IssueDetail project + status coordination", () => {
     expect(updateIssueMock).not.toHaveBeenCalled();
 
     // The project pill should show beta now.
-    expect(
-      screen.getByTestId("issue-project-picker-trigger").textContent,
-    ).toContain("beta");
+    expect(screen.getByTestId("issue-project-picker-trigger").textContent).toContain("beta");
 
     // The status picker should show the "Select a status…" placeholder.
-    expect(
-      screen.getByTestId("issue-status-picker-trigger").textContent,
-    ).toContain("Select a status…");
+    expect(screen.getByTestId("issue-status-picker-trigger").textContent).toContain(
+      "Select a status…",
+    );
   });
 
   it("shows the pending project's statuses (not the persisted project's)", async () => {
@@ -324,9 +260,7 @@ describe("IssueDetail project + status coordination", () => {
 
     // Open the status picker; it should fetch / list beta's statuses.
     fireEvent.click(screen.getByTestId("issue-status-picker-trigger"));
-    await waitFor(() =>
-      expect(screen.getByTestId("issue-status-option-triage")).toBeDefined(),
-    );
+    await waitFor(() => expect(screen.getByTestId("issue-status-option-triage")).toBeDefined());
 
     expect(screen.getByTestId("issue-status-option-shipping")).toBeDefined();
     // Persisted-project statuses must NOT appear.
@@ -342,9 +276,7 @@ describe("IssueDetail project + status coordination", () => {
     fireEvent.click(screen.getByTestId("issue-project-option-beta"));
 
     fireEvent.click(screen.getByTestId("issue-status-picker-trigger"));
-    await waitFor(() =>
-      expect(screen.getByTestId("issue-status-option-shipping")).toBeDefined(),
-    );
+    await waitFor(() => expect(screen.getByTestId("issue-status-option-shipping")).toBeDefined());
 
     await act(async () => {
       fireEvent.click(screen.getByTestId("issue-status-option-shipping"));
@@ -362,9 +294,9 @@ describe("IssueDetail project + status coordination", () => {
 
     // After success, the status pill is no longer in placeholder mode.
     await waitFor(() => {
-      expect(
-        screen.getByTestId("issue-status-picker-trigger").textContent,
-      ).not.toContain("Select a status…");
+      expect(screen.getByTestId("issue-status-picker-trigger").textContent).not.toContain(
+        "Select a status…",
+      );
     });
   });
 
@@ -376,9 +308,9 @@ describe("IssueDetail project + status coordination", () => {
     await openProjectPicker();
     fireEvent.click(screen.getByTestId("issue-project-option-beta"));
 
-    expect(
-      screen.getByTestId("issue-status-picker-trigger").textContent,
-    ).toContain("Select a status…");
+    expect(screen.getByTestId("issue-status-picker-trigger").textContent).toContain(
+      "Select a status…",
+    );
 
     // Re-pick alpha (the persisted project).
     fireEvent.click(screen.getByTestId("issue-project-picker-trigger"));
@@ -389,16 +321,12 @@ describe("IssueDetail project + status coordination", () => {
     expect(updateIssueMock).not.toHaveBeenCalled();
 
     // Project pill back to alpha.
-    expect(
-      screen.getByTestId("issue-project-picker-trigger").textContent,
-    ).toContain("alpha");
+    expect(screen.getByTestId("issue-project-picker-trigger").textContent).toContain("alpha");
     // Status picker no longer shows the placeholder.
-    expect(
-      screen.getByTestId("issue-status-picker-trigger").textContent,
-    ).not.toContain("Select a status…");
-    expect(
-      screen.getByTestId("issue-status-picker-trigger").textContent,
-    ).toContain("In Progress");
+    expect(screen.getByTestId("issue-status-picker-trigger").textContent).not.toContain(
+      "Select a status…",
+    );
+    expect(screen.getByTestId("issue-status-picker-trigger").textContent).toContain("In Progress");
   });
 
   it("auto-commits status when NO pending project change is active (legacy path preserved)", async () => {
