@@ -6,6 +6,7 @@ use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use hydra_common::{
     agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
+    api::v1::comments::{AddCommentRequest, AddCommentResponse, ListCommentsResponse},
     api::v1::conversations::{
         Conversation as ApiConversation, CreateConversationRequest, ListConversationsResponse,
         SearchConversationsQuery, SendMessageRequest, UpdateConversationRequest,
@@ -373,6 +374,17 @@ pub trait HydraClientInterface: Send + Sync {
         issue_id: &IssueId,
         request: &SubmitFormRequest,
     ) -> Result<SubmitFormResponse>;
+    async fn add_issue_comment(
+        &self,
+        issue_id: &IssueId,
+        request: &AddCommentRequest,
+    ) -> Result<AddCommentResponse>;
+    async fn list_issue_comments(
+        &self,
+        issue_id: &IssueId,
+        limit: Option<u32>,
+        before_sequence: Option<u64>,
+    ) -> Result<ListCommentsResponse>;
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
     async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
 
@@ -1102,6 +1114,64 @@ impl HydraClient {
             .json::<ListIssueVersionsResponse>()
             .await
             .context("failed to decode list issue versions response")
+    }
+
+    /// Call `POST /v1/issues/:issue_id/comments` to append a comment to
+    /// an issue. The server allocates the next per-issue sequence and
+    /// returns the persisted `Comment`.
+    pub async fn add_issue_comment(
+        &self,
+        issue_id: &IssueId,
+        request: &AddCommentRequest,
+    ) -> Result<AddCommentResponse> {
+        let path = format!("/v1/issues/{issue_id}/comments");
+        let url = self.endpoint(&path)?;
+        let response = self
+            .authed(self.http.post(url))
+            .json(request)
+            .send()
+            .await
+            .context("failed to submit add comment request")?
+            .error_for_status_with_body("hydra-server rejected add comment request")
+            .await?;
+
+        response
+            .json::<AddCommentResponse>()
+            .await
+            .context("failed to decode add comment response")
+    }
+
+    /// Call `GET /v1/issues/:issue_id/comments` to list comments on an
+    /// issue, most recent first. `limit` is clamped server-side to
+    /// `[1, 200]`; `before_sequence` is the cursor for paging.
+    pub async fn list_issue_comments(
+        &self,
+        issue_id: &IssueId,
+        limit: Option<u32>,
+        before_sequence: Option<u64>,
+    ) -> Result<ListCommentsResponse> {
+        let path = format!("/v1/issues/{issue_id}/comments");
+        let url = self.endpoint(&path)?;
+        let mut builder = self.authed(self.http.get(url));
+        if let Some(limit) = limit {
+            builder = builder.query(&[("limit", limit.to_string())]);
+        }
+        if let Some(before_sequence) = before_sequence {
+            builder = builder.query(&[("before_sequence", before_sequence.to_string())]);
+        }
+        let response = builder
+            .send()
+            .await
+            .context("failed to fetch issue comments")?
+            .error_for_status_with_body(
+                "hydra-server returned an error while listing issue comments",
+            )
+            .await?;
+
+        response
+            .json::<ListCommentsResponse>()
+            .await
+            .context("failed to decode list issue comments response")
     }
 
     /// Call `POST /v1/patches` to create a new patch.
@@ -3119,6 +3189,23 @@ impl HydraClientInterface for HydraClient {
         request: &SubmitFormRequest,
     ) -> Result<SubmitFormResponse> {
         HydraClient::submit_form(self, issue_id, request).await
+    }
+
+    async fn add_issue_comment(
+        &self,
+        issue_id: &IssueId,
+        request: &AddCommentRequest,
+    ) -> Result<AddCommentResponse> {
+        HydraClient::add_issue_comment(self, issue_id, request).await
+    }
+
+    async fn list_issue_comments(
+        &self,
+        issue_id: &IssueId,
+        limit: Option<u32>,
+        before_sequence: Option<u64>,
+    ) -> Result<ListCommentsResponse> {
+        HydraClient::list_issue_comments(self, issue_id, limit, before_sequence).await
     }
 
     async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {

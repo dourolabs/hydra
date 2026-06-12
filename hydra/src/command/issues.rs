@@ -2,8 +2,8 @@ use crate::{
     client::HydraClientInterface,
     command::{
         output::{
-            render, CommandContext, DeletedIssueOutcome, IssueRecords, IssueSummaryRecords,
-            ResolvedOutputFormat, SubmitFormOutcome,
+            render, AddCommentOutcome, CommandContext, DeletedIssueOutcome, IssueCommentsList,
+            IssueRecords, IssueSummaryRecords, ResolvedOutputFormat, SubmitFormOutcome,
         },
         utils::resolve_username,
     },
@@ -13,6 +13,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use chrono::Utc;
 use clap::Subcommand;
 use hydra_common::{
+    api::v1::comments::AddCommentRequest,
     api::v1::labels::{Label, SearchLabelsQuery, UpsertLabelRequest},
     api::v1::projects::{ProjectRef, StatusKey},
     constants::ENV_HYDRA_ISSUE_ID,
@@ -396,6 +397,30 @@ pub enum IssueCommands {
         #[arg(long, value_name = "JSON_OR_YAML", default_value = "{}")]
         values: String,
     },
+    /// Add a comment to an issue.
+    Comment {
+        /// Issue to comment on.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+
+        /// Markdown comment body. Required. Empty / whitespace-only is rejected with a 400 server-side.
+        #[arg(long, value_name = "BODY")]
+        body: String,
+    },
+    /// List comments on an issue, most recent first.
+    Comments {
+        /// Issue to fetch comments for.
+        #[arg(value_name = "ISSUE_ID")]
+        id: IssueId,
+
+        /// Maximum number of comments to return (default 50, server clamps to [1, 200]).
+        #[arg(long, value_name = "LIMIT")]
+        limit: Option<u32>,
+
+        /// Cursor: return comments with `sequence` strictly less than this. Omit for the most recent page.
+        #[arg(long = "before-sequence", value_name = "BEFORE_SEQUENCE")]
+        before_sequence: Option<u64>,
+    },
 }
 
 pub async fn run(
@@ -588,6 +613,14 @@ pub async fn run(
         IssueCommands::SubmitForm { id, action, values } => {
             submit_form(client, id, action, values, context.output_format).await
         }
+        IssueCommands::Comment { id, body } => {
+            add_comment(client, id, body, context.output_format).await
+        }
+        IssueCommands::Comments {
+            id,
+            limit,
+            before_sequence,
+        } => list_comments(client, id, limit, before_sequence, context.output_format).await,
     }
 }
 
@@ -877,6 +910,42 @@ async fn submit_form(
 
     let mut buf = Vec::new();
     render(SubmitFormOutcome(&response), output_format, &mut buf)?;
+    write_stdout(&buf)?;
+    Ok(())
+}
+
+async fn add_comment(
+    client: &dyn HydraClientInterface,
+    id: IssueId,
+    body: String,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
+    let request = AddCommentRequest::new(body);
+    let response = client
+        .add_issue_comment(&id, &request)
+        .await
+        .with_context(|| format!("failed to post comment to issue '{id}'"))?;
+
+    let mut buf = Vec::new();
+    render(AddCommentOutcome(&response), output_format, &mut buf)?;
+    write_stdout(&buf)?;
+    Ok(())
+}
+
+async fn list_comments(
+    client: &dyn HydraClientInterface,
+    id: IssueId,
+    limit: Option<u32>,
+    before_sequence: Option<u64>,
+    output_format: ResolvedOutputFormat,
+) -> Result<()> {
+    let response = client
+        .list_issue_comments(&id, limit, before_sequence)
+        .await
+        .with_context(|| format!("failed to list comments for issue '{id}'"))?;
+
+    let mut buf = Vec::new();
+    render(IssueCommentsList(&response), output_format, &mut buf)?;
     write_stdout(&buf)?;
     Ok(())
 }
@@ -3294,5 +3363,297 @@ mod tests {
         assert_eq!(parsed["issue_id"], issue_id("i-42").to_string());
         assert_eq!(parsed["version"], 7);
         assert_eq!(parsed["form_response"]["action_id"], "approve");
+    }
+
+    fn sample_actor_ref() -> hydra_common::actor_ref::ActorRef {
+        use hydra_common::actor_ref::{ActorId, ActorRef};
+        ActorRef::Authenticated {
+            actor_id: ActorId::User(
+                hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+            ),
+            session_id: None,
+        }
+    }
+
+    fn sample_comment(seq: u64, body: &str) -> hydra_common::api::v1::comments::Comment {
+        hydra_common::api::v1::comments::Comment::new(
+            issue_id("i-42"),
+            seq,
+            body.to_string(),
+            sample_actor_ref(),
+            Utc::now(),
+        )
+    }
+
+    #[tokio::test]
+    async fn add_comment_posts_to_correct_endpoint() {
+        use hydra_common::api::v1::comments::{AddCommentRequest, AddCommentResponse};
+
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let id = issue_id("i-42");
+        let request = AddCommentRequest::new("hello world".to_string());
+        let response = AddCommentResponse::new(sample_comment(1, "hello world"));
+
+        let post_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{id}/comments"))
+                .json_body_obj(&request);
+            then.status(200).json_body_obj(&response);
+        });
+
+        add_comment(
+            &client,
+            id.clone(),
+            "hello world".to_string(),
+            ResolvedOutputFormat::Jsonl,
+        )
+        .await
+        .unwrap();
+
+        post_mock.assert();
+        assert_eq!(post_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_comment_forwards_whitespace_body_unchanged() {
+        // Empty / whitespace-only bodies are rejected server-side (400).
+        // The CLI must NOT pre-validate — it just forwards what the user
+        // typed. We verify the wire body is the user's literal input.
+        use hydra_common::api::v1::comments::AddCommentRequest;
+
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let id = issue_id("i-42");
+        let request = AddCommentRequest::new("   ".to_string());
+
+        let post_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{id}/comments"))
+                .json_body_obj(&request);
+            then.status(400).body("rejected");
+        });
+
+        let err = add_comment(
+            &client,
+            id.clone(),
+            "   ".to_string(),
+            ResolvedOutputFormat::Jsonl,
+        )
+        .await
+        .expect_err("400 should surface as an error");
+        assert!(
+            err.to_string().contains("failed to post comment"),
+            "expected wrapped context, got: {err}"
+        );
+        post_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn list_comments_uses_query_params() {
+        use hydra_common::api::v1::comments::ListCommentsResponse;
+
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let id = issue_id("i-42");
+        let response = ListCommentsResponse::new(vec![sample_comment(2, "hi")], Some(2));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{id}/comments"))
+                .query_param("limit", "10")
+                .query_param("before_sequence", "5");
+            then.status(200).json_body_obj(&response);
+        });
+
+        list_comments(
+            &client,
+            id.clone(),
+            Some(10),
+            Some(5),
+            ResolvedOutputFormat::Jsonl,
+        )
+        .await
+        .unwrap();
+
+        get_mock.assert();
+        assert_eq!(get_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_comments_without_pagination_hits_endpoint() {
+        use hydra_common::api::v1::comments::ListCommentsResponse;
+
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let id = issue_id("i-42");
+        let response = ListCommentsResponse::new(Vec::new(), None);
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path(format!("/v1/issues/{id}/comments"));
+            then.status(200).json_body_obj(&response);
+        });
+
+        list_comments(&client, id, None, None, ResolvedOutputFormat::Jsonl)
+            .await
+            .unwrap();
+
+        get_mock.assert();
+    }
+
+    #[test]
+    fn comment_command_parses_required_body_flag() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "hydra",
+            "issues",
+            "comment",
+            "i-abcdef",
+            "--body",
+            "hello world",
+        ])
+        .expect("CLI should parse");
+        match cli.command.expect("subcommand must be present") {
+            crate::cli::Commands::Issues { command } => match command {
+                IssueCommands::Comment { id, body } => {
+                    assert_eq!(id.to_string(), "i-abcdef");
+                    assert_eq!(body, "hello world");
+                }
+                _ => panic!("expected IssueCommands::Comment"),
+            },
+            _ => panic!("expected Commands::Issues"),
+        }
+    }
+
+    #[test]
+    fn comment_command_requires_body_flag() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let result = Cli::try_parse_from(["hydra", "issues", "comment", "i-abcdef"]);
+        let err = match result {
+            Ok(_) => panic!("missing --body should be rejected"),
+            Err(err) => err,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("--body"), "expected --body in error: {msg}");
+    }
+
+    #[test]
+    fn comments_command_parses_pagination_flags() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "hydra",
+            "issues",
+            "comments",
+            "i-abcdef",
+            "--limit",
+            "25",
+            "--before-sequence",
+            "100",
+        ])
+        .expect("CLI should parse");
+        match cli.command.expect("subcommand must be present") {
+            crate::cli::Commands::Issues { command } => match command {
+                IssueCommands::Comments {
+                    id,
+                    limit,
+                    before_sequence,
+                } => {
+                    assert_eq!(id.to_string(), "i-abcdef");
+                    assert_eq!(limit, Some(25));
+                    assert_eq!(before_sequence, Some(100));
+                }
+                _ => panic!("expected IssueCommands::Comments"),
+            },
+            _ => panic!("expected Commands::Issues"),
+        }
+    }
+
+    #[test]
+    fn add_comment_outcome_renders_jsonl_object() {
+        use hydra_common::api::v1::comments::AddCommentResponse;
+        let response = AddCommentResponse::new(sample_comment(3, "hello"));
+        let mut buf = Vec::new();
+        render(
+            AddCommentOutcome(&response),
+            ResolvedOutputFormat::Jsonl,
+            &mut buf,
+        )
+        .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.ends_with('\n'), "jsonl output must end with newline");
+        let trimmed = output.trim_end_matches('\n');
+        assert!(
+            !trimmed.contains('\n'),
+            "jsonl output must be exactly one line"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).unwrap();
+        assert_eq!(parsed["comment"]["sequence"], 3);
+        assert_eq!(parsed["comment"]["body"], "hello");
+    }
+
+    #[test]
+    fn issue_comments_list_renders_jsonl_object() {
+        use hydra_common::api::v1::comments::ListCommentsResponse;
+        let response = ListCommentsResponse::new(
+            vec![sample_comment(2, "second"), sample_comment(1, "first")],
+            Some(1),
+        );
+        let mut buf = Vec::new();
+        render(
+            IssueCommentsList(&response),
+            ResolvedOutputFormat::Jsonl,
+            &mut buf,
+        )
+        .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.ends_with('\n'));
+        let trimmed = output.trim_end_matches('\n');
+        let parsed: serde_json::Value = serde_json::from_str(trimmed).unwrap();
+        assert_eq!(parsed["comments"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["next_before_sequence"], 1);
+    }
+
+    #[test]
+    fn issue_comments_list_renders_pretty_with_cursor_hint() {
+        use hydra_common::api::v1::comments::ListCommentsResponse;
+        let response = ListCommentsResponse::new(vec![sample_comment(2, "second")], Some(2));
+        let mut buf = Vec::new();
+        render(
+            IssueCommentsList(&response),
+            ResolvedOutputFormat::Pretty,
+            &mut buf,
+        )
+        .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(
+            output.contains("[2]"),
+            "expected sequence in pretty output: {output}"
+        );
+        assert!(
+            output.contains("second"),
+            "expected body in pretty output: {output}"
+        );
+        assert!(
+            output.contains("Next page cursor: --before-sequence 2"),
+            "expected pagination hint in pretty output: {output}"
+        );
+    }
+
+    #[test]
+    fn issue_comments_list_renders_pretty_empty() {
+        use hydra_common::api::v1::comments::ListCommentsResponse;
+        let response = ListCommentsResponse::new(Vec::new(), None);
+        let mut buf = Vec::new();
+        render(
+            IssueCommentsList(&response),
+            ResolvedOutputFormat::Pretty,
+            &mut buf,
+        )
+        .unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(output, "No comments.\n");
     }
 }
