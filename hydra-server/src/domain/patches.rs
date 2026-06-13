@@ -281,7 +281,7 @@ pub struct Patch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubPr>,
     #[serde(default)]
-    pub deleted: bool,
+    pub archived: bool,
     /// The head branch name for this patch, independent of any GitHub PR.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
@@ -323,7 +323,7 @@ impl Patch {
             reviews,
             service_repo_name,
             github,
-            deleted: false,
+            archived: false,
             branch_name,
             commit_range,
             base_branch,
@@ -482,7 +482,7 @@ impl From<api::patches::Patch> for Patch {
             reviews: value.reviews.into_iter().map(Into::into).collect(),
             service_repo_name: value.service_repo_name,
             github: value.github.map(Into::into),
-            deleted: value.deleted,
+            archived: value.archived,
             branch_name: value.branch_name,
             commit_range: value.commit_range.map(Into::into),
             base_branch: value.base_branch,
@@ -502,7 +502,7 @@ impl From<Patch> for api::patches::Patch {
             value.reviews.into_iter().map(Into::into).collect(),
             value.service_repo_name,
             value.github.map(Into::into),
-            value.deleted,
+            value.archived,
             value.branch_name,
             value.commit_range.map(Into::into),
             value.base_branch,
@@ -589,7 +589,7 @@ mod tests {
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
             github: None,
-            deleted: false,
+            archived: false,
             branch_name: Some("feature/branch".to_string()),
             commit_range: Some(CommitRange::new(
                 "0000000000000000000000000000000000000001".parse().unwrap(),

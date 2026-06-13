@@ -27,13 +27,13 @@ impl AppState {
             .collect())
     }
 
-    pub async fn delete_repository(
+    pub async fn archive_repository(
         &self,
         name: &RepoName,
         actor: ActorRef,
     ) -> Result<RepositoryRecord, RepositoryError> {
         // Get the repository before deleting to return it
-        // Use include_deleted: true since we need to access the repository to mark it as deleted
+        // Use include_archived: true since we need to access the repository to mark it as archived
         let current =
             self.store
                 .get_repository(name, true)
@@ -44,7 +44,7 @@ impl AppState {
                 })?;
 
         self.store
-            .delete_repository(name, actor)
+            .archive_repository(name, actor)
             .await
             .map_err(|source| match source {
                 StoreError::RepositoryNotFound(_) => RepositoryError::NotFound(name.clone()),
@@ -54,7 +54,7 @@ impl AppState {
         self.service_state.clear_cache(name).await;
 
         let mut deleted_repo = current.item;
-        deleted_repo.deleted = true;
+        deleted_repo.archived = true;
         Ok(RepositoryRecord::from((name.clone(), deleted_repo)))
     }
 
@@ -110,7 +110,7 @@ impl AppState {
 
     pub async fn repository_from_store(&self, name: &RepoName) -> Result<Repository, StoreError> {
         let store = self.store.as_ref();
-        // Use include_deleted: false since API callers should not see deleted repositories
+        // Use include_archived: false since API callers should not see archived repositories
         store
             .get_repository(name, false)
             .await

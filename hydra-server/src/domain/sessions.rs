@@ -126,7 +126,7 @@ pub struct Session {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<TaskError>,
     #[serde(default)]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,7 +194,7 @@ impl Session {
             status,
             last_message,
             error,
-            deleted: false,
+            archived: false,
             creation_time: None,
             start_time: None,
             end_time: None,
@@ -333,7 +333,7 @@ impl TryFrom<api::sessions::Session> for Session {
             status: value.status.try_into()?,
             last_message: value.last_message,
             error: value.error.map(TryInto::try_into).transpose()?,
-            deleted: value.deleted,
+            archived: value.archived,
             creation_time: value.creation_time,
             start_time: value.start_time,
             end_time: value.end_time,
@@ -360,7 +360,7 @@ impl From<Session> for api::sessions::Session {
             value.status.into(),
             value.last_message,
             value.error.map(Into::into),
-            value.deleted,
+            value.archived,
             value.creation_time,
             value.start_time,
             value.end_time,

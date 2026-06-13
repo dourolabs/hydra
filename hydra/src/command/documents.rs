@@ -40,9 +40,9 @@ pub enum DocumentsCommand {
         #[arg(value_name = "ID_OR_PATH")]
         id_or_path: String,
 
-        /// Include deleted documents in the result.
-        #[arg(long = "include-deleted")]
-        include_deleted: bool,
+        /// Include archived documents in the result.
+        #[arg(long = "include-archived")]
+        include_archived: bool,
 
         /// Retrieve a specific version. Positive numbers mean 'get version N'.
         /// Negative numbers mean 'offset from latest' (e.g., -1 = one version before latest).
@@ -53,8 +53,8 @@ pub enum DocumentsCommand {
     Create(CreateDocumentArgs),
     /// Update an existing document.
     Update(UpdateDocumentArgs),
-    /// Delete a document.
-    Delete {
+    /// Archive a document.
+    Archive {
         /// Document ID (e.g., d-abcdef) or path (e.g., docs/plan.md).
         #[arg(value_name = "ID_OR_PATH")]
         id_or_path: String,
@@ -89,9 +89,9 @@ pub struct DocumentsListArgs {
     #[arg(long = "path-prefix", value_name = "PREFIX")]
     pub path_prefix: Option<String>,
 
-    /// Include deleted documents in the listing.
-    #[arg(long = "include-deleted")]
-    pub include_deleted: bool,
+    /// Include archived documents in the listing.
+    #[arg(long = "include-archived")]
+    pub include_archived: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -187,11 +187,11 @@ pub async fn run(
         }
         DocumentsCommand::Get {
             id_or_path,
-            include_deleted,
+            include_archived,
             version,
         } => {
             let document =
-                get_document_with_options(client, &id_or_path, include_deleted, version).await?;
+                get_document_with_options(client, &id_or_path, include_archived, version).await?;
             write_documents_output(context.output_format, &[document], true)?;
         }
         DocumentsCommand::Create(args) => {
@@ -202,15 +202,15 @@ pub async fn run(
             let document = update_document(client, args).await?;
             write_documents_output(context.output_format, &[document], true)?;
         }
-        DocumentsCommand::Delete { id_or_path } => {
+        DocumentsCommand::Archive { id_or_path } => {
             let document = get_document_by_id_or_path(client, &id_or_path, false).await?;
-            let deleted = client
-                .delete_document(&document.document_id)
+            let archived = client
+                .archive_document(&document.document_id)
                 .await
                 .with_context(|| format!("failed to delete document '{}'", document.document_id))?;
             let mut buffer = Vec::new();
             render(
-                DeletedDocumentOutcome(&deleted.document_id),
+                DeletedDocumentOutcome(&archived.document_id),
                 context.output_format,
                 &mut buffer,
             )?;
@@ -283,15 +283,15 @@ fn write_document_summaries_output(
 async fn get_document_by_id_or_path(
     client: &dyn HydraClientInterface,
     id_or_path: &str,
-    include_deleted: bool,
+    include_archived: bool,
 ) -> Result<DocumentVersionRecord> {
     match DocumentId::try_from(id_or_path.to_string()) {
         Ok(id) => client
-            .get_document(&id, include_deleted)
+            .get_document(&id, include_archived)
             .await
             .context("failed to fetch document"),
         Err(_) => client
-            .get_document_by_path(id_or_path, include_deleted)
+            .get_document_by_path(id_or_path, include_archived)
             .await
             .with_context(|| format!("failed to fetch document with path '{id_or_path}'")),
     }
@@ -300,14 +300,14 @@ async fn get_document_by_id_or_path(
 async fn get_document_with_options(
     client: &dyn HydraClientInterface,
     id_or_path: &str,
-    include_deleted: bool,
+    include_archived: bool,
     version: Option<i64>,
 ) -> Result<DocumentVersionRecord> {
     match version {
-        None => get_document_by_id_or_path(client, id_or_path, include_deleted).await,
+        None => get_document_by_id_or_path(client, id_or_path, include_archived).await,
         Some(0) => bail!("--version 0 is not valid; use a positive number for an absolute version or a negative number for an offset from the latest"),
         Some(v) => {
-            let document_id = resolve_document_id(client, id_or_path, include_deleted).await?;
+            let document_id = resolve_document_id(client, id_or_path, include_archived).await?;
             client
                 .get_document_version(&document_id, RelativeVersionNumber::new(v))
                 .await
@@ -322,13 +322,13 @@ async fn get_document_with_options(
 async fn resolve_document_id(
     client: &dyn HydraClientInterface,
     id_or_path: &str,
-    include_deleted: bool,
+    include_archived: bool,
 ) -> Result<DocumentId> {
     match DocumentId::try_from(id_or_path.to_string()) {
         Ok(id) => Ok(id),
         Err(_) => {
             let record = client
-                .get_document_by_path(id_or_path, include_deleted)
+                .get_document_by_path(id_or_path, include_archived)
                 .await
                 .with_context(|| {
                     format!("failed to resolve path '{id_or_path}' to a document ID")
@@ -387,12 +387,12 @@ async fn list_documents(
     client: &dyn HydraClientInterface,
     args: DocumentsListArgs,
 ) -> Result<Vec<DocumentSummaryRecord>> {
-    let include_deleted = if args.include_deleted {
+    let include_archived = if args.include_archived {
         Some(true)
     } else {
         None
     };
-    let mut query = SearchDocumentsQuery::new(args.query, args.path_prefix, None, include_deleted);
+    let mut query = SearchDocumentsQuery::new(args.query, args.path_prefix, None, include_archived);
     query.ids = args.ids;
     let response = client
         .list_documents(&query)
@@ -1057,14 +1057,14 @@ pub async fn push_documents(
                 )?;
             } else {
                 client
-                    .delete_document(&entry.document_id)
+                    .archive_document(&entry.document_id)
                     .await
                     .with_context(|| {
                         format!("failed to delete document '{}'", entry.document_id)
                     })?;
                 new_entries.remove(manifest_path);
                 emit_sync_event(
-                    SyncEvent::Deleted {
+                    SyncEvent::Archived {
                         path: manifest_path,
                         document_id: &entry.document_id,
                     },
@@ -1092,7 +1092,7 @@ pub async fn push_documents(
             total,
             updated: updated_count,
             created: created_count,
-            deleted: deleted_count,
+            archived: deleted_count,
             unchanged: unchanged_count,
             skipped: skipped_count,
             conflicts: conflict_count,
@@ -1210,7 +1210,7 @@ mod tests {
                 ids: Vec::new(),
                 query: Some("runbook".to_string()),
                 path_prefix: Some("docs/".to_string()),
-                include_deleted: false,
+                include_archived: false,
             },
         )
         .await
@@ -1245,7 +1245,7 @@ mod tests {
                 ids: vec![document_id_a.clone(), document_id_b.clone()],
                 query: None,
                 path_prefix: None,
-                include_deleted: false,
+                include_archived: false,
             },
         )
         .await
@@ -2673,7 +2673,7 @@ mod tests {
     async fn push_documents_deletes_locally_removed_files() {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
-        let body = "# To be deleted";
+        let body = "# To be archived";
 
         // Create manifest with an entry, but don't create the local file
         let mut documents = BTreeMap::new();
@@ -2733,7 +2733,7 @@ mod tests {
 
         delete_mock.assert();
 
-        // Verify manifest no longer contains the deleted entry
+        // Verify manifest no longer contains the archived entry
         let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
         assert!(!updated_manifest.documents.contains_key("docs/old.md"));
     }
@@ -2742,7 +2742,7 @@ mod tests {
     async fn push_documents_dry_run_does_not_delete() {
         let dir = tempfile::tempdir().unwrap();
         let doc_id = DocumentId::new();
-        let body = "# To be deleted";
+        let body = "# To be archived";
 
         // Create manifest with an entry, but don't create the local file
         let mut documents = BTreeMap::new();
@@ -2820,7 +2820,7 @@ mod tests {
         };
         manifest.save(dir.path()).unwrap();
 
-        // Don't create either file locally (both "deleted"),
+        // Don't create either file locally (both "archived"),
         // but only push with --path-prefix /playbooks
         fs::create_dir_all(dir.path().join("playbooks")).unwrap();
         fs::create_dir_all(dir.path().join("guides")).unwrap();
@@ -2862,7 +2862,7 @@ mod tests {
         .await
         .unwrap();
 
-        // Only playbooks/old.md should have been deleted
+        // Only playbooks/old.md should have been archived
         delete_mock.assert_hits(1);
 
         let updated_manifest = load_manifest(dir.path()).unwrap().unwrap();
@@ -2908,7 +2908,7 @@ mod tests {
                     "document": {
                         "title": "existing.md",
                         "path": "/guides/existing.md",
-                        "deleted": false,
+                        "archived": false,
                     },
                     "creation_time": "2026-01-01T00:00:00Z",
                 }]

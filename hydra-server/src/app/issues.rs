@@ -418,7 +418,7 @@ impl AppState {
         Ok((issue_id, version))
     }
 
-    pub async fn delete_issue(
+    pub async fn archive_issue(
         &self,
         issue_id: &IssueId,
         actor: ActorRef,
@@ -1341,7 +1341,7 @@ mod tests {
         let mut rx = state.subscribe();
 
         state
-            .delete_issue(&issue_id, ActorRef::test())
+            .archive_issue(&issue_id, ActorRef::test())
             .await
             .expect("delete should succeed");
 
@@ -2052,7 +2052,7 @@ mod tests {
             .unwrap();
 
         // Flip `project.archived = true` without going through
-        // `archive_project`, so the issue's `deleted` flag stays false
+        // `archive_project`, so the issue's `archived` flag stays false
         // and the read-path tolerance fix is the only thing keeping
         // status resolution alive.
         let current = store.get_project(&project_id, true).await.unwrap();

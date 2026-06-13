@@ -19,9 +19,9 @@ pub struct SearchConversationsQuery {
     /// Filter by creator username.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creator: Option<String>,
-    /// Include soft-deleted conversations in results.
+    /// Include archived conversations in results.
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
     /// Filter by the issue that spawned this conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,

@@ -22,7 +22,7 @@ impl Render for DeletedTriggerOutcome<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
         serde_json::to_writer(
             &mut *writer,
-            &json!({ "trigger_id": self.0, "action": "deleted" }),
+            &json!({ "trigger_id": self.0, "action": "archived" }),
         )?;
         writer.write_all(b"\n")?;
         writer.flush()?;
@@ -30,7 +30,7 @@ impl Render for DeletedTriggerOutcome<'_> {
     }
 
     fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
-        writeln!(writer, "Deleted trigger '{}'", self.0)?;
+        writeln!(writer, "Archived trigger '{}'", self.0)?;
         writer.flush()?;
         Ok(())
     }
@@ -145,12 +145,12 @@ fn render_one<W: Write>(
         actions,
         creator,
         last_fired_at,
-        deleted,
+        archived,
         ..
     } = &record.trigger;
 
-    let status = if *deleted {
-        "deleted"
+    let status = if *archived {
+        "archived"
     } else if *enabled {
         "enabled"
     } else {
@@ -257,7 +257,7 @@ mod tests {
         )
         .expect("render");
         let output = String::from_utf8(output).expect("utf8");
-        assert_eq!(output, format!("Deleted trigger '{id}'\n"));
+        assert_eq!(output, format!("Archived trigger '{id}'\n"));
     }
 
     #[test]
@@ -273,6 +273,6 @@ mod tests {
         let output = String::from_utf8(output).expect("utf8");
         assert_eq!(output.lines().count(), 1);
         let parsed: serde_json::Value = serde_json::from_str(output.trim_end()).expect("json");
-        assert_eq!(parsed, json!({ "trigger_id": id, "action": "deleted" }));
+        assert_eq!(parsed, json!({ "trigger_id": id, "action": "archived" }));
     }
 }

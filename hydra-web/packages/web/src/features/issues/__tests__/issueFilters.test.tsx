@@ -32,7 +32,7 @@ const listProjects = vi.fn(() =>
           name: "Engineering v2",
           statuses: [],
           creator: "alice",
-          deleted: false,
+          archived: false,
         },
       },
     ],

@@ -54,15 +54,15 @@ pub struct User {
     pub username: Username,
     pub github_user_id: Option<u64>,
     #[serde(default)]
-    pub deleted: bool,
+    pub archived: bool,
 }
 
 impl User {
-    pub fn new(username: Username, github_user_id: Option<u64>, deleted: bool) -> Self {
+    pub fn new(username: Username, github_user_id: Option<u64>, archived: bool) -> Self {
         Self {
             username,
             github_user_id,
-            deleted,
+            archived,
         }
     }
 }
@@ -108,14 +108,14 @@ impl From<api::users::User> for User {
         User {
             username: value.username.into(),
             github_user_id: value.github_user_id,
-            deleted: value.deleted,
+            archived: value.archived,
         }
     }
 }
 
 impl From<User> for api::users::User {
     fn from(value: User) -> Self {
-        api::users::User::new(value.username.into(), value.github_user_id, value.deleted)
+        api::users::User::new(value.username.into(), value.github_user_id, value.archived)
     }
 }
 

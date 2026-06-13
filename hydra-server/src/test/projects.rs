@@ -470,7 +470,7 @@ async fn archive_status_with_active_issue_cascade_archives_it() -> anyhow::Resul
     let project_id = setup_engineering_project(&client, &base).await?;
 
     // Create an issue at `backlog`, then archive that status. The
-    // cascade-archive flow flips `issue.deleted = true` for the
+    // cascade-archive flow flips `issue.archived = true` for the
     // active issue — no 400, no FK violation.
     let mut input: hydra_common::api::v1::issues::IssueInput = Issue::new(
         IssueType::Task,
@@ -510,7 +510,7 @@ async fn archive_status_with_active_issue_cascade_archives_it() -> anyhow::Resul
     );
 
     let listed: hydra_common::api::v1::issues::ListIssuesResponse = client
-        .get(format!("{base}/v1/issues?include_deleted=true"))
+        .get(format!("{base}/v1/issues?include_archived=true"))
         .send()
         .await?
         .error_for_status()?
@@ -520,10 +520,10 @@ async fn archive_status_with_active_issue_cascade_archives_it() -> anyhow::Resul
         .issues
         .iter()
         .find(|i| i.issue_id == issue_id)
-        .expect("cascaded issue still in the list with include_deleted=true");
+        .expect("cascaded issue still in the list with include_archived=true");
     assert!(
-        cascaded.issue.deleted,
-        "cascade must flip issue.deleted = true"
+        cascaded.issue.archived,
+        "cascade must flip issue.archived = true"
     );
 
     Ok(())

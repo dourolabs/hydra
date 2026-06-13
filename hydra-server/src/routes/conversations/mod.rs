@@ -335,16 +335,16 @@ pub async fn update_conversation(
     Ok(Json(api_conversation))
 }
 
-pub async fn delete_conversation(
+pub async fn archive_conversation(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     ConversationIdPath(conversation_id): ConversationIdPath,
 ) -> Result<Json<api_conversations::Conversation>, ApiError> {
-    info!(conversation_id = %conversation_id, "delete_conversation invoked");
+    info!(conversation_id = %conversation_id, "archive_conversation invoked");
 
     let actor_ref = ActorRef::from(&actor);
     let versioned = state
-        .delete_conversation(&conversation_id, actor_ref)
+        .archive_conversation(&conversation_id, actor_ref)
         .await
         .map_err(map_close_conversation_error)?;
 
@@ -354,7 +354,7 @@ pub async fn delete_conversation(
         versioned.timestamp,
     );
 
-    info!(conversation_id = %conversation_id, "delete_conversation completed");
+    info!(conversation_id = %conversation_id, "archive_conversation completed");
     Ok(Json(api_conversation))
 }
 

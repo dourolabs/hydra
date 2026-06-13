@@ -206,7 +206,7 @@ pub async fn add_agent_with_name(handles: &TestStateHandles, name: &str) {
         title: format!("{name} prompt"),
         body_markdown: format!("prompt for {name}"),
         path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-        deleted: false,
+        archived: false,
     };
     let _ = handles
         .store
@@ -379,7 +379,7 @@ async fn seed_default_conversation_agent(store: &dyn Store) -> anyhow::Result<()
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid prompt path: {e:?}"))?,
         ),
-        deleted: false,
+        archived: false,
     };
     store
         .add_document(doc, &ActorRef::test())

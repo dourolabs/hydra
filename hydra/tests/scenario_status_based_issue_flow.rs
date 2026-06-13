@@ -129,7 +129,7 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
         title: "Approve/Reject form".to_string(),
         body_markdown: FORM_BODY.to_string(),
         path: Some(FORM_PATH.parse().unwrap()),
-        deleted: false,
+        archived: false,
     };
     harness
         .store()

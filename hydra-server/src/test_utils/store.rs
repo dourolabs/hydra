@@ -46,7 +46,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_repository(
         &self,
         _name: &RepoName,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Repository>, StoreError> {
         fail()
     }
@@ -61,7 +61,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_issue(
         &self,
         _id: &IssueId,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         fail()
     }
@@ -127,7 +127,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_patch(
         &self,
         _id: &PatchId,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         fail()
     }
@@ -154,7 +154,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_document(
         &self,
         _id: &DocumentId,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         fail()
     }
@@ -177,7 +177,7 @@ impl ReadOnlyStore for FailingStore {
         fail()
     }
 
-    async fn find_non_deleted_document_by_exact_path(
+    async fn find_non_archived_document_by_exact_path(
         &self,
         _path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
@@ -208,7 +208,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_session(
         &self,
         _id: &SessionId,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         fail()
     }
@@ -245,7 +245,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_user(
         &self,
         _username: &Username,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<User>, StoreError> {
         fail()
     }
@@ -305,14 +305,14 @@ impl ReadOnlyStore for FailingStore {
     async fn get_trigger(
         &self,
         _id: &TriggerId,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Trigger>, StoreError> {
         fail()
     }
 
     async fn list_triggers(
         &self,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         fail()
     }
@@ -403,7 +403,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_conversation(
         &self,
         _id: &ConversationId,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         fail()
     }
@@ -475,7 +475,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_repository(
+    async fn archive_repository(
         &self,
         _name: &RepoName,
         _actor: &ActorRef,
@@ -500,7 +500,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_issue(
+    async fn archive_issue(
         &self,
         _id: &IssueId,
         _actor: &ActorRef,
@@ -525,7 +525,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_patch(
+    async fn archive_patch(
         &self,
         _id: &PatchId,
         _actor: &ActorRef,
@@ -550,7 +550,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_document(
+    async fn archive_document(
         &self,
         _id: &DocumentId,
         _actor: &ActorRef,
@@ -576,7 +576,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_session(
+    async fn archive_session(
         &self,
         _id: &SessionId,
         _actor: &ActorRef,
@@ -596,7 +596,11 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_user(&self, _username: &Username, _actor: &ActorRef) -> Result<(), StoreError> {
+    async fn archive_user(
+        &self,
+        _username: &Username,
+        _actor: &ActorRef,
+    ) -> Result<(), StoreError> {
         fail()
     }
 
@@ -608,7 +612,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_agent(&self, _name: &str) -> Result<(), StoreError> {
+    async fn archive_agent(&self, _name: &str) -> Result<(), StoreError> {
         fail()
     }
 
@@ -620,7 +624,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_label(&self, _id: &LabelId) -> Result<(), StoreError> {
+    async fn archive_label(&self, _id: &LabelId) -> Result<(), StoreError> {
         fail()
     }
 
@@ -749,7 +753,7 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_trigger(
+    async fn archive_trigger(
         &self,
         _id: &TriggerId,
         _actor: &ActorRef,

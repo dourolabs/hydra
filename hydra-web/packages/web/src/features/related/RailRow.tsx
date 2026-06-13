@@ -61,7 +61,7 @@ function isActive(s: SessionSummaryRecord): boolean {
 export function IssueRailRow({ record, sessions, neighborhood, linkSearch }: IssueRailRowProps) {
   const navigate = useNavigate();
   const issue = record.issue;
-  const archived = issue.deleted === true;
+  const archived = issue.archived === true;
   const resolved = issue.status;
   const hasActive = sessions?.some(isActive) ?? false;
   // Resolved status drives the dot color directly. Active sessions

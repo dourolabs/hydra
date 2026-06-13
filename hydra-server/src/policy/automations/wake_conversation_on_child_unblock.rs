@@ -173,7 +173,7 @@ impl Automation for WakeConversationOnChildUnblockAutomation {
 
             let query = SearchConversationsQuery {
                 spawned_from: Some(parent_id.clone()),
-                include_deleted: Some(false),
+                include_archived: Some(false),
                 ..Default::default()
             };
             let conversations = match ctx.store.list_conversations(&query).await {

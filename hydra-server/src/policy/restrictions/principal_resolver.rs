@@ -106,7 +106,7 @@ mod tests {
             commit_range: None,
             base_branch: None,
             reviews: Vec::new(),
-            deleted: false,
+            archived: false,
         }
     }
 

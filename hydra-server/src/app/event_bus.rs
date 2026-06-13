@@ -126,7 +126,7 @@ pub enum EventType {
 /// containing the before/after entity state. For update events, `old` is the
 /// state before the mutation; for create events, only `new` is set; for delete
 /// events, `old` holds the entity as it was before deletion and `new` holds
-/// the deleted (soft-deleted) version.
+/// the archived (soft-archived) version.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum ServerEvent {
@@ -771,7 +771,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_issue = self.inner.get_issue(id, false).await.ok().map(|v| v.item);
-        let version = self.inner.delete_issue(id, &actor).await?;
+        let version = self.inner.archive_issue(id, &actor).await?;
         let new_issue = self
             .inner
             .get_issue(id, true)
@@ -835,7 +835,7 @@ impl StoreWithEvents {
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let old_patch = self.inner.get_patch(id, false).await.ok().map(|v| v.item);
-        let version = self.inner.delete_patch(id, &actor).await?;
+        let version = self.inner.archive_patch(id, &actor).await?;
         let new_patch = self
             .inner
             .get_patch(id, true)
@@ -909,7 +909,7 @@ impl StoreWithEvents {
             .await
             .ok()
             .map(|v| v.item);
-        let version = self.inner.delete_document(id, &actor).await?;
+        let version = self.inner.archive_document(id, &actor).await?;
         let new_document = self
             .inner
             .get_document(id, true)
@@ -981,7 +981,7 @@ impl StoreWithEvents {
         id: &SessionId,
         actor: ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_session(id, &actor).await
+        self.inner.archive_session(id, &actor).await
     }
 
     // ---- Repository mutations (inherent, with actor) ----
@@ -1004,12 +1004,12 @@ impl StoreWithEvents {
         self.inner.update_repository(name, config, &actor).await
     }
 
-    pub async fn delete_repository(
+    pub async fn archive_repository(
         &self,
         name: &RepoName,
         actor: ActorRef,
     ) -> Result<(), StoreError> {
-        self.inner.delete_repository(name, &actor).await
+        self.inner.archive_repository(name, &actor).await
     }
 
     // ---- Auth token mutations (inherent, with actor) ----
@@ -1047,12 +1047,12 @@ impl StoreWithEvents {
         self.inner.update_user(user, &actor).await
     }
 
-    pub async fn delete_user(
+    pub async fn archive_user(
         &self,
         username: &Username,
         actor: ActorRef,
     ) -> Result<(), StoreError> {
-        self.inner.delete_user(username, &actor).await
+        self.inner.archive_user(username, &actor).await
     }
 
     // ---- Conversation mutations (inherent, with actor) ----
@@ -1146,8 +1146,8 @@ impl StoreWithEvents {
         self.inner.update_agent(agent).await
     }
 
-    pub async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
-        self.inner.delete_agent(name).await
+    pub async fn archive_agent(&self, name: &str) -> Result<(), StoreError> {
+        self.inner.archive_agent(name).await
     }
 
     // ---- Label mutations ----
@@ -1183,16 +1183,16 @@ impl StoreWithEvents {
         Ok(())
     }
 
-    pub async fn delete_label(&self, id: &LabelId, actor: ActorRef) -> Result<(), StoreError> {
+    pub async fn archive_label(&self, id: &LabelId, actor: ActorRef) -> Result<(), StoreError> {
         let old_label = self.inner.get_label(id).await.ok();
-        self.inner.delete_label(id).await?;
+        self.inner.archive_label(id).await?;
         // After soft-delete, get_label returns NotFound, so construct the
-        // deleted version from the old label.
+        // archived version from the old label.
         let Some(mut deleted_label) = old_label.clone() else {
             tracing::warn!(label_id = %id, "entity not found before delete; skipping event emission");
             return Ok(());
         };
-        deleted_label.deleted = true;
+        deleted_label.archived = true;
         let payload = Arc::new(MutationPayload::Label {
             old: old_label,
             new: deleted_label,
@@ -1388,12 +1388,12 @@ impl StoreWithEvents {
         self.inner.update_trigger(id, trigger, actor).await
     }
 
-    pub async fn delete_trigger(
+    pub async fn archive_trigger(
         &self,
         id: &TriggerId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_trigger(id, actor).await
+        self.inner.archive_trigger(id, actor).await
     }
 
     pub async fn record_trigger_fire(
@@ -1678,12 +1678,12 @@ impl ReadOnlyStore for StoreWithEvents {
         self.inner.count_documents(query).await
     }
 
-    async fn find_non_deleted_document_by_exact_path(
+    async fn find_non_archived_document_by_exact_path(
         &self,
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
         self.inner
-            .find_non_deleted_document_by_exact_path(path)
+            .find_non_archived_document_by_exact_path(path)
             .await
     }
 
@@ -2340,7 +2340,7 @@ mod tests {
         let issue = Issue::new(
             IssueType::Task,
             "Test Title".to_string(),
-            "to be deleted".to_string(),
+            "to be archived".to_string(),
             Username::from("creator"),
             status("open"),
             crate::domain::projects::default_project_id(),
@@ -2368,9 +2368,9 @@ mod tests {
             ServerEvent::IssueDeleted { payload, .. } => match payload.as_ref() {
                 MutationPayload::Issue { old, new, .. } => {
                     let old = old.as_ref().expect("delete event should carry old state");
-                    assert_eq!(old.description, "to be deleted");
-                    assert!(!old.deleted, "old state should not be deleted");
-                    assert!(new.deleted, "new state should be soft-deleted");
+                    assert_eq!(old.description, "to be archived");
+                    assert!(!old.archived, "old state should not be archived");
+                    assert!(new.archived, "new state should be soft-archived");
                 }
                 other => panic!("expected Issue payload, got {other:?}"),
             },
@@ -2402,7 +2402,7 @@ mod tests {
             status,
             last_message,
             error: None,
-            deleted: false,
+            archived: false,
             creation_time: None,
             start_time: None,
             end_time: None,
@@ -2797,7 +2797,7 @@ mod tests {
             title: "Test doc".to_string(),
             body_markdown: "content".to_string(),
             path: None,
-            deleted: false,
+            archived: false,
         };
         let (doc_id, _) = store
             .add_document_with_actor(doc, ActorRef::test())
@@ -3110,7 +3110,7 @@ mod tests {
             status: Status::Created,
             last_message: None,
             error: None,
-            deleted: false,
+            archived: false,
             creation_time: None,
             start_time: None,
             end_time: None,

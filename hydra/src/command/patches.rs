@@ -53,9 +53,9 @@ pub enum PatchesCommand {
         #[arg(long = "query", value_name = "QUERY")]
         query: Option<String>,
 
-        /// Include deleted patches in the listing.
-        #[arg(long = "include-deleted")]
-        include_deleted: bool,
+        /// Include archived patches in the listing.
+        #[arg(long = "include-archived")]
+        include_archived: bool,
 
         /// Filter patches by exact target repository name (e.g., dourolabs/hydra).
         #[arg(long = "repo-name", value_name = "REPO_NAME")]
@@ -207,9 +207,9 @@ pub enum PatchesCommand {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    /// Delete a patch.
-    Delete {
-        /// Patch ID to delete.
+    /// Archive a patch.
+    Archive {
+        /// Patch ID to archive.
         #[arg(value_name = "PATCH_ID")]
         id: PatchId,
     },
@@ -241,7 +241,7 @@ pub async fn run(
         PatchesCommand::List {
             id,
             query,
-            include_deleted,
+            include_archived,
             repo_name,
             creator,
         } => {
@@ -250,7 +250,7 @@ pub async fn run(
                 ListPatchesArgs {
                     id,
                     query,
-                    include_deleted,
+                    include_archived,
                     repo_name,
                     creator,
                     output_format: context.output_format,
@@ -328,14 +328,14 @@ pub async fn run(
         PatchesCommand::Changelog { id, limit } => {
             changelog_patch(client, id, context.output_format, limit).await
         }
-        PatchesCommand::Delete { id } => {
-            let deleted = client
-                .delete_patch(&id)
+        PatchesCommand::Archive { id } => {
+            let archived = client
+                .archive_patch(&id)
                 .await
                 .with_context(|| format!("failed to delete patch '{id}'"))?;
             let mut buffer = Vec::new();
             render(
-                DeletedPatchOutcome(&deleted.patch_id),
+                DeletedPatchOutcome(&archived.patch_id),
                 context.output_format,
                 &mut buffer,
             )?;
@@ -437,7 +437,7 @@ impl PatchAssetOutput {
 struct ListPatchesArgs {
     id: Option<PatchId>,
     query: Option<String>,
-    include_deleted: bool,
+    include_archived: bool,
     repo_name: Option<String>,
     creator: Option<String>,
     output_format: ResolvedOutputFormat,
@@ -458,7 +458,7 @@ async fn list_patches_with_writer(
     let ListPatchesArgs {
         id,
         query,
-        include_deleted,
+        include_archived,
         repo_name,
         creator,
         output_format,
@@ -477,7 +477,7 @@ async fn list_patches_with_writer(
         return Ok(());
     }
 
-    let patches = fetch_patches(client, query, include_deleted, repo_name, creator).await?;
+    let patches = fetch_patches(client, query, include_archived, repo_name, creator).await?;
 
     render(PatchSummaryRecords(&patches), output_format, writer)?;
 
@@ -512,11 +512,11 @@ async fn get_patch_by_version(
 async fn fetch_patches(
     client: &HydraClient,
     query: Option<String>,
-    include_deleted: bool,
+    include_archived: bool,
     repo_name: Option<String>,
     creator: Option<String>,
 ) -> Result<Vec<PatchSummaryRecord>> {
-    let include_deleted_opt = if include_deleted { Some(true) } else { None };
+    let include_deleted_opt = if include_archived { Some(true) } else { None };
     let mut search_query = SearchPatchesQuery::new(query, include_deleted_opt, vec![], None);
     search_query.repo_name = repo_name;
     search_query.creator = creator;
@@ -1800,7 +1800,7 @@ mod tests {
             ListPatchesArgs {
                 id: None,
                 query: Some("login".to_string()),
-                include_deleted: false,
+                include_archived: false,
                 repo_name: None,
                 creator: None,
                 output_format: ResolvedOutputFormat::Jsonl,
@@ -1830,7 +1830,7 @@ mod tests {
             ListPatchesArgs {
                 id: None,
                 query: None,
-                include_deleted: false,
+                include_archived: false,
                 repo_name: Some("dourolabs/hydra".to_string()),
                 creator: Some("alice".to_string()),
                 output_format: ResolvedOutputFormat::Jsonl,
@@ -1858,7 +1858,7 @@ mod tests {
             ListPatchesArgs {
                 id: None,
                 query: None,
-                include_deleted: false,
+                include_archived: false,
                 repo_name: None,
                 creator: None,
                 output_format: ResolvedOutputFormat::Jsonl,

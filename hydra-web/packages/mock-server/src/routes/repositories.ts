@@ -17,7 +17,7 @@ export function createRepositoryRoutes(store: Store): Hono {
 
   // GET /v1/repositories
   app.get("/v1/repositories", (c) => {
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const items = store.list<Repository>(COLLECTION, includeDeleted);
     const repositories: RepositoryRecord[] = items.map(({ id, entry }) => ({
       name: id,
@@ -34,7 +34,7 @@ export function createRepositoryRoutes(store: Store): Hono {
       remote_url: body.remote_url,
       default_branch: body.default_branch,
       default_image: body.default_image,
-      deleted: body.deleted,
+      archived: body.archived,
       merge_policy: body.merge_policy,
     };
     store.create<Repository>(COLLECTION, body.name, repo, null);
@@ -57,7 +57,7 @@ export function createRepositoryRoutes(store: Store): Hono {
       remote_url: body.remote_url,
       default_branch: body.default_branch,
       default_image: body.default_image,
-      deleted: body.deleted,
+      archived: body.archived,
       merge_policy: body.merge_policy,
     };
     store.update<Repository>(COLLECTION, name, updated, null);

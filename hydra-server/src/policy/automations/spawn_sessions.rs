@@ -116,7 +116,7 @@ impl Automation for SpawnSessionsAutomation {
             triggered_by: Some(Box::new(ctx.actor().clone())),
         };
 
-        // Scan all non-deleted issues for spawn readiness on every event.
+        // Scan all non-archived issues for spawn readiness on every event.
         // This ensures that when a child issue transitions to a terminal state,
         // the parent issue is also evaluated for readiness.
         // Don't filter by status; terminal-status default-project issues
@@ -337,7 +337,7 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: format!("prompt for {name}"),
             path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;
         Ok(())
@@ -364,7 +364,7 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: format!("prompt for {name}"),
             path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;
         Ok(())

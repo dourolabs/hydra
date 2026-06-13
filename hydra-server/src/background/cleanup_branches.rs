@@ -86,7 +86,7 @@ impl ScheduledWorker for CleanupBranchesWorker {
                 .await
             {
                 Ok(stats) => {
-                    total_deleted += stats.deleted;
+                    total_deleted += stats.archived;
                     total_failed += stats.failed;
                 }
                 Err(err) => {
@@ -106,7 +106,7 @@ impl ScheduledWorker for CleanupBranchesWorker {
         } else {
             info!(
                 worker = WORKER_NAME,
-                deleted = total_deleted,
+                archived = total_deleted,
                 failed = total_failed,
                 "worker iteration completed"
             );
@@ -119,7 +119,7 @@ impl ScheduledWorker for CleanupBranchesWorker {
 }
 
 struct CleanupStats {
-    deleted: usize,
+    archived: usize,
     failed: usize,
 }
 
@@ -135,7 +135,7 @@ impl CleanupBranchesWorker {
 
         if refs.is_empty() {
             return Ok(CleanupStats {
-                deleted: 0,
+                archived: 0,
                 failed: 0,
             });
         }
@@ -145,11 +145,11 @@ impl CleanupBranchesWorker {
             .filter_map(|git_ref| parse_hydra_branch(&git_ref.ref_field))
             .collect();
 
-        let mut deleted = 0usize;
+        let mut archived = 0usize;
         let mut failed = 0usize;
 
         for branch in &branches {
-            if (deleted + failed) >= max_deletions {
+            if (archived + failed) >= max_deletions {
                 debug!(
                     owner = owner,
                     repo = repo,
@@ -181,24 +181,24 @@ impl CleanupBranchesWorker {
                 );
                 failed += 1;
             } else {
-                deleted += 1;
+                archived += 1;
             }
         }
 
-        Ok(CleanupStats { deleted, failed })
+        Ok(CleanupStats { archived, failed })
     }
 
     async fn is_branch_stale(&self, branch: &HydraBranch) -> bool {
         match &branch.id_kind {
             HydraIdKind::Issue(id) => {
                 match self.state.store().get_issue(id, true).await {
-                    Ok(versioned) => versioned.item.deleted,
+                    Ok(versioned) => versioned.item.archived,
                     Err(_) => false, // Unknown issue -- do not delete
                 }
             }
             HydraIdKind::Session(id) => {
                 match self.state.store().get_session(id, true).await {
-                    Ok(versioned) => versioned.item.deleted,
+                    Ok(versioned) => versioned.item.archived,
                     Err(_) => false, // Unknown task -- do not delete
                 }
             }
@@ -517,7 +517,7 @@ mod tests {
         let issue = crate::domain::issues::Issue::new(
             crate::domain::issues::IssueType::Task,
             "Test Title".to_string(),
-            "deleted issue".to_string(),
+            "archived issue".to_string(),
             crate::domain::users::Username::from("creator"),
             status("open"),
             crate::domain::projects::default_project_id(),
@@ -535,7 +535,7 @@ mod tests {
             .unwrap();
         handles
             .store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -573,7 +573,7 @@ mod tests {
     #[tokio::test]
     async fn is_branch_stale_returns_true_for_deleted_task() {
         let handles = crate::test_utils::test_state_handles();
-        let task = test_session("deleted task");
+        let task = test_session("archived task");
         let (task_id, _) = handles
             .store
             .add_session(task, chrono::Utc::now(), &ActorRef::test())
@@ -581,7 +581,7 @@ mod tests {
             .unwrap();
         handles
             .store
-            .delete_session(&task_id, &ActorRef::test())
+            .archive_session(&task_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -614,7 +614,7 @@ mod tests {
         );
         let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
         store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
         issue_id
@@ -624,7 +624,7 @@ mod tests {
     async fn cleanup_repo_branches_stops_after_budget_exhausted_by_failures() {
         let handles = crate::test_utils::test_state_handles();
 
-        // Create 5 deleted (stale) issues.
+        // Create 5 archived (stale) issues.
         let mut issue_ids = Vec::new();
         for i in 0..5 {
             let id = create_deleted_issue(handles.store.as_ref(), &format!("stale-{i}")).await;
@@ -680,9 +680,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(stats.deleted, 2);
+        assert_eq!(stats.archived, 2);
         assert_eq!(stats.failed, 1);
-        assert_eq!(stats.deleted + stats.failed, 3);
+        assert_eq!(stats.archived + stats.failed, 3);
     }
 
     #[tokio::test]

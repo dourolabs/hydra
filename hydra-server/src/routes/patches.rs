@@ -336,7 +336,7 @@ pub async fn list_patches(
     State(state): State<AppState>,
     Query(query): Query<v1::patches::SearchPatchesQuery>,
 ) -> Result<Json<v1::patches::ListPatchesResponse>, ApiError> {
-    info!(query = ?query.q, include_deleted = ?query.include_deleted, "list_patches invoked");
+    info!(query = ?query.q, include_archived = ?query.include_archived, "list_patches invoked");
 
     let patches = state
         .list_patches_with_query(&query)
@@ -715,14 +715,14 @@ fn map_patch_error(err: StoreError, patch_id: Option<&PatchId>) -> ApiError {
     }
 }
 
-pub async fn delete_patch(
+pub async fn archive_patch(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     PatchIdPath(patch_id): PatchIdPath,
 ) -> Result<Json<v1::patches::PatchVersionRecord>, ApiError> {
-    info!(patch_id = %patch_id, "delete_patch invoked");
+    info!(patch_id = %patch_id, "archive_patch invoked");
     state
-        .delete_patch(&patch_id, ActorRef::from(&actor))
+        .archive_patch(&patch_id, ActorRef::from(&actor))
         .await
         .map_err(|err| map_patch_error(err, Some(&patch_id)))?;
 
@@ -740,7 +740,7 @@ pub async fn delete_patch(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    info!(patch_id = %patch_id, "delete_patch completed");
+    info!(patch_id = %patch_id, "archive_patch completed");
     let response = v1::patches::PatchVersionRecord::new(
         patch_id,
         patch.version,

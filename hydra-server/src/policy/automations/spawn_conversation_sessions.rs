@@ -166,7 +166,7 @@ async fn spawn_session(
     conversation: &Conversation,
     is_resume: bool,
 ) -> Result<(), AutomationError> {
-    if conversation.deleted {
+    if conversation.archived {
         return Ok(());
     }
 
@@ -428,7 +428,7 @@ async fn find_prior_session_id(
 }
 
 /// On a session's terminal transition, flip the conversation's status from
-/// `Active` to `Idle`. Other statuses (`Closed`, `Idle`) and deleted
+/// `Active` to `Idle`. Other statuses (`Closed`, `Idle`) and archived
 /// conversations are left untouched.
 async fn flip_conversation_to_idle(ctx: &AutomationContext<'_>, conversation_id: ConversationId) {
     let versioned = match ctx.store.get_conversation(&conversation_id, false).await {
@@ -444,7 +444,7 @@ async fn flip_conversation_to_idle(ctx: &AutomationContext<'_>, conversation_id:
         }
     };
     let mut conversation = versioned.item;
-    if conversation.deleted || conversation.status != ConversationStatus::Active {
+    if conversation.archived || conversation.status != ConversationStatus::Active {
         return;
     }
     conversation.status = ConversationStatus::Idle;
@@ -516,7 +516,7 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: prompt_body.to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -537,7 +537,7 @@ mod tests {
             creator: Username::from("creator"),
             session_settings: SessionSettings::default(),
             spawned_from: None,
-            deleted: false,
+            archived: false,
         }
     }
 
@@ -833,8 +833,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Mark the persisted conversation as deleted.
-        conversation.deleted = true;
+        // Mark the persisted conversation as archived.
+        conversation.archived = true;
         state
             .store
             .update_conversation_with_actor(
@@ -1571,7 +1571,7 @@ mod tests {
                 title: path.to_string(),
                 body_markdown: body.to_string(),
                 path: Some(path.parse().unwrap()),
-                deleted: false,
+                archived: false,
             };
             state
                 .store

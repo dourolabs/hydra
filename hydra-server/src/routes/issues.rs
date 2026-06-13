@@ -27,7 +27,7 @@ use tracing::{error, info};
 #[derive(Debug, Deserialize)]
 pub struct GetIssueQuery {
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,10 +125,10 @@ pub async fn get_issue(
     IssueIdPath(issue_id): IssueIdPath,
     Query(query): Query<GetIssueQuery>,
 ) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
-    let include_deleted = query.include_deleted.unwrap_or(false);
-    info!(issue_id = %issue_id, include_deleted, "get_issue invoked");
+    let include_archived = query.include_archived.unwrap_or(false);
+    info!(issue_id = %issue_id, include_archived, "get_issue invoked");
     let issue = state
-        .get_issue(&issue_id, include_deleted)
+        .get_issue(&issue_id, include_archived)
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
@@ -255,7 +255,7 @@ pub async fn list_issues(
         creator = ?query.creator,
         query = ?query.q,
         ids_count = query.ids.len(),
-        include_deleted = ?query.include_deleted,
+        include_archived = ?query.include_archived,
         label_ids = ?query.label_ids,
         sort = ?query.sort,
         bucket_by = ?query.bucket_by,
@@ -478,14 +478,14 @@ fn map_issue_error(err: StoreError, issue_id: Option<&IssueId>) -> ApiError {
     }
 }
 
-pub async fn delete_issue(
+pub async fn archive_issue(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     IssueIdPath(issue_id): IssueIdPath,
 ) -> Result<Json<api_issues::IssueVersionRecord>, ApiError> {
-    info!(issue_id = %issue_id, "delete_issue invoked");
+    info!(issue_id = %issue_id, "archive_issue invoked");
     state
-        .delete_issue(&issue_id, ActorRef::from(&actor))
+        .archive_issue(&issue_id, ActorRef::from(&actor))
         .await
         .map_err(|err| map_issue_error(err, Some(&issue_id)))?;
 
@@ -503,7 +503,7 @@ pub async fn delete_issue(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    info!(issue_id = %issue_id, "delete_issue completed");
+    info!(issue_id = %issue_id, "archive_issue completed");
     let api_issue = build_issue_response(&state, issue.item).await?;
     let response = api_issues::IssueVersionRecord::new(
         issue_id,

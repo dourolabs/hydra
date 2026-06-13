@@ -12,7 +12,7 @@ use hydra_common::{ConversationId, IssueId};
 const AUTOMATION_NAME: &str = "teardown_issue_work";
 
 /// Tears down agent work attached to an issue when the issue either enters
-/// a "teardown_work" status or is deleted (soft-delete / archive).
+/// a "teardown_work" status or is archived (soft-delete / archive).
 ///
 /// Trigger:
 /// - `IssueUpdated` where the new status's `on_enter.teardown_work = true`
@@ -94,7 +94,7 @@ impl TeardownIssueWorkAutomation {
     ) -> Result<usize, AutomationError> {
         let query = SearchConversationsQuery {
             spawned_from: Some(issue_id.clone()),
-            include_deleted: Some(false),
+            include_archived: Some(false),
             ..Default::default()
         };
         let conversations: Vec<(ConversationId, _)> =
@@ -445,7 +445,7 @@ mod tests {
 
         // Build an IssueDeleted event. The payload carries the issue's
         // pre-delete state as `old` and the (still-readable, now soft-
-        // deleted) state as `new`.
+        // archived) state as `new`.
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(issue.clone()),
             new: issue.clone(),
@@ -475,7 +475,7 @@ mod tests {
         assert_eq!(
             after.item.status,
             ConversationStatus::Closed,
-            "conversation spawned from a deleted issue should be closed"
+            "conversation spawned from a archived issue should be closed"
         );
     }
 
@@ -525,7 +525,7 @@ mod tests {
         assert_eq!(
             job.status,
             JobStatus::Failed,
-            "session attached to a deleted issue should be killed",
+            "session attached to a archived issue should be killed",
         );
     }
 

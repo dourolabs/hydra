@@ -334,7 +334,7 @@ export class HydraApiClient {
 
   /** GET /v1/issues/:issueId */
   getIssue(issueId: string, includeDeleted?: boolean): Promise<IssueVersionRecord> {
-    const query = includeDeleted ? { include_deleted: "true" } : undefined;
+    const query = includeDeleted ? { include_archived: "true" } : undefined;
     return this.get(`/v1/issues/${encodeURIComponent(issueId)}`, query);
   }
 
@@ -453,7 +453,7 @@ export class HydraApiClient {
 
   /** GET /v1/documents/:documentId */
   getDocument(documentId: string, includeDeleted?: boolean): Promise<DocumentVersionRecord> {
-    const query = includeDeleted ? { include_deleted: "true" } : undefined;
+    const query = includeDeleted ? { include_archived: "true" } : undefined;
     return this.get(`/v1/documents/${encodeURIComponent(documentId)}`, query);
   }
 
@@ -466,7 +466,7 @@ export class HydraApiClient {
       q: null,
       path_prefix: path,
       path_is_exact: true,
-      include_deleted: includeDeleted ?? null,
+      include_archived: includeDeleted ?? null,
     };
     const response = await this.listDocuments(query);
     const summary = response.documents[0];

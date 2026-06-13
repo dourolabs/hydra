@@ -233,7 +233,7 @@ function toSummaryRecord(
     creator: task.creator,
     status: task.status,
     error: task.error,
-    deleted: task.deleted,
+    archived: task.archived,
     creation_time: task.creation_time,
     start_time: task.start_time,
     end_time: task.end_time,
@@ -297,7 +297,7 @@ export function createSessionRoutes(store: Store): Hono {
 
   // GET /v1/sessions
   app.get("/v1/sessions", (c) => {
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const q = c.req.query("q");
     const spawnedFrom = c.req.query("spawned_from");
     const spawnedFromIds = c.req.query("spawned_from_ids");

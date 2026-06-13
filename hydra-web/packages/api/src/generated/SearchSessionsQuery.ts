@@ -9,7 +9,7 @@ export type SearchSessionsQuery = {
    * Filter sessions spawned from any of these issue IDs (comma-separated, max 100).
    */
   spawned_from_ids?: string;
-  include_deleted: boolean | null;
+  include_archived: boolean | null;
   /**
    * Filter sessions by creator username.
    */

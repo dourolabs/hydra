@@ -28,7 +28,7 @@ export type IssueInput = {
   session_settings?: SessionSettings;
   dependencies: Array<IssueDependency>;
   patches: Array<PatchId>;
-  deleted?: boolean;
+  archived?: boolean;
   form?: Form | null;
   form_response?: FormResponse | null;
   feedback?: string | null;

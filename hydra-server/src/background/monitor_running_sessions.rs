@@ -32,7 +32,7 @@ impl ScheduledWorker for MonitorRunningSessionsWorker {
         // Kill any sessions that are running in the engine but missing from the store
         self.state.reap_orphaned_jobs().await;
 
-        // Clean up tasks whose spawned_from issue has been deleted
+        // Clean up tasks whose spawned_from issue has been archived
         let cleanup_actor = ActorRef::System {
             worker_name: WORKER_NAME_CLEANUP_ORPHANED_SESSIONS.into(),
             on_behalf_of: None,
@@ -231,7 +231,7 @@ mod tests {
 
         handles
             .store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
 

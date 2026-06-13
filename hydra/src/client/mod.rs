@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{stream, Stream, StreamExt};
 use hydra_common::{
-    agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
+    agents::{AgentResponse, ArchiveAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::comments::{
         AddCommentRequest, AddCommentResponse, ListCommentsQuery, ListCommentsResponse,
     },
@@ -253,7 +253,7 @@ pub trait HydraClientInterface: Send + Sync {
     async fn get_issue(
         &self,
         issue_id: &IssueId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<IssueVersionRecord>;
     async fn get_issue_version(
         &self,
@@ -289,12 +289,12 @@ pub trait HydraClientInterface: Send + Sync {
     async fn get_document(
         &self,
         document_id: &DocumentId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord>;
     async fn get_document_by_path(
         &self,
         path: &str,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord>;
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse>;
     async fn list_document_versions(
@@ -320,7 +320,7 @@ pub trait HydraClientInterface: Send + Sync {
         repo_name: &RepoName,
         request: &UpdateRepositoryRequest,
     ) -> Result<UpsertRepositoryResponse>;
-    async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord>;
+    async fn archive_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord>;
     async fn list_projects(&self) -> Result<ListProjectsResponse>;
     async fn create_project(&self, request: &UpsertProjectRequest)
         -> Result<UpsertProjectResponse>;
@@ -375,8 +375,8 @@ pub trait HydraClientInterface: Send + Sync {
     async fn create_agent(&self, request: &UpsertAgentRequest) -> Result<AgentResponse>;
     async fn update_agent(&self, name: &str, request: &UpsertAgentRequest)
         -> Result<AgentResponse>;
-    async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse>;
-    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord>;
+    async fn archive_agent(&self, name: &str) -> Result<ArchiveAgentResponse>;
+    async fn archive_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord>;
     async fn submit_form(
         &self,
         issue_id: &IssueId,
@@ -392,8 +392,8 @@ pub trait HydraClientInterface: Send + Sync {
         issue_id: &IssueId,
         query: &ListCommentsQuery,
     ) -> Result<ListCommentsResponse>;
-    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
-    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
+    async fn archive_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord>;
+    async fn archive_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord>;
 
     async fn create_trigger(&self, request: &UpsertTriggerRequest)
         -> Result<UpsertTriggerResponse>;
@@ -405,7 +405,7 @@ pub trait HydraClientInterface: Send + Sync {
     async fn get_trigger(
         &self,
         trigger_id: &TriggerId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<TriggerVersionRecord>;
     async fn get_trigger_version(
         &self,
@@ -417,7 +417,7 @@ pub trait HydraClientInterface: Send + Sync {
         &self,
         trigger_id: &TriggerId,
     ) -> Result<ListTriggerVersionsResponse>;
-    async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord>;
+    async fn archive_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord>;
 
     /// Open an SSE connection to GET /v1/events and return a stream of parsed events.
     async fn subscribe_events(
@@ -468,7 +468,7 @@ pub trait HydraClientInterface: Send + Sync {
         conversation_id: &ConversationId,
         request: &UpdateConversationRequest,
     ) -> Result<ApiConversation>;
-    async fn delete_conversation(
+    async fn archive_conversation(
         &self,
         conversation_id: &ConversationId,
     ) -> Result<ApiConversation>;
@@ -1037,13 +1037,13 @@ impl HydraClient {
     pub async fn get_issue(
         &self,
         issue_id: &IssueId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<IssueVersionRecord> {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let mut builder = self.authed(self.http.get(url));
-        if include_deleted {
-            builder = builder.query(&[("include_deleted", "true")]);
+        if include_archived {
+            builder = builder.query(&[("include_archived", "true")]);
         }
         let response = builder
             .send()
@@ -1407,13 +1407,13 @@ impl HydraClient {
     pub async fn get_document(
         &self,
         document_id: &DocumentId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord> {
         let path = format!("/v1/documents/{document_id}");
         let url = self.endpoint(&path)?;
         let mut builder = self.authed(self.http.get(url));
-        if include_deleted {
-            builder = builder.query(&[("include_deleted", "true")]);
+        if include_archived {
+            builder = builder.query(&[("include_archived", "true")]);
         }
         let response = builder
             .send()
@@ -1436,9 +1436,9 @@ impl HydraClient {
     pub async fn get_document_by_path(
         &self,
         path: &str,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord> {
-        let include_deleted_opt = if include_deleted { Some(true) } else { None };
+        let include_deleted_opt = if include_archived { Some(true) } else { None };
         let query = SearchDocumentsQuery::new(
             None,
             Some(path.to_string()),
@@ -1453,7 +1453,7 @@ impl HydraClient {
             .next()
             .ok_or_else(|| anyhow!("document with path '{path}' not found"))?;
 
-        self.get_document(&summary.document_id, include_deleted)
+        self.get_document(&summary.document_id, include_archived)
             .await
     }
 
@@ -1626,7 +1626,7 @@ impl HydraClient {
     }
 
     /// Call `DELETE /v1/repositories/:organization/:repo` to soft-delete a repository.
-    pub async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
+    pub async fn archive_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
         let path = format!(
             "/v1/repositories/{}/{}",
             repo_name.organization, repo_name.repo
@@ -1939,8 +1939,8 @@ impl HydraClient {
         if let Some(ref q) = query.q {
             builder = builder.query(&[("q", q.as_str())]);
         }
-        if let Some(include_deleted) = query.include_deleted {
-            builder = builder.query(&[("include_deleted", include_deleted.to_string())]);
+        if let Some(include_archived) = query.include_archived {
+            builder = builder.query(&[("include_archived", include_archived.to_string())]);
         }
         let response = builder
             .send()
@@ -2143,7 +2143,7 @@ impl HydraClient {
     }
 
     /// Call `DELETE /v1/agents/:name` to delete an agent.
-    pub async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse> {
+    pub async fn archive_agent(&self, name: &str) -> Result<ArchiveAgentResponse> {
         let url = self.endpoint(&format!("/v1/agents/{name}"))?;
         let response = self
             .authed(self.http.delete(url))
@@ -2154,13 +2154,13 @@ impl HydraClient {
             .await?;
 
         response
-            .json::<DeleteAgentResponse>()
+            .json::<ArchiveAgentResponse>()
             .await
             .context("failed to decode delete agent response")
     }
 
     /// Call `DELETE /v1/issues/:issue_id` to soft-delete an issue.
-    pub async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
+    pub async fn archive_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
         let path = format!("/v1/issues/{issue_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -2203,7 +2203,7 @@ impl HydraClient {
     }
 
     /// Call `DELETE /v1/patches/:patch_id` to soft-delete a patch.
-    pub async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
+    pub async fn archive_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
         let path = format!("/v1/patches/{patch_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -2221,7 +2221,10 @@ impl HydraClient {
     }
 
     /// Call `DELETE /v1/documents/:document_id` to soft-delete a document.
-    pub async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
+    pub async fn archive_document(
+        &self,
+        document_id: &DocumentId,
+    ) -> Result<DocumentVersionRecord> {
         let path = format!("/v1/documents/{document_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -2286,13 +2289,13 @@ impl HydraClient {
     pub async fn get_trigger(
         &self,
         trigger_id: &TriggerId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<TriggerVersionRecord> {
         let path = format!("/v1/triggers/{trigger_id}");
         let url = self.endpoint(&path)?;
         let mut builder = self.authed(self.http.get(url));
-        if include_deleted {
-            builder = builder.query(&[("include_deleted", "true")]);
+        if include_archived {
+            builder = builder.query(&[("include_archived", "true")]);
         }
         let response = builder
             .send()
@@ -2374,7 +2377,7 @@ impl HydraClient {
     }
 
     /// Call `DELETE /v1/triggers/:trigger_id` to soft-delete a trigger.
-    pub async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
+    pub async fn archive_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
         let path = format!("/v1/triggers/{trigger_id}");
         let url = self.endpoint(&path)?;
         let response = self
@@ -2752,7 +2755,7 @@ impl HydraClient {
     }
 
     /// Call `DELETE /v1/conversations/:id` to soft-delete a conversation.
-    pub async fn delete_conversation(
+    pub async fn archive_conversation(
         &self,
         conversation_id: &ConversationId,
     ) -> Result<ApiConversation> {
@@ -2973,9 +2976,9 @@ impl HydraClientInterface for HydraClient {
     async fn get_issue(
         &self,
         issue_id: &IssueId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<IssueVersionRecord> {
-        HydraClient::get_issue(self, issue_id, include_deleted).await
+        HydraClient::get_issue(self, issue_id, include_archived).await
     }
 
     async fn get_issue_version(
@@ -3048,17 +3051,17 @@ impl HydraClientInterface for HydraClient {
     async fn get_document(
         &self,
         document_id: &DocumentId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord> {
-        HydraClient::get_document(self, document_id, include_deleted).await
+        HydraClient::get_document(self, document_id, include_archived).await
     }
 
     async fn get_document_by_path(
         &self,
         path: &str,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord> {
-        HydraClient::get_document_by_path(self, path, include_deleted).await
+        HydraClient::get_document_by_path(self, path, include_archived).await
     }
 
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse> {
@@ -3106,8 +3109,8 @@ impl HydraClientInterface for HydraClient {
         HydraClient::update_repository(self, repo_name, request).await
     }
 
-    async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
-        HydraClient::delete_repository(self, repo_name).await
+    async fn archive_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
+        HydraClient::archive_repository(self, repo_name).await
     }
 
     async fn list_projects(&self) -> Result<ListProjectsResponse> {
@@ -3238,12 +3241,12 @@ impl HydraClientInterface for HydraClient {
         HydraClient::update_agent(self, name, request).await
     }
 
-    async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse> {
-        HydraClient::delete_agent(self, name).await
+    async fn archive_agent(&self, name: &str) -> Result<ArchiveAgentResponse> {
+        HydraClient::archive_agent(self, name).await
     }
 
-    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
-        HydraClient::delete_issue(self, issue_id).await
+    async fn archive_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
+        HydraClient::archive_issue(self, issue_id).await
     }
 
     async fn submit_form(
@@ -3270,12 +3273,12 @@ impl HydraClientInterface for HydraClient {
         HydraClient::list_issue_comments(self, issue_id, query).await
     }
 
-    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
-        HydraClient::delete_patch(self, patch_id).await
+    async fn archive_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
+        HydraClient::archive_patch(self, patch_id).await
     }
 
-    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
-        HydraClient::delete_document(self, document_id).await
+    async fn archive_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
+        HydraClient::archive_document(self, document_id).await
     }
 
     async fn create_trigger(
@@ -3296,9 +3299,9 @@ impl HydraClientInterface for HydraClient {
     async fn get_trigger(
         &self,
         trigger_id: &TriggerId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<TriggerVersionRecord> {
-        HydraClient::get_trigger(self, trigger_id, include_deleted).await
+        HydraClient::get_trigger(self, trigger_id, include_archived).await
     }
 
     async fn get_trigger_version(
@@ -3320,8 +3323,8 @@ impl HydraClientInterface for HydraClient {
         HydraClient::list_trigger_versions(self, trigger_id).await
     }
 
-    async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
-        HydraClient::delete_trigger(self, trigger_id).await
+    async fn archive_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
+        HydraClient::archive_trigger(self, trigger_id).await
     }
 
     async fn subscribe_events(
@@ -3420,11 +3423,11 @@ impl HydraClientInterface for HydraClient {
         HydraClient::update_conversation(self, conversation_id, request).await
     }
 
-    async fn delete_conversation(
+    async fn archive_conversation(
         &self,
         conversation_id: &ConversationId,
     ) -> Result<ApiConversation> {
-        HydraClient::delete_conversation(self, conversation_id).await
+        HydraClient::archive_conversation(self, conversation_id).await
     }
 }
 
@@ -3720,7 +3723,7 @@ mod tests {
             when.method(GET)
                 .path("/v1/users")
                 .query_param("q", "alice")
-                .query_param("include_deleted", "true");
+                .query_param("include_archived", "true");
             then.status(200).json_body_obj(&response_clone);
         });
 

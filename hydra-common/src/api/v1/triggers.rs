@@ -30,7 +30,7 @@ pub struct Trigger {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_fired_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
 }
 
 impl Trigger {
@@ -40,7 +40,7 @@ impl Trigger {
         actions: Vec<Action>,
         creator: Username,
         last_fired_at: Option<DateTime<Utc>>,
-        deleted: bool,
+        archived: bool,
     ) -> Self {
         Self {
             enabled,
@@ -48,7 +48,7 @@ impl Trigger {
             actions,
             creator,
             last_fired_at,
-            deleted,
+            archived,
         }
     }
 }
@@ -134,10 +134,10 @@ impl CreateIssueAction {
 
 /// Body for `POST /v1/triggers` and `PUT /v1/triggers/:id`.
 ///
-/// `last_fired_at` and `deleted` are stripped — they are owned by the
+/// `last_fired_at` and `archived` are stripped — they are owned by the
 /// server (`last_fired_at` is written in-place by `record_trigger_fire`
-/// and carried forward by `update_trigger`; `deleted` is flipped by
-/// `delete_trigger`).
+/// and carried forward by `update_trigger`; `archived` is flipped by
+/// `archive_trigger`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -258,7 +258,7 @@ impl ListTriggerVersionsResponse {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct SearchTriggersQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
 }
 
 /// Variables available to template strings: `now.iso`, `now.date`,

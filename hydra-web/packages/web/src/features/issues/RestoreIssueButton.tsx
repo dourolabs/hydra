@@ -32,8 +32,8 @@ interface RestoreContext {
 }
 
 function clearDeletedOnRecord(rec: IssueSummaryRecord): IssueSummaryRecord {
-  if (rec.issue.deleted !== true) return rec;
-  return { ...rec, issue: { ...rec.issue, deleted: false } };
+  if (rec.issue.archived !== true) return rec;
+  return { ...rec, issue: { ...rec.issue, archived: false } };
 }
 
 function clearDeletedOnPage(
@@ -52,7 +52,7 @@ function clearDeletedOnPage(
 
 /**
  * Row-level "Restore" action shown on archived issue rows. Re-fetches the
- * full issue (`include_deleted=true`) before submitting the update so the
+ * full issue (`include_archived=true`) before submitting the update so the
  * PUT body preserves fields the summary record drops (session_settings,
  * form, form_response, feedback). Without that round-trip the update would
  * blank those fields out on the server.
@@ -72,7 +72,7 @@ export function RestoreIssueButton({
         issue: {
           ...full.issue,
           status: full.issue.status.key,
-          deleted: false,
+          archived: false,
         },
         session_id: null,
       });
@@ -88,12 +88,12 @@ export function RestoreIssueButton({
       if (previousIssue) {
         queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
           ...previousIssue,
-          issue: { ...previousIssue.issue, deleted: false },
+          issue: { ...previousIssue.issue, archived: false },
         });
       }
 
       // The list cache drives the row-level ARCHIVED tag (via
-      // IssueSummaryRecord.issue.deleted), not the detail cache. Invalidating
+      // IssueSummaryRecord.issue.archived), not the detail cache. Invalidating
       // alone leaves the tag on the row until the refetch lands, so flip the
       // record in every matching cache page now.
       const paginatedSnapshots = queryClient.getQueriesData<PaginatedIssuesCache>({

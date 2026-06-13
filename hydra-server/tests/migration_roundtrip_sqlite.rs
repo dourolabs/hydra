@@ -205,6 +205,8 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     seed_progress_as_comments_drops_feedback_outright(&pool).await?;
     seed_progress_as_comments_migration_is_idempotent(&pool).await?;
 
+    rename_deleted_to_archived_post_migration_state(&pool).await?;
+
     Ok(())
 }
 
@@ -321,6 +323,37 @@ async fn seed_progress_as_comments_migration_is_idempotent(pool: &SqlitePool) ->
         bail!(
             "issue_comments row count changed across idempotency rerun: {count_before} -> {count_after}"
         );
+    }
+    Ok(())
+}
+
+/// 20260717000000_rename_deleted_to_archived. Renames the soft-delete
+/// column on the ten entities not covered by the sibling project/status
+/// rename. Post-state: `archived` exists on each table; `deleted` does
+/// not. Idempotency is enforced by sqlx's per-migration checkpoint —
+/// `ALTER TABLE ... RENAME COLUMN` is not naturally idempotent on
+/// SQLite, but the sqlx migrator never re-runs an applied SQL body, so
+/// a separate idempotency rerun would be checking the framework, not
+/// the migration.
+async fn rename_deleted_to_archived_post_migration_state(pool: &SqlitePool) -> Result<()> {
+    for table in [
+        "repositories_v2",
+        "users_v2",
+        "issues_v2",
+        "patches_v2",
+        "tasks_v2",
+        "documents_v2",
+        "agents",
+        "labels",
+        "conversations",
+        "triggers",
+    ] {
+        if !column_exists(pool, table, "archived").await? {
+            bail!("expected {table}.archived to exist post-rename");
+        }
+        if column_exists(pool, table, "deleted").await? {
+            bail!("expected {table}.deleted to be renamed away post-rename");
+        }
     }
     Ok(())
 }
@@ -784,13 +817,16 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &SqlitePool) -> Result
     if column_exists(pool, "agents", "is_assignment_agent").await? {
         bail!("expected `agents.is_assignment_agent` column to be dropped post-rollforward");
     }
-    // Sibling columns the migration is supposed to leave alone.
+    // Sibling columns the migration is supposed to leave alone. By the
+    // time this assertion runs, the later `rename_deleted_to_archived`
+    // migration has flipped the soft-delete column over to `archived`,
+    // so the post-state name is the one we expect here.
     for required in [
         "name",
         "prompt_path",
         "max_tries",
         "max_simultaneous",
-        "deleted",
+        "archived",
         "created_at",
         "updated_at",
         "secrets",
@@ -924,7 +960,7 @@ async fn rename_kill_sessions_to_teardown_work_is_idempotent(pool: &SqlitePool) 
 
 async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()> {
     let rows = sqlx::query(
-        "SELECT name, prompt_path, max_tries, max_simultaneous, deleted, \
+        "SELECT name, prompt_path, max_tries, max_simultaneous, archived, \
                 secrets, mcp_config_path, is_default_conversation_agent \
          FROM agents \
          WHERE name IN ('pm-baseline', 'chat-baseline', 'deleted-baseline') \
@@ -944,7 +980,7 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()
     assert_eq!(chat.try_get::<String, _>("name")?, "chat-baseline");
     assert_eq!(chat.try_get::<i64, _>("max_tries")?, 5);
     assert_eq!(chat.try_get::<i64, _>("max_simultaneous")?, 10);
-    assert_eq!(chat.try_get::<i64, _>("deleted")?, 0);
+    assert_eq!(chat.try_get::<i64, _>("archived")?, 0);
     assert_eq!(
         chat.try_get::<String, _>("secrets")?,
         "[\"OPENAI_API_KEY\"]"
@@ -955,14 +991,14 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()
     );
     assert_eq!(chat.try_get::<i64, _>("is_default_conversation_agent")?, 1);
 
-    let deleted = &rows[1];
-    assert_eq!(deleted.try_get::<String, _>("name")?, "deleted-baseline");
-    assert_eq!(deleted.try_get::<i64, _>("deleted")?, 1);
+    let archived = &rows[1];
+    assert_eq!(archived.try_get::<String, _>("name")?, "deleted-baseline");
+    assert_eq!(archived.try_get::<i64, _>("archived")?, 1);
 
     let pm = &rows[2];
     assert_eq!(pm.try_get::<String, _>("name")?, "pm-baseline");
     assert_eq!(pm.try_get::<i64, _>("max_tries")?, 3);
-    assert_eq!(pm.try_get::<i64, _>("deleted")?, 0);
+    assert_eq!(pm.try_get::<i64, _>("archived")?, 0);
     assert_eq!(pm.try_get::<i64, _>("is_default_conversation_agent")?, 0);
 
     Ok(())
@@ -970,7 +1006,7 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()
 
 async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
     let snapshot_before = sqlx::query(
-        "SELECT name, prompt_path, max_tries, max_simultaneous, deleted, \
+        "SELECT name, prompt_path, max_tries, max_simultaneous, archived, \
                 secrets, mcp_config_path, is_default_conversation_agent \
          FROM agents ORDER BY name",
     )
@@ -981,7 +1017,7 @@ async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> 
         .await
         .context("re-apply sqlite migrations to confirm drop-is-assignment-agent idempotency")?;
     let snapshot_after = sqlx::query(
-        "SELECT name, prompt_path, max_tries, max_simultaneous, deleted, \
+        "SELECT name, prompt_path, max_tries, max_simultaneous, archived, \
                 secrets, mcp_config_path, is_default_conversation_agent \
          FROM agents ORDER BY name",
     )
@@ -1859,7 +1895,7 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
     sqlx::query(
         "INSERT INTO triggers \
            (id, version_number, enabled, creator, schedule, actions, \
-            last_fired_at, deleted, actor, is_latest) \
+            last_fired_at, archived, actor, is_latest) \
          VALUES (?1, 1, 1, ?2, ?3, ?4, NULL, 0, NULL, 1)",
     )
     .bind(trigger_id)

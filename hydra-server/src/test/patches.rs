@@ -798,7 +798,7 @@ async fn delete_patch_basic_operation() -> anyhow::Result<()> {
         .await?;
 
     // Delete the patch
-    let deleted: PatchVersionRecord = client
+    let archived: PatchVersionRecord = client
         .delete(format!(
             "{}/v1/patches/{}",
             server.base_url(),
@@ -809,10 +809,10 @@ async fn delete_patch_basic_operation() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    // Verify the response has deleted=true
-    assert!(deleted.patch.deleted);
+    // Verify the response has archived=true
+    assert!(archived.patch.archived);
 
-    // Verify listing excludes the deleted patch
+    // Verify listing excludes the archived patch
     let list: ListPatchesResponse = client
         .get(format!("{}/v1/patches", server.base_url()))
         .send()
@@ -832,7 +832,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
 
     // Create and delete a patch
     let patch = Patch::new(
-        "deleted patch".to_string(),
+        "archived patch".to_string(),
         "patch description".to_string(),
         patch_diff(),
         PatchStatus::Open,
@@ -864,7 +864,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // List without include_deleted - verify not present
+    // List without include_archived - verify not present
     let list_without: ListPatchesResponse = client
         .get(format!("{}/v1/patches", server.base_url()))
         .send()
@@ -879,7 +879,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
             .any(|p| p.patch_id == created.patch_id)
     );
 
-    // List with include_deleted=true - verify present with deleted=true
+    // List with include_archived=true - verify present with archived=true
     let list_with: ListPatchesResponse = client
         .get(format!("{}/v1/patches", server.base_url()))
         .query(&SearchPatchesQuery::new(None, Some(true), vec![], None))
@@ -894,7 +894,7 @@ async fn delete_patch_include_deleted_in_listing() -> anyhow::Result<()> {
         .find(|p| p.patch_id == created.patch_id);
 
     assert!(deleted_patch.is_some());
-    assert!(deleted_patch.unwrap().patch.deleted);
+    assert!(deleted_patch.unwrap().patch.archived);
 
     Ok(())
 }
@@ -906,7 +906,7 @@ async fn delete_patch_get_deleted_by_id() -> anyhow::Result<()> {
 
     // Create and delete a patch
     let patch = Patch::new(
-        "get deleted patch".to_string(),
+        "get archived patch".to_string(),
         "patch description".to_string(),
         patch_diff(),
         PatchStatus::Open,
@@ -938,7 +938,7 @@ async fn delete_patch_get_deleted_by_id() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // GET by ID should return 404 for deleted patches
+    // GET by ID should return 404 for archived patches
     let response = client
         .get(format!(
             "{}/v1/patches/{}",

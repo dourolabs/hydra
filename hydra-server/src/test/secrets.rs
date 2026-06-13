@@ -121,7 +121,7 @@ async fn delete_secret() -> anyhow::Result<()> {
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify deleted — only GH_TOKEN remains
+    // Verify archived — only GH_TOKEN remains
     let response = client
         .get(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets",
@@ -531,7 +531,7 @@ async fn user_secrets_still_manageable_with_internal_secrets_present() -> anyhow
         .await?;
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Verify deleted — only GH_TOKEN remains
+    // Verify archived — only GH_TOKEN remains
     let response = client
         .get(format!(
             "{}/v1/users/{TEST_USERNAME}/secrets",
@@ -1044,7 +1044,7 @@ async fn get_job_context_includes_user_secrets() -> anyhow::Result<()> {
             status: Status::Created,
             last_message: None,
             error: None,
-            deleted: false,
+            archived: false,
             creation_time: None,
             start_time: None,
             end_time: None,

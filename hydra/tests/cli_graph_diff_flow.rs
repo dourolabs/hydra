@@ -4,7 +4,7 @@
 //! store + ephemeral HTTP server, covering:
 //! - `modified` records for issues whose view projection changed in the window
 //! - `added` records for issues created within the window
-//! - `removed` records for soft-deleted issues
+//! - `removed` records for soft-archived issues
 //! - conversation diffs going through the event-stream fold
 //! - `--verbosity` controlling which field changes surface
 //! - `--max-nodes` cap (exit 2)
@@ -126,8 +126,8 @@ async fn diff_classifies_soft_deleted_issue_at_l3() -> Result<()> {
     // Constructing a real `removed` classification (v_start exists, v_end =
     // None) requires the deletion to happen *outside* the time window, which
     // the harness can't easily reproduce without manipulating server-side
-    // clocks. Instead, exercise the L3 projection over a soft-deleted issue
-    // to confirm it surfaces the `deleted` field change as a `modified`
+    // clocks. Instead, exercise the L3 projection over a soft-archived issue
+    // to confirm it surfaces the `archived` field change as a `modified`
     // record (or `added` if both versions sit inside the window). The
     // dispatch/fetch_versions + classify path is covered.
     let harness = harness::TestHarness::new().await?;
@@ -136,7 +136,7 @@ async fn diff_classifies_soft_deleted_issue_at_l3() -> Result<()> {
 
     let parent = user.create_issue("rm-parent").await?;
     let child = user.create_child_issue(&parent, "rm-child").await?;
-    client.delete_issue(&child).await?;
+    client.archive_issue(&child).await?;
 
     let query = format!("{} | neighbors", parent.as_ref());
     let output = user

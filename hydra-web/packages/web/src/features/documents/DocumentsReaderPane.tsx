@@ -62,7 +62,7 @@ export function DocumentsReaderPane({
 
   const docs: DocumentSummaryRecord[] = useMemo(() => {
     if (isRoot) {
-      return (rootDocs?.documents ?? []).filter((d) => !d.document.deleted);
+      return (rootDocs?.documents ?? []).filter((d) => !d.document.archived);
     }
     return leafDocs;
   }, [isRoot, rootDocs, leafDocs]);

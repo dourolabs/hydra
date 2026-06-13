@@ -398,7 +398,7 @@ pub(crate) async fn has_active_conversation(
 ) -> Result<bool, StoreError> {
     let query = SearchConversationsQuery {
         spawned_from: Some(issue_id.clone()),
-        include_deleted: Some(false),
+        include_archived: Some(false),
         ..Default::default()
     };
     let conversations = state.store.list_conversations(&query).await?;
@@ -634,7 +634,7 @@ mod tests {
             title: format!("{} prompt", agent.name),
             body_markdown: prompt.to_string(),
             path: Some(path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         // The document may already exist if a previous call seeded
         // this agent (state_with_repository seeds vanilla copies of
@@ -760,7 +760,7 @@ mod tests {
             session_settings: SessionSettings::default(),
             dependencies: Vec::new(),
             patches: Vec::new(),
-            deleted: false,
+            archived: false,
             form: None,
             form_response: None,
         }
@@ -964,7 +964,7 @@ mod tests {
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
                     patches: vec![patch_id.clone()],
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -1416,7 +1416,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -1449,7 +1449,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -1548,7 +1548,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -1594,7 +1594,7 @@ mod tests {
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -1654,7 +1654,7 @@ mod tests {
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -1675,7 +1675,7 @@ mod tests {
                     session_settings: session_settings(&repo_name),
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -2150,7 +2150,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -2226,7 +2226,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -2280,7 +2280,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -2527,7 +2527,7 @@ mod tests {
             title: "MCP config".to_string(),
             body_markdown: config_json.to_string(),
             path: Some(path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         handles.store.add_document(doc, &ActorRef::test()).await?;
         Ok(())
@@ -2913,7 +2913,7 @@ mod tests {
             session_settings: session_settings(repo_name),
             dependencies: vec![],
             patches: Vec::new(),
-            deleted: false,
+            archived: false,
             form: None,
             form_response: None,
         }
@@ -3020,7 +3020,7 @@ mod tests {
         // No conversation was created for this issue.
         let q = SearchConversationsQuery {
             spawned_from: Some(issue_id.clone()),
-            include_deleted: Some(false),
+            include_archived: Some(false),
             ..Default::default()
         };
         let convs = handles.state.store().list_conversations(&q).await?;
@@ -3096,7 +3096,7 @@ mod tests {
             creator: default_user(),
             session_settings: session_settings(&repo_name),
             spawned_from: Some(issue_id.clone()),
-            deleted: false,
+            archived: false,
         };
         handles
             .store
@@ -3141,7 +3141,7 @@ mod tests {
             creator: default_user(),
             session_settings: session_settings(&repo_name),
             spawned_from: Some(issue_id.clone()),
-            deleted: false,
+            archived: false,
         };
         handles
             .store
@@ -3789,7 +3789,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },
@@ -3847,7 +3847,7 @@ mod tests {
                     },
                     dependencies: vec![],
                     patches: Vec::new(),
-                    deleted: false,
+                    archived: false,
                     form: None,
                     form_response: None,
                 },

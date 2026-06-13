@@ -253,11 +253,11 @@ impl AgentResponse {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[non_exhaustive]
-pub struct DeleteAgentResponse {
+pub struct ArchiveAgentResponse {
     pub agent: AgentRecord,
 }
 
-impl DeleteAgentResponse {
+impl ArchiveAgentResponse {
     pub fn new(agent: AgentRecord) -> Self {
         Self { agent }
     }

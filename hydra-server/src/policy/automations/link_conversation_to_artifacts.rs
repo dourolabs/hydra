@@ -279,7 +279,7 @@ mod tests {
             status: Status::Created,
             last_message: None,
             error: None,
-            deleted: false,
+            archived: false,
             creation_time: None,
             start_time: None,
             end_time: None,
@@ -310,7 +310,7 @@ mod tests {
             title: "Test doc".to_string(),
             body_markdown: "body".to_string(),
             path: Some(path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         }
     }
 

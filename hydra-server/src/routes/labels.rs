@@ -162,19 +162,19 @@ pub async fn update_label(
 }
 
 /// DELETE /v1/labels/:label_id — soft-delete a label.
-pub async fn delete_label(
+pub async fn archive_label(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path(label_id): Path<LabelId>,
 ) -> Result<Json<()>, ApiError> {
-    info!(actor = %actor.name(), label_id = %label_id, "delete_label invoked");
+    info!(actor = %actor.name(), label_id = %label_id, "archive_label invoked");
 
     state
-        .delete_label(&label_id, ActorRef::from(&actor))
+        .archive_label(&label_id, ActorRef::from(&actor))
         .await
         .map_err(|e| map_label_not_found(e, &label_id))?;
 
-    info!(actor = %actor.name(), label_id = %label_id, "delete_label completed");
+    info!(actor = %actor.name(), label_id = %label_id, "archive_label completed");
 
     Ok(Json(()))
 }

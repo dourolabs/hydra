@@ -108,7 +108,7 @@ function makeRecord(overrides: {
   form?: Form | null;
   form_response?: FormResponse | null;
   assignee?: Principal | null;
-  deleted?: boolean;
+  archived?: boolean;
 }): IssueVersionRecord {
   return {
     issue_id: "i-1",
@@ -129,7 +129,7 @@ function makeRecord(overrides: {
       labels: [],
       form: overrides.form ?? null,
       form_response: overrides.form_response ?? null,
-      deleted: overrides.deleted ?? false,
+      archived: overrides.archived ?? false,
     },
   } as unknown as IssueVersionRecord;
 }
@@ -212,8 +212,8 @@ describe("IssueDetail assignee rendering", () => {
 describe("IssueDetail archived badge", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("renders an Archived badge when issue.deleted is true", () => {
-    render(<IssueDetail record={makeRecord({ deleted: true })} />, {
+  it("renders an Archived badge when issue.archived is true", () => {
+    render(<IssueDetail record={makeRecord({ archived: true })} />, {
       wrapper: makeWrapper(),
     });
 
@@ -221,7 +221,7 @@ describe("IssueDetail archived badge", () => {
   });
 
   it("does not render an Archived badge for non-archived issues", () => {
-    render(<IssueDetail record={makeRecord({ deleted: false })} />, {
+    render(<IssueDetail record={makeRecord({ archived: false })} />, {
       wrapper: makeWrapper(),
     });
 
@@ -265,7 +265,7 @@ describe("IssueDetail title and overflow menu", () => {
   });
 
   it("omits the archive menu item when the issue is already archived", () => {
-    render(<IssueDetail record={makeRecord({ deleted: true })} />, {
+    render(<IssueDetail record={makeRecord({ archived: true })} />, {
       wrapper: makeWrapper(),
     });
 

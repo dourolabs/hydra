@@ -5,5 +5,5 @@ export type Document = {
   title: string;
   body_markdown: string;
   path?: DocumentPath | null;
-  deleted?: boolean;
+  archived?: boolean;
 };

@@ -46,7 +46,7 @@ impl AppState {
     /// - If `agent_name` is `Some`, fetches that agent by name; returns
     ///   `AgentError::NotFound` if the agent does not exist.
     /// - If `agent_name` is `None`, scans the agent list for the single
-    ///   non-deleted agent flagged `is_default_conversation_agent`. Returns
+    ///   non-archived agent flagged `is_default_conversation_agent`. Returns
     ///   `Ok(None)` if no such agent exists.
     pub async fn resolve_conversation_agent(
         &self,
@@ -59,7 +59,7 @@ impl AppState {
         let agents = self.list_agents().await?;
         Ok(agents
             .into_iter()
-            .find(|agent| agent.is_default_conversation_agent && !agent.deleted))
+            .find(|agent| agent.is_default_conversation_agent && !agent.archived))
     }
 
     pub async fn create_agent(&self, agent: Agent, actor: ActorRef) -> Result<Agent, AgentError> {
@@ -284,18 +284,18 @@ impl AppState {
         Ok(Some(mcp_config))
     }
 
-    pub async fn delete_agent(&self, agent_name: &str) -> Result<Agent, AgentError> {
+    pub async fn archive_agent(&self, agent_name: &str) -> Result<Agent, AgentError> {
         let agent = self.get_agent(agent_name).await?;
 
         self.store
-            .delete_agent(agent_name)
+            .archive_agent(agent_name)
             .await
             .map_err(|e| match e {
                 crate::store::StoreError::AgentNotFound(name) => AgentError::NotFound { name },
                 other => AgentError::Store(other),
             })?;
 
-        info!(agent = %agent_name, "agent deleted");
+        info!(agent = %agent_name, "agent archived");
         Ok(agent)
     }
 }
@@ -353,7 +353,7 @@ mod tests {
             title: path.to_string(),
             body_markdown: body.to_string(),
             path: Some(path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store

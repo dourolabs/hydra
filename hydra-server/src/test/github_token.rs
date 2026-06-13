@@ -211,7 +211,7 @@ async fn github_token_refreshes_expired_token() -> anyhow::Result<()> {
     let user = User {
         username: username.clone(),
         github_user_id: Some(101),
-        deleted: false,
+        archived: false,
     };
 
     handles.store.add_user(user, &ActorRef::test()).await?;
@@ -310,7 +310,7 @@ async fn github_token_refresh_failure_returns_unauthorized() -> anyhow::Result<(
     let user = User {
         username: username.clone(),
         github_user_id: Some(101),
-        deleted: false,
+        archived: false,
     };
 
     handles.store.add_user(user, &ActorRef::test()).await?;

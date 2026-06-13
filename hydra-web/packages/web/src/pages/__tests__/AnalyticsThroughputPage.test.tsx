@@ -23,7 +23,7 @@ vi.mock("../../api/client", () => ({
               name: "Default",
               statuses: [],
               creator: "alice",
-              deleted: false,
+              archived: false,
             },
           },
         ],

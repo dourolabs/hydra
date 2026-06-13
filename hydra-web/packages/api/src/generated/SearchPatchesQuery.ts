@@ -8,7 +8,7 @@ export type SearchPatchesQuery = {
    */
   ids?: string;
   q: string | null;
-  include_deleted: boolean | null;
+  include_archived: boolean | null;
   /**
    * Filter patches by status (e.g., Open, Closed). When multiple statuses
    * are provided, a patch matches if its status is any of the given values.

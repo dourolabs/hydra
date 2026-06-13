@@ -952,11 +952,11 @@ impl AppState {
         }
     }
 
-    /// Cleans up tasks whose `spawned_from` issue has been soft-deleted.
+    /// Cleans up tasks whose `spawned_from` issue has been soft-archived.
     ///
-    /// For each non-deleted task that references a `spawned_from` issue, checks
+    /// For each non-archived task that references a `spawned_from` issue, checks
     /// whether that issue still exists. If it does not (i.e., it has been
-    /// soft-deleted), the task is soft-deleted and any running/pending job is
+    /// soft-archived), the task is soft-archived and any running/pending job is
     /// killed in the engine.
     pub async fn cleanup_orphaned_tasks(&self, actor: ActorRef) {
         let store = self.store.as_ref();
@@ -995,7 +995,7 @@ impl AppState {
             info!(
                 hydra_id = %session_id,
                 issue_id = %issue_id,
-                "soft-deleting orphaned task whose spawned_from issue was deleted"
+                "soft-deleting orphaned task whose spawned_from issue was archived"
             );
 
             if let Err(err) = self
@@ -1529,7 +1529,7 @@ mod tests {
                         session_settings: session_settings.clone(),
                         dependencies: Vec::new(),
                         patches: Vec::new(),
-                        deleted: false,
+                        archived: false,
                         form: None,
                         form_response: None,
                     },
@@ -1699,7 +1699,7 @@ mod tests {
                     creator: Username::from("creator"),
                     session_settings: crate::domain::issues::SessionSettings::default(),
                     spawned_from: None,
-                    deleted: false,
+                    archived: false,
                 },
                 ActorRef::test(),
             )
@@ -1799,7 +1799,7 @@ mod tests {
                     creator: Username::from("creator"),
                     session_settings: crate::domain::issues::SessionSettings::default(),
                     spawned_from: None,
-                    deleted: false,
+                    archived: false,
                 },
                 ActorRef::test(),
             )
@@ -1874,7 +1874,7 @@ mod tests {
             title: "swe".to_string(),
             body_markdown: "AGENT BODY".to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -1943,7 +1943,7 @@ mod tests {
             title: "chat".to_string(),
             body_markdown: "CHAT AGENT BODY".to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -2013,7 +2013,7 @@ mod tests {
             title: agent_name.to_string(),
             body_markdown: "PM AGENT BODY".to_string(),
             path: Some(agent_prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -2063,7 +2063,7 @@ mod tests {
             title: "engineering-v2 project prompt".to_string(),
             body_markdown: "PROJECT SLICE — engineering-v2".to_string(),
             path: Some(project_prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -2074,7 +2074,7 @@ mod tests {
             title: "engineering-v2 backlog prompt".to_string(),
             body_markdown: "STATUS SLICE — backlog (engineering-v2)".to_string(),
             path: Some(backlog_prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -2163,7 +2163,7 @@ mod tests {
             title: agent_name.to_string(),
             body_markdown: "REVIEWER AGENT BODY".to_string(),
             path: Some(agent_prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -2210,7 +2210,7 @@ mod tests {
             title: "engineering-v2 project prompt".to_string(),
             body_markdown: "PROJECT SLICE — engineering-v2".to_string(),
             path: Some(project_prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -2221,7 +2221,7 @@ mod tests {
             title: "engineering-v2 in-review prompt".to_string(),
             body_markdown: "STATUS SLICE — same-issue review hand-off".to_string(),
             path: Some(in_review_prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -2333,7 +2333,7 @@ mod tests {
         let orphan_lookup = job_engine.find_job_by_hydra_id(&orphan_session_id).await;
         assert!(
             matches!(orphan_lookup, Err(JobEngineError::NotFound(_))),
-            "orphan job should be deleted by reaper, got {orphan_lookup:?}"
+            "orphan job should be archived by reaper, got {orphan_lookup:?}"
         );
     }
 
@@ -2683,11 +2683,11 @@ mod tests {
         let result = store.get_session(&session_id, false).await;
         assert!(
             matches!(result, Err(StoreError::SessionNotFound(_))),
-            "orphaned task should be soft-deleted"
+            "orphaned task should be soft-archived"
         );
 
         let deleted_task = store.get_session(&session_id, true).await.unwrap();
-        assert!(deleted_task.item.deleted);
+        assert!(deleted_task.item.archived);
     }
 
     #[tokio::test]
@@ -2712,8 +2712,8 @@ mod tests {
 
         let session = store.get_session(&session_id, false).await.unwrap();
         assert!(
-            !session.item.deleted,
-            "task with existing issue should not be deleted"
+            !session.item.archived,
+            "task with existing issue should not be archived"
         );
     }
 
@@ -2732,8 +2732,8 @@ mod tests {
 
         let session = store.get_session(&session_id, false).await.unwrap();
         assert!(
-            !session.item.deleted,
-            "task without spawned_from should not be deleted"
+            !session.item.archived,
+            "task without spawned_from should not be archived"
         );
     }
 
@@ -2771,7 +2771,7 @@ mod tests {
         let result = store.get_session(&session_id, false).await;
         assert!(
             matches!(result, Err(StoreError::SessionNotFound(_))),
-            "orphaned running task should be soft-deleted"
+            "orphaned running task should be soft-archived"
         );
 
         let job = job_engine

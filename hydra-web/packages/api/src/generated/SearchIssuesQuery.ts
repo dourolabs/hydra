@@ -30,7 +30,7 @@ export type SearchIssuesQuery = {
    */
   creator: string | null;
   q: string | null;
-  include_deleted: boolean | null;
+  include_archived: boolean | null;
   /**
    * Filter issues by label IDs (comma-separated in query string).
    */

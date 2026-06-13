@@ -46,11 +46,11 @@ test.describe("Issue Detail page for archived issues @issues:view-detail-archive
     await expect(page.getByTestId("issue-archived-badge")).toBeVisible();
     await expect(page.getByTestId("issue-archived-badge")).toHaveText(/Archived/i);
 
-    // The GET against the issue must have carried `include_deleted=true` —
+    // The GET against the issue must have carried `include_archived=true` —
     // otherwise the mock server would 404 on a soft-deleted row.
     expect(
       getIssueUrls.some(
-        (u) => u.searchParams.get("include_deleted") === "true",
+        (u) => u.searchParams.get("include_archived") === "true",
       ),
     ).toBe(true);
   });

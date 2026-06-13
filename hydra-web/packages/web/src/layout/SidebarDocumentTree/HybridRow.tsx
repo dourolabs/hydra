@@ -27,7 +27,7 @@ export function HybridRow({ entry, depth, pathToDoc, pathToDocLoading }: NodePro
     doc = pathToDoc.get(entry.full_path);
     docLoading = pathToDocLoading ?? false;
   } else {
-    doc = fallback.data?.documents.find((d) => !d.document.deleted);
+    doc = fallback.data?.documents.find((d) => !d.document.archived);
     docLoading = fallback.isLoading;
   }
 
@@ -42,7 +42,7 @@ export function HybridRow({ entry, depth, pathToDoc, pathToDocLoading }: NodePro
   const childPathToDoc = useMemo(() => {
     const map = new Map<string, DocumentSummaryRecord>();
     for (const record of childDocsData?.documents ?? []) {
-      if (record.document.deleted) continue;
+      if (record.document.archived) continue;
       const path = record.document.path;
       if (path == null) continue;
       if (!map.has(path)) map.set(path, record);

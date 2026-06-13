@@ -413,7 +413,7 @@ impl MemoryStore {
         let count = self
             .labels
             .iter()
-            .filter(|entry| !entry.value().deleted)
+            .filter(|entry| !entry.value().archived)
             .count() as u64;
         let len = random_len_for_count(count);
         LabelId::generate(len).expect("length within bounds")
@@ -460,7 +460,7 @@ impl MemoryStore {
 
     /// Cascade-archive every non-archived issue in `project_id`
     /// (optionally narrowed to `status_sequence_filter`) by appending
-    /// a new versioned row with `issue.deleted = true`. Returns the
+    /// a new versioned row with `issue.archived = true`. Returns the
     /// ids actually flipped. Mirrors the SQL backends'
     /// `cascade_archive_issues` helper.
     fn cascade_archive_issues_in_memory(
@@ -477,7 +477,7 @@ impl MemoryStore {
             if &latest.item.project_id != project_id {
                 continue;
             }
-            if latest.item.deleted {
+            if latest.item.archived {
                 continue;
             }
             if let Some(seq) = status_sequence_filter {
@@ -505,11 +505,11 @@ impl MemoryStore {
             let Some(latest) = Self::latest_versioned(versions) else {
                 continue;
             };
-            if latest.item.deleted {
+            if latest.item.archived {
                 continue;
             }
             let mut next_issue = latest.item.clone();
-            next_issue.deleted = true;
+            next_issue.archived = true;
             let next_version = Self::next_version(versions);
             versions.push(Self::versioned_now_with_actor(
                 next_issue,
@@ -626,7 +626,7 @@ impl MemoryStore {
         &'a self,
         query: &'a SearchIssuesQuery,
     ) -> impl Iterator<Item = (IssueId, Versioned<Issue>)> + 'a {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let ids_filter = &query.ids;
         let issue_type_filter: Option<IssueType> = query.issue_type.map(Into::into);
         let status_filter: &[StatusKey] = &query.status;
@@ -645,7 +645,7 @@ impl MemoryStore {
 
         self.issues.iter().filter_map(move |entry| {
             let mut latest = Self::latest_versioned(entry.value())?;
-            if !include_deleted && latest.item.deleted {
+            if !include_deleted && latest.item.archived {
                 return None;
             }
             let issue_id = entry.key();
@@ -710,7 +710,7 @@ impl MemoryStore {
         &'a self,
         query: &'a SearchPatchesQuery,
     ) -> impl Iterator<Item = (PatchId, Versioned<Patch>)> + 'a {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let search_term = query
             .q
             .as_ref()
@@ -724,7 +724,7 @@ impl MemoryStore {
             if !query.ids.is_empty() && !query.ids.contains(entry.key()) {
                 return None;
             }
-            if !include_deleted && latest.item.deleted {
+            if !include_deleted && latest.item.archived {
                 return None;
             }
             if !status_filter.is_empty() && !status_filter.contains(&latest.item.status) {
@@ -796,8 +796,8 @@ impl MemoryStore {
             documents.retain(|(id, _)| query.ids.contains(id));
         }
 
-        if !query.include_deleted.unwrap_or(false) {
-            documents.retain(|(_, versioned)| !versioned.item.deleted);
+        if !query.include_archived.unwrap_or(false) {
+            documents.retain(|(_, versioned)| !versioned.item.archived);
         }
 
         if let Some(has_path) = query.has_path {
@@ -834,7 +834,7 @@ impl MemoryStore {
         &'a self,
         query: &'a SearchSessionsQuery,
     ) -> impl Iterator<Item = (SessionId, Versioned<Session>)> + 'a {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let search_term = query
             .q
             .as_ref()
@@ -845,7 +845,7 @@ impl MemoryStore {
             let task_id = entry.key();
             let latest = Self::latest_versioned(entry.value())?;
 
-            if !include_deleted && latest.item.deleted {
+            if !include_deleted && latest.item.archived {
                 return None;
             }
 
@@ -910,13 +910,13 @@ impl MemoryStore {
 
     /// Returns filtered labels matching the query (without pagination).
     fn filter_labels(&self, query: &SearchLabelsQuery) -> Vec<(LabelId, Label)> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let mut results: Vec<(LabelId, Label)> = Vec::new();
 
         for entry in self.labels.iter() {
             let label = entry.value();
 
-            if !include_deleted && label.deleted {
+            if !include_deleted && label.archived {
                 continue;
             }
 
@@ -1119,7 +1119,7 @@ impl ReadOnlyStore for MemoryStore {
             .get(name)
             .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::RepositoryNotFound(name.clone()));
         }
         Ok(versioned)
@@ -1129,7 +1129,7 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let normalized_needle = query
             .remote_url
             .as_deref()
@@ -1139,8 +1139,8 @@ impl ReadOnlyStore for MemoryStore {
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
-                // Skip deleted unless include_deleted
-                if !include_deleted && latest.item.deleted {
+                // Skip archived unless include_deleted
+                if !include_deleted && latest.item.archived {
                     return None;
                 }
                 if let Some(needle) = normalized_needle.as_deref()
@@ -1167,7 +1167,7 @@ impl ReadOnlyStore for MemoryStore {
         let mut versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::IssueNotFound(id.clone()))?;
 
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
@@ -1277,7 +1277,7 @@ impl ReadOnlyStore for MemoryStore {
             let Some(latest) = Self::latest_versioned(entry.value()) else {
                 continue;
             };
-            if latest.item.deleted {
+            if latest.item.archived {
                 continue;
             }
             if !matches!(
@@ -1295,7 +1295,7 @@ impl ReadOnlyStore for MemoryStore {
             let Some(issue_latest) = Self::latest_versioned(issue_entry.value()) else {
                 continue;
             };
-            if issue_latest.item.deleted {
+            if issue_latest.item.archived {
                 continue;
             }
             if &issue_latest.item.project_id != project_id {
@@ -1348,7 +1348,7 @@ impl ReadOnlyStore for MemoryStore {
             let Some(latest) = Self::latest_versioned(entry.value()) else {
                 continue;
             };
-            if latest.item.deleted {
+            if latest.item.archived {
                 continue;
             }
             if &latest.item.project_id != project_id {
@@ -1463,7 +1463,7 @@ impl ReadOnlyStore for MemoryStore {
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
         let mut versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::PatchNotFound(id.clone()))?;
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
         versioned.creation_time = entry.value()[0].timestamp;
@@ -1535,7 +1535,7 @@ impl ReadOnlyStore for MemoryStore {
             .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
         let mut versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::DocumentNotFound(id.clone()));
         }
         versioned.creation_time = entry.value()[0].timestamp;
@@ -1576,7 +1576,7 @@ impl ReadOnlyStore for MemoryStore {
         Ok(self.filter_documents(query).len() as u64)
     }
 
-    async fn find_non_deleted_document_by_exact_path(
+    async fn find_non_archived_document_by_exact_path(
         &self,
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
@@ -1584,7 +1584,7 @@ impl ReadOnlyStore for MemoryStore {
         for id in ids {
             if let Some(entry) = self.documents.get(&id) {
                 if let Some(latest) = Self::latest_versioned(entry.value()) {
-                    if !latest.item.deleted {
+                    if !latest.item.archived {
                         return Ok(Some(id));
                     }
                 }
@@ -1618,7 +1618,7 @@ impl ReadOnlyStore for MemoryStore {
             let Some(latest) = Self::latest_versioned(versions) else {
                 continue;
             };
-            if latest.item.deleted {
+            if latest.item.archived {
                 continue;
             }
             let Some(ref path) = latest.item.path else {
@@ -1658,7 +1658,7 @@ impl ReadOnlyStore for MemoryStore {
         for entry in self.documents.iter() {
             let versions = entry.value();
             if let Some(latest) = Self::latest_versioned(versions) {
-                if latest.item.deleted {
+                if latest.item.archived {
                     continue;
                 }
                 if let Some(ref path) = latest.item.path {
@@ -1701,7 +1701,7 @@ impl ReadOnlyStore for MemoryStore {
             .get(id)
             .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::SessionNotFound(id.clone()))?;
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::SessionNotFound(id.clone()));
         }
         Ok(versioned)
@@ -1767,7 +1767,7 @@ impl ReadOnlyStore for MemoryStore {
             .get(username)
             .and_then(|entry| Self::latest_versioned(entry.value()))
             .ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::UserNotFound(username.clone()));
         }
         Ok(versioned)
@@ -1777,7 +1777,7 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let search_term = query
             .q
             .as_ref()
@@ -1787,8 +1787,8 @@ impl ReadOnlyStore for MemoryStore {
         let mut users = Vec::new();
         for entry in self.users.iter() {
             if let Some(versioned) = Self::latest_versioned(entry.value()) {
-                // Filter deleted users by default
-                if !include_deleted && versioned.item.deleted {
+                // Filter archived users by default
+                if !include_deleted && versioned.item.archived {
                     continue;
                 }
 
@@ -1816,7 +1816,7 @@ impl ReadOnlyStore for MemoryStore {
             .get(name)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::AgentNotFound(name.to_string()))?;
-        if agent.deleted {
+        if agent.archived {
             return Err(StoreError::AgentNotFound(name.to_string()));
         }
         Ok(agent)
@@ -1826,7 +1826,7 @@ impl ReadOnlyStore for MemoryStore {
         let mut results: Vec<Agent> = self
             .agents
             .iter()
-            .filter(|entry| !entry.value().deleted)
+            .filter(|entry| !entry.value().archived)
             .map(|entry| entry.value().clone())
             .collect();
         results.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1841,7 +1841,7 @@ impl ReadOnlyStore for MemoryStore {
             .get(id)
             .map(|entry| entry.value().clone())
             .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
-        if label.deleted {
+        if label.archived {
             return Err(StoreError::LabelNotFound(id.clone()));
         }
         Ok(label)
@@ -1875,7 +1875,7 @@ impl ReadOnlyStore for MemoryStore {
         let name_lower = name.to_lowercase();
         for entry in self.labels.iter() {
             let label = entry.value();
-            if !label.deleted && label.name == name_lower {
+            if !label.archived && label.name == name_lower {
                 return Ok(Some((entry.key().clone(), label.clone())));
             }
         }
@@ -1895,7 +1895,7 @@ impl ReadOnlyStore for MemoryStore {
             .iter()
             .filter_map(|label_id| {
                 let label = self.labels.get(label_id)?;
-                if label.deleted {
+                if label.archived {
                     return None;
                 }
                 Some(LabelSummary::new(
@@ -1946,7 +1946,7 @@ impl ReadOnlyStore for MemoryStore {
         let versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
 
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::TriggerNotFound(id.clone()));
         }
 
@@ -1962,7 +1962,7 @@ impl ReadOnlyStore for MemoryStore {
             .iter()
             .filter_map(|entry| {
                 let versioned = Self::latest_versioned(entry.value())?;
-                if !include_deleted && versioned.item.deleted {
+                if !include_deleted && versioned.item.archived {
                     return None;
                 }
                 Some((entry.key().clone(), versioned))
@@ -2277,7 +2277,7 @@ impl ReadOnlyStore for MemoryStore {
         let versioned = Self::latest_versioned(versions.value())
             .ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
 
-        if !include_deleted && versioned.item.deleted {
+        if !include_deleted && versioned.item.archived {
             return Err(StoreError::ConversationNotFound(id.clone()));
         }
 
@@ -2288,7 +2288,7 @@ impl ReadOnlyStore for MemoryStore {
         &self,
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let search_term = query
             .q
             .as_ref()
@@ -2314,7 +2314,7 @@ impl ReadOnlyStore for MemoryStore {
                 let versioned = Self::latest_versioned(versions)?;
                 let conv = &versioned.item;
 
-                if !include_deleted && conv.deleted {
+                if !include_deleted && conv.archived {
                     return None;
                 }
 
@@ -2464,7 +2464,7 @@ impl ReadOnlyStore for MemoryStore {
             .iter()
             .filter_map(|entry| {
                 let latest = Self::latest_versioned(entry.value())?;
-                if latest.item.deleted {
+                if latest.item.archived {
                     return None;
                 }
                 let linked = latest
@@ -2528,11 +2528,11 @@ impl Store for MemoryStore {
         config: Repository,
         actor: &ActorRef,
     ) -> Result<(), StoreError> {
-        // Check if exists and if deleted
+        // Check if exists and if archived
         if let Some(entry) = self.repositories.get(&name) {
             if let Some(latest) = Self::latest_versioned(entry.value()) {
-                if latest.item.deleted {
-                    // Re-create over deleted: use caller's config as-is
+                if latest.item.archived {
+                    // Re-create over archived: use caller's config as-is
                     drop(entry);
                     return self.update_repository(name, config, actor).await;
                 }
@@ -2561,11 +2561,15 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn delete_repository(&self, name: &RepoName, actor: &ActorRef) -> Result<(), StoreError> {
-        // Use include_deleted: true since we need to access the repository to mark it as deleted
+    async fn archive_repository(
+        &self,
+        name: &RepoName,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        // Use include_deleted: true since we need to access the repository to mark it as archived
         let current = self.get_repository(name, true).await?;
         let mut repo = current.item;
-        repo.deleted = true;
+        repo.archived = true;
         self.update_repository(name.clone(), repo, actor).await
     }
 
@@ -2624,14 +2628,14 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_issue(
+    async fn archive_issue(
         &self,
         id: &IssueId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
-        issue.deleted = true;
+        issue.archived = true;
         self.update_issue(id, issue, actor).await
     }
 
@@ -2663,14 +2667,14 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_patch(
+    async fn archive_patch(
         &self,
         id: &PatchId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
-        patch.deleted = true;
+        patch.archived = true;
         self.update_patch(id, patch, actor).await
     }
 
@@ -2679,10 +2683,10 @@ impl Store for MemoryStore {
         document: Document,
         actor: &ActorRef,
     ) -> Result<(DocumentId, VersionNumber), StoreError> {
-        // Check path uniqueness for non-deleted documents
+        // Check path uniqueness for non-archived documents
         if let Some(ref path) = document.path {
             if self
-                .find_non_deleted_document_by_exact_path(path.as_ref())
+                .find_non_archived_document_by_exact_path(path.as_ref())
                 .await?
                 .is_some()
             {
@@ -2716,8 +2720,8 @@ impl Store for MemoryStore {
         };
         let new_path = document.path.clone();
 
-        // Check path uniqueness when the path is changing and the document is not being deleted
-        if !document.deleted && new_path != previous_path {
+        // Check path uniqueness when the path is changing and the document is not being archived
+        if !document.archived && new_path != previous_path {
             if let Some(ref path) = new_path {
                 let ids = self.document_ids_with_exact_path(path.as_ref());
                 for other_id in ids {
@@ -2726,7 +2730,7 @@ impl Store for MemoryStore {
                     }
                     if let Some(entry) = self.documents.get(&other_id) {
                         if let Some(latest) = Self::latest_versioned(entry.value()) {
-                            if !latest.item.deleted {
+                            if !latest.item.archived {
                                 return Err(StoreError::DocumentPathConflict);
                             }
                         }
@@ -2755,14 +2759,14 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_document(
+    async fn archive_document(
         &self,
         id: &DocumentId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
-        document.deleted = true;
+        document.archived = true;
         self.update_document(id, document, actor).await
     }
 
@@ -2831,23 +2835,23 @@ impl Store for MemoryStore {
         Ok(updated)
     }
 
-    async fn delete_session(
+    async fn archive_session(
         &self,
         id: &SessionId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_session(id, true).await?;
         let mut task = current.item;
-        task.deleted = true;
+        task.archived = true;
         let versioned = self.update_session(id, task, actor).await?;
         Ok(versioned.version)
     }
 
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         if let Some(mut versions) = self.users.get_mut(&user.username) {
-            // Check if the user is deleted
+            // Check if the user is archived
             if let Some(latest) = Self::latest_versioned(versions.value()) {
-                if latest.item.deleted {
+                if latest.item.archived {
                     // Allow re-creation with the provided user
                     let next_version = Self::next_version(&versions);
                     let versioned = Self::versioned_now_with_actor(user, next_version, actor);
@@ -2880,10 +2884,10 @@ impl Store for MemoryStore {
         Ok(versioned)
     }
 
-    async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
+    async fn archive_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
         let current = self.get_user(username, true).await?;
         let mut user = current.item;
-        user.deleted = true;
+        user.archived = true;
         self.update_user(user, actor).await?;
         Ok(())
     }
@@ -2891,9 +2895,9 @@ impl Store for MemoryStore {
     // ---- Agent mutations ----
 
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
-        // Check if a non-deleted agent with this name already exists.
+        // Check if a non-archived agent with this name already exists.
         if let Some(entry) = self.agents.get(&agent.name) {
-            if !entry.value().deleted {
+            if !entry.value().archived {
                 return Err(StoreError::AgentAlreadyExists(agent.name));
             }
         }
@@ -2903,16 +2907,16 @@ impl Store for MemoryStore {
     }
 
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
-        // Check the agent exists and is not deleted.
+        // Check the agent exists and is not archived.
         let _ = self.get_agent(&agent.name).await?;
 
         self.agents.insert(agent.name.clone(), agent);
         Ok(())
     }
 
-    async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
+    async fn archive_agent(&self, name: &str) -> Result<(), StoreError> {
         let mut agent = self.get_agent(name).await?;
-        agent.deleted = true;
+        agent.archived = true;
         agent.updated_at = Utc::now();
         self.agents.insert(name.to_string(), agent);
         Ok(())
@@ -2949,9 +2953,9 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
+    async fn archive_label(&self, id: &LabelId) -> Result<(), StoreError> {
         let mut label = self.get_label(id).await?;
-        label.deleted = true;
+        label.archived = true;
         label.updated_at = Utc::now();
         self.labels.insert(id.clone(), label);
         Ok(())
@@ -3208,14 +3212,14 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_trigger(
+    async fn archive_trigger(
         &self,
         id: &TriggerId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_trigger(id, true).await?;
         let mut trigger = current.item;
-        trigger.deleted = true;
+        trigger.archived = true;
         self.update_trigger(id, trigger, actor).await
     }
 
@@ -3802,7 +3806,7 @@ mod tests {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
             path: path.map(|p| p.parse().unwrap()),
-            deleted: false,
+            archived: false,
         }
     }
 
@@ -3975,31 +3979,31 @@ mod tests {
 
         // Delete the repository
         store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap();
 
-        // With include_deleted=false, deleted repository returns RepositoryNotFound
+        // With include_deleted=false, archived repository returns RepositoryNotFound
         let err = store.get_repository(&name, false).await.unwrap_err();
         assert!(matches!(err, StoreError::RepositoryNotFound(_)));
 
         // With include_deleted=true, repository is still retrievable
         let fetched = store.get_repository(&name, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
         assert_eq!(fetched.version, 2);
 
-        // By default, list_repositories excludes deleted
+        // By default, list_repositories excludes archived
         let list = store
             .list_repositories(&SearchRepositoriesQuery::default())
             .await
             .unwrap();
         assert!(list.is_empty());
 
-        // With include_deleted=true, deleted repos are shown
+        // With include_deleted=true, archived repos are shown
         let query = SearchRepositoriesQuery::new(Some(true), None);
         let list = store.list_repositories(&query).await.unwrap();
         assert_eq!(list.len(), 1);
-        assert!(list[0].1.item.deleted);
+        assert!(list[0].1.item.archived);
     }
 
     #[tokio::test]
@@ -4014,14 +4018,14 @@ mod tests {
             .await
             .unwrap();
         store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap();
 
-        // Re-create with deleted=false (caller controls the deleted field)
+        // Re-create with archived=false (caller controls the archived field)
         let mut new_config = config.clone();
         new_config.default_branch = Some("develop".to_string());
-        new_config.deleted = false;
+        new_config.archived = false;
         store
             .add_repository(name.clone(), new_config.clone(), &ActorRef::test())
             .await
@@ -4029,7 +4033,7 @@ mod tests {
 
         // Repository should be active again
         let fetched = store.get_repository(&name, false).await.unwrap();
-        assert!(!fetched.item.deleted);
+        assert!(!fetched.item.archived);
         assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
         assert_eq!(fetched.version, 3);
 
@@ -4039,7 +4043,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(list.len(), 1);
-        assert!(!list[0].1.item.deleted);
+        assert!(!list[0].1.item.archived);
     }
 
     #[tokio::test]
@@ -4054,23 +4058,23 @@ mod tests {
             .await
             .unwrap();
         store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap();
 
-        // Re-create with deleted=true (caller wants to keep it deleted)
+        // Re-create with archived=true (caller wants to keep it archived)
         let mut new_config = config.clone();
         new_config.default_branch = Some("develop".to_string());
-        new_config.deleted = true;
+        new_config.archived = true;
         store
             .add_repository(name.clone(), new_config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
-        // Repository should still be deleted (caller's choice)
-        // Use include_deleted=true to retrieve the deleted repository
+        // Repository should still be archived (caller's choice)
+        // Use include_deleted=true to retrieve the archived repository
         let fetched = store.get_repository(&name, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
         assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
         assert_eq!(fetched.version, 3);
 
@@ -4167,7 +4171,7 @@ mod tests {
         let name = RepoName::from_str("dourolabs/nonexistent").unwrap();
 
         let err = store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap_err();
         assert!(matches!(
@@ -5514,7 +5518,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(101),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -5526,7 +5530,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(202),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -5548,17 +5552,17 @@ mod tests {
         let user = User {
             username: username.clone(),
             github_user_id: Some(101),
-            deleted: false,
+            archived: false,
         };
         store.add_user(user, &ActorRef::test()).await.unwrap();
 
-        // User is accessible when not deleted
+        // User is accessible when not archived
         let fetched = store.get_user(&username, false).await.unwrap();
         assert_eq!(fetched.item.username, username);
 
         // Delete the user
         store
-            .delete_user(&username, &ActorRef::test())
+            .archive_user(&username, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5569,7 +5573,7 @@ mod tests {
         // User is still accessible with include_deleted=true
         let fetched = store.get_user(&username, true).await.unwrap();
         assert_eq!(fetched.item.username, username);
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
     }
 
     #[tokio::test]
@@ -5825,11 +5829,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(issues.len(), 1);
-        assert!(!issues[0].1.item.deleted);
+        assert!(!issues[0].1.item.archived);
 
         // Delete the issue
         store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5852,11 +5856,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(issues.len(), 1);
-        assert!(issues[0].1.item.deleted);
+        assert!(issues[0].1.item.archived);
 
-        // get_issue with include_deleted: true should still return the deleted issue
+        // get_issue with include_deleted: true should still return the archived issue
         let issue = store.get_issue(&issue_id, true).await.unwrap();
-        assert!(issue.item.deleted);
+        assert!(issue.item.archived);
 
         // get_issue with include_deleted: false should return IssueNotFound
         let err = store.get_issue(&issue_id, false).await.unwrap_err();
@@ -5872,13 +5876,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Issue is accessible when not deleted
+        // Issue is accessible when not archived
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(fetched.item.description, issue.description);
 
         // Delete the issue
         store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5889,7 +5893,7 @@ mod tests {
         // Issue is still accessible with include_deleted=true
         let fetched = store.get_issue(&issue_id, true).await.unwrap();
         assert_eq!(fetched.item.description, issue.description);
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
     }
 
     #[tokio::test]
@@ -5906,11 +5910,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
-        assert!(!patches[0].1.item.deleted);
+        assert!(!patches[0].1.item.archived);
 
         // Delete the patch
         store
-            .delete_patch(&patch_id, &ActorRef::test())
+            .archive_patch(&patch_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5927,11 +5931,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
-        assert!(patches[0].1.item.deleted);
+        assert!(patches[0].1.item.archived);
 
-        // get_patch with include_deleted=true should still return the deleted patch
+        // get_patch with include_deleted=true should still return the archived patch
         let patch = store.get_patch(&patch_id, true).await.unwrap();
-        assert!(patch.item.deleted);
+        assert!(patch.item.archived);
     }
 
     #[tokio::test]
@@ -5943,13 +5947,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Patch is accessible when not deleted
+        // Patch is accessible when not archived
         let fetched = store.get_patch(&patch_id, false).await.unwrap();
         assert_eq!(fetched.item.title, patch.title);
 
         // Delete the patch
         store
-            .delete_patch(&patch_id, &ActorRef::test())
+            .archive_patch(&patch_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -5960,7 +5964,7 @@ mod tests {
         // Patch is still accessible with include_deleted=true
         let fetched = store.get_patch(&patch_id, true).await.unwrap();
         assert_eq!(fetched.item.title, patch.title);
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
     }
 
     #[tokio::test]
@@ -6232,11 +6236,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(!docs[0].1.item.deleted);
+        assert!(!docs[0].1.item.archived);
 
         // Delete the document
         store
-            .delete_document(&doc_id, &ActorRef::test())
+            .archive_document(&doc_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -6253,15 +6257,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(docs[0].1.item.deleted);
+        assert!(docs[0].1.item.archived);
 
         // get_document with include_deleted=false should return not found
         let result = store.get_document(&doc_id, false).await;
         assert!(matches!(result, Err(StoreError::DocumentNotFound(_))));
 
-        // get_document with include_deleted=true should return the deleted document
+        // get_document with include_deleted=true should return the archived document
         let doc = store.get_document(&doc_id, true).await.unwrap();
-        assert!(doc.item.deleted);
+        assert!(doc.item.archived);
     }
 
     #[tokio::test]
@@ -6279,11 +6283,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tasks.len(), 1);
-        assert!(!tasks[0].1.item.deleted);
+        assert!(!tasks[0].1.item.archived);
 
         // Delete the task
         store
-            .delete_session(&task_id, &ActorRef::test())
+            .archive_session(&task_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -6300,15 +6304,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tasks.len(), 1);
-        assert!(tasks[0].1.item.deleted);
+        assert!(tasks[0].1.item.archived);
 
-        // get_task with include_deleted=false should return TaskNotFound for deleted task
+        // get_task with include_deleted=false should return TaskNotFound for archived task
         let err = store.get_session(&task_id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::SessionNotFound(id) if id == task_id));
 
-        // get_task with include_deleted=true should return the deleted task
+        // get_task with include_deleted=true should return the archived task
         let deleted_task = store.get_session(&task_id, true).await.unwrap();
-        assert!(deleted_task.item.deleted);
+        assert!(deleted_task.item.archived);
     }
 
     #[tokio::test]
@@ -6317,7 +6321,7 @@ mod tests {
         let missing_id = IssueId::new();
 
         let err = store
-            .delete_issue(&missing_id, &ActorRef::test())
+            .archive_issue(&missing_id, &ActorRef::test())
             .await
             .unwrap_err();
 
@@ -6330,7 +6334,7 @@ mod tests {
         let missing_id = PatchId::new();
 
         let err = store
-            .delete_patch(&missing_id, &ActorRef::test())
+            .archive_patch(&missing_id, &ActorRef::test())
             .await
             .unwrap_err();
 
@@ -6343,7 +6347,7 @@ mod tests {
         let missing_id = DocumentId::new();
 
         let err = store
-            .delete_document(&missing_id, &ActorRef::test())
+            .archive_document(&missing_id, &ActorRef::test())
             .await
             .unwrap_err();
 
@@ -6356,7 +6360,7 @@ mod tests {
         let missing_id = SessionId::new();
 
         let err = store
-            .delete_session(&missing_id, &ActorRef::test())
+            .archive_session(&missing_id, &ActorRef::test())
             .await
             .unwrap_err();
 
@@ -6373,7 +6377,7 @@ mod tests {
 
         let version_before = store.get_issue(&issue_id, false).await.unwrap().version;
         store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
         // After deletion, we need include_deleted: true to get the issue
@@ -7417,7 +7421,7 @@ mod tests {
         patch.branch_name = Some("feature/foo".to_string());
         let (patch_id, _) = store.add_patch(patch, &ActorRef::test()).await.unwrap();
         store
-            .delete_patch(&patch_id, &ActorRef::test())
+            .archive_patch(&patch_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -7597,7 +7601,7 @@ mod tests {
         let fetched = store.get_label(&label_id).await.unwrap();
         assert_eq!(fetched.name, "bug");
         assert_eq!(fetched.color.as_ref(), "#e74c3c");
-        assert!(!fetched.deleted);
+        assert!(!fetched.archived);
 
         // LIST
         let results = store
@@ -7646,25 +7650,25 @@ mod tests {
             .unwrap();
 
         // Delete (soft delete)
-        store.delete_label(&label_id).await.unwrap();
+        store.archive_label(&label_id).await.unwrap();
 
-        // get_label returns not found for soft-deleted labels
+        // get_label returns not found for soft-archived labels
         let err = store.get_label(&label_id).await.unwrap_err();
         assert!(matches!(err, StoreError::LabelNotFound(_)));
 
-        // list_labels excludes deleted labels by default
+        // list_labels excludes archived labels by default
         let results = store
             .list_labels(&SearchLabelsQuery::default())
             .await
             .unwrap();
         assert!(results.is_empty());
 
-        // list_labels with include_deleted returns soft-deleted labels
+        // list_labels with include_deleted returns soft-archived labels
         let mut query = SearchLabelsQuery::default();
-        query.include_deleted = Some(true);
+        query.include_archived = Some(true);
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].1.deleted);
+        assert!(results[0].1.archived);
     }
 
     #[tokio::test]
@@ -8486,7 +8490,7 @@ mod tests {
         let store = MemoryStore::new();
         store.add_agent(sample_agent("alpha")).await.unwrap();
         store.add_agent(sample_agent("beta")).await.unwrap();
-        store.delete_agent("alpha").await.unwrap();
+        store.archive_agent("alpha").await.unwrap();
 
         let agents = store.list_agents().await.unwrap();
         assert_eq!(agents.len(), 1);
@@ -8533,7 +8537,7 @@ mod tests {
     async fn delete_agent_soft_deletes() {
         let store = MemoryStore::new();
         store.add_agent(sample_agent("swe")).await.unwrap();
-        store.delete_agent("swe").await.unwrap();
+        store.archive_agent("swe").await.unwrap();
 
         let err = store.get_agent("swe").await.unwrap_err();
         assert!(matches!(err, StoreError::AgentNotFound(_)));
@@ -8542,7 +8546,7 @@ mod tests {
     #[tokio::test]
     async fn delete_nonexistent_agent_returns_error() {
         let store = MemoryStore::new();
-        let err = store.delete_agent("missing").await.unwrap_err();
+        let err = store.archive_agent("missing").await.unwrap_err();
         assert!(matches!(err, StoreError::AgentNotFound(_)));
     }
 
@@ -8589,7 +8593,7 @@ mod tests {
         let mut chat = sample_agent("chat");
         chat.is_default_conversation_agent = true;
         store.add_agent(chat).await.unwrap();
-        store.delete_agent("chat").await.unwrap();
+        store.archive_agent("chat").await.unwrap();
 
         let mut chat2 = sample_agent("chat2");
         chat2.is_default_conversation_agent = true;
@@ -8604,7 +8608,7 @@ mod tests {
         let store = MemoryStore::new();
         let agent = sample_agent("swe");
         store.add_agent(agent).await.unwrap();
-        store.delete_agent("swe").await.unwrap();
+        store.archive_agent("swe").await.unwrap();
 
         // Re-creating with the same name should succeed.
         let mut agent2 = sample_agent("swe");
@@ -8613,7 +8617,7 @@ mod tests {
 
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
-        assert!(!fetched.deleted);
+        assert!(!fetched.archived);
     }
 
     // --- count_* method tests ---
@@ -9060,7 +9064,7 @@ mod tests {
             .unwrap();
 
         let found = store
-            .find_non_deleted_document_by_exact_path("/docs/unique.md")
+            .find_non_archived_document_by_exact_path("/docs/unique.md")
             .await
             .unwrap();
         assert_eq!(found, Some(doc_id));
@@ -9070,16 +9074,16 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_none_for_deleted() {
         let store = MemoryStore::new();
         let (doc_id, _) = store
-            .add_document(sample_document(Some("docs/deleted.md")), &ActorRef::test())
+            .add_document(sample_document(Some("docs/archived.md")), &ActorRef::test())
             .await
             .unwrap();
         store
-            .delete_document(&doc_id, &ActorRef::test())
+            .archive_document(&doc_id, &ActorRef::test())
             .await
             .unwrap();
 
         let found = store
-            .find_non_deleted_document_by_exact_path("/docs/deleted.md")
+            .find_non_archived_document_by_exact_path("/docs/archived.md")
             .await
             .unwrap();
         assert_eq!(found, None);
@@ -9089,7 +9093,7 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_none_for_missing() {
         let store = MemoryStore::new();
         let found = store
-            .find_non_deleted_document_by_exact_path("/docs/nonexistent.md")
+            .find_non_archived_document_by_exact_path("/docs/nonexistent.md")
             .await
             .unwrap();
         assert_eq!(found, None);
@@ -9121,11 +9125,11 @@ mod tests {
             .unwrap();
 
         store
-            .delete_document(&doc_id, &ActorRef::test())
+            .archive_document(&doc_id, &ActorRef::test())
             .await
             .unwrap();
 
-        // Should succeed since the original document is deleted
+        // Should succeed since the original document is archived
         let result = store
             .add_document(sample_document(Some("docs/reuse.md")), &ActorRef::test())
             .await;
@@ -9190,7 +9194,7 @@ mod tests {
             creator: Username::from("alice"),
             session_settings: Default::default(),
             spawned_from: None,
-            deleted: false,
+            archived: false,
         }
     }
 
@@ -9315,22 +9319,22 @@ mod tests {
     #[tokio::test]
     async fn get_conversation_versions_returns_versions_for_deleted_conversation() {
         // get_conversation_versions returns all versions regardless of the
-        // deleted flag — callers that want the deleted filter should use
+        // archived flag — callers that want the archived filter should use
         // get_conversation separately.
         let store = MemoryStore::new();
         let (id, _) = store
             .add_conversation(sample_conversation(), &test_actor())
             .await
             .unwrap();
-        let mut deleted = sample_conversation();
-        deleted.deleted = true;
+        let mut archived = sample_conversation();
+        archived.archived = true;
         store
-            .update_conversation(&id, deleted, &test_actor())
+            .update_conversation(&id, archived, &test_actor())
             .await
             .unwrap();
         let versions = store.get_conversation_versions(&id).await.unwrap();
         assert_eq!(versions.len(), 2);
-        assert!(versions.last().unwrap().item.deleted);
+        assert!(versions.last().unwrap().item.archived);
     }
 
     #[tokio::test]
@@ -9458,11 +9462,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(!results[0].1.item.deleted);
+        assert!(!results[0].1.item.archived);
 
         // Soft-delete the conversation
         let mut deleted_conv = sample_conversation();
-        deleted_conv.deleted = true;
+        deleted_conv.archived = true;
         store
             .update_conversation(&id, deleted_conv, &test_actor())
             .await
@@ -9475,16 +9479,16 @@ mod tests {
             .unwrap();
         assert!(results.is_empty());
 
-        // Deleted conversation should appear with include_deleted=true
+        // Deleted conversation should appear with include_archived=true
         let results = store
             .list_conversations(&SearchConversationsQuery {
-                include_deleted: Some(true),
+                include_archived: Some(true),
                 ..Default::default()
             })
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].1.item.deleted);
+        assert!(results[0].1.item.archived);
     }
 
     #[tokio::test]
@@ -9495,13 +9499,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Conversation is accessible when not deleted
+        // Conversation is accessible when not archived
         let fetched = store.get_conversation(&id, false).await.unwrap();
         assert_eq!(fetched.item.title.as_deref(), Some("Test conversation"));
 
         // Soft-delete the conversation
         let mut deleted_conv = sample_conversation();
-        deleted_conv.deleted = true;
+        deleted_conv.archived = true;
         store
             .update_conversation(&id, deleted_conv, &test_actor())
             .await
@@ -9511,9 +9515,9 @@ mod tests {
         let err = store.get_conversation(&id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::ConversationNotFound(_)));
 
-        // get_conversation with include_deleted=true should return the deleted conversation
+        // get_conversation with include_deleted=true should return the archived conversation
         let fetched = store.get_conversation(&id, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
     }
 
     #[tokio::test]
@@ -10234,7 +10238,7 @@ mod tests {
             )
             .await
             .unwrap();
-        store.delete_session(&sid, &test_actor()).await.unwrap();
+        store.archive_session(&sid, &test_actor()).await.unwrap();
         let ids = store
             .list_session_ids_by_conversation_id(&conv_id)
             .await
@@ -10370,7 +10374,7 @@ mod tests {
         );
     }
 
-    fn insert_dummy_undeleted_labels(store: &MemoryStore, count: usize) -> Vec<LabelId> {
+    fn insert_dummy_unarchived_labels(store: &MemoryStore, count: usize) -> Vec<LabelId> {
         let now = Utc::now();
         let mut ids = Vec::with_capacity(count);
         for i in 0..count {
@@ -10382,7 +10386,7 @@ mod tests {
                 Label {
                     name: format!("dummy-{i}"),
                     color: "#000000".parse().unwrap(),
-                    deleted: false,
+                    archived: false,
                     recurse: false,
                     hidden: false,
                     created_at: now,
@@ -10400,7 +10404,7 @@ mod tests {
 
         // Seed 677 live labels so next_label_id sees a count past the 6 → 7
         // threshold.
-        let dummies = insert_dummy_undeleted_labels(&store, 677);
+        let dummies = insert_dummy_unarchived_labels(&store, 677);
         let pre = store
             .add_label(sample_label("live-pre", "#ffffff"))
             .await
@@ -10414,9 +10418,9 @@ mod tests {
         // Soft-delete every label; the live count should drop back to zero
         // and the next id should fall back to the default 6-char suffix.
         for id in &dummies {
-            store.delete_label(id).await.unwrap();
+            store.archive_label(id).await.unwrap();
         }
-        store.delete_label(&pre).await.unwrap();
+        store.archive_label(&pre).await.unwrap();
 
         let post = store
             .add_label(sample_label("live-post", "#ffffff"))
@@ -10425,7 +10429,7 @@ mod tests {
         assert_eq!(
             post.as_ref().len() - LabelId::prefix().len(),
             6,
-            "soft-deleted labels must not inflate the suffix length"
+            "soft-archived labels must not inflate the suffix length"
         );
     }
 
@@ -10483,11 +10487,11 @@ mod tests {
         assert_eq!(v2, 2);
         assert!(!store.get_trigger(&id, false).await.unwrap().item.enabled);
 
-        let v3 = store.delete_trigger(&id, &ActorRef::test()).await.unwrap();
+        let v3 = store.archive_trigger(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 3);
-        // List excludes deleted by default.
+        // List excludes archived by default.
         assert!(store.list_triggers(false).await.unwrap().is_empty());
-        // List includes deleted on request.
+        // List includes archived on request.
         assert_eq!(store.list_triggers(true).await.unwrap().len(), 1);
         // Get without include_deleted returns NotFound.
         assert!(matches!(
@@ -10496,7 +10500,7 @@ mod tests {
         ));
         // Get with include_deleted returns the tombstoned row.
         let tombstoned = store.get_trigger(&id, true).await.unwrap();
-        assert!(tombstoned.item.deleted);
+        assert!(tombstoned.item.archived);
     }
 
     #[tokio::test]
@@ -11094,7 +11098,7 @@ mod tests {
             .unwrap();
         assert_eq!(cascaded, vec![issue_id.clone()]);
         let fetched = store.get_issue(&issue_id, true).await.unwrap();
-        assert!(fetched.item.deleted, "cascade must flip issue.deleted");
+        assert!(fetched.item.archived, "cascade must flip issue.archived");
     }
 
     /// `archive_project` cascades to every non-archived issue in the
@@ -11125,7 +11129,7 @@ mod tests {
         assert_eq!(cascaded.len(), 2);
         for id in &ids {
             let fetched = store.get_issue(id, true).await.unwrap();
-            assert!(fetched.item.deleted);
+            assert!(fetched.item.archived);
         }
         let p = store.get_project(&project_id, true).await.unwrap();
         assert!(p.item.archived);
@@ -11158,7 +11162,7 @@ mod tests {
         assert!(!p.item.archived);
         let i = store.get_issue(&issue_id, true).await.unwrap();
         assert!(
-            i.item.deleted,
+            i.item.archived,
             "cascade-archived issue stays archived after unarchive_project"
         );
     }

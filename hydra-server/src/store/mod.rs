@@ -364,27 +364,27 @@ impl StoreError {
 /// Trait for read-only store operations: queries and lookups.
 #[async_trait]
 pub trait ReadOnlyStore: Send + Sync {
-    /// Returns `StoreError::RepositoryNotFound` for deleted repositories unless `include_deleted` is true.
+    /// Returns `StoreError::RepositoryNotFound` for archived repositories unless `include_archived` is true.
     async fn get_repository(
         &self,
         name: &RepoName,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Repository>, StoreError>;
 
     /// Lists repository configurations keyed by name.
     ///
-    /// By default, deleted repositories are filtered out unless `include_deleted: true`
+    /// By default, archived repositories are filtered out unless `include_archived: true`
     /// is set in the query.
     async fn list_repositories(
         &self,
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError>;
 
-    /// Returns `StoreError::IssueNotFound` for deleted issues unless `include_deleted` is true.
+    /// Returns `StoreError::IssueNotFound` for archived issues unless `include_archived` is true.
     async fn get_issue(
         &self,
         id: &IssueId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Issue>, StoreError>;
 
     /// Retrieves all versions of an issue in ascending version order.
@@ -392,7 +392,7 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Lists issues in the store that match the provided search query.
     ///
-    /// By default, deleted issues are filtered out unless `include_deleted: true`
+    /// By default, archived issues are filtered out unless `include_archived: true`
     /// is set in the query.
     ///
     async fn list_issues(
@@ -403,7 +403,7 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Counts issues matching the search query, ignoring pagination (cursor/limit).
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError>;
 
-    /// Lists non-deleted issue IDs in the given `(project_id,
+    /// Lists non-archived issue IDs in the given `(project_id,
     /// status_key)` whose latest version's `updated_at` is older
     /// than `now - threshold_seconds`, capped to `limit` rows.
     ///
@@ -428,7 +428,7 @@ pub trait ReadOnlyStore: Send + Sync {
     /// [`crate::policy::automations::agent_queue::agent_task_state`]:
     /// sessions in `Created`, `Pending`, or `Running`. Both
     /// conversation-backed (interactive) and headless sessions count.
-    /// Deleted sessions and deleted issues are excluded. Used by the
+    /// Deleted sessions and archived issues are excluded. Used by the
     /// status-cap enforcement in `spawn_for_issue` /
     /// `spawn_conversation_sessions::spawn_session`.
     async fn count_active_sessions_in_status(
@@ -463,11 +463,11 @@ pub trait ReadOnlyStore: Send + Sync {
         before_sequence: Option<u64>,
     ) -> Result<ListCommentsPage, StoreError>;
 
-    /// Returns `StoreError::PatchNotFound` for deleted patches unless `include_deleted` is true.
+    /// Returns `StoreError::PatchNotFound` for archived patches unless `include_archived` is true.
     async fn get_patch(
         &self,
         id: &PatchId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Patch>, StoreError>;
 
     /// Retrieves all versions of a patch in ascending version order.
@@ -485,11 +485,11 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Lists all issues that reference the provided patch ID.
     async fn get_issues_for_patch(&self, patch_id: &PatchId) -> Result<Vec<IssueId>, StoreError>;
 
-    /// Returns `StoreError::DocumentNotFound` for deleted documents unless `include_deleted` is true.
+    /// Returns `StoreError::DocumentNotFound` for archived documents unless `include_archived` is true.
     async fn get_document(
         &self,
         id: &DocumentId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Document>, StoreError>;
 
     /// Retrieves all versions of a document in ascending order.
@@ -507,9 +507,9 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Counts documents matching the search query, ignoring pagination (cursor/limit).
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError>;
 
-    /// Finds a non-deleted document with the exact given path.
+    /// Finds a non-archived document with the exact given path.
     /// Returns the document ID and its latest version, or None if no such document exists.
-    async fn find_non_deleted_document_by_exact_path(
+    async fn find_non_archived_document_by_exact_path(
         &self,
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError>;
@@ -520,11 +520,11 @@ pub trait ReadOnlyStore: Send + Sync {
         path_prefix: &str,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError>;
 
-    /// Returns the live (non-deleted) document at each of the provided exact paths.
+    /// Returns the live (non-archived) document at each of the provided exact paths.
     ///
     /// Looks up documents whose `path` matches one of `paths` exactly. The result
     /// includes only paths that resolve to a live document — paths that do not
-    /// match any non-deleted document are omitted. Duplicate paths in the input
+    /// match any non-archived document are omitted. Duplicate paths in the input
     /// produce at most one result per path.
     async fn get_documents_by_paths(
         &self,
@@ -532,17 +532,17 @@ pub trait ReadOnlyStore: Send + Sync {
     ) -> Result<Vec<(String, DocumentId, String)>, StoreError>;
 
     /// Returns the unique next-level path segments under the given prefix,
-    /// along with the count of (non-deleted) documents under each segment.
+    /// along with the count of (non-archived) documents under each segment.
     async fn list_document_path_children(
         &self,
         prefix: &str,
     ) -> Result<Vec<(String, String, u64, bool)>, StoreError>;
 
-    /// Returns `StoreError::SessionNotFound` for deleted sessions unless `include_deleted` is true.
+    /// Returns `StoreError::SessionNotFound` for archived sessions unless `include_archived` is true.
     async fn get_session(
         &self,
         id: &SessionId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Session>, StoreError>;
 
     /// Retrieves all versions of a session in ascending version order.
@@ -572,16 +572,16 @@ pub trait ReadOnlyStore: Send + Sync {
         ids: &[SessionId],
     ) -> Result<HashMap<SessionId, TaskStatusLog>, StoreError>;
 
-    /// Returns `StoreError::UserNotFound` for deleted users unless `include_deleted` is true.
+    /// Returns `StoreError::UserNotFound` for archived users unless `include_archived` is true.
     async fn get_user(
         &self,
         username: &Username,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<User>, StoreError>;
 
     /// Lists users that match the provided search query.
     ///
-    /// By default, deleted users are filtered out unless `include_deleted: true`
+    /// By default, archived users are filtered out unless `include_archived: true`
     /// is set in the query.
     async fn list_users(
         &self,
@@ -604,7 +604,7 @@ pub trait ReadOnlyStore: Send + Sync {
     /// want a single-shot case-insensitive index lookup can override
     /// this method.
     ///
-    /// Returns `Ok(None)` when no matching, non-deleted user exists.
+    /// Returns `Ok(None)` when no matching, non-archived user exists.
     async fn get_user_by_github_login(
         &self,
         login: &str,
@@ -618,7 +618,7 @@ pub trait ReadOnlyStore: Send + Sync {
         }
 
         // Fall back to a case-insensitive scan. Deleted users are filtered
-        // out by `list_users` default (include_deleted = false), which
+        // out by `list_users` default (include_archived = false), which
         // matches the design's intent: the poller should not attribute a
         // review to a tombstoned account.
         let users = self.list_users(&SearchUsersQuery::default()).await?;
@@ -632,7 +632,7 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Returns whether the given [`Principal`] exists in the store.
     ///
     /// - `Principal::User { name }` → checks the users table
-    ///   (`include_deleted = false`).
+    ///   (`include_archived = false`).
     /// - `Principal::Agent { name }` → checks the agents table.
     /// - `Principal::External { .. }` → always returns `true`. External
     ///   principals are format-checked only — they live in an external
@@ -666,10 +666,10 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Retrieves an agent by its name.
     ///
     /// Returns `StoreError::AgentNotFound` if the agent does not exist or
-    /// has been soft-deleted.
+    /// has been archived.
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError>;
 
-    /// Lists all non-deleted agents, ordered by name.
+    /// Lists all non-archived agents, ordered by name.
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError>;
 
     // ---- Label (read-only) ----
@@ -677,12 +677,12 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Retrieves a label by its LabelId.
     ///
     /// Returns `StoreError::LabelNotFound` if the label does not exist or
-    /// has been soft-deleted.
+    /// has been archived.
     async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError>;
 
     /// Lists labels matching the search query.
     ///
-    /// By default, deleted labels are filtered out unless `include_deleted: true`
+    /// By default, archived labels are filtered out unless `include_archived: true`
     /// is set in the query.
     async fn list_labels(
         &self,
@@ -694,7 +694,7 @@ pub trait ReadOnlyStore: Send + Sync {
 
     /// Finds a label by its name (case-insensitive).
     ///
-    /// Returns `None` if no non-deleted label with the given name exists.
+    /// Returns `None` if no non-archived label with the given name exists.
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError>;
 
     // ---- Label association (read-only) ----
@@ -719,11 +719,11 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Conversation (read-only) ----
 
-    /// Returns `StoreError::ConversationNotFound` for deleted conversations unless `include_deleted` is true.
+    /// Returns `StoreError::ConversationNotFound` for archived conversations unless `include_archived` is true.
     async fn get_conversation(
         &self,
         id: &ConversationId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Conversation>, StoreError>;
 
     /// Lists conversations matching the query, returning summaries sorted by updated_at DESC.
@@ -742,8 +742,8 @@ pub trait ReadOnlyStore: Send + Sync {
     /// Status transitions (`Active`/`Idle`/`Closed`) are observable as new
     /// version rows on the conversation itself.
     ///
-    /// Soft-deleted conversations are still returned via this method (callers
-    /// that need the deleted filter should use
+    /// Soft-archived conversations are still returned via this method (callers
+    /// that need the archived filter should use
     /// [`Self::get_conversation`] separately).
     async fn get_conversation_versions(
         &self,
@@ -803,19 +803,19 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Trigger (read-only) ----
 
-    /// Returns `StoreError::TriggerNotFound` for deleted triggers unless `include_deleted` is true.
+    /// Returns `StoreError::TriggerNotFound` for archived triggers unless `include_archived` is true.
     async fn get_trigger(
         &self,
         id: &TriggerId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Trigger>, StoreError>;
 
     /// Lists all triggers paired with their `TriggerId`.
     ///
-    /// By default, deleted triggers are filtered out unless `include_deleted: true`.
+    /// By default, archived triggers are filtered out unless `include_archived: true`.
     async fn list_triggers(
         &self,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError>;
 
     /// Retrieves all versions of a trigger in ascending version order.
@@ -950,12 +950,13 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<(), StoreError>;
 
-    /// Soft-deletes a repository by setting its `deleted` flag to true.
+    /// Soft-archives a repository by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the repository with `deleted: true`.
+    /// This creates a new version of the repository with `archived: true`.
     /// The repository can still be retrieved via `get_repository` but will be filtered
     /// from `list_repositories` by default.
-    async fn delete_repository(&self, name: &RepoName, actor: &ActorRef) -> Result<(), StoreError>;
+    async fn archive_repository(&self, name: &RepoName, actor: &ActorRef)
+    -> Result<(), StoreError>;
 
     /// Adds a new issue to the store and assigns it an IssueId.
     ///
@@ -978,13 +979,13 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Soft-deletes an issue by setting its `deleted` flag to true.
+    /// Soft-archives an issue by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the issue with `deleted: true`.
+    /// This creates a new version of the issue with `archived: true`.
     /// The issue can still be retrieved via `get_issue` but will be filtered
     /// from `list_issues` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_issue(
+    async fn archive_issue(
         &self,
         id: &IssueId,
         actor: &ActorRef,
@@ -1009,13 +1010,13 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Soft-deletes a patch by setting its `deleted` flag to true.
+    /// Soft-archives a patch by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the patch with `deleted: true`.
+    /// This creates a new version of the patch with `archived: true`.
     /// The patch can still be retrieved via `get_patch` but will be filtered
     /// from `list_patches` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_patch(
+    async fn archive_patch(
         &self,
         id: &PatchId,
         actor: &ActorRef,
@@ -1040,14 +1041,14 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Soft-deletes a document by setting its `deleted` flag to true.
+    /// Soft-archives a document by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the document with `deleted: true`.
-    /// The document can still be retrieved via `get_document` with `include_deleted: true`,
-    /// but will be filtered from `get_document` with `include_deleted: false` and from
-    /// `list_documents` by default (unless `include_deleted: true` is in the query).
+    /// This creates a new version of the document with `archived: true`.
+    /// The document can still be retrieved via `get_document` with `include_archived: true`,
+    /// but will be filtered from `get_document` with `include_archived: false` and from
+    /// `list_documents` by default (unless `include_archived: true` is in the query).
     /// Returns the version number of the deletion record.
-    async fn delete_document(
+    async fn archive_document(
         &self,
         id: &DocumentId,
         actor: &ActorRef,
@@ -1108,13 +1109,13 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<Versioned<Session>, StoreError>;
 
-    /// Soft-deletes a session by setting its `deleted` flag to true.
+    /// Soft-archives a session by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the session with `deleted: true`.
+    /// This creates a new version of the session with `archived: true`.
     /// The session can still be retrieved via `get_session` but will be filtered
     /// from `list_sessions` by default. Returns the version number of the
     /// deletion record.
-    async fn delete_session(
+    async fn archive_session(
         &self,
         id: &SessionId,
         actor: &ActorRef,
@@ -1122,8 +1123,8 @@ pub trait Store: ReadOnlyStore {
 
     /// Adds a new user to the store.
     ///
-    /// If a user with the same username exists but is deleted, this will
-    /// undelete the user by creating a new version with `deleted: false`.
+    /// If a user with the same username exists but is archived, this will
+    /// unarchive the user by creating a new version with `archived: false`.
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError>;
 
     /// Updates an existing user in the store.
@@ -1133,19 +1134,19 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<Versioned<User>, StoreError>;
 
-    /// Soft-deletes a user by setting its `deleted` flag to true.
+    /// Soft-archives a user by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the user with `deleted: true`.
-    /// The user can still be retrieved via `get_user` with `include_deleted: true`,
-    /// but will be filtered from `get_user` with `include_deleted: false` and from
-    /// `list_users` by default (unless `include_deleted: true` is in the query).
-    async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError>;
+    /// This creates a new version of the user with `archived: true`.
+    /// The user can still be retrieved via `get_user` with `include_archived: true`,
+    /// but will be filtered from `get_user` with `include_archived: false` and from
+    /// `list_users` by default (unless `include_archived: true` is in the query).
+    async fn archive_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError>;
 
     // ---- Agent mutations ----
 
     /// Adds a new agent to the store.
     ///
-    /// Returns `StoreError::AgentAlreadyExists` if a non-deleted agent with
+    /// Returns `StoreError::AgentAlreadyExists` if a non-archived agent with
     /// the same name already exists. Role-flag uniqueness
     /// (`is_default_conversation_agent`) is workflow state and is enforced by
     /// the `agent_role_uniqueness` `Restriction` in `AppState`, not here.
@@ -1158,28 +1159,28 @@ pub trait Store: ReadOnlyStore {
     /// `Restriction` in `AppState`, not here.
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError>;
 
-    /// Soft-deletes an agent by setting its `deleted` flag to true.
+    /// Soft-archives an agent by setting its `archived` flag to true.
     ///
     /// Returns `StoreError::AgentNotFound` if the agent does not exist.
-    async fn delete_agent(&self, name: &str) -> Result<(), StoreError>;
+    async fn archive_agent(&self, name: &str) -> Result<(), StoreError>;
 
     // ---- Label mutations ----
 
     /// Adds a new label to the store and assigns it a LabelId.
     ///
     /// Returns the new LabelId, or `StoreError::LabelAlreadyExists` if a
-    /// non-deleted label with the same name already exists.
+    /// non-archived label with the same name already exists.
     async fn add_label(&self, label: Label) -> Result<LabelId, StoreError>;
 
     /// Updates an existing label's name and/or color.
     ///
     /// Returns `StoreError::LabelNotFound` if the label does not exist.
     /// Returns `StoreError::LabelAlreadyExists` if renaming to a name that
-    /// is already taken by another non-deleted label.
+    /// is already taken by another non-archived label.
     async fn update_label(&self, id: &LabelId, label: Label) -> Result<(), StoreError>;
 
-    /// Soft-deletes a label by setting its `deleted` flag to true.
-    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError>;
+    /// Soft-archives a label by setting its `archived` flag to true.
+    async fn archive_label(&self, id: &LabelId) -> Result<(), StoreError>;
 
     // ---- Label association mutations ----
 
@@ -1227,13 +1228,13 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Soft-deletes a trigger by setting its `deleted` flag to true.
+    /// Soft-archives a trigger by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the trigger with `deleted: true`.
+    /// This creates a new version of the trigger with `archived: true`.
     /// The trigger can still be retrieved via `get_trigger` with
-    /// `include_deleted: true` but is filtered from `list_triggers` by
+    /// `include_archived: true` but is filtered from `list_triggers` by
     /// default. Returns the version number of the deletion record.
-    async fn delete_trigger(
+    async fn archive_trigger(
         &self,
         id: &TriggerId,
         actor: &ActorRef,
@@ -1267,11 +1268,10 @@ pub trait Store: ReadOnlyStore {
 
     /// Archives a project by setting its `archived` flag to true and
     /// cascade-archives every non-archived issue currently in the
-    /// project. Issues are archived by flipping `issue.deleted = true`
-    /// — the field rename for issues is sequenced into a sibling
-    /// cleanup, but the semantic intent here is the same as
-    /// `archive_status`'s cascade. The whole operation is one store
-    /// transaction so a partial cascade can't observe.
+    /// project. Issues are archived by flipping `issue.archived = true`
+    /// — the semantic intent here is the same as `archive_status`'s
+    /// cascade. The whole operation is one store transaction so a
+    /// partial cascade can't observe.
     ///
     /// Returns the new project version plus the ids of every issue
     /// that was flipped by the cascade (already-archived issues are
@@ -1343,7 +1343,7 @@ pub trait Store: ReadOnlyStore {
     /// table so the FK from `issues_v2.status_sequence` is never
     /// tripped) and cascade-archive every non-archived issue
     /// currently at `(project_id, status_key)` by flipping
-    /// `issue.deleted = true`. The whole operation runs in one store
+    /// `issue.archived = true`. The whole operation runs in one store
     /// transaction.
     ///
     /// Returns the project's new version (bumped per the existing

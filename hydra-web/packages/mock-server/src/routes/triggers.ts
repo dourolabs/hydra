@@ -76,7 +76,7 @@ export function createTriggerRoutes(store: Store): Hono {
   // GET /v1/triggers/:id
   app.get("/v1/triggers/:id", (c) => {
     const id = c.req.param("id");
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const entry = store.get<Trigger>(COLLECTION, id, includeDeleted);
     if (!entry) {
       return c.json({ error: `trigger '${id}' not found` }, 404);
@@ -103,7 +103,7 @@ export function createTriggerRoutes(store: Store): Hono {
 
   // GET /v1/triggers
   app.get("/v1/triggers", (c) => {
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const items = store.list<Trigger>(COLLECTION, includeDeleted);
 
     // Sort by last-update time descending (most recently updated first)

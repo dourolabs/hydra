@@ -60,7 +60,7 @@ function makeDocumentRecord(documentId: string, path: string) {
     document: {
       title: `Doc ${documentId}`,
       path,
-      deleted: false,
+      archived: false,
       labels: [],
     },
   };

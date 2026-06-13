@@ -26,7 +26,7 @@ pub struct Conversation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawned_from: Option<IssueId>,
     #[serde(default)]
-    pub deleted: bool,
+    pub archived: bool,
 }
 
 // ---- From conversions: API -> Domain ----
@@ -61,7 +61,7 @@ impl From<api::conversations::Conversation> for Conversation {
             creator: value.creator.into(),
             session_settings: value.session_settings.into(),
             spawned_from: value.spawned_from,
-            deleted: false,
+            archived: false,
         }
     }
 }

@@ -77,14 +77,14 @@ impl AppState {
     }
 
     /// Soft-delete a trigger via the store. Returns the post-deletion
-    /// `Versioned<Trigger>` (fetched with `include_deleted = true`) so the
+    /// `Versioned<Trigger>` (fetched with `include_archived = true`) so the
     /// caller can populate a response that reflects the new tombstone row.
-    pub async fn delete_trigger(
+    pub async fn archive_trigger(
         &self,
         id: &TriggerId,
         actor: &ActorRef,
     ) -> Result<Versioned<Trigger>, UpsertTriggerError> {
-        self.store.delete_trigger(id, actor).await?;
+        self.store.archive_trigger(id, actor).await?;
         let versioned = self.store.get_trigger(id, true).await?;
         Ok(versioned)
     }

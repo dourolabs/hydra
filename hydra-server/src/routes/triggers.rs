@@ -76,7 +76,7 @@ where
 #[derive(Debug, serde::Deserialize)]
 pub struct GetTriggerQuery {
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
 }
 
 pub async fn create_trigger(
@@ -123,11 +123,11 @@ pub async fn get_trigger(
     TriggerIdPath(trigger_id): TriggerIdPath,
     Query(query): Query<GetTriggerQuery>,
 ) -> Result<Json<TriggerVersionRecord>, ApiError> {
-    let include_deleted = query.include_deleted.unwrap_or(false);
-    info!(trigger_id = %trigger_id, include_deleted, "get_trigger invoked");
+    let include_archived = query.include_archived.unwrap_or(false);
+    info!(trigger_id = %trigger_id, include_archived, "get_trigger invoked");
     let versioned = state
         .store_with_events()
-        .get_trigger(&trigger_id, include_deleted)
+        .get_trigger(&trigger_id, include_archived)
         .await
         .map_err(|err| map_trigger_error(err, Some(&trigger_id)))?;
     info!(trigger_id = %trigger_id, "get_trigger completed");
@@ -138,11 +138,11 @@ pub async fn list_triggers(
     State(state): State<AppState>,
     Query(query): Query<SearchTriggersQuery>,
 ) -> Result<Json<ListTriggersResponse>, ApiError> {
-    let include_deleted = query.include_deleted.unwrap_or(false);
-    info!(include_deleted, "list_triggers invoked");
+    let include_archived = query.include_archived.unwrap_or(false);
+    info!(include_archived, "list_triggers invoked");
     let rows = state
         .store_with_events()
-        .list_triggers(include_deleted)
+        .list_triggers(include_archived)
         .await
         .map_err(|err| map_trigger_error(err, None))?;
     let records: Vec<TriggerVersionRecord> = rows
@@ -206,20 +206,20 @@ pub async fn get_trigger_version(
     Ok(Json(to_record(&trigger_id, versioned)))
 }
 
-pub async fn delete_trigger(
+pub async fn archive_trigger(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     TriggerIdPath(trigger_id): TriggerIdPath,
 ) -> Result<Json<TriggerVersionRecord>, ApiError> {
-    info!(trigger_id = %trigger_id, "delete_trigger invoked");
+    info!(trigger_id = %trigger_id, "archive_trigger invoked");
     let versioned = state
-        .delete_trigger(&trigger_id, &ActorRef::from(&actor))
+        .archive_trigger(&trigger_id, &ActorRef::from(&actor))
         .await
         .map_err(|err| match err {
             UpsertTriggerError::Store { source } => map_trigger_error(source, Some(&trigger_id)),
             other => map_upsert_error(other),
         })?;
-    info!(trigger_id = %trigger_id, "delete_trigger completed");
+    info!(trigger_id = %trigger_id, "archive_trigger completed");
     Ok(Json(to_record(&trigger_id, versioned)))
 }
 

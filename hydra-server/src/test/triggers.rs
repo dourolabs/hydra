@@ -201,12 +201,15 @@ async fn delete_marks_trigger_deleted_and_filters_from_list() -> anyhow::Result<
         .await?
         .json()
         .await?;
-    assert!(listed.triggers.is_empty(), "deleted trigger must be hidden");
+    assert!(
+        listed.triggers.is_empty(),
+        "archived trigger must be hidden"
+    );
 
-    // include_deleted=true surfaces the tombstoned row.
+    // include_archived=true surfaces the tombstoned row.
     let listed_with: ListTriggersResponse = client
         .get(format!(
-            "{}/v1/triggers?include_deleted=true",
+            "{}/v1/triggers?include_archived=true",
             server.base_url()
         ))
         .send()
@@ -214,7 +217,7 @@ async fn delete_marks_trigger_deleted_and_filters_from_list() -> anyhow::Result<
         .json()
         .await?;
     assert_eq!(listed_with.triggers.len(), 1);
-    assert!(listed_with.triggers[0].trigger.deleted);
+    assert!(listed_with.triggers[0].trigger.archived);
     Ok(())
 }
 
@@ -473,7 +476,7 @@ async fn test_client_state(
                 Some(input.session_settings),
                 input.dependencies,
                 input.patches,
-                input.deleted,
+                input.archived,
                 input.form,
                 input.form_response,
             );

@@ -34,7 +34,7 @@ function dropIssueFromPage(
  * Soft-delete an issue via `DELETE /v1/issues/:id`. Drops the row from every
  * paginated cache so it leaves the default (non-archived) view immediately;
  * the include-archived view re-renders the row with its ARCHIVED tag after
- * the refetch. The detail cache flips `deleted: true` so a viewer on the
+ * the refetch. The detail cache flips `archived: true` so a viewer on the
  * detail page sees the Archived badge appear instantly.
  */
 export function useArchiveIssue(issueId: string) {
@@ -54,7 +54,7 @@ export function useArchiveIssue(issueId: string) {
       if (previousIssue) {
         queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
           ...previousIssue,
-          issue: { ...previousIssue.issue, deleted: true },
+          issue: { ...previousIssue.issue, archived: true },
         });
       }
 

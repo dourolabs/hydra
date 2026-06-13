@@ -132,7 +132,7 @@ pub struct Issue {
     #[serde(default)]
     pub patches: Vec<PatchId>,
     #[serde(default)]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,7 +170,7 @@ impl Issue {
             session_settings: session_settings.unwrap_or_default(),
             dependencies,
             patches,
-            deleted: false,
+            archived: false,
             form,
             form_response,
         }
@@ -363,7 +363,7 @@ impl From<api::issues::Issue> for Issue {
             session_settings: value.session_settings.into(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
-            deleted: value.deleted,
+            archived: value.archived,
             form: value.form,
             form_response: value.form_response,
         }
@@ -383,7 +383,7 @@ impl From<api::issues::IssueInput> for Issue {
             session_settings: value.session_settings.into(),
             dependencies: value.dependencies.into_iter().map(Into::into).collect(),
             patches: value.patches,
-            deleted: value.deleted,
+            archived: value.archived,
             form: value.form,
             form_response: value.form_response,
         }
@@ -403,7 +403,7 @@ impl From<Issue> for api::issues::IssueInput {
             Some(value.session_settings.into()),
             value.dependencies.into_iter().map(Into::into).collect(),
             value.patches,
-            value.deleted,
+            value.archived,
             value.form,
             value.form_response,
         )

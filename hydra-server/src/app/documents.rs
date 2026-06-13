@@ -93,7 +93,7 @@ impl AppState {
         if document_id.is_none() {
             if let Some(ref path) = document.path {
                 let existing_id = store
-                    .find_non_deleted_document_by_exact_path(path.as_ref())
+                    .find_non_archived_document_by_exact_path(path.as_ref())
                     .await
                     .map_err(|source| UpsertDocumentError::Store { source })?;
                 if existing_id.is_some() {
@@ -169,7 +169,7 @@ impl AppState {
         store.count_documents(query).await
     }
 
-    pub async fn delete_document(
+    pub async fn archive_document(
         &self,
         document_id: &DocumentId,
         actor: ActorRef,
@@ -216,7 +216,7 @@ mod tests {
             title: "Test".to_string(),
             body_markdown: "body".to_string(),
             path: Some("docs/notes.md".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
 
         let result = state
@@ -232,7 +232,7 @@ mod tests {
             title: "Test".to_string(),
             body_markdown: "body".to_string(),
             path: None,
-            deleted: false,
+            archived: false,
         };
 
         let result = state
@@ -248,7 +248,7 @@ mod tests {
             title: "First".to_string(),
             body_markdown: "body".to_string(),
             path: Some("docs/unique.md".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .upsert_document(None, doc1, ActorRef::test())
@@ -259,7 +259,7 @@ mod tests {
             title: "Second".to_string(),
             body_markdown: "body2".to_string(),
             path: Some("docs/unique.md".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         assert!(
@@ -275,7 +275,7 @@ mod tests {
             title: "First".to_string(),
             body_markdown: "body".to_string(),
             path: Some("docs/reuse.md".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         let (first_id, _) = state
             .upsert_document(None, doc, ActorRef::test())
@@ -283,7 +283,7 @@ mod tests {
             .unwrap();
 
         state
-            .delete_document(&first_id, ActorRef::test())
+            .archive_document(&first_id, ActorRef::test())
             .await
             .unwrap();
 
@@ -291,7 +291,7 @@ mod tests {
             title: "Second".to_string(),
             body_markdown: "body2".to_string(),
             path: Some("docs/reuse.md".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         assert!(result.is_ok());
@@ -304,7 +304,7 @@ mod tests {
             title: "First".to_string(),
             body_markdown: "body".to_string(),
             path: None,
-            deleted: false,
+            archived: false,
         };
         state
             .upsert_document(None, doc1, ActorRef::test())
@@ -315,7 +315,7 @@ mod tests {
             title: "Second".to_string(),
             body_markdown: "body2".to_string(),
             path: None,
-            deleted: false,
+            archived: false,
         };
         let result = state.upsert_document(None, doc2, ActorRef::test()).await;
         assert!(result.is_ok());

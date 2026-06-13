@@ -22,7 +22,7 @@ export type SessionSummary = {
   creator: Username;
   status: Status;
   error?: TaskError | null;
-  deleted?: boolean;
+  archived?: boolean;
   creation_time?: string | null;
   start_time?: string | null;
   end_time?: string | null;

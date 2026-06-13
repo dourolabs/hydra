@@ -35,9 +35,9 @@ pub struct ListUsersArgs {
     #[arg(long = "q", value_name = "QUERY")]
     pub q: Option<String>,
 
-    /// Include soft-deleted users in the results.
-    #[arg(long = "include-deleted")]
-    pub include_deleted: bool,
+    /// Include soft-archived users in the results.
+    #[arg(long = "include-archived")]
+    pub include_archived: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -95,7 +95,7 @@ async fn list_users(
     client: &dyn HydraClientInterface,
     args: ListUsersArgs,
 ) -> Result<Vec<hydra_common::users::UserSummary>> {
-    let query = SearchUsersQuery::new(args.q, args.include_deleted.then_some(true));
+    let query = SearchUsersQuery::new(args.q, args.include_archived.then_some(true));
     let response = client
         .list_users(&query)
         .await
@@ -347,7 +347,7 @@ mod tests {
             &client,
             ListUsersArgs {
                 q: None,
-                include_deleted: false,
+                include_archived: false,
             },
         )
         .await?;
@@ -414,7 +414,7 @@ mod tests {
             when.method(GET)
                 .path("/v1/users")
                 .query_param("q", "alice")
-                .query_param("include_deleted", "true");
+                .query_param("include_archived", "true");
             then.status(200).json_body_obj(&list_response);
         });
 
@@ -423,7 +423,7 @@ mod tests {
             &client,
             ListUsersArgs {
                 q: Some("alice".to_string()),
-                include_deleted: true,
+                include_archived: true,
             },
         )
         .await?;
@@ -621,7 +621,7 @@ mod tests {
             &mut output,
         )?;
         let output = String::from_utf8(output)?;
-        assert_eq!(output, "Secret 'OPENAI_API_KEY' deleted.\n");
+        assert_eq!(output, "Secret 'OPENAI_API_KEY' archived.\n");
         Ok(())
     }
 
@@ -638,7 +638,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(output.trim_end())?;
         assert_eq!(
             parsed,
-            json!({ "name": "OPENAI_API_KEY", "action": "deleted" })
+            json!({ "name": "OPENAI_API_KEY", "action": "archived" })
         );
         Ok(())
     }

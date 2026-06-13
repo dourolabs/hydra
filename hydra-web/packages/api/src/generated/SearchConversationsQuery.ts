@@ -16,9 +16,9 @@ export type SearchConversationsQuery = {
    */
   creator?: string | null;
   /**
-   * Include soft-deleted conversations in results.
+   * Include archived conversations in results.
    */
-  include_deleted: boolean | null;
+  include_archived: boolean | null;
   /**
    * Filter by the issue that spawned this conversation.
    */

@@ -109,10 +109,10 @@ pub async fn get_document(
     DocumentIdPath(document_id): DocumentIdPath,
     Query(query): Query<v1::documents::GetDocumentQuery>,
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
-    let include_deleted = query.include_deleted.unwrap_or(false);
-    info!(document_id = %document_id, include_deleted, "get_document invoked");
+    let include_archived = query.include_archived.unwrap_or(false);
+    info!(document_id = %document_id, include_archived, "get_document invoked");
     let document = state
-        .get_document(&document_id, include_deleted)
+        .get_document(&document_id, include_archived)
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
@@ -142,7 +142,7 @@ pub async fn list_documents(
     State(state): State<AppState>,
     Query(query): Query<v1::documents::SearchDocumentsQuery>,
 ) -> Result<Json<v1::documents::ListDocumentsResponse>, ApiError> {
-    info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, include_deleted = ?query.include_deleted, "list_documents invoked");
+    info!(query = ?query.q, path_prefix = ?query.path_prefix, path_is_exact = ?query.path_is_exact, include_archived = ?query.include_archived, "list_documents invoked");
     let documents = state
         .list_documents(&query)
         .await
@@ -422,14 +422,14 @@ fn map_upsert_document_error(err: UpsertDocumentError) -> ApiError {
     }
 }
 
-pub async fn delete_document(
+pub async fn archive_document(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     DocumentIdPath(document_id): DocumentIdPath,
 ) -> Result<Json<v1::documents::DocumentVersionRecord>, ApiError> {
-    info!(document_id = %document_id, "delete_document invoked");
+    info!(document_id = %document_id, "archive_document invoked");
     state
-        .delete_document(&document_id, ActorRef::from(&actor))
+        .archive_document(&document_id, ActorRef::from(&actor))
         .await
         .map_err(|err| map_document_error(err, Some(&document_id)))?;
 
@@ -447,7 +447,7 @@ pub async fn delete_document(
             ApiError::internal(anyhow!("failed to fetch labels: {err}"))
         })?;
 
-    info!(document_id = %document_id, "delete_document completed");
+    info!(document_id = %document_id, "archive_document completed");
     let response = v1::documents::DocumentVersionRecord::new(
         document_id,
         document.version,

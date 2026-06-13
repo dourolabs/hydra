@@ -58,7 +58,7 @@ pub async fn build_issue_response(
         Some(issue.session_settings.into()),
         issue.dependencies.into_iter().map(Into::into).collect(),
         issue.patches,
-        issue.deleted,
+        issue.archived,
         issue.form,
         issue.form_response,
     ))

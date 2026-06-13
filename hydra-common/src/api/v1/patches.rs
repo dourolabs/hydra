@@ -335,7 +335,7 @@ pub struct Patch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubPr>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     /// The head branch name for this patch, independent of any GitHub PR.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
@@ -363,7 +363,7 @@ impl Patch {
         reviews: Vec<Review>,
         service_repo_name: RepoName,
         github: Option<GithubPr>,
-        deleted: bool,
+        archived: bool,
         branch_name: Option<String>,
         commit_range: Option<CommitRange>,
         base_branch: Option<String>,
@@ -378,7 +378,7 @@ impl Patch {
             reviews,
             service_repo_name,
             github,
-            deleted,
+            archived,
             branch_name,
             commit_range,
             base_branch,
@@ -482,7 +482,7 @@ pub struct UpsertPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubPr>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -503,7 +503,7 @@ impl UpsertPatch {
         reviews: Vec<UpsertReviewRequest>,
         service_repo_name: RepoName,
         github: Option<GithubPr>,
-        deleted: bool,
+        archived: bool,
         branch_name: Option<String>,
         commit_range: Option<CommitRange>,
         base_branch: Option<String>,
@@ -518,7 +518,7 @@ impl UpsertPatch {
             reviews,
             service_repo_name,
             github,
-            deleted,
+            archived,
             branch_name,
             commit_range,
             base_branch,
@@ -541,7 +541,7 @@ impl From<Patch> for UpsertPatch {
             reviews: patch.reviews.into_iter().map(Into::into).collect(),
             service_repo_name: patch.service_repo_name,
             github: patch.github,
-            deleted: patch.deleted,
+            archived: patch.archived,
             branch_name: patch.branch_name,
             commit_range: patch.commit_range,
             base_branch: patch.base_branch,
@@ -625,7 +625,7 @@ pub struct SearchPatchesQuery {
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
     /// Filter patches by status (e.g., Open, Closed). When multiple statuses
     /// are provided, a patch matches if its status is any of the given values.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -653,14 +653,14 @@ pub struct SearchPatchesQuery {
 impl SearchPatchesQuery {
     pub fn new(
         q: Option<String>,
-        include_deleted: Option<bool>,
+        include_archived: Option<bool>,
         status: Vec<PatchStatus>,
         branch_name: Option<String>,
     ) -> Self {
         Self {
             ids: Vec::new(),
             q,
-            include_deleted,
+            include_archived,
             status,
             branch_name,
             repo_name: None,
@@ -765,7 +765,7 @@ pub struct PatchSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_branch: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<LabelSummary>,
 }
@@ -782,7 +782,7 @@ impl From<&Patch> for PatchSummary {
             github: patch.github.clone(),
             branch_name: patch.branch_name.clone(),
             base_branch: patch.base_branch.clone(),
-            deleted: patch.deleted,
+            archived: patch.archived,
             labels: Vec::new(),
         }
     }
@@ -888,7 +888,7 @@ mod tests {
         let query = SearchPatchesQuery {
             ids: Vec::new(),
             q: Some("test query".to_string()),
-            include_deleted: None,
+            include_archived: None,
             status: Vec::new(),
             branch_name: None,
             repo_name: None,
@@ -1000,7 +1000,7 @@ mod tests {
             reviews: vec![],
             service_repo_name: "org/repo".parse().unwrap(),
             github: None,
-            deleted: false,
+            archived: false,
             branch_name: Some("feature/my-branch".to_string()),
             commit_range: Some(CommitRange::new(
                 "0000000000000000000000000000000000000001".parse().unwrap(),
@@ -1078,7 +1078,7 @@ mod tests {
             ],
             service_repo_name: "org/repo".parse().unwrap(),
             github: None,
-            deleted: false,
+            archived: false,
             branch_name: Some("feature/fix".to_string()),
             commit_range: Some(CommitRange::new(
                 "0000000000000000000000000000000000000001".parse().unwrap(),
@@ -1148,7 +1148,7 @@ mod tests {
         assert!(summary.review_summary.approved);
         assert_eq!(summary.branch_name.as_deref(), Some("feature/fix"));
         assert_eq!(summary.base_branch.as_deref(), Some("main"));
-        assert!(!summary.deleted);
+        assert!(!summary.archived);
     }
 
     #[test]

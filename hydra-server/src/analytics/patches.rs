@@ -71,7 +71,7 @@ impl PatchHistory {
 /// [`ReadOnlyStore::list_patches`] in [`ANALYTICS_BATCH_SIZE`]-sized
 /// cursor-paged batches so peak memory is bounded by one page of
 /// histories — not the full dataset. Deleted patches and
-/// `is_automatic_backup` patches are excluded; deleted patches are
+/// `is_automatic_backup` patches are excluded; archived patches are
 /// filtered store-side at the latest version, `is_automatic_backup` is
 /// filtered per-row inside the loop because it isn't a list-level
 /// filter.
@@ -745,7 +745,7 @@ mod tests {
     /// - p_open_in_window: created inside the window, not yet merged.
     /// - p_pre_window_merged: created before window, merged inside.
     /// - p_closed_in_window: closed-without-merging inside window.
-    /// - p_deleted: deleted patch — excluded by fetch_patch_histories
+    /// - p_deleted: archived patch — excluded by fetch_patch_histories
     ///   (not exercised here since we test the aggregator's pure
     ///   inputs; the fetcher's exclusion is covered separately).
     #[test]
@@ -873,7 +873,7 @@ mod tests {
             .await
             .expect("add to_delete");
         store
-            .delete_patch(&delete_id, &actor)
+            .archive_patch(&delete_id, &actor)
             .await
             .expect("delete");
 

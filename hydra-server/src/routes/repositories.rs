@@ -72,22 +72,22 @@ pub async fn update_repository(
     Ok(Json(UpsertRepositoryResponse::new(updated)))
 }
 
-pub async fn delete_repository(
+pub async fn archive_repository(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path((organization, repo)): Path<(String, String)>,
 ) -> Result<Json<DeleteRepositoryResponse>, ApiError> {
     let name =
         RepoName::new(organization, repo).map_err(|err| ApiError::bad_request(err.to_string()))?;
-    info!(repository = %name, "delete_repository invoked");
+    info!(repository = %name, "archive_repository invoked");
 
-    let deleted = state
-        .delete_repository(&name, ActorRef::from(&actor))
+    let archived = state
+        .archive_repository(&name, ActorRef::from(&actor))
         .await
         .map_err(map_repository_error)?;
 
-    info!(repository = %name, "delete_repository completed");
-    Ok(Json(DeleteRepositoryResponse::new(deleted)))
+    info!(repository = %name, "archive_repository completed");
+    Ok(Json(DeleteRepositoryResponse::new(archived)))
 }
 
 fn normalize_config(mut config: Repository) -> Result<Repository, ApiError> {

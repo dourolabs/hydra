@@ -94,7 +94,7 @@ function toSummaryRecord(
     progress: (issue.progress ?? "").slice(0, 200),
     dependencies: issue.dependencies,
     patches: issue.patches,
-    deleted: issue.deleted,
+    archived: issue.archived,
     labels: getLabelsForObject(issueId),
   };
   return {
@@ -146,7 +146,7 @@ export function createIssueRoutes(store: Store): Hono {
   // GET /v1/issues/:id
   app.get("/v1/issues/:id", (c) => {
     const id = c.req.param("id");
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const entry = store.get<Issue>(COLLECTION, id, includeDeleted);
     if (!entry) {
       return c.json({ error: `issue '${id}' not found` }, 404);
@@ -169,7 +169,7 @@ export function createIssueRoutes(store: Store): Hono {
 
   // GET /v1/issues
   app.get("/v1/issues", (c) => {
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const ids = c.req.query("ids");
     const issueType = c.req.query("issue_type");
     const status = c.req.query("status");

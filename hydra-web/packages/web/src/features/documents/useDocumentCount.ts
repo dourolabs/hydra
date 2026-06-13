@@ -6,7 +6,7 @@ import { apiClient } from "../../api/client";
  * Count-only query for the Documents page eyebrow total. Uses `limit=0` and
  * `count=true` so the response carries `total_count` without fetching any
  * document rows. The backend's default behavior excludes soft-deleted
- * documents (`include_deleted` defaults to false), which matches the rendered
+ * documents (`include_archived` defaults to false), which matches the rendered
  * tree's visible set.
  */
 export function useDocumentCount(enabled = true) {

@@ -136,7 +136,7 @@ pub async fn register_agent(state: &AppState, name: &str) {
         title: format!("{name} prompt"),
         body_markdown: "agent prompt body".to_string(),
         path: Some(prompt_path.parse().unwrap()),
-        deleted: false,
+        archived: false,
     };
     state
         .store
@@ -159,7 +159,7 @@ pub async fn seed_linked_conversation(
         creator: Username::from("creator"),
         session_settings: SessionSettings::default(),
         spawned_from: Some(issue_id.clone()),
-        deleted: false,
+        archived: false,
     };
     let (id, _) = state
         .store

@@ -77,7 +77,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
   // server-side filter narrows to this issue; we then pick the first
   // Active/Idle row to drive the header affordance.
   const { data: spawnedConversations } = useConversations(
-    { spawned_from: issueId, include_deleted: false },
+    { spawned_from: issueId, include_archived: false },
     { enabled: !!issueId },
   );
   const liveConversation = useMemo(
@@ -124,7 +124,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
         testId: "issue-overflow-conversation",
       });
     }
-    if (issue.deleted !== true) {
+    if (issue.archived !== true) {
       items.push({
         key: "archive",
         label: archivePending ? "Archiving…" : "Archive",
@@ -134,7 +134,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
       });
     }
     return items;
-  }, [liveConversation, navigate, issue.deleted, archivePending, archiveIssue]);
+  }, [liveConversation, navigate, issue.archived, archivePending, archiveIssue]);
 
   return (
     <div className={styles.detail}>
@@ -155,7 +155,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
           <div className={styles.titleRow}>
             <span className={styles.titleId}>{issueId}</span>
             {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
-            {issue.deleted === true && (
+            {issue.archived === true && (
               <Badge status="archived" data-testid="issue-archived-badge" />
             )}
             <div className={styles.headRight}>
@@ -175,7 +175,7 @@ export function IssueDetail({ record }: IssueDetailProps) {
                       : "Open Conversation"}
                   </Link>
                 )}
-                {issue.deleted !== true && (
+                {issue.archived !== true && (
                   <ArchiveIssueButton
                     issueId={issueId}
                     variant="secondary"

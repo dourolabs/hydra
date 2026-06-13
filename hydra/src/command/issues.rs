@@ -104,9 +104,9 @@ pub enum IssueCommands {
         #[arg(long = "labels", value_name = "LABEL_NAME", value_delimiter = ',')]
         labels: Vec<String>,
 
-        /// Include deleted issues in the listing.
-        #[arg(long = "include-deleted")]
-        include_deleted: bool,
+        /// Include archived issues in the listing.
+        #[arg(long = "include-archived")]
+        include_archived: bool,
     },
     /// Create a new issue.
     Create {
@@ -346,9 +346,9 @@ pub enum IssueCommands {
         #[arg(long, value_name = "BODY")]
         comment: Option<String>,
     },
-    /// Delete an issue.
-    Delete {
-        /// Issue ID to delete.
+    /// Archive an issue.
+    Archive {
+        /// Issue ID to archive.
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
     },
@@ -358,9 +358,9 @@ pub enum IssueCommands {
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
 
-        /// Include deleted issues in the result.
-        #[arg(long = "include-deleted")]
-        include_deleted: bool,
+        /// Include archived issues in the result.
+        #[arg(long = "include-archived")]
+        include_archived: bool,
 
         /// Retrieve a specific version of the issue (positive = exact version, negative = offset from latest).
         #[arg(long)]
@@ -420,7 +420,7 @@ pub async fn run(
             assignee,
             query,
             labels,
-            include_deleted,
+            include_archived,
         } => {
             let label_ids = resolve_label_names_to_ids(client, &labels).await?;
             let project_id = match project {
@@ -436,7 +436,7 @@ pub async fn run(
                 assignee,
                 query,
                 label_ids,
-                include_deleted,
+                include_archived,
             )
             .await?;
             write_issue_summary_records(context.output_format, &issues)?;
@@ -560,14 +560,14 @@ pub async fn run(
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
         }
-        IssueCommands::Delete { id } => {
-            let deleted = client
-                .delete_issue(&id)
+        IssueCommands::Archive { id } => {
+            let archived = client
+                .archive_issue(&id)
                 .await
                 .with_context(|| format!("failed to delete issue '{id}'"))?;
             let mut buffer = Vec::new();
             render(
-                DeletedIssueOutcome(&deleted.issue_id),
+                DeletedIssueOutcome(&archived.issue_id),
                 context.output_format,
                 &mut buffer,
             )?;
@@ -576,10 +576,10 @@ pub async fn run(
         }
         IssueCommands::Get {
             id,
-            include_deleted,
+            include_archived,
             version,
         } => {
-            let issue = resolve_issue(client, &id, include_deleted, version).await?;
+            let issue = resolve_issue(client, &id, include_archived, version).await?;
             write_issue_records(context.output_format, &[issue])?;
             Ok(())
         }
@@ -598,11 +598,11 @@ pub async fn run(
 }
 
 /// Resolve a single issue, handling `--version` (positive, negative, or absent)
-/// and `--include-deleted`.
+/// and `--include-archived`.
 async fn resolve_issue(
     client: &dyn HydraClientInterface,
     issue_id: &IssueId,
-    include_deleted: bool,
+    include_archived: bool,
     version: Option<i64>,
 ) -> Result<IssueVersionRecord> {
     match version {
@@ -614,7 +614,7 @@ async fn resolve_issue(
             .await
             .with_context(|| format!("failed to fetch version {v} of issue '{issue_id}'")),
         None => client
-            .get_issue(issue_id, include_deleted)
+            .get_issue(issue_id, include_archived)
             .await
             .with_context(|| format!("failed to fetch issue '{issue_id}'")),
     }
@@ -629,11 +629,11 @@ async fn fetch_issues(
     assignee: Option<Principal>,
     query: Option<String>,
     label_ids: Vec<LabelId>,
-    include_deleted: bool,
+    include_archived: bool,
 ) -> Result<Vec<IssueSummaryRecord>> {
     if let Some(issue_id) = id {
         let record = client
-            .get_issue(&issue_id, include_deleted)
+            .get_issue(&issue_id, include_archived)
             .await
             .with_context(|| format!("failed to fetch issue '{issue_id}'"))?;
 
@@ -669,7 +669,7 @@ async fn fetch_issues(
         }
     });
 
-    let include_deleted_opt = if include_deleted { Some(true) } else { None };
+    let include_deleted_opt = if include_archived { Some(true) } else { None };
     let mut search_query = SearchIssuesQuery::new(
         issue_type,
         status.clone(),
@@ -1185,7 +1185,7 @@ async fn update_issue(
             job_settings,
             dependencies_update.unwrap_or(current.issue.dependencies),
             patches_update.unwrap_or(current.issue.patches),
-            current.issue.deleted,
+            current.issue.archived,
             form_update.unwrap_or(current.issue.form),
             current.issue.form_response,
         );

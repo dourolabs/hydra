@@ -72,7 +72,7 @@ function upsertPatchToPatch(
     reviews: stampReviewAuthors(upsert.reviews ?? [], prior),
     service_repo_name: upsert.service_repo_name,
     github: upsert.github,
-    deleted: upsert.deleted ?? false,
+    archived: upsert.archived ?? false,
     branch_name: upsert.branch_name,
     commit_range: upsert.commit_range,
     base_branch: upsert.base_branch,
@@ -119,7 +119,7 @@ function toSummaryRecord(
     github: patch.github,
     branch_name: patch.branch_name,
     base_branch: patch.base_branch,
-    deleted: patch.deleted,
+    archived: patch.archived,
   };
   return {
     patch_id: patchId,
@@ -193,7 +193,7 @@ export function createPatchRoutes(store: Store): Hono {
 
   // GET /v1/patches
   app.get("/v1/patches", (c) => {
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const ids = c.req.query("ids");
     const q = c.req.query("q");
     const statusParam = c.req.query("status");

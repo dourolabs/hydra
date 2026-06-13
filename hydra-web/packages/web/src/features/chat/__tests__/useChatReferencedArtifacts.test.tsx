@@ -93,7 +93,7 @@ function makeDocument(id: string, title = `Doc ${id}`): DocumentSummaryRecord {
     document: {
       title,
       path: `docs/${id}.md`,
-      deleted: false,
+      archived: false,
     },
   } as DocumentSummaryRecord;
 }

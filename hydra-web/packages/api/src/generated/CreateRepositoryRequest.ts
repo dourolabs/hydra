@@ -7,6 +7,6 @@ export type CreateRepositoryRequest = {
   remote_url: string;
   default_branch: string | null;
   default_image: string | null;
-  deleted?: boolean;
+  archived?: boolean;
   merge_policy?: MergePolicy | null;
 };

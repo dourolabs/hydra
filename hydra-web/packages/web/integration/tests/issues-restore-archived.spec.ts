@@ -36,7 +36,7 @@ test.describe("Issues page row-level 'Restore' action @issues:restore-archived",
     // Stall the PUT response until released, so the row drop must come from
     // the optimistic update on the paginated list cache rather than from the
     // server round-trip + refetch. The row is rendered from the list cache
-    // (IssueSummaryRecord.issue.deleted), not the issue detail cache, so the
+    // (IssueSummaryRecord.issue.archived), not the issue detail cache, so the
     // detail-cache-only optimistic update is insufficient — this gating
     // proves we touch the right cache.
     let releaseUpdate!: () => void;
@@ -80,7 +80,7 @@ test.describe("Issues page row-level 'Restore' action @issues:restore-archived",
 
     releaseUpdate();
 
-    // A PUT to /v1/issues/:id should fire with `deleted: false` in the body.
+    // A PUT to /v1/issues/:id should fire with `archived: false` in the body.
     await expect
       .poll(() =>
         updateBodies.some(

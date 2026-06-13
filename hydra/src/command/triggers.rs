@@ -37,15 +37,15 @@ pub enum TriggerCommands {
         #[arg(value_name = "TRIGGER_ID")]
         id: TriggerId,
 
-        /// Include the trigger even if it has been soft-deleted.
-        #[arg(long = "include-deleted")]
-        include_deleted: bool,
+        /// Include the trigger even if it has been soft-archived.
+        #[arg(long = "include-archived")]
+        include_archived: bool,
     },
     /// List triggers.
     List {
-        /// Include soft-deleted triggers in the listing.
-        #[arg(long = "include-deleted")]
-        include_deleted: bool,
+        /// Include soft-archived triggers in the listing.
+        #[arg(long = "include-archived")]
+        include_archived: bool,
     },
     /// Replace a trigger's config from a YAML spec.
     Update {
@@ -57,9 +57,9 @@ pub enum TriggerCommands {
         #[arg(long, value_name = "FILE")]
         file: String,
     },
-    /// Soft-delete a trigger.
-    Delete {
-        /// Trigger ID to delete.
+    /// Soft-archive a trigger.
+    Archive {
+        /// Trigger ID to archive.
         #[arg(value_name = "TRIGGER_ID")]
         id: TriggerId,
     },
@@ -95,17 +95,17 @@ pub async fn run(
         }
         TriggerCommands::Get {
             id,
-            include_deleted,
+            include_archived,
         } => {
             let record = client
-                .get_trigger(&id, include_deleted)
+                .get_trigger(&id, include_archived)
                 .await
                 .with_context(|| format!("failed to fetch trigger '{id}'"))?;
             write_trigger_records(context.output_format, &[record])
         }
-        TriggerCommands::List { include_deleted } => {
+        TriggerCommands::List { include_archived } => {
             let query = SearchTriggersQuery {
-                include_deleted: include_deleted.then_some(true),
+                include_archived: include_archived.then_some(true),
             };
             let response = client
                 .list_triggers(&query)
@@ -128,14 +128,14 @@ pub async fn run(
                 .with_context(|| format!("failed to update trigger '{id}'"))?;
             write_upsert_response(context.output_format, &response)
         }
-        TriggerCommands::Delete { id } => {
-            let deleted = client
-                .delete_trigger(&id)
+        TriggerCommands::Archive { id } => {
+            let archived = client
+                .archive_trigger(&id)
                 .await
                 .with_context(|| format!("failed to delete trigger '{id}'"))?;
             let mut buffer = Vec::new();
             render_output(
-                DeletedTriggerOutcome(&deleted.trigger_id),
+                DeletedTriggerOutcome(&archived.trigger_id),
                 context.output_format,
                 &mut buffer,
             )?;
@@ -567,7 +567,7 @@ actions:
         assert_eq!(listed.triggers.len(), 1);
 
         let mut deleted_trigger = trigger;
-        deleted_trigger.deleted = true;
+        deleted_trigger.archived = true;
         let delete_record = TriggerVersionRecord::new(
             tid.clone(),
             2,
@@ -580,9 +580,9 @@ actions:
             when.method(DELETE).path(format!("/v1/triggers/{tid}"));
             then.status(200).json_body_obj(&delete_record);
         });
-        let deleted = client.delete_trigger(&tid).await.expect("delete");
+        let archived = client.archive_trigger(&tid).await.expect("delete");
         delete_mock.assert();
-        assert!(deleted.trigger.deleted);
+        assert!(archived.trigger.archived);
     }
 
     #[tokio::test]
@@ -593,11 +593,11 @@ actions:
         let mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/v1/triggers")
-                .query_param("include_deleted", "true");
+                .query_param("include_archived", "true");
             then.status(200).json_body_obj(&list_response);
         });
         let query = SearchTriggersQuery {
-            include_deleted: Some(true),
+            include_archived: Some(true),
         };
         client.list_triggers(&query).await.expect("list");
         mock.assert();

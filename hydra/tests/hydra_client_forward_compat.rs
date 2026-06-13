@@ -1275,7 +1275,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "future-action"
     );
 
-    let deleted_issue = client.delete_issue(&issue_id).await?;
+    let deleted_issue = client.archive_issue(&issue_id).await?;
     assert_eq!(deleted_issue.issue_id, issue_id);
     assert!(matches!(deleted_issue.issue.issue_type, IssueType::Unknown));
 
@@ -1321,7 +1321,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .await?;
     assert!(!asset_url.is_empty());
 
-    let deleted_patch = client.delete_patch(&patch_id).await?;
+    let deleted_patch = client.archive_patch(&patch_id).await?;
     assert_eq!(deleted_patch.patch_id, patch_id);
     assert!(matches!(deleted_patch.patch.status, PatchStatus::Unknown));
 
@@ -1440,7 +1440,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .await?;
     assert_eq!(document_by_path.document_id, document_id);
 
-    let deleted_document = client.delete_document(&document_id).await?;
+    let deleted_document = client.archive_document(&document_id).await?;
     assert_eq!(deleted_document.document_id, document_id);
 
     // Repositories
@@ -1463,7 +1463,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .await?;
     assert_eq!(repos.repositories.len(), 1);
 
-    let deleted_repo = client.delete_repository(&repo_name).await?;
+    let deleted_repo = client.archive_repository(&repo_name).await?;
     assert_eq!(deleted_repo.name, repo_name);
 
     let github_token = client.get_github_token().await?;
@@ -1521,7 +1521,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         ConversationStatus::Unknown
     ));
 
-    let deleted_conversation = client.delete_conversation(&conversation_id).await?;
+    let deleted_conversation = client.archive_conversation(&conversation_id).await?;
     assert_eq!(deleted_conversation.conversation_id, conversation_id);
     assert!(matches!(
         deleted_conversation.status,
@@ -1633,7 +1633,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let TriggerAction::CreateIssue(listed_create_issue) = listed_action;
     assert!(matches!(listed_create_issue.issue_type, IssueType::Unknown));
 
-    let deleted_trigger = client.delete_trigger(&trigger_id).await?;
+    let deleted_trigger = client.archive_trigger(&trigger_id).await?;
     assert_eq!(deleted_trigger.trigger_id, trigger_id);
 
     // Users + secrets. Neither `UserSummary` nor `ListSecretsResponse`
@@ -1683,7 +1683,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let fetched_agent = client.get_agent(agent_name).await?;
     assert_eq!(fetched_agent.agent.name, agent_name);
 
-    let deleted_agent = client.delete_agent(agent_name).await?;
+    let deleted_agent = client.archive_agent(agent_name).await?;
     assert_eq!(deleted_agent.agent.name, agent_name);
 
     // Labels. Neither `Label` nor `LabelRecord` carries an enum with an
@@ -2202,7 +2202,7 @@ fn forward_trigger_json(
             ],
             "creator": "test-creator",
             "last_fired_at": null,
-            "deleted": false,
+            "archived": false,
             "future": "trigger-field"
         },
         "actor": null,
