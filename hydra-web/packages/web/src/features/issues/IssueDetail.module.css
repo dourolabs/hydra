@@ -241,7 +241,20 @@
 }
 
 /* ── Responsive ── */
-@media (max-width: 1024px) {
+/* Tablet band: keep the two-column grid but shrink the right panel and
+   tighten main padding so the squeezed pane stops truncating labels. The
+   right pane already carries `min-width: 0` + `overflow: hidden` on its
+   wrapper, so clamping the column width is enough. */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .detail {
+    grid-template-columns: 1fr 260px;
+  }
+  .main {
+    padding: 20px 20px;
+  }
+}
+
+@media (max-width: 768px) {
   .detail {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
@@ -263,9 +276,7 @@
   .detail > [data-mobile-active="false"] {
     display: none;
   }
-}
 
-@media (max-width: 768px) {
   .main {
     padding: 16px;
   }

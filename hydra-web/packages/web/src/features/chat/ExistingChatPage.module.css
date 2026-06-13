@@ -46,7 +46,17 @@
   margin: 0;
 }
 
-@media (max-width: 1024px) {
+/* Tablet band: keep two columns but shrink the right pane (the desktop
+   400px column is too wide once the viewport drops under ~1024px). The
+   panel wrapper already has `min-width: 0` + `overflow: hidden`, so this
+   plus the panel's own tightened padding is enough to clamp overflow. */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .chatLayout {
+    grid-template-columns: 1fr 320px;
+  }
+}
+
+@media (max-width: 768px) {
   .chatLayout {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
