@@ -458,6 +458,98 @@ impl MemoryStore {
         versions.last().cloned()
     }
 
+    /// Cascade-archive every non-archived issue in `project_id`
+    /// (optionally narrowed to `status_sequence_filter`) by appending
+    /// a new versioned row with `issue.deleted = true`. Returns the
+    /// ids actually flipped. Mirrors the SQL backends'
+    /// `cascade_archive_issues` helper.
+    fn cascade_archive_issues_in_memory(
+        &self,
+        project_id: &ProjectId,
+        status_sequence_filter: Option<i64>,
+        actor: &ActorRef,
+    ) -> Vec<IssueId> {
+        let mut target_ids: Vec<IssueId> = Vec::new();
+        for entry in self.issues.iter() {
+            let Some(latest) = Self::latest_versioned(entry.value()) else {
+                continue;
+            };
+            if &latest.item.project_id != project_id {
+                continue;
+            }
+            if latest.item.deleted {
+                continue;
+            }
+            if let Some(seq) = status_sequence_filter {
+                let v = match i64::try_from(latest.version) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let Some(seq_entry) = self.issue_status_sequences.get(&(entry.key().clone(), v))
+                else {
+                    continue;
+                };
+                if *seq_entry.value() != seq {
+                    continue;
+                }
+            }
+            target_ids.push(entry.key().clone());
+        }
+
+        let mut cascaded = Vec::with_capacity(target_ids.len());
+        for issue_id in target_ids {
+            let Some(mut versions_entry) = self.issues.get_mut(&issue_id) else {
+                continue;
+            };
+            let versions = versions_entry.value_mut();
+            let Some(latest) = Self::latest_versioned(versions) else {
+                continue;
+            };
+            if latest.item.deleted {
+                continue;
+            }
+            let mut next_issue = latest.item.clone();
+            next_issue.deleted = true;
+            let next_version = Self::next_version(versions);
+            versions.push(Self::versioned_now_with_actor(
+                next_issue,
+                next_version,
+                actor,
+            ));
+            // Carry the same status_sequence forward for the new version
+            // so resolution stays consistent. Drop the get_mut borrow
+            // first since `issue_status_sequences` is a separate map.
+            let prev_version = match i64::try_from(latest.version) {
+                Ok(v) => v,
+                Err(_) => {
+                    drop(versions_entry);
+                    cascaded.push(issue_id);
+                    continue;
+                }
+            };
+            let next_version_i64 = match i64::try_from(next_version) {
+                Ok(v) => v,
+                Err(_) => {
+                    drop(versions_entry);
+                    cascaded.push(issue_id);
+                    continue;
+                }
+            };
+            drop(versions_entry);
+            if let Some(seq_entry) = self
+                .issue_status_sequences
+                .get(&(issue_id.clone(), prev_version))
+            {
+                let seq = *seq_entry.value();
+                drop(seq_entry);
+                self.issue_status_sequences
+                    .insert((issue_id.clone(), next_version_i64), seq);
+            }
+            cascaded.push(issue_id);
+        }
+        cascaded
+    }
+
     fn next_version<T>(versions: &[Versioned<T>]) -> VersionNumber {
         versions
             .last()
@@ -3184,7 +3276,7 @@ impl Store for MemoryStore {
             .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
         let versions = entry.value_mut();
         // `update_project` is project-level only; status changes flow
-        // through `add_status` / `update_status` / `delete_status`.
+        // through `add_status` / `update_status` / `archive_status`.
         // Carry the current statuses index snapshot forward on the new
         // version row.
         let statuses = self
@@ -3203,14 +3295,33 @@ impl Store for MemoryStore {
         Ok(next_version)
     }
 
-    async fn delete_project(
+    async fn archive_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        let current = self.get_project(id, true).await?;
+        if current.item.archived {
+            return Ok((current.version, Vec::new()));
+        }
+        let mut project = current.item;
+        project.archived = true;
+        let next_version = self.update_project(id, project, actor).await?;
+        let cascaded = self.cascade_archive_issues_in_memory(id, None, actor);
+        Ok((next_version, cascaded))
+    }
+
+    async fn unarchive_project(
         &self,
         id: &ProjectId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_project(id, true).await?;
+        if !current.item.archived {
+            return Ok(current.version);
+        }
         let mut project = current.item;
-        project.archived = true;
+        project.archived = false;
         self.update_project(id, project, actor).await
     }
 
@@ -3310,7 +3421,70 @@ impl Store for MemoryStore {
         Ok((status, next_version))
     }
 
-    async fn delete_status(
+    async fn archive_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        let sequence = {
+            let mut entry = self
+                .projects
+                .get_mut(id)
+                .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+            let versions = entry.value_mut();
+            let latest = versions
+                .last()
+                .cloned()
+                .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+
+            let idx_mutex = self
+                .statuses_indexes
+                .get(id)
+                .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+            let mut idx = idx_mutex.lock().expect("statuses index mutex poisoned");
+
+            let sequence = *idx.by_key.get(status_key).ok_or_else(|| {
+                StoreError::InvalidIssueStatus(format!(
+                    "status '{}' does not exist on project '{id}'",
+                    status_key.as_str()
+                ))
+            })?;
+
+            let row = idx.rows.get(&sequence).cloned().ok_or_else(|| {
+                StoreError::Internal(format!(
+                    "status '{}' sequence row missing on project '{id}'",
+                    status_key.as_str()
+                ))
+            })?;
+
+            if row.archived {
+                return Ok((latest.version, Vec::new()));
+            }
+
+            let mut updated = row;
+            updated.archived = true;
+            idx.rows.insert(sequence, updated);
+            let new_statuses = idx.ordered_statuses();
+            drop(idx);
+
+            let mut project = latest.item;
+            project.statuses = new_statuses;
+            let next_version = Self::next_version(versions);
+            versions.push(Self::versioned_now_with_actor(project, next_version, actor));
+            sequence
+        };
+
+        let cascaded = self.cascade_archive_issues_in_memory(id, Some(sequence), actor);
+        let new_version = self
+            .get_project(id, true)
+            .await
+            .map(|v| v.version)
+            .unwrap_or_default();
+        Ok((new_version, cascaded))
+    }
+
+    async fn unarchive_status(
         &self,
         id: &ProjectId,
         status_key: &StatusKey,
@@ -3339,27 +3513,20 @@ impl Store for MemoryStore {
             ))
         })?;
 
-        // FK equivalent: refuse the delete if any live issue on this
-        // project still references the row.
-        for issue_entry in self.issue_status_sequences.iter() {
-            let (issue_id, _version) = issue_entry.key();
-            if *issue_entry.value() != sequence {
-                continue;
-            }
-            if let Some(versions) = self.issues.get(issue_id) {
-                if let Some(latest) = Self::latest_versioned(versions.value()) {
-                    if &latest.item.project_id == id && !latest.item.deleted {
-                        return Err(StoreError::InvalidIssueStatus(format!(
-                            "cannot remove status '{}' from project '{id}': an issue still references it",
-                            status_key.as_str()
-                        )));
-                    }
-                }
-            }
+        let row = idx.rows.get(&sequence).cloned().ok_or_else(|| {
+            StoreError::Internal(format!(
+                "status '{}' sequence row missing on project '{id}'",
+                status_key.as_str()
+            ))
+        })?;
+
+        if !row.archived {
+            return Ok(latest.version);
         }
 
-        idx.by_key.remove(status_key);
-        idx.rows.remove(&sequence);
+        let mut updated = row;
+        updated.archived = false;
+        idx.rows.insert(sequence, updated);
         let new_statuses = idx.ordered_statuses();
         drop(idx);
 
@@ -10542,7 +10709,7 @@ mod tests {
             "Engineering Renamed"
         );
 
-        let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        let (v3, _) = store.archive_project(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 5);
         // List excludes archived by default — the default seed remains.
         let after_delete = store.list_projects(false).await.unwrap();
@@ -10639,7 +10806,7 @@ mod tests {
             .add_project(sample_project(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        store.archive_project(&id, &ActorRef::test()).await.unwrap();
 
         let key = ProjectKey::try_new("engineering").unwrap();
 
@@ -10688,17 +10855,17 @@ mod tests {
     /// An archived project frees its key for re-use, mirroring the
     /// partial unique index `WHERE is_latest AND NOT archived`.
     #[tokio::test]
-    async fn add_project_after_delete_releases_key() {
+    async fn add_project_after_archive_releases_key() {
         let store = MemoryStore::new();
         let (id, _) = store
             .add_project(sample_project(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        store.archive_project(&id, &ActorRef::test()).await.unwrap();
         let result = store.add_project(sample_project(), &ActorRef::test()).await;
         assert!(
             result.is_ok(),
-            "expected re-add after delete, got {result:?}"
+            "expected re-add after archive, got {result:?}"
         );
     }
 
@@ -10807,11 +10974,12 @@ mod tests {
         assert_eq!(idx.next_sequence, 4);
     }
 
-    /// `delete_status` followed by `add_status` must not reuse the
-    /// freed sequence id. The per-project high-water mark is
-    /// monotonically non-decreasing.
+    /// `archive_status` followed by `add_status` must not reuse the
+    /// archived row's sequence id. The per-project high-water mark
+    /// is monotonically non-decreasing even when status rows stay in
+    /// place.
     #[tokio::test]
-    async fn delete_status_then_add_does_not_reuse_sequence_memory() {
+    async fn archive_status_then_add_does_not_reuse_sequence_memory() {
         use hydra_common::api::v1::projects::StatusKey;
         let store = MemoryStore::new();
         let project = cutover_sample_project("abc", &[]);
@@ -10823,7 +10991,7 @@ mod tests {
                 .unwrap();
         }
         store
-            .delete_status(
+            .archive_status(
                 &project_id,
                 &StatusKey::try_new("c").unwrap(),
                 &ActorRef::test(),
@@ -10852,7 +11020,7 @@ mod tests {
             .by_key
             .get(&StatusKey::try_new("x").unwrap())
             .copied();
-        assert_eq!(x_seq, Some(4), "removed sequence must not be reused");
+        assert_eq!(x_seq, Some(4), "archived sequence must not be reused");
     }
 
     /// `update_status` with a different `key` is a rename that
@@ -10903,11 +11071,11 @@ mod tests {
         assert!(matches!(res, Err(StoreError::InvalidIssueStatus(_))));
     }
 
-    /// `delete_status` is rejected when any live issue still
-    /// references the row — mirrors the FK on `issues_v2.status_sequence`
-    /// in the SQL backends.
+    /// `archive_status` with an active issue cascade-archives the
+    /// issue rather than failing — replaces the FK-violation path
+    /// removed in Phase 3. Validates the memory-store cascade.
     #[tokio::test]
-    async fn delete_status_rejects_removal_with_active_issue_memory() {
+    async fn archive_status_cascade_archives_active_issues_memory() {
         use hydra_common::api::v1::projects::StatusKey;
         let store = MemoryStore::new();
         let project = cutover_sample_project("rmproj", &[]);
@@ -10921,18 +11089,84 @@ mod tests {
         let mut issue = sample_issue(vec![]);
         issue.project_id = project_id.clone();
         issue.status = StatusKey::try_new("b").unwrap();
-        store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
-        let res = store
-            .delete_status(
+        let (_, cascaded) = store
+            .archive_status(
                 &project_id,
                 &StatusKey::try_new("b").unwrap(),
                 &ActorRef::test(),
             )
-            .await;
+            .await
+            .unwrap();
+        assert_eq!(cascaded, vec![issue_id.clone()]);
+        let fetched = store.get_issue(&issue_id, true).await.unwrap();
+        assert!(fetched.item.deleted, "cascade must flip issue.deleted");
+    }
+
+    /// `archive_project` cascades to every non-archived issue in the
+    /// project and flips `project.archived = true`. Memory-store
+    /// version of the SQLite/Postgres cascade roundtrip.
+    #[tokio::test]
+    async fn archive_project_cascades_to_all_non_archived_issues_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("pcas", &[]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        store
+            .add_status(&project_id, cutover_status_def("a"), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let mut issue = sample_issue(vec![]);
+            issue.project_id = project_id.clone();
+            issue.status = StatusKey::try_new("a").unwrap();
+            let (id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+            ids.push(id);
+        }
+        let (_, cascaded) = store
+            .archive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(cascaded.len(), 2);
+        for id in &ids {
+            let fetched = store.get_issue(id, true).await.unwrap();
+            assert!(fetched.item.deleted);
+        }
+        let p = store.get_project(&project_id, true).await.unwrap();
+        assert!(p.item.archived);
+    }
+
+    /// `unarchive_project` does NOT reverse-cascade.
+    #[tokio::test]
+    async fn unarchive_project_does_not_reverse_cascade_memory() {
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = MemoryStore::new();
+        let project = cutover_sample_project("unp", &[]);
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        store
+            .add_status(&project_id, cutover_status_def("a"), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut issue = sample_issue(vec![]);
+        issue.project_id = project_id.clone();
+        issue.status = StatusKey::try_new("a").unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        store
+            .archive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .unarchive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        let p = store.get_project(&project_id, true).await.unwrap();
+        assert!(!p.item.archived);
+        let i = store.get_issue(&issue_id, true).await.unwrap();
         assert!(
-            matches!(res, Err(StoreError::InvalidIssueStatus(_))),
-            "expected rejection of removal-with-active-issue; got {res:?}"
+            i.item.deleted,
+            "cascade-archived issue stays archived after unarchive_project"
         );
     }
 

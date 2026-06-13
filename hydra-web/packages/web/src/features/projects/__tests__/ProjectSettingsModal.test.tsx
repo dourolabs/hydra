@@ -152,7 +152,7 @@ const updateProjectSpy = vi.fn(async () => ({
   project_id: "j-engine",
   version: 2n,
 }));
-const deleteProjectSpy = vi.fn(async () => ({}));
+const archiveProjectSpy = vi.fn(async () => ({}));
 const getDocumentByPathSpy = vi.fn();
 const createDocumentSpy = vi.fn(async () => ({ document_id: "d-1" }));
 const updateDocumentSpy = vi.fn(async () => ({ document_id: "d-1" }));
@@ -167,7 +167,7 @@ vi.mock("../../../api/client", () => ({
   ApiError: ApiErrorMock,
   apiClient: {
     updateProject: updateProjectSpy,
-    deleteProject: deleteProjectSpy,
+    archiveProject: archiveProjectSpy,
     getDocumentByPath: getDocumentByPathSpy,
     createDocument: createDocumentSpy,
     updateDocument: updateDocumentSpy,
@@ -237,7 +237,7 @@ describe("ProjectSettingsModal", () => {
     navigateSpy.mockReset();
     invalidateQueriesSpy.mockReset();
     updateProjectSpy.mockClear();
-    deleteProjectSpy.mockClear();
+    archiveProjectSpy.mockClear();
     getDocumentByPathSpy.mockReset();
     createDocumentSpy.mockClear();
     updateDocumentSpy.mockClear();
@@ -408,8 +408,8 @@ describe("ProjectSettingsModal", () => {
       fireEvent.click(screen.getByTestId("confirm-delete"));
     });
 
-    expect(deleteProjectSpy).toHaveBeenCalledTimes(1);
-    expect((deleteProjectSpy.mock.calls[0] as unknown as [string])[0]).toBe(
+    expect(archiveProjectSpy).toHaveBeenCalledTimes(1);
+    expect((archiveProjectSpy.mock.calls[0] as unknown as [string])[0]).toBe(
       "j-engine",
     );
     expect(onClose).toHaveBeenCalledTimes(1);

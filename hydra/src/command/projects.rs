@@ -20,16 +20,20 @@ pub enum ProjectsCommand {
     /// List configured projects.
     List,
     /// Create a new project. Statuses are managed independently via
-    /// `projects status create / update / delete`.
+    /// `projects status create / update / archive`.
     Create(CreateProjectArgs),
     /// Get a project by its id.
     Get(GetProjectArgs),
     /// Update project-level fields (key, name, prompt path). Statuses
-    /// are managed independently via `projects status create / update /
-    /// delete`.
+    /// are managed independently via `projects status create / update
+    /// / archive`.
     Update(UpdateProjectArgs),
-    /// Soft-delete a project.
-    Delete(DeleteProjectArgs),
+    /// Archive a project, cascade-archiving every non-archived issue
+    /// it owns. Idempotent.
+    Archive(ArchiveProjectArgs),
+    /// Unarchive a project. No reverse cascade — previously cascade-
+    /// archived issues stay archived.
+    Unarchive(ArchiveProjectArgs),
     /// List the status definitions for a project. Pass `default` for the
     /// seeded default project's statuses.
     Statuses(StatusesProjectArgs),
@@ -49,9 +53,11 @@ pub enum StatusCommand {
     /// overlaid on the current definition; the `--key` flag renames the
     /// status in place (storage identity preserved).
     Update(Box<UpdateStatusArgs>),
-    /// Delete a status from a project. Fails if any issue still
-    /// references the status.
-    Delete(DeleteStatusArgs),
+    /// Archive a status in place and cascade-archive every non-
+    /// archived issue currently at that status. Idempotent.
+    Archive(ArchiveStatusArgs),
+    /// Unarchive a status. No reverse cascade.
+    Unarchive(ArchiveStatusArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -362,18 +368,18 @@ fn parse_principal_arg(value: &str) -> Result<Principal, String> {
 }
 
 #[derive(Debug, Clone, Args)]
-pub struct DeleteStatusArgs {
+pub struct ArchiveStatusArgs {
     /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
     #[arg(value_name = "PROJECT_ID_OR_KEY")]
     pub project_ref: ProjectRef,
 
-    /// Status key (within the project) to delete.
+    /// Status key (within the project) to archive / unarchive.
     #[arg(value_name = "STATUS_KEY")]
     pub status_key: StatusKey,
 }
 
 #[derive(Debug, Clone, Args)]
-pub struct DeleteProjectArgs {
+pub struct ArchiveProjectArgs {
     /// Project id (e.g. `j-abc123`) or key (e.g. `engineering`).
     #[arg(value_name = "PROJECT_ID_OR_KEY")]
     pub project_ref: ProjectRef,
@@ -433,12 +439,19 @@ pub async fn run(
                 &mut buffer,
             )?;
         }
-        ProjectsCommand::Delete(args) => {
+        ProjectsCommand::Archive(args) => {
             let response = client
-                .delete_project(&args.project_ref)
+                .archive_project(&args.project_ref)
                 .await
-                .with_context(|| format!("failed to delete project '{}'", args.project_ref))?;
-            write_delete_summary(context.output_format, &response, &mut buffer)?;
+                .with_context(|| format!("failed to archive project '{}'", args.project_ref))?;
+            write_archive_summary(context.output_format, &response, "Archived", &mut buffer)?;
+        }
+        ProjectsCommand::Unarchive(args) => {
+            let response = client
+                .unarchive_project(&args.project_ref)
+                .await
+                .with_context(|| format!("failed to unarchive project '{}'", args.project_ref))?;
+            write_archive_summary(context.output_format, &response, "Unarchived", &mut buffer)?;
         }
         ProjectsCommand::Statuses(args) => {
             let response = client
@@ -473,8 +486,16 @@ pub async fn run(
                     &mut buffer,
                 )?;
             }
-            StatusCommand::Delete(args) => {
-                let record = delete_status(client, args).await?;
+            StatusCommand::Archive(args) => {
+                let record = archive_status(client, args).await?;
+                render(
+                    ProjectRecords(&[record]),
+                    context.output_format,
+                    &mut buffer,
+                )?;
+            }
+            StatusCommand::Unarchive(args) => {
+                let record = unarchive_status(client, args).await?;
                 render(
                     ProjectRecords(&[record]),
                     context.output_format,
@@ -814,16 +835,36 @@ fn normalize_prompt_path(arg: Option<String>) -> Option<String> {
     }
 }
 
-async fn delete_status(
+async fn archive_status(
     client: &dyn HydraClientInterface,
-    args: DeleteStatusArgs,
+    args: ArchiveStatusArgs,
 ) -> Result<ProjectRecord> {
     client
-        .delete_project_status(&args.project_ref, &args.status_key)
+        .archive_project_status(&args.project_ref, &args.status_key)
         .await
         .with_context(|| {
             format!(
-                "failed to delete status '{}' from project '{}'",
+                "failed to archive status '{}' on project '{}'",
+                args.status_key, args.project_ref
+            )
+        })?;
+    let record = client
+        .get_project(&args.project_ref)
+        .await
+        .with_context(|| format!("failed to fetch project '{}'", args.project_ref))?;
+    Ok(record)
+}
+
+async fn unarchive_status(
+    client: &dyn HydraClientInterface,
+    args: ArchiveStatusArgs,
+) -> Result<ProjectRecord> {
+    client
+        .unarchive_project_status(&args.project_ref, &args.status_key)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to unarchive status '{}' on project '{}'",
                 args.status_key, args.project_ref
             )
         })?;
@@ -845,16 +886,17 @@ fn apply_prompt_path_arg(arg: Option<String>, current: Option<String>) -> Option
     }
 }
 
-fn write_delete_summary<W: std::io::Write>(
+fn write_archive_summary<W: std::io::Write>(
     format: ResolvedOutputFormat,
     response: &UpsertProjectResponse,
+    verb: &str,
     writer: &mut W,
 ) -> Result<()> {
     match format {
         ResolvedOutputFormat::Pretty => {
             writeln!(
                 writer,
-                "Deleted project '{}' (version {})",
+                "{verb} project '{}' (version {})",
                 response.project_id, response.version
             )?;
         }

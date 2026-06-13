@@ -310,6 +310,11 @@ struct StatusRow {
     // `session_settings_json`. NULL deserializes to
     // `SessionSettings::default()` in `status_row_to_definition`.
     session_settings_json: Option<String>,
+    // No `#[sqlx(default)]`: every SELECT on `statuses` must project
+    // `archived` explicitly. Cascade-archive in `archive_status` flips
+    // the column in place; an unprojected column would silently
+    // surface `false` for archived rows and corrupt resolution.
+    archived: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1148,6 +1153,7 @@ impl SqliteStore {
             })?,
             None => Default::default(),
         };
+        def.archived = row.archived;
         Ok(def)
     }
 
@@ -1159,7 +1165,7 @@ impl SqliteStore {
         E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json, archived \
              FROM statuses WHERE project_id = ?1 ORDER BY position, sequence",
         )
         .bind(project_id)
@@ -1182,7 +1188,7 @@ impl SqliteStore {
         }
         let placeholders: Vec<String> = (1..=project_ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json, archived \
              FROM statuses WHERE project_id IN ({}) ORDER BY project_id, position, sequence",
             placeholders.join(", ")
         );
@@ -1305,6 +1311,91 @@ impl SqliteStore {
         Ok(next_version)
     }
 
+    /// Cascade-archive every non-archived issue in this project (or
+    /// in `(project_id, status_sequence_filter)` when `Some`) by
+    /// flipping `issue.deleted = TRUE` on the row's next version.
+    /// Returns the ids of every issue actually flipped.
+    ///
+    /// Carries every other column forward by `INSERT ... SELECT`
+    /// from the prior latest version so the cascade does not lose
+    /// any field. Relationships ARE preserved untouched — cascade
+    /// does not mutate `(child_of, blocked_on, has_patch)` rows.
+    async fn cascade_archive_issues(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        project_id: &str,
+        status_sequence_filter: Option<i64>,
+        actor: &ActorRef,
+    ) -> Result<Vec<IssueId>, StoreError> {
+        let actor_json = actor_to_json_string(actor);
+
+        let ids: Vec<String> = match status_sequence_filter {
+            Some(seq) => sqlx::query_scalar(
+                "SELECT id FROM issues_v2 \
+                 WHERE project_id = ?1 AND status_sequence = ?2 \
+                       AND is_latest = 1 AND deleted = 0",
+            )
+            .bind(project_id)
+            .bind(seq)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?,
+            None => sqlx::query_scalar(
+                "SELECT id FROM issues_v2 \
+                 WHERE project_id = ?1 AND is_latest = 1 AND deleted = 0",
+            )
+            .bind(project_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?,
+        };
+
+        let mut cascaded = Vec::with_capacity(ids.len());
+        for id_str in ids {
+            let current_version: Option<i64> = sqlx::query_scalar(
+                "SELECT version_number FROM issues_v2 WHERE id = ?1 AND is_latest = 1 LIMIT 1",
+            )
+            .bind(&id_str)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?;
+            let Some(current_version) = current_version else {
+                continue;
+            };
+            let next_version = current_version.checked_add(1).ok_or_else(|| {
+                StoreError::Internal(format!("version number overflow for issue '{id_str}'"))
+            })?;
+
+            sqlx::query("UPDATE issues_v2 SET is_latest = 0 WHERE id = ?1 AND is_latest = 1")
+                .bind(&id_str)
+                .execute(&mut **tx)
+                .await
+                .map_err(map_sqlx_error)?;
+
+            sqlx::query(
+                "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, \
+                  creator, progress, status_sequence, assignee, assignee_principal, \
+                  job_settings, deleted, actor, form, form_response, feedback, \
+                  project_id, is_latest) \
+                 SELECT id, ?2, issue_type, title, description, creator, progress, \
+                        status_sequence, assignee, assignee_principal, job_settings, \
+                        1, ?3, form, form_response, feedback, project_id, 1 \
+                 FROM issues_v2 WHERE id = ?1 AND version_number = ?4",
+            )
+            .bind(&id_str)
+            .bind(next_version)
+            .bind(&actor_json)
+            .bind(current_version)
+            .execute(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+            let issue_id = IssueId::try_from(id_str.clone())
+                .map_err(|e| StoreError::Internal(format!("invalid issue id stored: {e}")))?;
+            cascaded.push(issue_id);
+        }
+        Ok(cascaded)
+    }
+
     /// Insert a single `statuses` row for `add_status`. Pulled out of
     /// the trait method so the caller can sequence it with the
     /// preflight existence check + the project version bump.
@@ -1325,8 +1416,8 @@ impl SqliteStore {
             })?;
         let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
         sqlx::query(
-            "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json, archived) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         )
         .bind(project_id)
         .bind(sequence)
@@ -1344,6 +1435,7 @@ impl SqliteStore {
         .bind(status.suppress_sessions)
         .bind(status.position)
         .bind(session_settings_json.as_deref())
+        .bind(status.archived)
         .execute(&mut **tx)
         .await
         .map_err(map_sqlx_error)?;
@@ -2761,29 +2853,6 @@ fn map_sqlx_error(err: sqlx::Error) -> StoreError {
         }
     }
     StoreError::Internal(err.to_string())
-}
-
-/// True iff `err` is a SQLite FK-constraint violation. Used by
-/// `delete_status` (scoped to its DELETE on `statuses`) to translate
-/// the raw sqlx error into [`StoreError::InvalidIssueStatus`] so the
-/// route layer can surface a 400 instead of an opaque 500.
-///
-/// SQLite messages do not carry a constraint name, so the predicate is
-/// intentionally generic; only call from a site where the only FK that
-/// can fail is the `issues_v2.status_sequence` one. Matches the
-/// extended code SQLITE_CONSTRAINT_FOREIGNKEY (787) and the message
-/// substring as a fallback for sqlx versions that surface the base
-/// SQLITE_CONSTRAINT code instead.
-fn is_foreign_key_violation_sqlite(err: &sqlx::Error) -> bool {
-    if let sqlx::Error::Database(db_err) = err {
-        if db_err.code().as_deref() == Some("787") {
-            return true;
-        }
-        if db_err.message().contains("FOREIGN KEY constraint failed") {
-            return true;
-        }
-    }
-    false
 }
 
 /// True iff `err` is a SQLite unique-violation on the partial
@@ -6313,14 +6382,79 @@ impl Store for SqliteStore {
         Ok(next_version)
     }
 
-    async fn delete_project(
+    async fn archive_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let row: Option<(i64, i64, bool)> = sqlx::query_as::<_, (i64, i64, bool)>(&format!(
+            "SELECT version_number, next_status_sequence, archived FROM {TABLE_PROJECTS}
+             WHERE id = ?1 AND is_latest = 1
+             LIMIT 1"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let (latest_version, current_next_seq, already_archived) =
+            row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let latest_version = VersionNumber::try_from(latest_version).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+
+        if already_archived {
+            return Ok((latest_version, Vec::new()));
+        }
+
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+        let next_version_i64 = i64::try_from(next_version).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+
+        let current = Self::load_project_row_for_status_mutation(&mut tx, id).await?;
+        let mut archived_project = Self::row_to_project(&current, Vec::new())?;
+        archived_project.archived = true;
+
+        let actor_json = actor_to_json_string(actor);
+        sqlx::query(&format!(
+            "UPDATE {TABLE_PROJECTS} SET is_latest = 0 WHERE id = ?1 AND is_latest = 1"
+        ))
+        .bind(id.as_ref())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        Self::insert_project_row_in_tx(
+            &mut *tx,
+            id,
+            next_version_i64,
+            &archived_project,
+            Some(&actor_json),
+            current_next_seq,
+        )
+        .await?;
+
+        let cascaded = Self::cascade_archive_issues(&mut tx, id.as_ref(), None, actor).await?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((next_version, cascaded))
+    }
+
+    async fn unarchive_project(
         &self,
         id: &ProjectId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_project(id, true).await?;
+        if !current.item.archived {
+            return Ok(current.version);
+        }
         let mut project = current.item;
-        project.archived = true;
+        project.archived = false;
         self.update_project(id, project, actor).await
     }
 
@@ -6429,8 +6563,8 @@ impl Store for SqliteStore {
             })?;
         let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
         sqlx::query(
-            "UPDATE statuses SET key = ?1, label = ?2, color = ?3, unblocks_parents = ?4, unblocks_dependents = ?5, cascades_to_children = ?6, on_enter = ?7, prompt_path = ?8, interactive = ?9, auto_archive_after_seconds = ?10, max_simultaneous_sessions = ?11, suppress_sessions = ?12, position = ?13, session_settings_json = ?14 \
-             WHERE project_id = ?15 AND sequence = ?16",
+            "UPDATE statuses SET key = ?1, label = ?2, color = ?3, unblocks_parents = ?4, unblocks_dependents = ?5, cascades_to_children = ?6, on_enter = ?7, prompt_path = ?8, interactive = ?9, auto_archive_after_seconds = ?10, max_simultaneous_sessions = ?11, suppress_sessions = ?12, position = ?13, session_settings_json = ?14, archived = ?15 \
+             WHERE project_id = ?16 AND sequence = ?17",
         )
         .bind(status.key.as_str())
         .bind(&status.label)
@@ -6446,6 +6580,7 @@ impl Store for SqliteStore {
         .bind(status.suppress_sessions)
         .bind(status.position)
         .bind(session_settings_json.as_deref())
+        .bind(status.archived)
         .bind(id.as_ref())
         .bind(sequence)
         .execute(&mut *tx)
@@ -6466,7 +6601,63 @@ impl Store for SqliteStore {
         Ok((status, next_version))
     }
 
-    async fn delete_status(
+    async fn archive_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let project_row = Self::load_project_row_for_status_mutation(&mut tx, id).await?;
+        let latest_version = VersionNumber::try_from(project_row.version_number).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+
+        let row: Option<(i64, bool)> = sqlx::query_as::<_, (i64, bool)>(
+            "SELECT sequence, archived FROM statuses WHERE project_id = ?1 AND key = ?2 LIMIT 1",
+        )
+        .bind(id.as_ref())
+        .bind(status_key.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let (sequence, already_archived) = row.ok_or_else(|| {
+            StoreError::InvalidIssueStatus(format!(
+                "status '{}' does not exist on project '{id}'",
+                status_key.as_str()
+            ))
+        })?;
+
+        if already_archived {
+            return Ok((latest_version, Vec::new()));
+        }
+
+        sqlx::query("UPDATE statuses SET archived = 1 WHERE project_id = ?1 AND sequence = ?2")
+            .bind(id.as_ref())
+            .bind(sequence)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let cascaded =
+            Self::cascade_archive_issues(&mut tx, id.as_ref(), Some(sequence), actor).await?;
+
+        let next_version = Self::bump_project_version_for_status_mutation(
+            &mut tx,
+            id,
+            &project_row,
+            latest_version,
+            actor,
+            project_row.next_status_sequence,
+        )
+        .await?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((next_version, cascaded))
+    }
+
+    async fn unarchive_status(
         &self,
         id: &ProjectId,
         status_key: &StatusKey,
@@ -6479,27 +6670,31 @@ impl Store for SqliteStore {
             StoreError::Internal(format!("invalid version number stored for project '{id}'"))
         })?;
 
-        let result = sqlx::query("DELETE FROM statuses WHERE project_id = ?1 AND key = ?2")
-            .bind(id.as_ref())
-            .bind(status_key.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| {
-                if is_foreign_key_violation_sqlite(&err) {
-                    StoreError::InvalidIssueStatus(format!(
-                        "cannot remove status '{}' from project '{id}': an issue still references it",
-                        status_key.as_str()
-                    ))
-                } else {
-                    map_sqlx_error(err)
-                }
-            })?;
-        if result.rows_affected() == 0 {
-            return Err(StoreError::InvalidIssueStatus(format!(
+        let row: Option<(i64, bool)> = sqlx::query_as::<_, (i64, bool)>(
+            "SELECT sequence, archived FROM statuses WHERE project_id = ?1 AND key = ?2 LIMIT 1",
+        )
+        .bind(id.as_ref())
+        .bind(status_key.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let (sequence, already_archived) = row.ok_or_else(|| {
+            StoreError::InvalidIssueStatus(format!(
                 "status '{}' does not exist on project '{id}'",
                 status_key.as_str()
-            )));
+            ))
+        })?;
+
+        if !already_archived {
+            return Ok(latest_version);
         }
+
+        sqlx::query("UPDATE statuses SET archived = 0 WHERE project_id = ?1 AND sequence = ?2")
+            .bind(id.as_ref())
+            .bind(sequence)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx_error)?;
 
         let next_version = Self::bump_project_version_for_status_mutation(
             &mut tx,
@@ -14248,7 +14443,7 @@ mod tests {
         assert_eq!(fetched.version, 4);
         assert_eq!(fetched.item.name, "Engineering Renamed");
 
-        let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        let (v3, _) = store.archive_project(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 5);
         let after_delete = store.list_projects(false).await.unwrap();
         assert_eq!(after_delete.len(), 1);
@@ -14356,7 +14551,7 @@ mod tests {
             .add_project(sample_project(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        store.archive_project(&id, &ActorRef::test()).await.unwrap();
 
         let key = ProjectKey::try_new("engineering").unwrap();
 
@@ -14681,17 +14876,17 @@ mod tests {
     /// An archived project frees its key for re-use — the partial
     /// unique index applies only to `is_latest = 1 AND archived = 0`.
     #[tokio::test]
-    async fn add_project_after_delete_releases_key_sqlite() {
+    async fn add_project_after_archive_releases_key_sqlite() {
         let store = create_test_store().await;
         let (id, _) = store
             .add_project(sample_project(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        store.archive_project(&id, &ActorRef::test()).await.unwrap();
         let result = store.add_project(sample_project(), &ActorRef::test()).await;
         assert!(
             result.is_ok(),
-            "expected re-add after delete, got {result:?}"
+            "expected re-add after archive, got {result:?}"
         );
     }
 
@@ -14909,11 +15104,12 @@ mod tests {
         assert_eq!(row, (2, "B Prime".to_string()));
     }
 
-    /// `delete_status` followed by `add_status` must NOT reuse the
-    /// freed sequence id. The high-water mark on
-    /// `projects.next_status_sequence` enforces monotonic-no-reuse.
+    /// `archive_status` followed by `add_status` must NOT reuse the
+    /// archived row's sequence id, even though the row stays in the
+    /// table (just `archived = TRUE`). The high-water mark on
+    /// `projects.next_status_sequence` enforces monotonic allocation.
     #[tokio::test]
-    async fn delete_status_then_add_does_not_reuse_sequence_sqlite() {
+    async fn archive_status_then_add_does_not_reuse_sequence_sqlite() {
         use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
         let (project_id, _) = store
@@ -14928,7 +15124,7 @@ mod tests {
         }
 
         store
-            .delete_status(
+            .archive_status(
                 &project_id,
                 &StatusKey::try_new("c").unwrap(),
                 &ActorRef::test(),
@@ -14954,7 +15150,16 @@ mod tests {
                 .fetch_one(&store.pool)
                 .await
                 .unwrap();
-        assert_eq!(x_seq, 4, "removed sequence id must not be reused");
+        assert_eq!(x_seq, 4, "archived sequence id must not be reused");
+
+        // The archived row stays in the table with archived = 1.
+        let archived_flag: bool =
+            sqlx::query_scalar("SELECT archived FROM statuses WHERE project_id = ?1 AND key = 'c'")
+                .bind(project_id.as_ref())
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert!(archived_flag, "archived row must remain with archived = 1");
     }
 
     /// `update_status` with a different `key` is a rename: the row's
@@ -15027,11 +15232,11 @@ mod tests {
         assert!(res.is_err(), "FK must reject unknown status_sequence");
     }
 
-    /// `delete_status` is rejected when any live issue still
-    /// references the row — surfaced from the SQLite FK on
-    /// `issues_v2.status_sequence → statuses(project_id, sequence)`.
+    /// `archive_status` with an active issue cascade-archives the
+    /// issue and succeeds — replaces the old FK-violation behavior.
+    /// Validates the SQLite cascade roundtrip.
     #[tokio::test]
-    async fn delete_status_rejects_removal_with_active_issue_sqlite() {
+    async fn archive_status_cascade_archives_active_issues_sqlite() {
         use crate::domain::issues::{Issue, IssueType};
         use hydra_common::api::v1::projects::StatusKey;
         let store = create_test_store().await;
@@ -15061,18 +15266,195 @@ mod tests {
             None,
             None,
         );
-        store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
-        let res = store
-            .delete_status(
+        let (_, cascaded) = store
+            .archive_status(
                 &project_id,
                 &StatusKey::try_new("b").unwrap(),
                 &ActorRef::test(),
             )
-            .await;
+            .await
+            .unwrap();
+        assert_eq!(cascaded, vec![issue_id.clone()]);
+        let fetched = store.get_issue(&issue_id, true).await.unwrap();
+        assert!(fetched.item.deleted, "cascade must flip issue.deleted");
+    }
+
+    /// Cascade-archive is bounded by `(project_id, status_sequence)`:
+    /// non-archived issues at a different status on the same project
+    /// stay untouched.
+    #[tokio::test]
+    async fn archive_status_does_not_cascade_to_other_statuses_sqlite() {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = create_test_store().await;
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("scope"), &ActorRef::test())
+            .await
+            .unwrap();
+        for k in ["a", "b"] {
+            store
+                .add_status(&project_id, cutover_status_def(k), &ActorRef::test())
+                .await
+                .unwrap();
+        }
+        let issue_a = Issue::new(
+            IssueType::Task,
+            "a-issue".to_string(),
+            "x".to_string(),
+            Username::from("alice"),
+            String::new(),
+            StatusKey::try_new("a").unwrap(),
+            project_id.clone(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (a_id, _) = store.add_issue(issue_a, &ActorRef::test()).await.unwrap();
+        let issue_b = Issue::new(
+            IssueType::Task,
+            "b-issue".to_string(),
+            "x".to_string(),
+            Username::from("alice"),
+            String::new(),
+            StatusKey::try_new("b").unwrap(),
+            project_id.clone(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (b_id, _) = store.add_issue(issue_b, &ActorRef::test()).await.unwrap();
+
+        let (_, cascaded) = store
+            .archive_status(
+                &project_id,
+                &StatusKey::try_new("b").unwrap(),
+                &ActorRef::test(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cascaded, vec![b_id.clone()]);
+        let a = store.get_issue(&a_id, false).await.unwrap();
+        assert!(!a.item.deleted, "issue at status 'a' must not be cascaded");
+    }
+
+    /// `archive_project` cascades to every non-archived issue in
+    /// the project and flips `project.archived = true`. Idempotent on
+    /// the project AND on already-archived issues.
+    #[tokio::test]
+    async fn archive_project_cascades_to_all_non_archived_issues_sqlite() {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = create_test_store().await;
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("pcas"), &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_status(&project_id, cutover_status_def("a"), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for title in ["one", "two"] {
+            let issue = Issue::new(
+                IssueType::Task,
+                title.to_string(),
+                "x".to_string(),
+                Username::from("alice"),
+                String::new(),
+                StatusKey::try_new("a").unwrap(),
+                project_id.clone(),
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+            );
+            let (id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+            ids.push(id);
+        }
+
+        let (_, cascaded) = store
+            .archive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(cascaded.len(), 2);
+        for id in &ids {
+            let fetched = store.get_issue(id, true).await.unwrap();
+            assert!(fetched.item.deleted);
+        }
+        let p = store.get_project(&project_id, true).await.unwrap();
+        assert!(p.item.archived);
+
+        // Idempotent: a second archive_project call is a no-op and
+        // reports an empty cascade.
+        let (_, cascaded_again) = store
+            .archive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        assert!(cascaded_again.is_empty());
+    }
+
+    /// `unarchive_project` does NOT reverse-cascade. Issues that were
+    /// cascade-archived stay archived; the caller restores them
+    /// individually.
+    #[tokio::test]
+    async fn unarchive_project_does_not_reverse_cascade_sqlite() {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = create_test_store().await;
+        let (project_id, _) = store
+            .add_project(cutover_empty_project("unp"), &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_status(&project_id, cutover_status_def("a"), &ActorRef::test())
+            .await
+            .unwrap();
+        let issue = Issue::new(
+            IssueType::Task,
+            "x".to_string(),
+            "x".to_string(),
+            Username::from("alice"),
+            String::new(),
+            StatusKey::try_new("a").unwrap(),
+            project_id.clone(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+
+        store
+            .archive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .unarchive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+
+        let p = store.get_project(&project_id, true).await.unwrap();
+        assert!(!p.item.archived, "project must be active after unarchive");
+        let i = store.get_issue(&issue_id, true).await.unwrap();
         assert!(
-            matches!(res, Err(StoreError::InvalidIssueStatus(_))),
-            "expected InvalidIssueStatus when removing a status with active issues, got {res:?}"
+            i.item.deleted,
+            "cascade-archived issue must stay archived after unarchive_project"
         );
     }
 

@@ -117,14 +117,27 @@ async fn cli_projects_crud_round_trip() -> Result<()> {
         "rename should preserve statuses"
     );
 
-    // Delete via CLI; soft-delete leaves the row visible to subsequent
-    // operations through the API but `list_projects` should not include it.
-    user.cli(&["projects", "delete", project_id.as_ref()])
+    // Archive via CLI; cascade-archive leaves the row visible via
+    // `get_project(..., include_archived=true)` but `list_projects`
+    // (default) should not include it.
+    user.cli(&["projects", "archive", project_id.as_ref()])
         .await?;
     let listed_after = user.client().list_projects().await?.projects;
     assert!(
         !listed_after.iter().any(|p| p.project_id == project_id),
-        "deleted project should not appear in list"
+        "archived project should not appear in list"
+    );
+
+    // Unarchive restores the project on the default list (no reverse
+    // cascade on issues, but the project itself flips back active).
+    user.cli(&["projects", "unarchive", project_id.as_ref()])
+        .await?;
+    let listed_after_unarchive = user.client().list_projects().await?.projects;
+    assert!(
+        listed_after_unarchive
+            .iter()
+            .any(|p| p.project_id == project_id),
+        "unarchived project should reappear in list"
     );
 
     Ok(())

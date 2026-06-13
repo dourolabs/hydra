@@ -249,6 +249,12 @@ pub struct StatusDefinition {
     /// `SessionSettings::merge` and `apply_session_settings_defaults`.
     #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
     pub session_settings: SessionSettings,
+    /// Set by `archive_status` and cleared by `unarchive_status`.
+    /// Archived statuses stay in the project's `statuses` list
+    /// (resolution of historical issues keeps working), but the
+    /// frontend filters them out of the active picker UI.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
 }
 
 impl StatusDefinition {
@@ -276,6 +282,7 @@ impl StatusDefinition {
             max_simultaneous_sessions: None,
             position: 0.0,
             session_settings: SessionSettings::default(),
+            archived: false,
         }
     }
 }

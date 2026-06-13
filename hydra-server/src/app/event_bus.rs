@@ -1221,12 +1221,22 @@ impl StoreWithEvents {
         self.inner.update_project(id, project, actor).await
     }
 
-    pub async fn delete_project(
+    pub async fn archive_project(
         &self,
         id: &ProjectId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_project(id, actor).await
+        let (version, cascaded) = self.inner.archive_project(id, actor).await?;
+        self.emit_cascade_archive_events(&cascaded, actor).await;
+        Ok(version)
+    }
+
+    pub async fn unarchive_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.unarchive_project(id, actor).await
     }
 
     pub async fn add_status(
@@ -1262,13 +1272,52 @@ impl StoreWithEvents {
             .await
     }
 
-    pub async fn delete_status(
+    pub async fn archive_status(
         &self,
         id: &ProjectId,
         status_key: &hydra_common::api::v1::projects::StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.inner.delete_status(id, status_key, actor).await
+        let (version, cascaded) = self.inner.archive_status(id, status_key, actor).await?;
+        self.emit_cascade_archive_events(&cascaded, actor).await;
+        Ok(version)
+    }
+
+    pub async fn unarchive_status(
+        &self,
+        id: &ProjectId,
+        status_key: &hydra_common::api::v1::projects::StatusKey,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.inner.unarchive_status(id, status_key, actor).await
+    }
+
+    /// For each issue id flipped by an archive cascade, fetch the
+    /// post-cascade issue and emit an `IssueDeleted` event so SSE
+    /// subscribers see the transitions. Re-fetch failures are logged
+    /// and skipped — data is already on disk and the event surface is
+    /// best-effort.
+    async fn emit_cascade_archive_events(&self, cascaded: &[IssueId], actor: &ActorRef) {
+        for issue_id in cascaded {
+            let new = match self.inner.get_issue(issue_id, true).await {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(
+                        issue_id = %issue_id,
+                        error = %err,
+                        "cascade-archive event emission skipped: failed to re-fetch issue"
+                    );
+                    continue;
+                }
+            };
+            let payload = Arc::new(MutationPayload::Issue {
+                old: None,
+                new: new.item,
+                actor: actor.clone(),
+            });
+            self.event_bus
+                .emit_issue_deleted(issue_id.clone(), new.version, payload);
+        }
     }
 
     // ---- Comment mutations ----

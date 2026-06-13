@@ -171,18 +171,18 @@ async fn project_crud_round_trip() -> anyhow::Result<()> {
     // Statuses are preserved across project-level updates.
     assert_eq!(after_update.project.statuses.len(), 1);
 
-    let delete_resp = client
-        .delete(format!("{base}/v1/projects/{project_id}"))
+    let archive_resp = client
+        .post(format!("{base}/v1/projects/{project_id}/archive"))
         .send()
         .await?
         .error_for_status()?;
-    assert!(delete_resp.status().is_success());
+    assert!(archive_resp.status().is_success());
 
-    let after_delete = client
+    let after_archive = client
         .get(format!("{base}/v1/projects/{project_id}"))
         .send()
         .await?;
-    assert_eq!(after_delete.status(), reqwest::StatusCode::NOT_FOUND);
+    assert_eq!(after_archive.status(), reqwest::StatusCode::NOT_FOUND);
 
     Ok(())
 }
@@ -424,15 +424,19 @@ async fn update_status_rename_to_existing_returns_400() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn delete_status_route_round_trip() -> anyhow::Result<()> {
+async fn archive_status_route_round_trip() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let base = server.base_url();
     let project_id = setup_engineering_project(&client, &base).await?;
 
-    // Delete `released`, which has no issues against it — succeeds.
+    // Archive `released`, which has no issues against it — succeeds. The
+    // status row stays in the project's `statuses` list (archived flag
+    // flipped in place) so reads continue to surface it.
     let resp = client
-        .delete(format!("{base}/v1/projects/{project_id}/statuses/released"))
+        .post(format!(
+            "{base}/v1/projects/{project_id}/statuses/released/archive"
+        ))
         .send()
         .await?
         .error_for_status()?;
@@ -446,19 +450,30 @@ async fn delete_status_route_round_trip() -> anyhow::Result<()> {
         .json()
         .await?;
     let keys: Vec<&str> = statuses.statuses.iter().map(|s| s.key.as_str()).collect();
-    assert_eq!(keys, ["backlog", "in-development", "in-review"]);
+    assert_eq!(keys, ["backlog", "in-development", "in-review", "released"]);
+    let released = statuses
+        .statuses
+        .iter()
+        .find(|s| s.key.as_str() == "released")
+        .expect("released status still present");
+    assert!(
+        released.archived,
+        "archived flag must be true after archive_status"
+    );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn delete_status_with_active_issue_returns_400() -> anyhow::Result<()> {
+async fn archive_status_with_active_issue_cascade_archives_it() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
     let client = test_client();
     let base = server.base_url();
     let project_id = setup_engineering_project(&client, &base).await?;
 
-    // Create an issue with `backlog`, then try to delete that status.
+    // Create an issue at `backlog`, then archive that status. The
+    // cascade-archive flow flips `issue.deleted = true` for the
+    // active issue — no 400, no FK violation.
     let mut input: hydra_common::api::v1::issues::IssueInput = Issue::new(
         IssueType::Task,
         "backlog item".to_string(),
@@ -477,18 +492,43 @@ async fn delete_status_with_active_issue_returns_400() -> anyhow::Result<()> {
     )
     .into();
     input.project_id = project_id.clone();
-    client
+    let created: hydra_common::api::v1::issues::UpsertIssueResponse = client
         .post(format!("{base}/v1/issues"))
         .json(&UpsertIssueRequest::new(input, None))
         .send()
         .await?
-        .error_for_status()?;
+        .error_for_status()?
+        .json()
+        .await?;
+    let issue_id = created.issue_id;
 
     let resp = client
-        .delete(format!("{base}/v1/projects/{project_id}/statuses/backlog"))
+        .post(format!(
+            "{base}/v1/projects/{project_id}/statuses/backlog/archive"
+        ))
         .send()
         .await?;
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert!(
+        resp.status().is_success(),
+        "archive_status must cascade, not 400"
+    );
+
+    let listed: hydra_common::api::v1::issues::ListIssuesResponse = client
+        .get(format!("{base}/v1/issues?include_deleted=true"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let cascaded = listed
+        .issues
+        .iter()
+        .find(|i| i.issue_id == issue_id)
+        .expect("cascaded issue still in the list with include_deleted=true");
+    assert!(
+        cascaded.issue.deleted,
+        "cascade must flip issue.deleted = true"
+    );
 
     Ok(())
 }
@@ -768,15 +808,15 @@ async fn project_routes_accept_key_alongside_id() -> anyhow::Result<()> {
         .await?;
     assert_eq!(after_update.project.name, "Engineering v3");
 
-    // DELETE by key.
-    let delete_resp: UpsertProjectResponse = client
-        .delete(format!("{base}/v1/projects/engineering"))
+    // Archive by key.
+    let archive_resp: UpsertProjectResponse = client
+        .post(format!("{base}/v1/projects/engineering/archive"))
         .send()
         .await?
         .error_for_status()?
         .json()
         .await?;
-    assert_eq!(delete_resp.project_id, project_id);
+    assert_eq!(archive_resp.project_id, project_id);
 
     let resp = client
         .get(format!("{base}/v1/projects/engineering"))

@@ -13,7 +13,8 @@
 //!
 //! `POST /v1/projects` and `PUT /v1/projects/:project_ref` carry only
 //! project-level fields. Per-status add / update / delete lives at
-//! `POST/PUT/DELETE /v1/projects/:project_ref/statuses[/:status_key]`.
+//! `POST/PUT /v1/projects/:project_ref/statuses[/:status_key]` and
+//! `POST .../:status_key/archive` / `.../:status_key/unarchive`.
 
 use crate::app::AppState;
 use crate::domain::actors::{Actor, ActorRef};
@@ -209,18 +210,19 @@ pub async fn update_project(
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
-/// DELETE /v1/projects/:project_ref — soft-delete a project.
-pub async fn delete_project(
+/// POST /v1/projects/:project_ref/archive — archive a project and
+/// cascade-archive every non-archived issue it owns. Idempotent.
+pub async fn archive_project(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path(project_ref): Path<ProjectRef>,
 ) -> Result<Json<UpsertProjectResponse>, ApiError> {
     let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
-    info!(actor = %actor.name(), project_id = %project_id, "delete_project invoked");
+    info!(actor = %actor.name(), project_id = %project_id, "archive_project invoked");
 
     let actor_ref = ActorRef::from(&actor);
     let version = state
-        .delete_project(&project_id, &actor_ref)
+        .archive_project(&project_id, &actor_ref)
         .await
         .map_err(|e| map_project_not_found(e, &project_id))?;
 
@@ -228,7 +230,33 @@ pub async fn delete_project(
         actor = %actor.name(),
         project_id = %project_id,
         version,
-        "delete_project completed"
+        "archive_project completed"
+    );
+    Ok(Json(UpsertProjectResponse::new(project_id, version)))
+}
+
+/// POST /v1/projects/:project_ref/unarchive — unarchive a project.
+/// **No reverse cascade**: issues that were archived as part of the
+/// original `archive_project` stay archived.
+pub async fn unarchive_project(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(project_ref): Path<ProjectRef>,
+) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
+    info!(actor = %actor.name(), project_id = %project_id, "unarchive_project invoked");
+
+    let actor_ref = ActorRef::from(&actor);
+    let version = state
+        .unarchive_project(&project_id, &actor_ref)
+        .await
+        .map_err(|e| map_project_not_found(e, &project_id))?;
+
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        version,
+        "unarchive_project completed"
     );
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
@@ -318,11 +346,12 @@ pub async fn update_project_status(
     )))
 }
 
-/// DELETE /v1/projects/:project_ref/statuses/:status_key — remove a
-/// status. The DB FK on `issues_v2.status_sequence` is the
-/// authoritative guard; a still-referenced row surfaces as
-/// `400 InvalidIssueStatus`.
-pub async fn delete_project_status(
+/// POST /v1/projects/:project_ref/statuses/:status_key/archive —
+/// archive a status (flip `statuses.archived = TRUE` in place) and
+/// cascade-archive every non-archived issue at that status. The
+/// status row stays in the table so historical issues continue to
+/// resolve. Idempotent.
+pub async fn archive_project_status(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path((project_ref, status_key)): Path<(ProjectRef, StatusKey)>,
@@ -332,12 +361,12 @@ pub async fn delete_project_status(
         actor = %actor.name(),
         project_id = %project_id,
         status_key = %status_key,
-        "delete_project_status invoked"
+        "archive_project_status invoked"
     );
 
     let actor_ref = ActorRef::from(&actor);
     let version = state
-        .delete_status(&project_id, &status_key, &actor_ref)
+        .archive_status(&project_id, &status_key, &actor_ref)
         .await
         .map_err(|e| match e {
             StoreError::InvalidIssueStatus(msg) => ApiError::bad_request(msg),
@@ -349,7 +378,42 @@ pub async fn delete_project_status(
         project_id = %project_id,
         status_key = %status_key,
         version,
-        "delete_project_status completed"
+        "archive_project_status completed"
+    );
+    Ok(Json(UpsertProjectResponse::new(project_id, version)))
+}
+
+/// POST /v1/projects/:project_ref/statuses/:status_key/unarchive —
+/// unarchive a status. **No reverse cascade**: issues that were
+/// archived as part of the original `archive_status` stay archived.
+pub async fn unarchive_project_status(
+    State(state): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path((project_ref, status_key)): Path<(ProjectRef, StatusKey)>,
+) -> Result<Json<UpsertProjectResponse>, ApiError> {
+    let project_id = resolve_project_ref(state.store.as_ref(), &project_ref).await?;
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        status_key = %status_key,
+        "unarchive_project_status invoked"
+    );
+
+    let actor_ref = ActorRef::from(&actor);
+    let version = state
+        .unarchive_status(&project_id, &status_key, &actor_ref)
+        .await
+        .map_err(|e| match e {
+            StoreError::InvalidIssueStatus(msg) => ApiError::bad_request(msg),
+            other => map_project_not_found(other, &project_id),
+        })?;
+
+    info!(
+        actor = %actor.name(),
+        project_id = %project_id,
+        status_key = %status_key,
+        version,
+        "unarchive_project_status completed"
     );
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }

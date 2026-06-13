@@ -333,7 +333,7 @@ const updateProjectStatusSpy = vi.fn(
     status,
   }),
 );
-const deleteProjectStatusSpy = vi.fn(
+const archiveProjectStatusSpy = vi.fn(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async (_id: string, _key: string): Promise<{ project_id: string; version: number }> => ({
     project_id: _id,
@@ -386,7 +386,7 @@ vi.mock("../../../api/client", () => ({
     updateProject: updateProjectSpy,
     createProjectStatus: createProjectStatusSpy,
     updateProjectStatus: updateProjectStatusSpy,
-    deleteProjectStatus: deleteProjectStatusSpy,
+    archiveProjectStatus: archiveProjectStatusSpy,
     listIssues: listIssuesSpy,
     getIssue: getIssueSpy,
     updateIssue: updateIssueSpy,
@@ -475,7 +475,7 @@ describe("StatusSettingsModal", () => {
     updateProjectSpy.mockClear();
     createProjectStatusSpy.mockClear();
     updateProjectStatusSpy.mockClear();
-    deleteProjectStatusSpy.mockClear();
+    archiveProjectStatusSpy.mockClear();
     listIssuesSpy.mockReset();
     listIssuesSpy.mockImplementation(async () => ({
       issues: [],
@@ -1123,9 +1123,9 @@ describe("StatusSettingsModal", () => {
       ).toBe("full description");
 
       // After all issues moved, the per-status DELETE fires.
-      expect(deleteProjectStatusSpy).toHaveBeenCalledTimes(1);
-      expect(deleteProjectStatusSpy.mock.calls[0][0]).toBe("j-eng");
-      expect(deleteProjectStatusSpy.mock.calls[0][1]).toBe("in-progress");
+      expect(archiveProjectStatusSpy).toHaveBeenCalledTimes(1);
+      expect(archiveProjectStatusSpy.mock.calls[0][0]).toBe("j-eng");
+      expect(archiveProjectStatusSpy.mock.calls[0][1]).toBe("in-progress");
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 

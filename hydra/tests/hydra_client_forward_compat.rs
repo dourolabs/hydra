@@ -575,17 +575,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
-    let project_delete_path = project_path.clone();
-    let project_id_for_delete = project_id.clone();
-    server.mock(move |when, then| {
-        when.method(DELETE).path(project_delete_path.as_str());
-        then.status(200).json_body(json!({
-            "project_id": project_id_for_delete,
-            "version": 2,
-            "note": "delete-project"
-        }));
-    });
-
     let project_statuses_path_clone = project_statuses_path.clone();
     server.mock(move |when, then| {
         when.method(GET).path(project_statuses_path_clone.as_str());
@@ -646,16 +635,52 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         }));
     });
 
-    // DELETE /v1/projects/:project_ref/statuses/:status_key
-    let project_status_delete_path = format!("{project_statuses_path}/open");
-    let project_id_for_status_delete = project_id.clone();
+    // POST /v1/projects/:project_ref/statuses/:status_key/archive
+    let project_status_archive_path = format!("{project_statuses_path}/open/archive");
+    let project_id_for_status_archive = project_id.clone();
     server.mock(move |when, then| {
-        when.method(DELETE)
-            .path(project_status_delete_path.as_str());
+        when.method(POST).path(project_status_archive_path.as_str());
         then.status(200).json_body(json!({
-            "project_id": project_id_for_status_delete,
+            "project_id": project_id_for_status_archive,
             "version": 5,
-            "extra": "delete-status"
+            "extra": "archive-status"
+        }));
+    });
+
+    // POST /v1/projects/:project_ref/statuses/:status_key/unarchive
+    let project_status_unarchive_path = format!("{project_statuses_path}/open/unarchive");
+    let project_id_for_status_unarchive = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(POST)
+            .path(project_status_unarchive_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_status_unarchive,
+            "version": 6,
+            "extra": "unarchive-status"
+        }));
+    });
+
+    // POST /v1/projects/:project_ref/archive
+    let project_archive_path = format!("{project_path}/archive");
+    let project_id_for_archive = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path(project_archive_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_archive,
+            "version": 7,
+            "extra": "archive-project"
+        }));
+    });
+
+    // POST /v1/projects/:project_ref/unarchive
+    let project_unarchive_path = format!("{project_path}/unarchive");
+    let project_id_for_unarchive = project_id.clone();
+    server.mock(move |when, then| {
+        when.method(POST).path(project_unarchive_path.as_str());
+        then.status(200).json_body(json!({
+            "project_id": project_id_for_unarchive,
+            "version": 8,
+            "extra": "unarchive-project"
         }));
     });
 
@@ -1355,11 +1380,16 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         )
         .await?;
     client
-        .delete_project_status(&project_ref, &StatusKey::try_new("open").unwrap())
+        .archive_project_status(&project_ref, &StatusKey::try_new("open").unwrap())
+        .await?;
+    client
+        .unarchive_project_status(&project_ref, &StatusKey::try_new("open").unwrap())
         .await?;
 
-    let deleted_project = client.delete_project(&project_ref).await?;
-    assert_eq!(deleted_project.project_id, project_id);
+    let archived_project = client.archive_project(&project_ref).await?;
+    assert_eq!(archived_project.project_id, project_id);
+    let unarchived_project = client.unarchive_project(&project_ref).await?;
+    assert_eq!(unarchived_project.project_id, project_id);
 
     // Documents
     let document = Document::new(
