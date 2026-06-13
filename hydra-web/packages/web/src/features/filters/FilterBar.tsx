@@ -220,7 +220,7 @@ export function FilterBar<T>({
           aria-label="Add filter"
           data-testid="filter-bar-add"
         >
-          <Icons.IconPlus size={12} />
+          <Icons.IconFilter size={12} />
           <span className={styles.addButtonLabel}>Filter</span>
           {filters.length >= 2 && (
             <span

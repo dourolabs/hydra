@@ -88,6 +88,14 @@
 }
 
 @media (max-width: 768px) {
+  /* Stretch to fill the wrapped row inside the page toolbar so the chips
+     scroll area has real width — otherwise the bar collapses to the button's
+     intrinsic 44px and the mask fade swallows the right edge of the +Filter
+     button. */
+  .bar {
+    width: 100%;
+  }
+
   .chips {
     flex-wrap: nowrap;
     overflow-x: auto;
