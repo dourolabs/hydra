@@ -75,21 +75,22 @@ export function DocumentsReaderPane({
   return (
     <div className={styles.pane} data-testid="documents-reader-pane">
       <div className={styles.breadcrumb}>
-        {breadcrumbs.map((b, i) => {
-          const isLast = i === breadcrumbs.length - 1;
-          return (
-            <span key={b.path}>
-              {i > 0 && <span className={styles.crumbSep}>/</span>}
-              <span
-                className={isLast ? styles.crumbCurrent : styles.crumb}
-                onClick={isLast ? undefined : () => onSelectFolder(b.path)}
-              >
-                {b.name}
+        <div className={styles.crumbsList}>
+          {breadcrumbs.map((b, i) => {
+            const isLast = i === breadcrumbs.length - 1;
+            return (
+              <span key={b.path} className={styles.crumbSegment}>
+                {i > 0 && <span className={styles.crumbSep}>/</span>}
+                <span
+                  className={isLast ? styles.crumbCurrent : styles.crumb}
+                  onClick={isLast ? undefined : () => onSelectFolder(b.path)}
+                >
+                  {b.name}
+                </span>
               </span>
-            </span>
-          );
-        })}
-        <span className={styles.crumbSpacer} />
+            );
+          })}
+        </div>
         <span className={styles.crumbMeta}>
           {totalFiles} {totalFiles === 1 ? "file" : "files"} · {totalFolders}{" "}
           {totalFolders === 1 ? "folder" : "folders"}

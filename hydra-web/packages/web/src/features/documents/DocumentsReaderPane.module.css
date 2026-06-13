@@ -9,7 +9,7 @@
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--line);
   font-family: var(--f-mono);
@@ -17,7 +17,28 @@
   color: var(--fg-1);
   background: var(--bg-0);
   flex-shrink: 0;
-  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Path segments live in their own scroll/clip container so the breadcrumb
+   stays a single row on 768–900 px tablets (where it previously wrapped onto
+   2–3 lines). Deep paths scroll horizontally; the meta stays pinned right. */
+.crumbsList {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.crumbSegment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .crumb {
@@ -37,14 +58,12 @@
   color: var(--fg-3);
 }
 
-.crumbSpacer {
-  flex: 1;
-}
-
 .crumbMeta {
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--fg-2);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .paneBody {
