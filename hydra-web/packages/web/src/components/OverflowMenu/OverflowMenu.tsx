@@ -109,10 +109,7 @@ export function OverflowMenu({
   };
 
   return (
-    <div
-      className={className ? `${styles.wrap} ${className}` : styles.wrap}
-      ref={wrapRef}
-    >
+    <div className={className ? `${styles.wrap} ${className}` : styles.wrap} ref={wrapRef}>
       <button
         ref={triggerRef}
         type="button"
@@ -127,6 +124,13 @@ export function OverflowMenu({
       >
         <Icons.IconMore />
       </button>
+      {open && (
+        <div
+          className={styles.mobileBackdrop}
+          onClick={() => close({ restoreFocus: false })}
+          aria-hidden="true"
+        />
+      )}
       {open && (
         <div
           id={menuId}

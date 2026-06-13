@@ -81,9 +81,45 @@
   font-size: var(--t-xs);
 }
 
+.mobileBackdrop {
+  display: none;
+}
+
 @media (max-width: 768px) {
+  .menu {
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    min-width: 0;
+    max-width: none;
+    max-height: 80dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: 0;
+    padding-top: 14px;
+    padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+  }
+  .menu::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    background: var(--line-strong);
+    border-radius: 999px;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
   .row {
     min-height: 44px;
     padding: var(--space-2) 12px;
+  }
+  .mobileBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--bg-overlay);
+    z-index: 1099;
   }
 }
