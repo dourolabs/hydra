@@ -203,7 +203,13 @@
   }
 
   .segmented button {
-    padding: 0 8px;
+    padding: 0 12px;
+    height: 44px;
+    min-width: 44px;
+  }
+
+  .loadMoreButton {
+    min-height: 44px;
   }
 
   /* Force the search box onto its own row instead of letting it squeeze into
@@ -215,6 +221,7 @@
   .searchBox {
     min-width: 0;
     flex: 1 1 100%;
+    height: 44px;
   }
 
   .loadMore {
