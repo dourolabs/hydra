@@ -26,7 +26,7 @@ test.describe("Header create menu @nav:header-create-menu", () => {
     await expect(page.getByTestId("issue-create-modal")).toBeVisible();
   });
 
-  test("creates a new conversation and navigates to it @nav:header-create-menu", async ({
+  test("opens the create-conversation modal @nav:header-create-menu", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/?selected=all");
@@ -35,8 +35,8 @@ test.describe("Header create menu @nav:header-create-menu", () => {
     await page.getByTestId("site-header-create").click();
     await page.getByTestId("site-header-new-conversation").click();
 
-    await expect(page).toHaveURL(/\/chat\/[\w-]+$/);
     await expect(page.getByTestId("site-header-create-menu")).toBeHidden();
+    await expect(page.getByTestId("chat-create-modal")).toBeVisible();
   });
 
   test("closes the menu on Escape @nav:header-create-menu", async ({
