@@ -153,43 +153,62 @@ test.describe("Mobile bottom-tab bar @mobile:bottom-tab", () => {
       expect(paddingBottom).toBeGreaterThanOrEqual(56);
     });
 
-    test("Sessions tab badges the active session count and exposes it on the aria-label @mobile:bottom-tab", async ({
+    test("Sessions tab brightens its text/icon and shows an accent border when active sessions > 0 @mobile:bottom-tab", async ({
       authenticatedPage: page,
     }) => {
-      // The mock-server seed has four `status: \"running\"` sessions whose
+      // The mock-server seed has four `status: "running"` sessions whose
       // creator is `dev-user` (the logged-in user). `useActiveSessionCount`
-      // calls `/sessions?status=created,pending,running&creator=dev-user&count=true`
-      // and the badge reflects that count.
+      // calls `/sessions?status=created,pending,running&creator=dev-user&count=true`,
+      // which flips the Sessions tab into its "has activity" state — bright
+      // foreground text/icon + accent top-border (matching the Sidebar's
+      // selected-item highlight + the active-tab accent line).
       await setSidebarHidden(page);
-      await page.goto("/");
+      await page.goto("/patches"); // route the Sessions tab is NOT current, so the
+      // accent comes purely from the activity state, not the current-tab styling.
 
       const sessionsTab = page.getByTestId("mobile-bottom-tab-sessions");
-      const badge = page.getByTestId("mobile-bottom-tab-sessions-badge");
       await expect(sessionsTab).toBeVisible();
-      await expect(badge).toBeVisible();
+      await expect(sessionsTab).toHaveAttribute("data-has-activity", "true");
 
-      // Badge text is the count, never an empty string. Verify it parses as
-      // a positive integer rather than asserting an exact value so the test
-      // tracks the seed without re-encoding it.
-      const text = (await badge.textContent())?.trim() ?? "";
-      const count = Number(text);
-      expect(Number.isFinite(count)).toBe(true);
-      expect(count).toBeGreaterThan(0);
-
-      // The numeric count is conveyed to assistive tech via the link's
-      // aria-label, which the icon-wrapping badge (aria-hidden) does not.
-      await expect(sessionsTab).toHaveAttribute(
-        "aria-label",
-        `Sessions, ${count} active`,
+      // Resolved styles: foreground brightens to --fg-0 and the top border
+      // resolves to the accent color (same as the in-progress active tab).
+      const { color, borderTopColor, acc, fg0 } = await sessionsTab.evaluate(
+        (el) => {
+          const cs = window.getComputedStyle(el);
+          const root = window.getComputedStyle(document.documentElement);
+          return {
+            color: cs.color,
+            borderTopColor: cs.borderTopColor,
+            acc: root.getPropertyValue("--acc").trim(),
+            fg0: root.getPropertyValue("--fg-0").trim(),
+          };
+        },
       );
+      // Resolve the token-form colors by setting them on a probe element so
+      // we can compare against `getComputedStyle`'s resolved RGB-or-OKLCH.
+      const resolveToken = async (raw: string) =>
+        await page.evaluate((value) => {
+          const probe = document.createElement("span");
+          probe.style.color = value;
+          document.body.appendChild(probe);
+          const c = window.getComputedStyle(probe).color;
+          probe.remove();
+          return c;
+        }, raw);
+      expect(color).toBe(await resolveToken(fg0));
+      expect(borderTopColor).toBe(await resolveToken(acc));
+
+      // a11y: count is still surfaced via aria-label so screen-reader users
+      // get the same signal the visual brightening conveys to sighted users.
+      const ariaLabel = await sessionsTab.getAttribute("aria-label");
+      expect(ariaLabel).toMatch(/^Sessions, \d+ active$/);
     });
 
-    test("Sessions tab shows no badge when the active session count is zero @mobile:bottom-tab", async ({
+    test("Sessions tab has no activity treatment when the count is zero @mobile:bottom-tab", async ({
       authenticatedPage: page,
     }) => {
       // Force the active-session endpoint to report zero so we exercise the
-      // \"no badge, no aria-label augmentation\" branch deterministically
-      // without relying on a separate seed.
+      // "no activity state, no aria-label augmentation" branch deterministically.
       await page.route(
         (url) =>
           url.pathname.endsWith("/v1/sessions") &&
@@ -204,15 +223,13 @@ test.describe("Mobile bottom-tab bar @mobile:bottom-tab", () => {
       );
 
       await setSidebarHidden(page);
-      await page.goto("/");
+      await page.goto("/patches");
 
       const sessionsTab = page.getByTestId("mobile-bottom-tab-sessions");
       await expect(sessionsTab).toBeVisible();
-      await expect(
-        page.getByTestId("mobile-bottom-tab-sessions-badge"),
-      ).toHaveCount(0);
-      // No badge -> no augmented aria-label; the cell's accessible name comes
-      // from its visible \"Sessions\" text.
+      expect(await sessionsTab.getAttribute("data-has-activity")).toBeNull();
+      // No activity -> no augmented aria-label; the cell's accessible name
+      // comes from its visible "Sessions" text.
       expect(await sessionsTab.getAttribute("aria-label")).toBeNull();
     });
 
