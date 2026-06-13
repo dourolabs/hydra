@@ -153,6 +153,67 @@ test.describe("Mobile bottom-tab bar @mobile:bottom-tab", () => {
       expect(paddingBottom).toBeGreaterThanOrEqual(56);
     });
 
+    test("Sessions tab shows a runtime-pill badge with the active session count and surfaces it on the aria-label @mobile:bottom-tab", async ({
+      authenticatedPage: page,
+    }) => {
+      // The mock-server seed has four `status: "running"` sessions whose
+      // creator is `dev-user` (the logged-in user). `useActiveSessionCount`
+      // calls `/sessions?status=created,pending,running&creator=dev-user&count=true`
+      // and the badge reflects that count.
+      await setSidebarHidden(page);
+      await page.goto("/");
+
+      const sessionsTab = page.getByTestId("mobile-bottom-tab-sessions");
+      const badge = page.getByTestId("mobile-bottom-tab-sessions-badge");
+      await expect(sessionsTab).toBeVisible();
+      await expect(badge).toBeVisible();
+
+      // Badge text is a positive integer. Compare against what the API
+      // currently returns rather than re-encoding a fixture count.
+      const text = (await badge.textContent())?.trim() ?? "";
+      const count = Number(text);
+      expect(Number.isFinite(count)).toBe(true);
+      expect(count).toBeGreaterThan(0);
+
+      // The numeric count is also exposed via the link's aria-label since the
+      // badge itself is aria-hidden.
+      await expect(sessionsTab).toHaveAttribute(
+        "aria-label",
+        `Sessions, ${count} active`,
+      );
+    });
+
+    test("Sessions tab shows no badge when the active session count is zero @mobile:bottom-tab", async ({
+      authenticatedPage: page,
+    }) => {
+      // Force the active-session endpoint to report zero so we exercise the
+      // "no badge, no aria-label augmentation" branch deterministically.
+      await page.route(
+        (url) =>
+          url.pathname.endsWith("/v1/sessions") &&
+          url.searchParams.get("count") === "true",
+        async (route) => {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ sessions: [], total_count: 0 }),
+          });
+        },
+      );
+
+      await setSidebarHidden(page);
+      await page.goto("/");
+
+      const sessionsTab = page.getByTestId("mobile-bottom-tab-sessions");
+      await expect(sessionsTab).toBeVisible();
+      await expect(
+        page.getByTestId("mobile-bottom-tab-sessions-badge"),
+      ).toHaveCount(0);
+      // No badge -> no augmented aria-label; the cell's accessible name comes
+      // from its visible "Sessions" text.
+      expect(await sessionsTab.getAttribute("aria-label")).toBeNull();
+    });
+
     test("SiteHeader.clusterStatus is hidden on mobile @mobile:bottom-tab", async ({
       authenticatedPage: page,
     }) => {

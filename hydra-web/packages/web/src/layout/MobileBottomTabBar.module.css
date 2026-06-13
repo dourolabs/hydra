@@ -12,6 +12,10 @@
   z-index: 5;
 }
 
+/* Tabs mirror the Sidebar `.item` / `:hover` / `.itemActive` pattern: dim
+   foreground by default, lozenge-fill brighten on hover, slightly stronger
+   lozenge + bright text when selected. No accent strip — selected state is
+   conveyed by the bg-3 fill alone. */
 .tab {
   display: flex;
   flex-direction: column;
@@ -19,16 +23,23 @@
   justify-content: center;
   gap: 2px;
   background: transparent;
-  border: none;
-  border-top: 2px solid transparent;
+  border: 0;
   color: var(--fg-2);
   text-decoration: none;
   font: inherit;
   cursor: pointer;
-  padding: 4px 2px;
+  padding: 6px 2px;
   min-width: 0;
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast);
   /* Disable iOS tap-highlight tint on the bar. */
   -webkit-tap-highlight-color: transparent;
+}
+
+.tab:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
 }
 
 .tab:focus-visible {
@@ -36,7 +47,14 @@
   outline-offset: -2px;
 }
 
+.tabActive {
+  background: var(--bg-3);
+  color: var(--fg-0);
+}
+
 .icon {
+  /* Anchor for the absolute-positioned badge below. */
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -53,11 +71,41 @@
   max-width: 100%;
 }
 
-/* Selected-tab treatment — mirrors the Sidebar's `.itemActive` highlight
-   (background lozenge + brightened text) and adds the accent top-border
-   that doubles as the bar's "you're here" indicator. */
-.tabActive {
-  background: var(--bg-3);
-  color: var(--fg-0);
-  border-top-color: var(--acc);
+/* Activity badge — runtime-pill instrument styling (mirrors the
+   `.rtInstrument.isLive` rule in Runtime.module.css): low-opacity amber
+   wash, slightly stronger amber border, amber digit. Sits at the top-right
+   corner of the icon container. */
+.badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  transform: translate(50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--s-progress) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--s-progress) 35%, transparent);
+  color: var(--s-progress);
+  font-family: var(--f-sans);
+  font-size: var(--t-xxs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: 0;
+  box-sizing: border-box;
+}
+
+.badgeDot {
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  /* The dot variant is presence-only — fill solid so it stays legible at
+     this size; the tinted wash + border alone would all but disappear. */
+  background: var(--s-progress);
+  border-color: transparent;
 }
