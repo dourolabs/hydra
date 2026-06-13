@@ -107,25 +107,14 @@
   .searchButton kbd {
     display: none;
   }
+
+  /* The active-session pill has moved to the Sessions bottom-tab badge on
+     mobile (MobileBottomTabBar). Desktop keeps the topbar pill as-is. */
+  .clusterStatus {
+    display: none;
+  }
 }
 
 .clusterStatusCount {
   display: none;
-}
-
-@media (max-width: 480px) {
-  .clusterStatus {
-    min-width: 44px;
-    min-height: 44px;
-    justify-content: center;
-    padding: 4px 10px;
-  }
-
-  .clusterStatusLabel {
-    display: none;
-  }
-
-  .clusterStatusCount {
-    display: inline;
-  }
 }

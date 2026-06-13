@@ -37,10 +37,44 @@
 }
 
 .icon {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   line-height: 0;
+}
+
+.badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  /* Translate the badge slightly outside the icon's bounding box so it
+     overlaps the top-right corner of the glyph rather than the center. */
+  transform: translate(50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--acc);
+  color: var(--acc-fg-on);
+  font-family: var(--f-sans);
+  font-size: var(--t-xxs);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  box-sizing: border-box;
+  /* Subtle ring to separate the badge from the icon strokes underneath. */
+  box-shadow: 0 0 0 2px var(--bg-1);
+}
+
+.badgeDot {
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
 }
 
 .label {
