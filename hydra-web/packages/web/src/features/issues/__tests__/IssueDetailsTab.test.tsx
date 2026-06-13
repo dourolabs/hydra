@@ -23,6 +23,10 @@ vi.mock("../IssueLabelEditor", () => ({
   IssueLabelEditor: () => <div data-testid="label-editor" />,
 }));
 
+vi.mock("../IssueSettingsEditor", () => ({
+  IssueSettingsEditor: () => <div data-testid="issue-settings-editor" />,
+}));
+
 vi.mock("@hydra/ui", () => ({
   Avatar: ({ name, kind }: { name: string; kind?: string }) => (
     <span data-testid="avatar" data-kind={kind ?? "human"}>
@@ -167,7 +171,7 @@ describe("IssueDetailsTab", () => {
     expect(screen.queryByText("Parent")).toBeNull();
   });
 
-  it("renders Repository block when session_settings.repo_name is present", () => {
+  it("renders the Session settings block with an editor", () => {
     render(
       <IssueDetailsTab
         record={makeRecord({
@@ -176,18 +180,16 @@ describe("IssueDetailsTab", () => {
         onOpenStatusModal={() => {}}
       />,
     );
-    expect(screen.getByText("Repository")).toBeDefined();
-    expect(screen.getByText("dourolabs/hydra")).toBeDefined();
-    expect(screen.getByText("Branch")).toBeDefined();
-    expect(screen.getByText("main")).toBeDefined();
+    expect(screen.getByText("Session settings")).toBeDefined();
+    expect(screen.getByTestId("issue-settings-editor")).toBeDefined();
   });
 
-  it("omits Repository and Branch blocks when not provided", () => {
+  it("renders the Session settings editor even when no settings are configured", () => {
     render(
       <IssueDetailsTab record={makeRecord({})} onOpenStatusModal={() => {}} />,
     );
-    expect(screen.queryByText("Repository")).toBeNull();
-    expect(screen.queryByText("Branch")).toBeNull();
+    expect(screen.getByText("Session settings")).toBeDefined();
+    expect(screen.getByTestId("issue-settings-editor")).toBeDefined();
   });
 
   it("shows 'Unassigned' italic when assignee is missing", () => {

@@ -12,6 +12,7 @@ import { useProject } from "../projects/useProjects";
 import { formatTimestamp } from "../../utils/time";
 import { useIssuesByIds } from "./useIssue";
 import { IssueLabelEditor } from "./IssueLabelEditor";
+import { IssueSettingsEditor } from "./IssueSettingsEditor";
 import styles from "./IssueDetailsTab.module.css";
 
 function DepRow({
@@ -38,7 +39,6 @@ interface IssueDetailsTabProps {
 export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabProps) {
   const { issue } = record;
   const issueId = record.issue_id;
-  const settings = issue.session_settings;
   const projectId = issue.project_id;
 
   const { data: projectRecord } = useProject(projectId);
@@ -111,23 +111,10 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
         )}
       </div>
 
-      {settings?.repo_name && (
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Repository</span>
-          <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
-            {settings.repo_name}
-          </span>
-        </div>
-      )}
-
-      {settings?.branch && (
-        <div className={styles.block}>
-          <span className={styles.blockLabel}>Branch</span>
-          <span className={`${styles.blockValue} ${styles.blockValueMono}`}>
-            {settings.branch}
-          </span>
-        </div>
-      )}
+      <div className={styles.block}>
+        <span className={styles.blockLabel}>Session settings</span>
+        <IssueSettingsEditor issueId={issueId} issue={issue} />
+      </div>
 
       <div className={styles.block}>
         <span className={styles.blockLabel}>Created</span>
