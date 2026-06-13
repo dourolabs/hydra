@@ -66,10 +66,12 @@ export function IssuesView({
   onSearchChange,
   onFilterMenuOpenChange,
 }: IssuesViewProps) {
-  // On mobile, the eyebrow + title row is suppressed and the segmented
-  // layout control moves into the toolbar so everything chrome-ish sits on
-  // one row. Rendering it in exactly one place keeps testids unique.
+  // On mobile, board is the only sane layout — the table is unreadable at
+  // 375px — so force it at render time without touching the persisted
+  // desktop preference. The segmented control is dropped entirely on mobile
+  // since it would only ever offer a worse option.
   const isMobile = useIsMobile();
+  const effectiveLayout: IssuesLayout = isMobile ? "board" : layout;
   const layoutSegmentedControl = (
     <div className={styles.segmented} role="tablist" aria-label="Layout">
       <button
@@ -120,11 +122,10 @@ export function IssuesView({
           total={totalCount}
           onMenuOpenChange={onFilterMenuOpenChange}
         />
-        {isMobile && layoutSegmentedControl}
       </div>
 
       <div className={styles.body}>
-        {layout === "table" && (
+        {effectiveLayout === "table" && (
           <>
             {isLoading && issues.length === 0 && (
               <div className={styles.empty}>Loading issues…</div>
@@ -158,7 +159,7 @@ export function IssuesView({
           </>
         )}
 
-        {layout === "board" && (
+        {effectiveLayout === "board" && (
           <IssuesBoard
             baseFilters={baseFilters}
             filterRootId={filterRootId}
