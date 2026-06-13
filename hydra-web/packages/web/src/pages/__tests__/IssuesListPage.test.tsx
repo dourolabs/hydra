@@ -172,15 +172,9 @@ vi.mock("../../features/issues/view/IssuesTable.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
-// Stub the row-action buttons; both pull in `Button` from @hydra/ui (which
-// this suite's UI mock doesn't expose) and require a real React Query +
-// Toast context.
-vi.mock("../../features/issues/ArchiveIssueButton", () => ({
-  ArchiveIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
-    <button data-testid={testId}>Archive</button>
-  ),
-}));
-
+// Stub the row-action button; RestoreIssueButton pulls in `Button` from
+// @hydra/ui (which this suite's UI mock doesn't expose) and requires a real
+// React Query + Toast context.
 vi.mock("../../features/issues/RestoreIssueButton", () => ({
   RestoreIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
     <button data-testid={testId}>Restore</button>

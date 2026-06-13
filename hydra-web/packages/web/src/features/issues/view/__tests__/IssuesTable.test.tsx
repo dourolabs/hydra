@@ -61,14 +61,9 @@ vi.mock("../../../related/RailRow", () => ({
   ),
 }));
 
-// Stub the row-action buttons; both require a QueryClientProvider / Toast
-// context that the desktop-table tests don't otherwise need.
-vi.mock("../../ArchiveIssueButton", () => ({
-  ArchiveIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
-    <button data-testid={testId}>Archive</button>
-  ),
-}));
-
+// Stub the row-action button; RestoreIssueButton requires a
+// QueryClientProvider / Toast context that the desktop-table tests don't
+// otherwise need.
 vi.mock("../../RestoreIssueButton", () => ({
   RestoreIssueButton: ({ "data-testid": testId }: { "data-testid"?: string }) => (
     <button data-testid={testId}>Restore</button>
