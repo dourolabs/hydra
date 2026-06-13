@@ -362,6 +362,13 @@ pub enum IssueCommands {
         /// Remove the current feedback.
         #[arg(long)]
         clear_feedback: bool,
+
+        /// Markdown comment to post on the issue alongside the update. The
+        /// comment is posted before the update is applied; if the update
+        /// fails, the comment stays on the issue. Empty / whitespace-only
+        /// bodies are rejected.
+        #[arg(long, value_name = "BODY")]
+        comment: Option<String>,
     },
     /// Delete an issue.
     Delete {
@@ -546,6 +553,7 @@ pub async fn run(
             clear_form,
             feedback,
             clear_feedback,
+            comment,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             let project_id = match project {
@@ -583,6 +591,7 @@ pub async fn run(
                 clear_form,
                 feedback,
                 clear_feedback,
+                comment,
             )
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
@@ -1077,8 +1086,25 @@ async fn update_issue(
     clear_form: bool,
     feedback: Option<String>,
     clear_feedback: bool,
+    comment: Option<String>,
 ) -> Result<IssueVersionRecord> {
     let issue_id = id;
+
+    // Validate `--comment` up front so we never POST anything for a body the
+    // server would reject. `hydra issues comment` forwards whitespace and lets
+    // the server return 400; here we surface the same constraint locally so
+    // the caller doesn't see a half-applied "comment OK, update OK" outcome
+    // produced by a body that should never have left the client.
+    let comment_body = match comment {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("--comment must not be empty or whitespace-only.");
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
 
     let description = match description {
         Some(value) => {
@@ -1157,9 +1183,22 @@ async fn update_issue(
         && feedback_update.is_none()
         && !job_settings_requested
         && !labels_requested
-        && !form_requested;
+        && !form_requested
+        && comment_body.is_none();
     if no_changes {
         bail!("At least one field must be provided to update.");
+    }
+
+    // Comment-first: the PR-2 contract is that the comment lands before the
+    // PUT, so a failed update never leaves us with a status change recorded
+    // without the explanatory comment. The comment is not transactional with
+    // the PUT — if the PUT fails downstream, the comment stays on the issue.
+    if let Some(body) = comment_body {
+        let request = AddCommentRequest::new(body);
+        client
+            .add_issue_comment(&issue_id, &request)
+            .await
+            .with_context(|| format!("failed to post comment to issue '{issue_id}'"))?;
     }
 
     let current = client
@@ -2394,6 +2433,7 @@ mod tests {
             false,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2505,6 +2545,7 @@ mod tests {
             false,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2620,6 +2661,7 @@ mod tests {
             false,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2730,6 +2772,7 @@ mod tests {
             false,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2840,6 +2883,7 @@ mod tests {
             false,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2848,6 +2892,313 @@ mod tests {
         update_mock.assert();
         assert_eq!(get_mock.hits(), 1);
         assert_eq!(update_mock.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_issue_posts_comment_before_update() {
+        use hydra_common::api::v1::comments::AddCommentResponse;
+
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let target_issue_id = issue_id("i-cmt-ok");
+        let current_issue = api_issue_record(
+            "i-cmt-ok",
+            IssueType::Task,
+            "Existing",
+            status("open"),
+            None,
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let comment_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{target_issue_id}/comments").as_str())
+                .json_body_obj(&AddCommentRequest::new("ship it".to_string()));
+            then.status(200)
+                .json_body_obj(&AddCommentResponse::new(sample_comment(1, "ship it")));
+        });
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&UpsertIssueResponse::new(
+                target_issue_id.clone(),
+                0,
+                stub_response_issue(),
+            ));
+        });
+
+        update_issue(
+            &client,
+            target_issue_id,
+            None,
+            None,
+            Some(status("closed")),
+            None,
+            None,
+            false,
+            None,
+            vec![],
+            false,
+            vec![],
+            false,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+            false,
+            Vec::new(),
+            Vec::new(),
+            None,
+            false,
+            None,
+            false,
+            Some("ship it".into()),
+        )
+        .await
+        .unwrap();
+
+        comment_mock.assert();
+        get_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_issue_aborts_when_comment_post_fails() {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let target_issue_id = issue_id("i-cmt-fail");
+
+        let comment_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{target_issue_id}/comments").as_str());
+            then.status(400).body("rejected");
+        });
+        // GET / PUT mocks are registered with a 500 so any accidental call
+        // would still produce a distinguishable failure; we assert their
+        // hit-count is 0 to prove the comment-first abort contract.
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(500);
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(500);
+        });
+
+        let err = update_issue(
+            &client,
+            target_issue_id,
+            None,
+            None,
+            Some(status("closed")),
+            None,
+            None,
+            false,
+            None,
+            vec![],
+            false,
+            vec![],
+            false,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+            false,
+            Vec::new(),
+            Vec::new(),
+            None,
+            false,
+            None,
+            false,
+            Some("explain the failure".into()),
+        )
+        .await
+        .expect_err("failed comment should abort the update");
+        assert!(
+            err.to_string().contains("comment"),
+            "expected comment-failure context, got: {err}"
+        );
+
+        comment_mock.assert();
+        assert_eq!(get_mock.hits(), 0);
+        assert_eq!(update_mock.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_issue_surfaces_put_error_after_successful_comment() {
+        use hydra_common::api::v1::comments::AddCommentResponse;
+
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let target_issue_id = issue_id("i-cmt-put-err");
+        let current_issue = api_issue_record(
+            "i-cmt-put-err",
+            IssueType::Task,
+            "Existing",
+            status("open"),
+            None,
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let comment_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(format!("/v1/issues/{target_issue_id}/comments").as_str());
+            then.status(200)
+                .json_body_obj(&AddCommentResponse::new(sample_comment(1, "body")));
+        });
+        let get_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(200).json_body_obj(&current_issue);
+        });
+        let update_mock = server.mock(|when, then| {
+            when.method(PUT)
+                .path(format!("/v1/issues/{target_issue_id}").as_str());
+            then.status(500).body("server exploded");
+        });
+
+        let err = update_issue(
+            &client,
+            target_issue_id,
+            None,
+            None,
+            Some(status("closed")),
+            None,
+            None,
+            false,
+            None,
+            vec![],
+            false,
+            vec![],
+            false,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+            false,
+            Vec::new(),
+            Vec::new(),
+            None,
+            false,
+            None,
+            false,
+            Some("body".into()),
+        )
+        .await
+        .expect_err("PUT failure should surface to the caller");
+        assert!(
+            err.to_string().contains("update issue"),
+            "expected update-failure context, got: {err}"
+        );
+
+        comment_mock.assert();
+        get_mock.assert();
+        update_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn update_issue_rejects_whitespace_only_comment() {
+        let server = MockServer::start();
+        let client = hydra_client(&server);
+        let err = update_issue(
+            &client,
+            issue_id("i-cmt-ws"),
+            None,
+            None,
+            Some(status("closed")),
+            None,
+            None,
+            false,
+            None,
+            vec![],
+            false,
+            vec![],
+            false,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+            false,
+            Vec::new(),
+            Vec::new(),
+            None,
+            false,
+            None,
+            false,
+            Some("   ".into()),
+        )
+        .await
+        .expect_err("whitespace-only --comment must be rejected at the CLI layer");
+        assert!(
+            err.to_string().contains("--comment"),
+            "expected --comment error: {err}"
+        );
+    }
+
+    #[test]
+    fn update_command_parses_comment_flag() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "hydra",
+            "issues",
+            "update",
+            "i-abcdef",
+            "--status",
+            "in-review",
+            "--comment",
+            "ready for review",
+        ])
+        .expect("CLI should parse");
+        match cli.command.expect("subcommand must be present") {
+            crate::cli::Commands::Issues { command } => match command {
+                IssueCommands::Update {
+                    id,
+                    comment,
+                    status: status_key,
+                    ..
+                } => {
+                    assert_eq!(id.to_string(), "i-abcdef");
+                    assert_eq!(comment.as_deref(), Some("ready for review"));
+                    assert_eq!(status_key.unwrap().to_string(), "in-review");
+                }
+                _ => panic!("expected IssueCommands::Update"),
+            },
+            _ => panic!("expected Commands::Issues"),
+        }
     }
 
     #[test]
