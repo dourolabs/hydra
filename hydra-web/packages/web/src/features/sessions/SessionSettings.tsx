@@ -42,7 +42,9 @@ function promptOf(task: Session): string | null {
 function formatError(error: Session["error"]): string | null {
   if (!error) return null;
   if (error === "unknown") return "Unknown error";
-  return error.job_engine_error.reason;
+  if ("job_engine_error" in error) return error.job_engine_error.reason;
+  if ("killed" in error) return error.killed.reason;
+  return null;
 }
 
 function formatEnvVars(envVars: Session["env_vars"]): string | null {
