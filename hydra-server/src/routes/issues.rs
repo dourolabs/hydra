@@ -257,8 +257,32 @@ pub async fn list_issues(
         ids_count = query.ids.len(),
         include_deleted = ?query.include_deleted,
         label_ids = ?query.label_ids,
+        sort = ?query.sort,
+        bucket_by = ?query.bucket_by,
+        bucket_limit = ?query.bucket_limit,
         "list_issues invoked"
     );
+
+    if query.bucket_by.is_some() {
+        if query.cursor.is_some() {
+            return Err(ApiError::bad_request(
+                "cursor is incompatible with bucket_by; per-cell pagination is a single-cell unbucketed query".to_string(),
+            ));
+        }
+        match query.bucket_limit {
+            None => {
+                return Err(ApiError::bad_request(
+                    "bucket_by requires bucket_limit".to_string(),
+                ));
+            }
+            Some(0) => {
+                return Err(ApiError::bad_request(
+                    "bucket_limit must be > 0".to_string(),
+                ));
+            }
+            Some(_) => {}
+        }
+    }
 
     let issues = state
         .list_issues_with_query(&query)
@@ -299,38 +323,45 @@ pub async fn list_issues(
         filtered.push(record);
     }
 
-    let next_cursor = match query.sort {
-        Some(api_issues::IssueSort::ProjectStatusTimeDesc) => {
-            // Project priority isn't carried on the issue record; fetch it
-            // once here so the cursor for the last row can encode the full
-            // four-key tuple `(priority, position, created_at, id)`.
-            let projects = state
-                .store
-                .list_projects(true)
-                .await
-                .map_err(|err| map_issue_error(err, None))?;
-            let priority_by_project: std::collections::HashMap<_, f64> = projects
-                .iter()
-                .map(|(id, v)| (id.clone(), v.item.priority))
-                .collect();
-            compute_next_cursor_with_keys(&mut filtered, eff_limit, |r| {
-                CursorKeys::ProjectStatusTime {
-                    project_priority: priority_by_project
-                        .get(&r.issue.project_id)
-                        .copied()
-                        .unwrap_or(0.0),
-                    status_position: r.issue.status.position,
-                    timestamp: r.timestamp,
-                    id: r.issue_id.as_ref().to_string(),
-                }
-            })
+    // Bucketed responses are bounded by `bucket_limit * num_cells` and don't
+    // paginate via cursor; per-cell "load more" is a single-cell unbucketed
+    // follow-up call. Skip cursor computation entirely.
+    let next_cursor = if query.bucket_by.is_some() {
+        None
+    } else {
+        match query.sort {
+            Some(api_issues::IssueSort::ProjectStatusTimeDesc) => {
+                // Project priority isn't carried on the issue record; fetch it
+                // once here so the cursor for the last row can encode the full
+                // four-key tuple `(priority, position, created_at, id)`.
+                let projects = state
+                    .store
+                    .list_projects(true)
+                    .await
+                    .map_err(|err| map_issue_error(err, None))?;
+                let priority_by_project: std::collections::HashMap<_, f64> = projects
+                    .iter()
+                    .map(|(id, v)| (id.clone(), v.item.priority))
+                    .collect();
+                compute_next_cursor_with_keys(&mut filtered, eff_limit, |r| {
+                    CursorKeys::ProjectStatusTime {
+                        project_priority: priority_by_project
+                            .get(&r.issue.project_id)
+                            .copied()
+                            .unwrap_or(0.0),
+                        status_position: r.issue.status.position,
+                        timestamp: r.timestamp,
+                        id: r.issue_id.as_ref().to_string(),
+                    }
+                })
+            }
+            _ => compute_next_cursor(
+                &mut filtered,
+                eff_limit,
+                |r| &r.timestamp,
+                |r| r.issue_id.as_ref(),
+            ),
         }
-        _ => compute_next_cursor(
-            &mut filtered,
-            eff_limit,
-            |r| &r.timestamp,
-            |r| r.issue_id.as_ref(),
-        ),
     };
 
     // Compute total_count when count=true

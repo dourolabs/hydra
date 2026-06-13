@@ -1996,3 +1996,114 @@ async fn submit_feedback_kills_active_sessions() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// `bucket_by` set without `bucket_limit` must 400 — the route layer is the
+/// validation boundary (per the issue spec). A silent coercion would risk
+/// returning the full table flattened into one bucket.
+#[tokio::test]
+async fn list_issues_rejects_bucket_by_without_bucket_limit() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/issues?bucket_by=project_status",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await?;
+    let error = body["error"].as_str().unwrap();
+    assert!(
+        error.contains("bucket_limit"),
+        "expected message to mention bucket_limit, got: {error}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_issues_rejects_bucket_by_with_zero_bucket_limit() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let response = client
+        .get(format!(
+            "{}/v1/issues?bucket_by=project_status&bucket_limit=0",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_issues_rejects_bucket_by_with_cursor() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    // A real cursor isn't required — the route rejects on the presence of
+    // the param, before any decode attempt.
+    let response = client
+        .get(format!(
+            "{}/v1/issues?bucket_by=project_status&bucket_limit=5&cursor=anything",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await?;
+    let error = body["error"].as_str().unwrap();
+    assert!(
+        error.contains("cursor"),
+        "expected message to mention cursor, got: {error}"
+    );
+    Ok(())
+}
+
+/// Happy path: `bucket_by=project_status&bucket_limit=N` returns 200 and
+/// surfaces `next_cursor: None` (bucketed responses are non-paginated; the
+/// follow-up "load more" is a single-cell unbucketed query, not a cursor).
+#[tokio::test]
+async fn list_issues_bucket_by_returns_200_with_null_cursor() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+
+    // Seed three issues against the default project / default status so the
+    // single (project_id, status_key) cell has rows to bucket.
+    for desc in ["a", "b", "c"] {
+        client
+            .post(format!("{}/v1/issues", server.base_url()))
+            .json(&UpsertIssueRequest::new(
+                issue(
+                    IssueType::Task,
+                    desc,
+                    default_user(),
+                    String::new(),
+                    status("open"),
+                    None,
+                    vec![],
+                    Vec::new(),
+                )
+                .into(),
+                None,
+            ))
+            .send()
+            .await?;
+    }
+
+    let response = client
+        .get(format!(
+            "{}/v1/issues?bucket_by=project_status&bucket_limit=2",
+            server.base_url()
+        ))
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let resp: ListIssuesResponse = response.json().await?;
+    // One cell, capped at bucket_limit=2.
+    assert_eq!(resp.issues.len(), 2);
+    assert!(
+        resp.next_cursor.is_none(),
+        "bucketed responses always return next_cursor: None"
+    );
+    Ok(())
+}

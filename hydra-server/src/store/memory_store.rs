@@ -23,7 +23,7 @@ use crate::domain::{
 };
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
-use hydra_common::api::v1::issues::{IssueSort, SearchIssuesQuery};
+use hydra_common::api::v1::issues::{IssueBucketBy, IssueSort, SearchIssuesQuery};
 use hydra_common::api::v1::pagination::{
     CursorKeys, DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT,
 };
@@ -248,6 +248,93 @@ impl MemoryStore {
         idx.sequence_for_key(status_key)
             .and_then(|seq| idx.rows.get(&seq).map(|d| d.position))
             .unwrap_or(0.0)
+    }
+
+    /// Top-N-per-cell bucketing for [`SearchIssuesQuery::bucket_by`]. Groups
+    /// `items` by the bucket key, sorts within each group by the effective
+    /// sort, truncates each group to `bucket_limit`, and concatenates the
+    /// groups in the effective sort's global order. Mirrors the SQL stores'
+    /// `ROW_NUMBER() OVER (PARTITION BY ...)` semantics.
+    fn apply_memory_bucketing(
+        &self,
+        items: Vec<(IssueId, Versioned<Issue>)>,
+        bucket_by: IssueBucketBy,
+        bucket_limit: u32,
+        query: &SearchIssuesQuery,
+    ) -> Vec<(IssueId, Versioned<Issue>)> {
+        type BucketKey = (ProjectId, hydra_common::api::v1::projects::StatusKey);
+        type BucketRows = Vec<(IssueId, Versioned<Issue>)>;
+        let effective_sort = query.sort.unwrap_or(IssueSort::CreatedAtDesc);
+        let mut groups: HashMap<BucketKey, BucketRows> = HashMap::new();
+        for (id, v) in items {
+            let key = match bucket_by {
+                IssueBucketBy::ProjectStatus => (v.item.project_id.clone(), v.item.status.clone()),
+                // `IssueBucketBy` is `#[non_exhaustive]`; unknown variants
+                // collapse into a single bucket (degrades to a global top-N).
+                _ => (v.item.project_id.clone(), v.item.status.clone()),
+            };
+            groups.entry(key).or_default().push((id, v));
+        }
+        let bucket_cap = bucket_limit as usize;
+        let mut out: Vec<(IssueId, Versioned<Issue>)> = Vec::new();
+        for (_key, mut group) in groups {
+            self.sort_issues_by(&mut group, effective_sort);
+            group.truncate(bucket_cap);
+            out.extend(group);
+        }
+        // Re-sort across buckets so consumers iterate in the effective
+        // sort's global order even after the per-bucket truncation.
+        self.sort_issues_by(&mut out, effective_sort);
+        // `limit` is the global cap across buckets per the wire spec.
+        if let Some(limit) = query.limit {
+            let capped = limit.min(PAGINATION_MAX_LIMIT) as usize;
+            out.truncate(capped);
+        }
+        out
+    }
+
+    /// Sort issues by the effective sort. Used by the bucketing path; the
+    /// non-bucketed path uses the legacy `apply_memory_pagination*` helpers
+    /// because they also handle cursor predicates.
+    fn sort_issues_by(&self, items: &mut [(IssueId, Versioned<Issue>)], sort: IssueSort) {
+        match sort {
+            IssueSort::ProjectStatusTimeDesc => {
+                items.sort_by(|a, b| {
+                    let a_pri = self.project_priority_for(&a.1.item.project_id);
+                    let b_pri = self.project_priority_for(&b.1.item.project_id);
+                    a_pri
+                        .partial_cmp(&b_pri)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            let a_pos =
+                                self.status_position_for(&a.1.item.project_id, &a.1.item.status);
+                            let b_pos =
+                                self.status_position_for(&b.1.item.project_id, &b.1.item.status);
+                            a_pos
+                                .partial_cmp(&b_pos)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .then_with(|| b.1.timestamp.cmp(&a.1.timestamp))
+                        .then_with(|| b.0.as_ref().cmp(a.0.as_ref()))
+                });
+            }
+            IssueSort::CreatedAtDesc => {
+                items.sort_by(|a, b| {
+                    b.1.timestamp
+                        .cmp(&a.1.timestamp)
+                        .then_with(|| b.0.as_ref().cmp(a.0.as_ref()))
+                });
+            }
+            // `IssueSort` is `#[non_exhaustive]`; future variants fall back
+            // to the default sort.
+            _ => {
+                items.sort_by(|a, b| {
+                    b.1.timestamp
+                        .cmp(&a.1.timestamp)
+                        .then_with(|| b.0.as_ref().cmp(a.0.as_ref()))
+                });
+            }
+        }
     }
 
     /// Resolve `(project_id, status_key)` to a `statuses.sequence`.
@@ -1027,6 +1114,23 @@ impl ReadOnlyStore for MemoryStore {
                 (issue_id, latest)
             })
             .collect();
+        if let Some(bucket_by) = query.bucket_by {
+            // Route handler validates the (bucket_by, bucket_limit, cursor)
+            // shape; defend here as well in case a non-route call site passes
+            // an invalid combination.
+            if query.cursor.is_some() {
+                return Err(StoreError::Internal(
+                    "cursor is incompatible with bucket_by".to_string(),
+                ));
+            }
+            let bucket_limit = query.bucket_limit.ok_or_else(|| {
+                StoreError::Internal("bucket_by requires bucket_limit".to_string())
+            })?;
+            if bucket_limit == 0 {
+                return Err(StoreError::Internal("bucket_limit must be > 0".to_string()));
+            }
+            return Ok(self.apply_memory_bucketing(items, bucket_by, bucket_limit, query));
+        }
         match query.sort {
             Some(IssueSort::ProjectStatusTimeDesc) => {
                 let keyed = items
@@ -7771,6 +7875,121 @@ mod tests {
             );
         }
         assert_eq!(visited, full_ids, "paged traversal must match full result");
+    }
+
+    // ---- `bucket_by=project_status` tests ---------------------------------
+
+    /// Top-N-per-cell with `bucket_by=project_status` + explicit
+    /// `sort=project_status_time_desc`: each `(project_id, status_key)`
+    /// cell must return at most `bucket_limit` rows, with within-cell
+    /// rows ordered by `created_at DESC` (priority+position are constant
+    /// within a cell). Across-cell rows follow the global
+    /// `(priority ASC, position ASC, created_at DESC, id DESC)` order.
+    #[tokio::test]
+    async fn list_issues_bucket_by_project_status_caps_each_cell_with_sort() {
+        use hydra_common::api::v1::issues::{IssueBucketBy, IssueSort};
+        let store = MemoryStore::new();
+        let (proj_a, a_todo) = seed_project_with_status(&store, "pa", 100.0, "todo", 10.0).await;
+        let (_, a_doing) = seed_project_with_status_existing(&store, &proj_a, "doing", 20.0).await;
+        let (proj_b, b_open) = seed_project_with_status(&store, "pb", 200.0, "open", 5.0).await;
+
+        // 3 issues per (project,status) cell — bucket_limit=2 must truncate
+        // each cell to its two newest.
+        let mut a_todo_ids = Vec::new();
+        let mut a_doing_ids = Vec::new();
+        let mut b_open_ids = Vec::new();
+        for _ in 0..3 {
+            a_todo_ids.push(add_issue_in(&store, &proj_a, &a_todo).await);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            a_doing_ids.push(add_issue_in(&store, &proj_a, &a_doing).await);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            b_open_ids.push(add_issue_in(&store, &proj_b, &b_open).await);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+
+        let mut query = SearchIssuesQuery::default();
+        query.bucket_by = Some(IssueBucketBy::ProjectStatus);
+        query.bucket_limit = Some(2);
+        query.sort = Some(IssueSort::ProjectStatusTimeDesc);
+        let results = store.list_issues(&query).await.unwrap();
+
+        // 3 cells × 2 = 6 rows total.
+        assert_eq!(results.len(), 6);
+        let ordered: Vec<IssueId> = results.iter().map(|(id, _)| id.clone()).collect();
+        // Expected cell order (by priority ASC, position ASC):
+        //   (A, todo, pos=10): newest 2 of a_todo
+        //   (A, doing, pos=20): newest 2 of a_doing
+        //   (B, open, pos=5): newest 2 of b_open
+        let expected = vec![
+            a_todo_ids[2].clone(),
+            a_todo_ids[1].clone(),
+            a_doing_ids[2].clone(),
+            a_doing_ids[1].clone(),
+            b_open_ids[2].clone(),
+            b_open_ids[1].clone(),
+        ];
+        assert_eq!(ordered, expected);
+    }
+
+    /// `bucket_by=project_status` without an explicit `sort` defaults to
+    /// `created_at_desc` within each cell — same within-cell order as the
+    /// explicit project_status_time variant (since project/status are
+    /// constant within a cell). The global order, however, is the default
+    /// `created_at DESC, id DESC` rather than the priority/position one.
+    #[tokio::test]
+    async fn list_issues_bucket_by_default_sort_orders_within_cell_by_created_at_desc() {
+        use hydra_common::api::v1::issues::IssueBucketBy;
+        let store = MemoryStore::new();
+        let (proj_a, a_todo) = seed_project_with_status(&store, "pa", 100.0, "todo", 10.0).await;
+        let (_, a_doing) = seed_project_with_status_existing(&store, &proj_a, "doing", 20.0).await;
+
+        // Two cells, 3 rows each. bucket_limit=2 takes the two newest per
+        // cell. Globally we expect them interleaved by created_at desc.
+        let mut todo_ids = Vec::new();
+        let mut doing_ids = Vec::new();
+        for _ in 0..3 {
+            todo_ids.push(add_issue_in(&store, &proj_a, &a_todo).await);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            doing_ids.push(add_issue_in(&store, &proj_a, &a_doing).await);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+
+        let mut query = SearchIssuesQuery::default();
+        query.bucket_by = Some(IssueBucketBy::ProjectStatus);
+        query.bucket_limit = Some(2);
+        let results = store.list_issues(&query).await.unwrap();
+        let ordered: Vec<IssueId> = results.iter().map(|(id, _)| id.clone()).collect();
+        // Each cell keeps its two newest. Across-cell ordering is by
+        // created_at desc, so the global ordering interleaves the cells.
+        // Newest first: doing[2], todo[2], doing[1], todo[1].
+        let expected = vec![
+            doing_ids[2].clone(),
+            todo_ids[2].clone(),
+            doing_ids[1].clone(),
+            todo_ids[1].clone(),
+        ];
+        assert_eq!(ordered, expected);
+    }
+
+    /// Default (`bucket_by` omitted) behaviour must be unchanged: a normal
+    /// flat sorted list, no per-cell truncation.
+    #[tokio::test]
+    async fn list_issues_bucket_by_omitted_behaviour_unchanged() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            ids.push(id);
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        ids.reverse();
+        let results = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        let observed: Vec<IssueId> = results.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(observed, ids);
     }
 
     /// Helper companion to [`seed_project_with_status`] that adds another
