@@ -93,9 +93,13 @@ describe("useBoardIssuesByProject", () => {
     vi.clearAllMocks();
   });
 
-  it("fires one paginated query per (project, status) cell with limit=7", async () => {
-    mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) =>
-      Promise.resolve(page([issue(`i-${query.status}`, query.status as string)])),
+  it("fires one bucketed request and groups results into per-cell maps", async () => {
+    mockListIssues.mockImplementation(() =>
+      Promise.resolve(
+        page(
+          DEFAULT_STATUSES.map((s) => issue(`i-${s.key}`, s.key, "j-defaul")),
+        ),
+      ),
     );
 
     const { result } = renderHook(
@@ -105,25 +109,30 @@ describe("useBoardIssuesByProject", () => {
 
     await waitFor(() => {
       for (const s of DEFAULT_STATUSES) {
-        expect(result.current.get("j-defaul")!.get(s.key)!.issues.length).toBe(1);
+        expect(
+          result.current.get("j-defaul")!.get(s.key)!.issues.length,
+        ).toBe(1);
       }
     });
 
-    expect(mockListIssues).toHaveBeenCalledTimes(DEFAULT_STATUSES.length);
-    const statuses = mockListIssues.mock.calls.map(
-      (c) => (c[0] as Partial<SearchIssuesQuery>).status,
-    );
-    for (const s of DEFAULT_STATUSES) {
-      expect(statuses).toContain(s.key);
-    }
-    for (const call of mockListIssues.mock.calls) {
-      const arg = call[0] as Partial<SearchIssuesQuery>;
-      expect(arg.limit).toBe(7);
-      expect(arg.cursor).toBeUndefined();
-    }
+    // The fan-out (one request per cell) is gone — a single bucketed call
+    // returns top-N issues per (project, status) cell in one roundtrip.
+    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    const arg = mockListIssues.mock.calls[0][0] as Partial<SearchIssuesQuery>;
+    expect(arg.bucket_by).toBe("project_status");
+    expect(arg.bucket_limit).toBe(7);
+    expect(arg.sort).toBe("project_status_time_desc");
+    expect(arg.cursor).toBeUndefined();
+    // No per-cell project/status filter on the bulk call.
+    expect(arg.project_id).toBeUndefined();
+    expect(arg.status).toBeUndefined();
+    // No global `limit` on the bulk call — the backend applies `limit` as a
+    // global cap *after* per-bucket truncation, so a default 50 would
+    // silently empty later projects' cells in a populated workspace.
+    expect(arg.limit).toBeUndefined();
   });
 
-  it("dispatches per-(project, status) cells across multiple projects", async () => {
+  it("groups bulk response across multiple projects into the correct cells", async () => {
     const projectAlpha = {
       project_id: "j-alpha",
       key: "alpha",
@@ -137,14 +146,14 @@ describe("useBoardIssuesByProject", () => {
       statuses: [makeStatus("backlog"), makeStatus("active"), makeStatus("shipped")],
     };
 
-    mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) =>
+    mockListIssues.mockImplementation(() =>
       Promise.resolve(
         page([
-          issue(
-            `i-${query.project_id ?? "none"}-${query.status}`,
-            query.status as string,
-            (query.project_id as string) ?? null,
-          ),
+          issue("a-inbox", "inbox", "j-alpha"),
+          issue("a-done", "done", "j-alpha"),
+          issue("b-backlog", "backlog", "j-beta"),
+          issue("b-active", "active", "j-beta"),
+          issue("b-shipped", "shipped", "j-beta"),
         ]),
       ),
     );
@@ -159,31 +168,44 @@ describe("useBoardIssuesByProject", () => {
       expect(result.current.get("j-beta")!.get("shipped")!.issues.length).toBe(1);
     });
 
-    // 2 (alpha) + 3 (beta) cells = 5 server requests.
-    expect(mockListIssues).toHaveBeenCalledTimes(5);
-    const seen = new Set<string>();
-    for (const call of mockListIssues.mock.calls) {
-      const arg = call[0] as Partial<SearchIssuesQuery>;
-      seen.add(`${arg.project_id ?? "_"}::${arg.status}`);
-    }
-    expect(seen.has("j-alpha::inbox")).toBe(true);
-    expect(seen.has("j-alpha::done")).toBe(true);
-    expect(seen.has("j-beta::backlog")).toBe(true);
-    expect(seen.has("j-beta::active")).toBe(true);
-    expect(seen.has("j-beta::shipped")).toBe(true);
+    // One bulk call total — no per-project / per-status fan-out.
+    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    expect(
+      result.current.get("j-alpha")!.get("done")!.issues[0].issue_id,
+    ).toBe("a-done");
+    expect(
+      result.current.get("j-beta")!.get("backlog")!.issues[0].issue_id,
+    ).toBe("b-backlog");
+    expect(
+      result.current.get("j-beta")!.get("active")!.issues[0].issue_id,
+    ).toBe("b-active");
   });
 
-  it("fetchNextPage on a column passes that column's cursor and status only", async () => {
+  it("fetchNextPage on a cell spawns a single-cell unbucketed cursor query", async () => {
     mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) => {
+      // Bulk bucketed request: one record per status, each at the
+      // BOARD_PAGE_SIZE=7 boundary so the "open" cell reports hasNextPage.
+      if (query.bucket_by === "project_status") {
+        const issues: IssueSummaryRecord[] = [];
+        for (const s of DEFAULT_STATUSES) {
+          // Seven records in the "open" cell so the heuristic kicks in.
+          const n = s.key === "open" ? 7 : 1;
+          for (let i = 0; i < n; i++) {
+            issues.push(issue(`i-${s.key}-${i}`, s.key, "j-defaul"));
+          }
+        }
+        return Promise.resolve(page(issues));
+      }
+      // Per-cell unbucketed request after a Load more click.
       if (query.status === "open" && query.cursor === "open-next") {
-        return Promise.resolve(page([issue("open-2", "open")], null));
+        return Promise.resolve(page([issue("open-page2", "open", "j-defaul")], null));
       }
-      if (query.status === "open" && !query.cursor) {
-        return Promise.resolve(page([issue("open-1", "open")], "open-next"));
+      if (query.status === "open") {
+        return Promise.resolve(
+          page([issue("open-page1", "open", "j-defaul")], "open-next"),
+        );
       }
-      return Promise.resolve(
-        page([issue(`i-${query.status}`, query.status as string)], null),
-      );
+      return Promise.resolve(page([], null));
     });
 
     const { result } = renderHook(
@@ -192,35 +214,47 @@ describe("useBoardIssuesByProject", () => {
     );
 
     await waitFor(() => {
-      expect(result.current.get("j-defaul")!.get("open")!.hasNextPage).toBe(true);
-      expect(result.current.get("j-defaul")!.get("in-progress")!.issues.length).toBe(1);
+      expect(result.current.get("j-defaul")!.get("open")!.hasNextPage).toBe(
+        true,
+      );
     });
 
     const before = mockListIssues.mock.calls.length;
+    expect(before).toBe(1); // bulk only
 
     await act(async () => {
       result.current.get("j-defaul")!.get("open")!.fetchNextPage();
     });
 
     await waitFor(() => {
-      expect(result.current.get("j-defaul")!.get("open")!.issues.length).toBe(2);
+      // The expanded query walks 2 pages on first click (depth=2): page-1
+      // and page-2 of the single-cell cursor chain. Other cells are not
+      // refetched — only the expanded cell makes follow-up requests.
+      expect(
+        result.current.get("j-defaul")!.get("open")!.issues.length,
+      ).toBeGreaterThanOrEqual(2);
     });
 
-    // After the depth bump, the open cell refetches its full chain
-    // (page-1 + page-2). Other cells are unaffected.
-    const after = mockListIssues.mock.calls.length;
     const followUpCalls = mockListIssues.mock.calls.slice(before);
-    const followUpOpenCursors = followUpCalls
-      .filter((c) => (c[0] as Partial<SearchIssuesQuery>).status === "open")
-      .map((c) => (c[0] as Partial<SearchIssuesQuery>).cursor);
-    expect(followUpOpenCursors).toContain("open-next");
-    expect(after - before).toBeGreaterThanOrEqual(1);
+    expect(followUpCalls.length).toBeGreaterThanOrEqual(1);
+    for (const call of followUpCalls) {
+      const arg = call[0] as Partial<SearchIssuesQuery>;
+      // Follow-ups are single-cell unbucketed cursor queries scoped to
+      // the expanded (project, status) cell.
+      expect(arg.bucket_by).toBeUndefined();
+      expect(arg.bucket_limit).toBeUndefined();
+      expect(arg.project_id).toBe("j-defaul");
+      expect(arg.status).toBe("open");
+      expect(arg.limit).toBe(7);
+    }
+    const cursors = followUpCalls.map(
+      (c) => (c[0] as Partial<SearchIssuesQuery>).cursor,
+    );
+    expect(cursors).toContain("open-next");
   });
 
-  it("includes base filters (q, labels, creator, assignee) in every cell query", async () => {
-    mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) =>
-      Promise.resolve(page([issue(`i-${query.status}`, query.status as string)])),
-    );
+  it("includes base filters (q, labels, creator, assignee) on the bulk query", async () => {
+    mockListIssues.mockImplementation(() => Promise.resolve(page([])));
 
     renderHook(
       () =>
@@ -237,24 +271,24 @@ describe("useBoardIssuesByProject", () => {
     );
 
     await waitFor(() => {
-      expect(mockListIssues).toHaveBeenCalledTimes(DEFAULT_STATUSES.length);
+      expect(mockListIssues).toHaveBeenCalledTimes(1);
     });
 
-    for (const call of mockListIssues.mock.calls) {
-      const arg = call[0] as Partial<SearchIssuesQuery>;
-      expect(arg.q).toBe("needle");
-      expect(arg.labels).toBe("lbl-1");
-      expect(arg.creator).toBe("alice");
-      expect(arg.assignee).toBe("bob");
-    }
+    const arg = mockListIssues.mock.calls[0][0] as Partial<SearchIssuesQuery>;
+    expect(arg.q).toBe("needle");
+    expect(arg.labels).toBe("lbl-1");
+    expect(arg.creator).toBe("alice");
+    expect(arg.assignee).toBe("bob");
+    expect(arg.bucket_by).toBe("project_status");
+    expect(arg.bucket_limit).toBe(7);
   });
 
-  it("when the chip status is set, only the matching column shows issues", async () => {
-    mockListIssues.mockImplementation((query: Partial<SearchIssuesQuery>) =>
+  it("with chip status set, bucketing narrows the response and other columns are empty", async () => {
+    mockListIssues.mockImplementation(() =>
       Promise.resolve(
         page([
-          issue(`a-${query.status}`, query.status as string),
-          issue(`b-${query.status}`, query.status as string),
+          issue("a-open", "open", "j-defaul"),
+          issue("b-open", "open", "j-defaul"),
         ]),
       ),
     );
@@ -269,13 +303,11 @@ describe("useBoardIssuesByProject", () => {
       expect(result.current.get("j-defaul")!.get("open")!.issues.length).toBe(2);
     });
 
-    // Every actual network call must use the chip status — the cell
-    // queries within a project share a cache key (status=open) so
-    // React Query dedupes to 1 network call per project.
-    for (const call of mockListIssues.mock.calls) {
-      const arg = call[0] as Partial<SearchIssuesQuery>;
-      expect(arg.status).toBe("open");
-    }
+    // One bulk request, status filter and bucketing both applied.
+    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    const arg = mockListIssues.mock.calls[0][0] as Partial<SearchIssuesQuery>;
+    expect(arg.status).toBe("open");
+    expect(arg.bucket_by).toBe("project_status");
 
     // Non-matching columns render zero rows and have no Load more.
     for (const s of DEFAULT_STATUSES) {

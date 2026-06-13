@@ -182,6 +182,36 @@ export function createIssueRoutes(store: Store): Hono {
     const cursorParam = c.req.query("cursor");
     const countParam = c.req.query("count");
     const sortParam = c.req.query("sort");
+    const bucketByParam = c.req.query("bucket_by");
+    const bucketLimitParam = c.req.query("bucket_limit");
+
+    // Validate bucket_by + bucket_limit + cursor combinations, matching the
+    // real backend (see PR-3 [[i-aiunhiwa]]'s route-handler validation).
+    if (bucketByParam !== undefined) {
+      if (bucketByParam !== "project_status") {
+        return c.json(
+          { error: `unsupported bucket_by value: '${bucketByParam}'` },
+          400,
+        );
+      }
+      if (cursorParam) {
+        return c.json(
+          { error: "bucket_by is incompatible with cursor" },
+          400,
+        );
+      }
+      const bucketLimitNum = Number(bucketLimitParam);
+      if (
+        bucketLimitParam === undefined ||
+        Number.isNaN(bucketLimitNum) ||
+        bucketLimitNum <= 0
+      ) {
+        return c.json(
+          { error: "bucket_by requires bucket_limit > 0" },
+          400,
+        );
+      }
+    }
 
     const items = store.list<Issue>(COLLECTION, includeDeleted);
 
@@ -309,20 +339,47 @@ export function createIssueRoutes(store: Store): Hono {
 
     const totalCount = filtered.length;
 
-    // Apply cursor-based pagination
-    if (cursorParam) {
-      const cursorIndex = filtered.findIndex(({ id }) => id === cursorParam);
-      if (cursorIndex !== -1) {
-        filtered = filtered.slice(cursorIndex + 1);
-      }
-    }
-
+    // `bucket_by=project_status`: after filters + sort, group by
+    // `(project_id, status.key)`, truncate each group to `bucket_limit`,
+    // then re-concatenate preserving the global sort order across cells.
+    // Matches PR-3 [[i-aiunhiwa]]'s memory/SQLite/Postgres v2 semantics.
+    // Bucketed queries never paginate by cursor: `next_cursor` is always
+    // null; per-cell "load more" is a follow-up unbucketed call.
     let nextCursor: string | null = null;
-    if (limitParam !== undefined && limitParam !== null) {
-      const limit = Number(limitParam);
-      if (limit >= 0 && filtered.length > limit) {
-        nextCursor = filtered[limit - 1]?.id ?? null;
-        filtered = filtered.slice(0, limit);
+    if (bucketByParam === "project_status") {
+      const bucketLimit = Number(bucketLimitParam);
+      const seenByCell = new Map<string, number>();
+      const truncated: typeof filtered = [];
+      for (const item of filtered) {
+        const ck = `${item.entry.data.project_id}::${item.entry.data.status.key}`;
+        const seen = seenByCell.get(ck) ?? 0;
+        if (seen < bucketLimit) {
+          truncated.push(item);
+          seenByCell.set(ck, seen + 1);
+        }
+      }
+      filtered = truncated;
+      if (limitParam !== undefined && limitParam !== null) {
+        const limit = Number(limitParam);
+        if (limit >= 0 && filtered.length > limit) {
+          filtered = filtered.slice(0, limit);
+        }
+      }
+    } else {
+      // Apply cursor-based pagination
+      if (cursorParam) {
+        const cursorIndex = filtered.findIndex(({ id }) => id === cursorParam);
+        if (cursorIndex !== -1) {
+          filtered = filtered.slice(cursorIndex + 1);
+        }
+      }
+
+      if (limitParam !== undefined && limitParam !== null) {
+        const limit = Number(limitParam);
+        if (limit >= 0 && filtered.length > limit) {
+          nextCursor = filtered[limit - 1]?.id ?? null;
+          filtered = filtered.slice(0, limit);
+        }
       }
     }
 

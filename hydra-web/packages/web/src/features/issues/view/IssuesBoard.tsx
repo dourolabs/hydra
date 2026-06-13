@@ -40,6 +40,7 @@ import { apiClient } from "../../../api/client";
 import { useIssueCreateModal } from "../../dashboard/useIssueCreateModal";
 import { useToast } from "../../toast/useToast";
 import {
+  BOARD_BULK_QUERY_KEY_MARKER,
   useBoardIssuesByProject,
   type BoardCellQuery,
   type BoardProjectDescriptor,
@@ -358,34 +359,56 @@ export function IssuesBoard({
     }) => {
       await queryClient.cancelQueries({ queryKey: ["paginatedIssues"] });
 
-      // The `["paginatedIssues", …]` prefix is shared with the table-view
-      // `usePaginatedIssues` hook, which is a `useInfiniteQuery` whose `data`
-      // is `{ pages, pageParams }` — not the per-cell `ListIssuesResponse[]`
-      // produced by `useBoardIssuesByProject`. Filter to the board-cell key
-      // shape (`[…, filters, "depth", depth]`) so the optimistic surgery
-      // never tries to iterate the infinite-query payload.
+      // The `["paginatedIssues", …]` prefix is shared by three cache shapes:
+      // - table-view `usePaginatedIssues` infinite query: `{ pages, pageParams }`,
+      //   keyed `["paginatedIssues", filters, "sort", sortKey]`.
+      // - per-expanded-cell board query: `ListIssuesResponse[]`,
+      //   keyed `["paginatedIssues", cellFilters, "depth", depth]`.
+      // - board bulk bucketed query: `ListIssuesResponse`,
+      //   keyed `["paginatedIssues", baseFilters, "board-bulk", sort]`.
+      // Categorize on `key[2]` so the optimistic surgery only touches the
+      // shapes it knows; iterating the infinite-query payload as an array
+      // throws and would abort the mutation before it fires.
       const all = queryClient
         .getQueryCache()
-        .findAll({ queryKey: ["paginatedIssues"] })
-        .filter((q) => {
-          const key = q.queryKey as readonly unknown[];
-          return key.length === 4 && key[2] === "depth";
-        });
+        .findAll({ queryKey: ["paginatedIssues"] });
+      const cellQueries = all.filter((q) => {
+        const key = q.queryKey as readonly unknown[];
+        return key.length === 4 && key[2] === "depth";
+      });
+      const bulkQueries = all.filter((q) => {
+        const key = q.queryKey as readonly unknown[];
+        return key.length === 4 && key[2] === BOARD_BULK_QUERY_KEY_MARKER;
+      });
 
       // Locate the source record so the optimistic insert into the target
-      // cell carries the same summary fields as the rendered card.
+      // cell carries the same summary fields as the rendered card. The bulk
+      // query usually holds the source record (every cell's first
+      // BOARD_PAGE_SIZE issues live there); fall back to the per-cell
+      // queries in case the user has already expanded a cell.
       let sourceRecord: IssueSummaryRecord | undefined;
-      for (const q of all) {
-        const data = q.state.data as ListIssuesResponse[] | undefined;
+      for (const q of bulkQueries) {
+        const data = q.state.data as ListIssuesResponse | undefined;
         if (!data) continue;
-        for (const page of data) {
-          const found = page.issues.find((r) => r.issue_id === issueId);
-          if (found) {
-            sourceRecord = found;
-            break;
-          }
+        const found = data.issues.find((r) => r.issue_id === issueId);
+        if (found) {
+          sourceRecord = found;
+          break;
         }
-        if (sourceRecord) break;
+      }
+      if (!sourceRecord) {
+        for (const q of cellQueries) {
+          const data = q.state.data as ListIssuesResponse[] | undefined;
+          if (!data) continue;
+          for (const page of data) {
+            const found = page.issues.find((r) => r.issue_id === issueId);
+            if (found) {
+              sourceRecord = found;
+              break;
+            }
+          }
+          if (sourceRecord) break;
+        }
       }
 
       const snapshots: Array<{
@@ -406,7 +429,24 @@ export function IssuesBoard({
         },
       };
 
-      for (const q of all) {
+      // Patch the bulk query: replace the source record with the updated
+      // one in-place. The bulk → bucket grouping in `useBoardIssuesByProject`
+      // will redistribute the issue to the target cell.
+      for (const q of bulkQueries) {
+        const key = q.queryKey;
+        const data = q.state.data as ListIssuesResponse | undefined;
+        if (!data) continue;
+        const idx = data.issues.findIndex((r) => r.issue_id === issueId);
+        if (idx < 0) continue;
+        snapshots.push({ key, data });
+        const nextIssues = data.issues.slice();
+        nextIssues.splice(idx, 1);
+        nextIssues.unshift(updatedRecord);
+        queryClient.setQueryData(key, { ...data, issues: nextIssues });
+      }
+
+      // Patch any per-cell expanded queries that match the source/target.
+      for (const q of cellQueries) {
         const key = q.queryKey;
         const filters = (key as readonly unknown[])[1] as
           | (IssueFilters & { project_id?: string; status?: string })
