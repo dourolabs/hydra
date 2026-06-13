@@ -24,7 +24,7 @@ vi.mock("../IssueLabelEditor", () => ({
 }));
 
 vi.mock("../IssueSettingsEditor", () => ({
-  IssueSettingsEditor: () => <div data-testid="issue-settings-display" />,
+  IssueSettingsEditor: () => <div data-testid="issue-settings-editor" />,
 }));
 
 vi.mock("@hydra/ui", () => ({
@@ -181,7 +181,7 @@ describe("IssueDetailsTab", () => {
       />,
     );
     expect(screen.getByText("Session settings")).toBeDefined();
-    expect(screen.getByTestId("issue-settings-display")).toBeDefined();
+    expect(screen.getByTestId("issue-settings-editor")).toBeDefined();
   });
 
   it("renders the Session settings editor even when no settings are configured", () => {
@@ -189,7 +189,7 @@ describe("IssueDetailsTab", () => {
       <IssueDetailsTab record={makeRecord({})} onOpenStatusModal={() => {}} />,
     );
     expect(screen.getByText("Session settings")).toBeDefined();
-    expect(screen.getByTestId("issue-settings-display")).toBeDefined();
+    expect(screen.getByTestId("issue-settings-editor")).toBeDefined();
   });
 
   it("shows 'Unassigned' italic when assignee is missing", () => {

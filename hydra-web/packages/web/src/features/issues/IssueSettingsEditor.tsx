@@ -1,6 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@hydra/ui";
 import type { Issue, IssueVersionRecord, SessionSettings } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
@@ -11,122 +16,198 @@ interface IssueSettingsEditorProps {
   issue: Issue;
 }
 
-type StringField =
-  | "repo_name"
-  | "remote_url"
-  | "image"
-  | "model"
-  | "branch"
-  | "cpu_limit"
-  | "memory_limit";
+type FieldKind = "string" | "integer" | "secrets";
 
 interface FieldSpec {
-  key: StringField;
+  key: keyof SessionSettings;
   label: string;
-  placeholder: string;
+  kind: FieldKind;
+  placeholder?: string;
 }
 
-const STRING_FIELDS: FieldSpec[] = [
-  { key: "repo_name", label: "Repository", placeholder: "owner/name" },
-  { key: "remote_url", label: "Remote URL", placeholder: "https://github.com/owner/name.git" },
-  { key: "image", label: "Image", placeholder: "Agent default" },
-  { key: "model", label: "Model", placeholder: "Agent default" },
-  { key: "branch", label: "Branch", placeholder: "main" },
-  { key: "cpu_limit", label: "CPU limit", placeholder: "Agent default" },
-  { key: "memory_limit", label: "Memory limit", placeholder: "Agent default" },
+const FIELDS: FieldSpec[] = [
+  { key: "repo_name", label: "Repository", kind: "string", placeholder: "owner/name" },
+  { key: "remote_url", label: "Remote URL", kind: "string", placeholder: "https://github.com/owner/name.git" },
+  { key: "image", label: "Image", kind: "string" },
+  { key: "model", label: "Model", kind: "string" },
+  { key: "branch", label: "Branch", kind: "string", placeholder: "main" },
+  { key: "max_retries", label: "Max retries", kind: "integer" },
+  { key: "cpu_limit", label: "CPU limit", kind: "string" },
+  { key: "memory_limit", label: "Memory limit", kind: "string" },
+  { key: "secrets", label: "Secrets", kind: "secrets", placeholder: "comma-separated names" },
 ];
 
-interface DraftState {
-  repo_name: string;
-  remote_url: string;
-  image: string;
-  model: string;
-  branch: string;
-  cpu_limit: string;
-  memory_limit: string;
-  max_retries: string;
-  secrets: string;
-}
-
-function settingsToDraft(s: SessionSettings | undefined | null): DraftState {
-  return {
-    repo_name: s?.repo_name ?? "",
-    remote_url: s?.remote_url ?? "",
-    image: s?.image ?? "",
-    model: s?.model ?? "",
-    branch: s?.branch ?? "",
-    cpu_limit: s?.cpu_limit ?? "",
-    memory_limit: s?.memory_limit ?? "",
-    max_retries: s?.max_retries != null ? String(s.max_retries) : "",
-    secrets: (s?.secrets ?? []).join(", "),
-  };
-}
-
-function draftToSettings(
-  draft: DraftState,
-  base: SessionSettings | undefined | null,
-): { settings: SessionSettings; error: string | null } {
-  const next: SessionSettings = { ...(base ?? {}) };
-
-  const trim = (v: string) => v.trim();
-  const setOrNull = (key: StringField, value: string) => {
-    const t = trim(value);
-    next[key] = t === "" ? null : t;
-  };
-
-  setOrNull("repo_name", draft.repo_name);
-  setOrNull("remote_url", draft.remote_url);
-  setOrNull("image", draft.image);
-  setOrNull("model", draft.model);
-  setOrNull("branch", draft.branch);
-  setOrNull("cpu_limit", draft.cpu_limit);
-  setOrNull("memory_limit", draft.memory_limit);
-
-  const retriesRaw = trim(draft.max_retries);
-  if (retriesRaw === "") {
-    next.max_retries = null;
-  } else {
-    const n = Number(retriesRaw);
-    if (!Number.isInteger(n) || n < 0) {
-      return {
-        settings: next,
-        error: "Max retries must be a non-negative integer.",
-      };
-    }
-    next.max_retries = n;
+function displayValue(settings: SessionSettings | undefined | null, field: FieldSpec): string | null {
+  if (!settings) return null;
+  const raw = settings[field.key];
+  if (raw == null) return null;
+  if (field.kind === "secrets") {
+    const list = (raw as string[]).filter(Boolean);
+    return list.length > 0 ? list.join(", ") : null;
   }
+  if (field.kind === "integer") {
+    return String(raw);
+  }
+  return String(raw);
+}
 
-  const secretsRaw = trim(draft.secrets);
-  if (secretsRaw === "") {
-    next.secrets = null;
-  } else {
-    const parts = secretsRaw
+function draftFromSettings(
+  settings: SessionSettings | undefined | null,
+  field: FieldSpec,
+): string {
+  return displayValue(settings, field) ?? "";
+}
+
+interface ParsedCommit {
+  value: SessionSettings[keyof SessionSettings] | null;
+  error: string | null;
+}
+
+function parseDraft(draft: string, field: FieldSpec): ParsedCommit {
+  const trimmed = draft.trim();
+  if (trimmed === "") return { value: null, error: null };
+  if (field.kind === "integer") {
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 0) {
+      return { value: null, error: `${field.label} must be a non-negative integer.` };
+    }
+    return { value: n, error: null };
+  }
+  if (field.kind === "secrets") {
+    const parts = trimmed
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
-    next.secrets = parts.length > 0 ? parts : null;
+    return { value: parts.length > 0 ? parts : null, error: null };
   }
-
-  return { settings: next, error: null };
+  return { value: trimmed, error: null };
 }
 
-function DisplayRow({
-  testKey,
-  label,
-  value,
-}: {
-  testKey: string;
-  label: string;
-  value: string | null;
-}) {
+function settingsEqualForField(
+  a: SessionSettings | undefined | null,
+  b: SessionSettings | undefined | null,
+  field: FieldSpec,
+): boolean {
+  const av = a?.[field.key] ?? null;
+  const bv = b?.[field.key] ?? null;
+  if (field.kind === "secrets") {
+    const al = (av as string[] | null) ?? [];
+    const bl = (bv as string[] | null) ?? [];
+    if (al.length !== bl.length) return false;
+    return al.every((v, i) => v === bl[i]);
+  }
+  return av === bv;
+}
+
+interface RowProps {
+  field: FieldSpec;
+  settings: SessionSettings | undefined | null;
+  editing: boolean;
+  pending: boolean;
+  errorMsg: string | null;
+  onStartEdit: () => void;
+  onCommit: (draft: string) => void;
+  onCancel: () => void;
+}
+
+function Row({
+  field,
+  settings,
+  editing,
+  pending,
+  errorMsg,
+  onStartEdit,
+  onCommit,
+  onCancel,
+}: RowProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<string>(() => draftFromSettings(settings, field));
+
+  useLayoutEffect(() => {
+    if (editing) {
+      setDraft(draftFromSettings(settings, field));
+    }
+  }, [editing, settings, field]);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  // If validation kept the field in edit mode after a blur attempt, re-focus
+  // so the user can correct without an extra click.
+  useEffect(() => {
+    if (editing && errorMsg && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [editing, errorMsg]);
+
+  const display = displayValue(settings, field);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        inputRef.current?.blur();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    },
+    [onCancel],
+  );
+
   return (
-    <div className={styles.row} data-testid={`issue-settings-row-${testKey}`}>
-      <dt className={styles.rowLabel}>{label}</dt>
+    <div
+      className={styles.row}
+      data-testid={`issue-settings-row-${String(field.key)}`}
+    >
+      <dt className={styles.rowLabel}>{field.label}</dt>
       <dd className={styles.rowValue}>
-        {value != null ? (
-          <span className={styles.rowMono}>{value}</span>
+        {editing ? (
+          <>
+            <input
+              ref={inputRef}
+              type={field.kind === "integer" ? "number" : "text"}
+              inputMode={field.kind === "integer" ? "numeric" : undefined}
+              min={field.kind === "integer" ? 0 : undefined}
+              step={field.kind === "integer" ? 1 : undefined}
+              className={styles.input}
+              value={draft}
+              placeholder={field.placeholder}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => onCommit(draft)}
+              onKeyDown={handleKeyDown}
+              disabled={pending}
+              data-testid={`issue-settings-input-${String(field.key)}`}
+              aria-label={field.label}
+            />
+            {errorMsg && (
+              <div
+                className={styles.error}
+                role="alert"
+                data-testid="issue-settings-error"
+              >
+                {errorMsg}
+              </div>
+            )}
+          </>
         ) : (
-          <span className={styles.rowEmpty}>Agent default</span>
+          <button
+            type="button"
+            className={styles.displayButton}
+            onClick={onStartEdit}
+            data-testid={`issue-settings-value-${String(field.key)}`}
+            title="Click to edit"
+          >
+            {display != null ? (
+              <span className={styles.displayValue}>{display}</span>
+            ) : (
+              <span className={styles.displayEmpty}>Default</span>
+            )}
+          </button>
         )}
       </dd>
     </div>
@@ -138,28 +219,10 @@ export function IssueSettingsEditor({ issueId, issue }: IssueSettingsEditorProps
   const { addToast } = useToast();
   const settings = issue.session_settings;
 
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<DraftState>(() => settingsToDraft(settings));
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<{ key: string; message: string } | null>(null);
 
-  const startEditing = useCallback(() => {
-    setDraft(settingsToDraft(settings));
-    setValidationError(null);
-    setEditing(true);
-  }, [settings]);
-
-  const cancel = useCallback(() => {
-    setDraft(settingsToDraft(settings));
-    setValidationError(null);
-    setEditing(false);
-  }, [settings]);
-
-  const mutation = useMutation<
-    unknown,
-    Error,
-    SessionSettings,
-    { previous?: IssueVersionRecord }
-  >({
+  const mutation = useMutation<unknown, Error, SessionSettings>({
     mutationFn: (nextSettings) =>
       apiClient.updateIssue(issueId, {
         issue: {
@@ -169,174 +232,83 @@ export function IssueSettingsEditor({ issueId, issue }: IssueSettingsEditorProps
         },
         session_id: null,
       }),
-    onMutate: async (nextSettings) => {
-      await queryClient.cancelQueries({ queryKey: ["issue", issueId] });
-      const previous = queryClient.getQueryData<IssueVersionRecord>([
-        "issue",
-        issueId,
-      ]);
-      if (previous) {
-        queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
-          ...previous,
-          issue: { ...previous.issue, session_settings: nextSettings },
-        });
-      }
-      return { previous };
-    },
-    onSuccess: () => {
-      setEditing(false);
-      addToast("Session settings updated.", "success");
-    },
-    onError: (err, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(["issue", issueId], context.previous);
-      }
+    onError: (err) => {
       addToast(err.message || "Failed to update settings", "error");
+      queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["issue", issueId] });
     },
   });
 
-  const onSave = useCallback(() => {
-    const { settings: nextSettings, error } = draftToSettings(draft, settings);
-    if (error) {
-      setValidationError(error);
-      return;
-    }
-    setValidationError(null);
-    mutation.mutate(nextSettings);
-  }, [draft, settings, mutation]);
+  const commitField = useCallback(
+    (field: FieldSpec, draft: string) => {
+      const parsed = parseDraft(draft, field);
+      if (parsed.error) {
+        setFieldError({ key: String(field.key), message: parsed.error });
+        return;
+      }
+      setFieldError(null);
 
-  const displayedSecrets = useMemo(() => {
-    const list = (settings?.secrets ?? []).filter(Boolean);
-    return list.length > 0 ? list.join(", ") : null;
-  }, [settings?.secrets]);
+      const previous = queryClient.getQueryData<IssueVersionRecord>([
+        "issue",
+        issueId,
+      ]);
+      const baseSettings = previous?.issue.session_settings ?? settings ?? {};
+      const nextSettings: SessionSettings = {
+        ...baseSettings,
+        [field.key]: parsed.value,
+      };
 
-  if (!editing) {
-    return (
-      <div className={styles.wrapper} data-testid="issue-settings-display">
-        <dl className={styles.list}>
-          {STRING_FIELDS.map((field) => (
-            <DisplayRow
-              key={field.key}
-              testKey={field.key}
-              label={field.label}
-              value={(settings?.[field.key] as string | null | undefined) ?? null}
-            />
-          ))}
-          <DisplayRow
-            testKey="max_retries"
-            label="Max retries"
-            value={
-              settings?.max_retries != null ? String(settings.max_retries) : null
-            }
-          />
-          <DisplayRow
-            testKey="secrets"
-            label="Secrets"
-            value={displayedSecrets}
-          />
-        </dl>
-        <div className={styles.actions}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={startEditing}
-            data-testid="issue-settings-edit"
-          >
-            Edit settings
-          </Button>
-        </div>
-      </div>
-    );
-  }
+      setEditingKey(null);
 
-  const inputClass = (extra?: string) =>
-    [styles.input, extra].filter(Boolean).join(" ");
+      if (settingsEqualForField(baseSettings, nextSettings, field)) {
+        return;
+      }
+
+      if (previous) {
+        queryClient.setQueryData<IssueVersionRecord>(["issue", issueId], {
+          ...previous,
+          issue: { ...previous.issue, session_settings: nextSettings },
+        });
+      }
+      mutation.mutate(nextSettings);
+    },
+    [issueId, queryClient, settings, mutation],
+  );
+
+  const startEditing = useCallback((key: string) => {
+    setFieldError(null);
+    setEditingKey(key);
+  }, []);
+
+  const cancel = useCallback(() => {
+    setFieldError(null);
+    setEditingKey(null);
+  }, []);
 
   return (
-    <div className={styles.wrapper} data-testid="issue-settings-editor">
-      <div className={styles.form}>
-        {STRING_FIELDS.map((field) => (
-          <label key={field.key} className={styles.field}>
-            <span className={styles.fieldLabel}>{field.label}</span>
-            <input
-              type="text"
-              className={inputClass()}
-              value={draft[field.key]}
-              placeholder={field.placeholder}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, [field.key]: e.target.value }))
-              }
-              disabled={mutation.isPending}
-              data-testid={`issue-settings-input-${field.key}`}
-            />
-          </label>
-        ))}
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Max retries</span>
-          <input
-            type="number"
-            inputMode="numeric"
-            min={0}
-            step={1}
-            className={inputClass()}
-            value={draft.max_retries}
-            placeholder="Agent default"
-            onChange={(e) =>
-              setDraft((d) => ({ ...d, max_retries: e.target.value }))
-            }
-            disabled={mutation.isPending}
-            data-testid="issue-settings-input-max_retries"
+    <dl className={styles.list} data-testid="issue-settings-editor">
+      {FIELDS.map((field) => {
+        const isEditing = editingKey === String(field.key);
+        const errMsg =
+          isEditing && fieldError?.key === String(field.key)
+            ? fieldError.message
+            : null;
+        return (
+          <Row
+            key={String(field.key)}
+            field={field}
+            settings={settings}
+            editing={isEditing}
+            pending={mutation.isPending}
+            errorMsg={errMsg}
+            onStartEdit={() => startEditing(String(field.key))}
+            onCommit={(draft) => commitField(field, draft)}
+            onCancel={cancel}
           />
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Secrets</span>
-          <input
-            type="text"
-            className={inputClass()}
-            value={draft.secrets}
-            placeholder="comma-separated names"
-            onChange={(e) =>
-              setDraft((d) => ({ ...d, secrets: e.target.value }))
-            }
-            disabled={mutation.isPending}
-            data-testid="issue-settings-input-secrets"
-          />
-        </label>
-      </div>
-      {validationError && (
-        <div
-          className={styles.error}
-          role="alert"
-          data-testid="issue-settings-error"
-        >
-          {validationError}
-        </div>
-      )}
-      <div className={styles.actions}>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={onSave}
-          disabled={mutation.isPending}
-          data-testid="issue-settings-save"
-        >
-          {mutation.isPending ? "Saving…" : "Save"}
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={cancel}
-          disabled={mutation.isPending}
-        >
-          Cancel
-        </Button>
-        <span className={styles.hint}>
-          Leave a field blank to inherit the agent default.
-        </span>
-      </div>
-    </div>
+        );
+      })}
+    </dl>
   );
 }
