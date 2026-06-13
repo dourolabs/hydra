@@ -121,3 +121,24 @@
     display: none;
   }
 }
+
+.clusterStatusCount {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .clusterStatus {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 4px 10px;
+  }
+
+  .clusterStatusLabel {
+    display: none;
+  }
+
+  .clusterStatusCount {
+    display: inline;
+  }
+}
