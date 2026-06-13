@@ -170,6 +170,8 @@
 }
 
 .pillEmpty {
+  display: inline-flex;
+  align-items: center;
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);

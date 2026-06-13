@@ -26,7 +26,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  min-height: 26px;
   padding: 0 9px;
   background: transparent;
   border: 1px dashed var(--line-strong);
@@ -56,7 +56,7 @@
 .clearButton {
   display: inline-flex;
   align-items: center;
-  height: 26px;
+  min-height: 26px;
   padding: 0 8px;
   background: transparent;
   border: 0;
@@ -69,4 +69,11 @@
 
 .clearButton:hover {
   color: var(--fg-0);
+}
+
+@media (max-width: 768px) {
+  .addButton,
+  .clearButton {
+    min-height: 44px;
+  }
 }

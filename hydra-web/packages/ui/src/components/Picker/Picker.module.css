@@ -18,7 +18,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 28px;
+  min-height: 28px;
   padding: 0 8px 0 9px;
   background: var(--bg-2);
   border: 1px solid var(--line);
@@ -39,6 +39,18 @@
 .pillActive {
   border-color: var(--acc);
   background: var(--acc-soft);
+}
+
+@media (max-width: 768px) {
+  .pill {
+    min-height: 44px;
+    padding: 0 var(--space-2);
+    gap: 9px;
+  }
+  .popRow {
+    min-height: 44px;
+    padding: var(--space-2) 12px;
+  }
 }
 
 .pillChevron {

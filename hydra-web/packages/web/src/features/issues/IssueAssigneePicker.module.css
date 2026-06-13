@@ -5,6 +5,8 @@
 }
 
 .pillEmpty {
+  display: inline-flex;
+  align-items: center;
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--fg-3);

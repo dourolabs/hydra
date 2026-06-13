@@ -1,7 +1,7 @@
 .chip {
   display: inline-flex;
   align-items: stretch;
-  height: 26px;
+  min-height: 26px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--bg-2);
@@ -102,4 +102,13 @@
 .remove:hover {
   background: var(--bg-3);
   color: var(--fg-0);
+}
+
+@media (max-width: 768px) {
+  .chip {
+    min-height: 44px;
+  }
+  .remove {
+    width: 44px;
+  }
 }

@@ -80,3 +80,10 @@
   font-family: var(--f-sans);
   font-size: var(--t-xs);
 }
+
+@media (max-width: 768px) {
+  .row {
+    min-height: 44px;
+    padding: var(--space-2) 12px;
+  }
+}
