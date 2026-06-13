@@ -571,6 +571,22 @@ pub enum IssueSort {
     ProjectStatusTimeDesc,
 }
 
+/// Partitioning key for the `bucket_by` parameter. When set, the issue list
+/// returns the top `bucket_limit` issues per partition cell instead of one
+/// flat list. Used by the board page to collapse an N-query fan-out into a
+/// single request. See [[i-aiunhiwa]] for the wire spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+// wire-casing-exempt: parent spec [[i-zowlkous]] pins the wire form as `project_status` to mirror the `(project_id, status_key)` partition tuple it represents.
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum IssueBucketBy {
+    /// Partition by `(project_id, status_key)`. Each cell returns at most
+    /// `bucket_limit` issues ordered by the effective `sort`.
+    ProjectStatus,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -641,6 +657,17 @@ pub struct SearchIssuesQuery {
     /// behaviour; `project_status_time_desc` groups by project then status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<IssueSort>,
+    /// Partition issues into top-N-per-cell buckets. When set, the response
+    /// returns at most `bucket_limit` issues per cell instead of a single
+    /// flat sorted list; `limit` becomes a global cap across all buckets,
+    /// `cursor` is rejected with 400 (per-cell pagination is a follow-up
+    /// single-cell unbucketed call), and `next_cursor` is always `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bucket_by: Option<IssueBucketBy>,
+    /// Maximum issues per partition cell when `bucket_by` is set. Required
+    /// alongside `bucket_by`; must be > 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bucket_limit: Option<u32>,
 }
 
 impl SearchIssuesQuery {
@@ -665,6 +692,8 @@ impl SearchIssuesQuery {
             cursor: None,
             count: None,
             sort: None,
+            bucket_by: None,
+            bucket_limit: None,
         }
     }
 }
@@ -950,6 +979,53 @@ mod tests {
         );
     }
 
+    /// Wire-contract check for [`IssueBucketBy`]. Same rationale as
+    /// [`IssueSort`]: the literal is what the wire carries.
+    #[test]
+    fn issue_bucket_by_serializes_to_snake_case_literal() {
+        assert_eq!(
+            serde_json::to_value(IssueBucketBy::ProjectStatus).unwrap(),
+            json!("project_status")
+        );
+        assert_eq!(
+            serde_json::from_value::<IssueBucketBy>(json!("project_status")).unwrap(),
+            IssueBucketBy::ProjectStatus
+        );
+    }
+
+    #[test]
+    fn search_issues_query_serializes_bucket_params() {
+        let query = SearchIssuesQuery {
+            bucket_by: Some(IssueBucketBy::ProjectStatus),
+            bucket_limit: Some(7),
+            ..SearchIssuesQuery::default()
+        };
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("bucket_by").map(String::as_str),
+            Some("project_status"),
+        );
+        assert_eq!(params.get("bucket_limit").map(String::as_str), Some("7"));
+    }
+
+    #[test]
+    fn search_issues_query_omits_bucket_params_when_none() {
+        let query = SearchIssuesQuery::default();
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert!(
+            !params.contains_key("bucket_by"),
+            "bucket_by=None must not appear on the wire",
+        );
+        assert!(
+            !params.contains_key("bucket_limit"),
+            "bucket_limit=None must not appear on the wire",
+        );
+    }
+
     #[test]
     fn search_issues_query_omits_sort_when_none() {
         let query = SearchIssuesQuery::default();
@@ -980,6 +1056,8 @@ mod tests {
             cursor: None,
             count: None,
             sort: None,
+            bucket_by: None,
+            bucket_limit: None,
         };
 
         let params = serialize_query_params(&query)

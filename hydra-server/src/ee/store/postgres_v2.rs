@@ -29,7 +29,7 @@ use chrono::{DateTime, Utc};
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
 use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
-use hydra_common::api::v1::issues::{IssueSort, SearchIssuesQuery};
+use hydra_common::api::v1::issues::{IssueBucketBy, IssueSort, SearchIssuesQuery};
 use hydra_common::api::v1::pagination::{
     CursorKeys, DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT,
 };
@@ -2747,52 +2747,11 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
-        // The `projects` join only carries `p.priority` for the
-        // `project_status_time` sort; skip it under the default sort so
-        // legacy test fixtures that seed `metis.statuses` rows without a
-        // matching `metis.projects` row keep returning their issues.
-        let projects_join = match query.sort {
-            Some(IssueSort::ProjectStatusTimeDesc) => format!(
-                " INNER JOIN {TABLE_PROJECTS} p ON p.id = i.project_id AND p.is_latest = true"
-            ),
-            _ => String::new(),
+        let (sql, bindings) = if query.bucket_by.is_some() {
+            build_bucketed_issues_sql_pg(query)?
+        } else {
+            build_flat_issues_sql_pg(query)?
         };
-        // Filter to the latest version of each issue using the is_latest
-        // column maintained by a BEFORE INSERT trigger, avoiding correlated
-        // subqueries or DISTINCT ON.
-        let mut sql = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-             i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
-             i.created_at, i.updated_at, \
-             (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
-             i.form, i.form_response, i.feedback, i.project_id \
-             FROM {TABLE_ISSUES_V2} i \
-             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}"
-        );
-        let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
-        predicates.push("i.is_latest = true".to_string());
-
-        let sort = match query.sort {
-            Some(IssueSort::ProjectStatusTimeDesc) => CursorSort::ProjectStatusTime {
-                priority_col: "p.priority",
-                position_col: "s.position",
-                timestamp_col: "i.created_at",
-                id_col: "i.id",
-            },
-            _ => CursorSort::CreatedAtId {
-                timestamp_col: "i.created_at",
-                id_col: "i.id",
-            },
-        };
-
-        apply_pagination_sql_pg(
-            &mut sql,
-            &mut predicates,
-            &mut bindings,
-            &query.cursor,
-            query.limit,
-            sort,
-        )?;
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
         for value in bindings {
@@ -6402,6 +6361,121 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
+}
+
+/// Build the unbucketed `list_issues` SQL + bindings. See the SQLite
+/// dialect copy — same structure, Postgres `$N` placeholders.
+fn build_flat_issues_sql_pg(
+    query: &SearchIssuesQuery,
+) -> Result<(String, Vec<String>), StoreError> {
+    // The `projects` join only carries `p.priority` for the
+    // `project_status_time` sort; skip it under the default sort so
+    // legacy test fixtures that seed `metis.statuses` rows without a
+    // matching `metis.projects` row keep returning their issues.
+    let projects_join = match query.sort {
+        Some(IssueSort::ProjectStatusTimeDesc) => {
+            format!(" INNER JOIN {TABLE_PROJECTS} p ON p.id = i.project_id AND p.is_latest = true")
+        }
+        _ => String::new(),
+    };
+    let mut sql = format!(
+        "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
+         i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
+         i.created_at, i.updated_at, \
+         (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
+         i.form, i.form_response, i.feedback, i.project_id \
+         FROM {TABLE_ISSUES_V2} i \
+         INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}"
+    );
+    let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
+    predicates.push("i.is_latest = true".to_string());
+
+    let sort = match query.sort {
+        Some(IssueSort::ProjectStatusTimeDesc) => CursorSort::ProjectStatusTime {
+            priority_col: "p.priority",
+            position_col: "s.position",
+            timestamp_col: "i.created_at",
+            id_col: "i.id",
+        },
+        _ => CursorSort::CreatedAtId {
+            timestamp_col: "i.created_at",
+            id_col: "i.id",
+        },
+    };
+
+    apply_pagination_sql_pg(
+        &mut sql,
+        &mut predicates,
+        &mut bindings,
+        &query.cursor,
+        query.limit,
+        sort,
+    )?;
+    Ok((sql, bindings))
+}
+
+/// Build the bucketed `list_issues` SQL + bindings. Uses
+/// `ROW_NUMBER() OVER (PARTITION BY ...)` to return the top
+/// `bucket_limit` rows per cell. Pagination cursor is incompatible with
+/// bucketing and is rejected here as a defence-in-depth check; the route
+/// handler is the primary validation site (returns 400).
+fn build_bucketed_issues_sql_pg(
+    query: &SearchIssuesQuery,
+) -> Result<(String, Vec<String>), StoreError> {
+    if query.cursor.is_some() {
+        return Err(StoreError::Internal(
+            "cursor is incompatible with bucket_by".to_string(),
+        ));
+    }
+    let bucket_limit = query
+        .bucket_limit
+        .ok_or_else(|| StoreError::Internal("bucket_by requires bucket_limit".to_string()))?;
+    if bucket_limit == 0 {
+        return Err(StoreError::Internal("bucket_limit must be > 0".to_string()));
+    }
+    let effective_sort = query.sort.unwrap_or(IssueSort::CreatedAtDesc);
+    let projects_join = match effective_sort {
+        IssueSort::ProjectStatusTimeDesc => {
+            format!(" INNER JOIN {TABLE_PROJECTS} p ON p.id = i.project_id AND p.is_latest = true")
+        }
+        _ => String::new(),
+    };
+    let inner_order = "i.created_at DESC, i.id DESC";
+    let partition_by = match query.bucket_by {
+        Some(IssueBucketBy::ProjectStatus) => "i.project_id, s.key",
+        _ => "i.project_id, s.key",
+    };
+
+    let (mut predicates, bindings) = build_issues_predicates_pg(query);
+    predicates.push("i.is_latest = true".to_string());
+    let where_clause = format!(" WHERE {}", predicates.join(" AND "));
+
+    let (extra_select, outer_order) = match effective_sort {
+        IssueSort::ProjectStatusTimeDesc => (
+            ", p.priority AS bucket_project_priority, s.position AS bucket_status_position",
+            "bucket_project_priority ASC, bucket_status_position ASC, created_at DESC, id DESC",
+        ),
+        _ => ("", "created_at DESC, id DESC"),
+    };
+
+    let mut sql = format!(
+        "SELECT * FROM (SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
+         i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
+         i.created_at, i.updated_at, \
+         (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
+         i.form, i.form_response, i.feedback, i.project_id{extra_select}, \
+         ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY {inner_order}) AS rn \
+         FROM {TABLE_ISSUES_V2} i \
+         INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}{where_clause}) sub \
+         WHERE rn <= {bucket_limit} \
+         ORDER BY {outer_order}"
+    );
+
+    if let Some(limit) = query.limit {
+        let capped = limit.min(PAGINATION_MAX_LIMIT);
+        sql.push_str(&format!(" LIMIT {capped}"));
+    }
+    Ok((sql, bindings))
 }
 
 /// Per-query sort descriptor for pagination helpers. See the SQLite
@@ -12665,5 +12739,113 @@ mod tests {
             );
         }
         assert_eq!(visited, full_ids);
+    }
+
+    // ---- `bucket_by=project_status` tests ----------------------------------
+
+    /// Top-N-per-cell with `bucket_by=project_status` + explicit
+    /// `sort=project_status_time_desc`: each cell returns at most
+    /// `bucket_limit` rows ordered within-cell by `created_at DESC`,
+    /// and cells are globally ordered by `(priority ASC, position ASC)`.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_bucket_by_project_status_caps_each_cell_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::issues::{IssueBucketBy, IssueSort};
+        let store = PostgresStoreV2::new(pool);
+        let (proj_a, a_todo) = seed_project_with_status_pg(&store, "pa", 100.0, "todo", 10.0).await;
+        let a_doing = add_status_in_project_pg(&store, &proj_a, "doing", 20.0).await;
+        let (proj_b, b_open) = seed_project_with_status_pg(&store, "pb", 200.0, "open", 5.0).await;
+
+        let mut a_todo_ids = Vec::new();
+        let mut a_doing_ids = Vec::new();
+        let mut b_open_ids = Vec::new();
+        for _ in 0..3 {
+            a_todo_ids.push(add_issue_in_pg(&store, &proj_a, &a_todo).await);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            a_doing_ids.push(add_issue_in_pg(&store, &proj_a, &a_doing).await);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            b_open_ids.push(add_issue_in_pg(&store, &proj_b, &b_open).await);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        let mut query = SearchIssuesQuery::default();
+        query.bucket_by = Some(IssueBucketBy::ProjectStatus);
+        query.bucket_limit = Some(2);
+        query.sort = Some(IssueSort::ProjectStatusTimeDesc);
+        let results = store.list_issues(&query).await.unwrap();
+        // Scope to test projects in case the default project seed contributes.
+        let ordered: Vec<IssueId> = results
+            .iter()
+            .filter(|(_, v)| v.item.project_id == proj_a || v.item.project_id == proj_b)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let expected = vec![
+            a_todo_ids[2].clone(),
+            a_todo_ids[1].clone(),
+            a_doing_ids[2].clone(),
+            a_doing_ids[1].clone(),
+            b_open_ids[2].clone(),
+            b_open_ids[1].clone(),
+        ];
+        assert_eq!(ordered, expected);
+    }
+
+    /// `bucket_by=project_status` without explicit `sort` defaults to
+    /// `created_at_desc`. Cells get their two newest; global ordering is
+    /// `created_at DESC`.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_bucket_by_default_sort_within_cell_created_at_desc_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::issues::IssueBucketBy;
+        let store = PostgresStoreV2::new(pool);
+        let (proj_a, a_todo) = seed_project_with_status_pg(&store, "pa", 100.0, "todo", 10.0).await;
+        let a_doing = add_status_in_project_pg(&store, &proj_a, "doing", 20.0).await;
+
+        let mut todo_ids = Vec::new();
+        let mut doing_ids = Vec::new();
+        for _ in 0..3 {
+            todo_ids.push(add_issue_in_pg(&store, &proj_a, &a_todo).await);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            doing_ids.push(add_issue_in_pg(&store, &proj_a, &a_doing).await);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        let mut query = SearchIssuesQuery::default();
+        query.bucket_by = Some(IssueBucketBy::ProjectStatus);
+        query.bucket_limit = Some(2);
+        let results = store.list_issues(&query).await.unwrap();
+        let ordered: Vec<IssueId> = results
+            .iter()
+            .filter(|(_, v)| v.item.project_id == proj_a)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let expected = vec![
+            doing_ids[2].clone(),
+            todo_ids[2].clone(),
+            doing_ids[1].clone(),
+            todo_ids[1].clone(),
+        ];
+        assert_eq!(ordered, expected);
+    }
+
+    /// Default-bucket-omitted behaviour is unchanged on Postgres v2.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_bucket_by_omitted_unchanged_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            ids.push(id);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        ids.reverse();
+        let results = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        let observed: Vec<IssueId> = results.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(observed, ids);
     }
 }
