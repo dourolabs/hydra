@@ -11,6 +11,7 @@
 
 .button {
   height: 26px;
+  min-height: var(--touch-min);
   padding: 0 10px;
   font-family: var(--f-sans);
   font-size: var(--t-xs);

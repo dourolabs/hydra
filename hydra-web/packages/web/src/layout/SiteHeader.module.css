@@ -10,24 +10,10 @@
   box-sizing: border-box;
 }
 
+/* Layout-only overlay on top of the Button primitive: the topbar is a flex
+   row with a flexible breadcrumbs slot, so the hamburger must not shrink. */
 .hamburger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  background: transparent;
-  color: var(--fg-1);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
   flex-shrink: 0;
-  transition: background var(--tx-fast), color var(--tx-fast);
-}
-
-.hamburger:hover {
-  background: var(--bg-2);
-  color: var(--fg-0);
 }
 
 .breadcrumbs {
@@ -109,14 +95,12 @@
 @media (max-width: 768px) {
   .hamburger {
     order: -1;
-    width: 44px;
-    height: 44px;
   }
 
   .searchButton {
     padding: 0;
-    width: 44px;
-    height: 44px;
+    width: var(--touch-min);
+    height: var(--touch-min);
     justify-content: center;
   }
 

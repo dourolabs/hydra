@@ -154,30 +154,13 @@
   color: var(--fg-2);
 }
 
-.sectionAdd {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border: 0;
-  background: transparent;
-  color: var(--fg-3);
-  border-radius: 3px;
-  cursor: pointer;
-  transition: background var(--tx-fast), color var(--tx-fast);
-}
-
-.sectionAdd:hover {
-  background: var(--bg-2);
-  color: var(--acc);
-}
-
 /* ─── Sidebar item ─────────────────────────────────────────────── */
 .item {
   display: flex;
   align-items: center;
   gap: 9px;
   height: 28px;
+  min-height: var(--touch-min);
   padding: 0 8px;
   border-radius: var(--radius-sm);
   color: var(--fg-1);
@@ -246,6 +229,7 @@
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
+  min-height: var(--touch-min);
   border-radius: var(--radius-sm);
   color: var(--fg-1);
   font-size: var(--t-sm);
@@ -307,6 +291,7 @@
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
+  min-height: var(--touch-min);
   border-radius: var(--radius-sm);
   color: var(--fg-1);
   font-size: var(--t-sm);
@@ -400,22 +385,12 @@
   white-space: nowrap;
 }
 
+/* Layout-only overlay on top of the Button primitive (danger-subtle sm
+   iconOnly): preserve the muted baseline color so the logout icon reads as
+   passive until hovered (Button's danger-subtle defaults to the full danger
+   accent, which is too loud for a footer position). */
 .logoutButton {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 0;
-  background: transparent;
   color: var(--fg-3);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background var(--tx-fast), color var(--tx-fast);
-}
-
-.logoutButton:hover {
-  background: var(--bg-2);
-  color: var(--s-failed);
 }
 
 .connectionStrip {
@@ -460,19 +435,6 @@
     border-right-width: 1px;
   }
 
-  /* Touch-target floor (44×44). Nav rows and chat/session rows grow to the
-     44px minimum so the full-width sidebar drawer is comfortably tappable. */
-  .item,
-  .chatRow,
-  .sessionRow {
-    min-height: 44px;
-  }
-
-  .sectionAdd,
-  .logoutButton {
-    width: 44px;
-    height: 44px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

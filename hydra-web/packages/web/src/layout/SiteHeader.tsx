@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Icons, Kbd, Tooltip } from "@hydra/ui";
+import { Button, Icons, Kbd, Tooltip } from "@hydra/ui";
 import { actorDisplayName } from "../api/auth";
 import { useAuth } from "../features/auth/useAuth";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
@@ -39,15 +39,15 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
   return (
     <header className={styles.topbar} data-testid="site-header">
       <Tooltip content={toggleLabel} position="right">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           className={styles.hamburger}
           onClick={onToggleSidebar}
           aria-label={toggleLabel}
           data-testid="site-header-toggle-sidebar"
         >
           <Icons.IconMenu />
-        </button>
+        </Button>
       </Tooltip>
 
       <div className={styles.breadcrumbs} data-testid="site-header-breadcrumbs">

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { NavLink, useLocation, useSearchParams } from "react-router-dom";
-import { HydraMark, Avatar, Kbd, Icons, Tooltip } from "@hydra/ui";
+import { HydraMark, Avatar, Button, Kbd, Icons, Tooltip } from "@hydra/ui";
 import type { ConversationSummary, VersionResponse } from "@hydra/api";
 import { apiClient } from "../api/client";
 import { useAuth } from "../features/auth/useAuth";
@@ -468,14 +468,15 @@ export function Sidebar({ connectionState, hidden, onHide, onOpenSearch }: Sideb
               )}
             </div>
             <Tooltip content="Logout" position="top">
-              <button
-                type="button"
+              <Button
+                variant="danger-subtle"
+                size="sm"
                 className={styles.logoutButton}
                 onClick={logout}
                 aria-label="Logout"
               >
                 <Icons.IconX size={14} />
-              </button>
+              </Button>
             </Tooltip>
           </div>
         )}

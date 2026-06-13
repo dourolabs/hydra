@@ -200,6 +200,16 @@ vi.mock("@hydra/ui", () => ({
       </div>
     ) : null,
   FlowPill: () => <span data-testid="flow-pill" />,
+  Button: ({
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: string;
+    size?: string;
+  }) => {
+    const { variant: _variant, size: _size, ...rest } = props;
+    return <button {...rest}>{children}</button>;
+  },
   Icons: {
     IconSettings: () => <span data-testid="icon-settings" />,
     IconSpark: () => <span data-testid="icon-spark" />,

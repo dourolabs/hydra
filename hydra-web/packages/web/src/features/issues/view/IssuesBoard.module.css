@@ -74,37 +74,18 @@
   min-width: 0;
 }
 
+/* Layout-only overlay on top of the Button primitive (ghost sm iconOnly):
+   add a transform transition so the chevron rotates smoothly when the
+   project body collapses, in sync with the 180ms grid-template-rows
+   transition on `.projectGroupBody`. Re-declares Button's own transitions
+   since the `transition` shorthand replaces rather than merges. */
 .projectCollapseToggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  background: transparent;
-  border: 1px solid transparent;
   border-radius: var(--radius-xs);
-  color: var(--fg-2);
-  cursor: pointer;
-  /* Match the chevron-down → chevron-right look by rotating the icon when
-     collapsed. Same transition timing as the body collapse keeps the two
-     in sync. */
   transition:
-    color var(--tx-fast),
     background var(--tx-fast),
     border-color var(--tx-fast),
+    color var(--tx-fast),
     transform 180ms ease;
-}
-
-.projectCollapseToggle:hover {
-  background: var(--bg-2);
-  border-color: var(--line);
-  color: var(--fg-0);
-}
-
-.projectCollapseToggle:focus-visible {
-  outline: 1px solid var(--line-strong);
-  outline-offset: 1px;
 }
 
 .projectCollapseToggleCollapsed {
@@ -147,33 +128,18 @@
   min-height: 22px;
 }
 
+/* Layout-only overlay on top of the Button primitive (secondary sm iconOnly):
+   nudge the baseline a half-shade darker (`bg-2` vs Button's `bg-1`) and tone
+   down the icon color so the gear reads as a secondary affordance inside the
+   already-saturated project bar. */
 .projectSettingsButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
   background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
   color: var(--fg-2);
-  cursor: pointer;
-  transition:
-    background var(--tx-fast),
-    border-color var(--tx-fast),
-    color var(--tx-fast);
+  border-radius: var(--radius-xs);
 }
 
-.projectSettingsButton:hover {
+.projectSettingsButton:hover:not(:disabled) {
   background: var(--bg-3);
-  border-color: var(--line-strong);
-  color: var(--fg-0);
-}
-
-.projectSettingsButton:focus-visible {
-  outline: 1px solid var(--line-strong);
-  outline-offset: 1px;
 }
 
 .projectMeta {
@@ -307,6 +273,8 @@
   justify-content: center;
   width: 18px;
   height: 18px;
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
@@ -441,6 +409,8 @@
   justify-content: center;
   width: 26px;
   height: 26px;
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
   padding: 0;
   background: var(--acc-soft);
   border: 1px solid var(--acc);
@@ -498,6 +468,7 @@
 
 .colLoadMoreButton {
   height: 26px;
+  min-height: var(--touch-min);
   padding: 0 12px;
   background: var(--bg-1);
   border: 1px solid var(--line);
@@ -685,28 +656,5 @@
     min-width: 0;
     align-self: center;
     justify-content: center;
-  }
-
-  /* Touch-target floor for the project-bar controls and per-column gear.
-     The project bar's `.projectBarRight` min-height is also bumped so the
-     row keeps its alignment when the controls expand to 44×44. */
-  .projectCollapseToggle,
-  .projectSettingsButton,
-  .colGear {
-    width: 44px;
-    height: 44px;
-  }
-
-  .projectBarRight {
-    min-height: 44px;
-  }
-
-  .colLoadMoreButton {
-    min-height: 44px;
-  }
-
-  .cardChatButton {
-    width: 44px;
-    height: 44px;
   }
 }

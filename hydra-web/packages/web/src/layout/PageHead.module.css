@@ -3,6 +3,7 @@
   align-items: flex-end;
   gap: 16px;
   padding: 18px 24px 14px;
+  min-height: var(--touch-min);
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
@@ -49,7 +50,6 @@
     gap: 12px;
     row-gap: 8px;
     padding: 10px 16px;
-    min-height: 44px;
   }
 
   .headLeft {

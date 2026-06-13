@@ -16,7 +16,7 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { Icons } from "@hydra/ui";
+import { Button, Icons } from "@hydra/ui";
 import type {
   ConversationSummary,
   ListProjectsResponse,
@@ -297,8 +297,9 @@ export function ProjectSection({
         data-testid={`board-project-bar-${project.key}`}
         {...(sortableDragHandleProps ?? {})}
       >
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="sm"
           className={
             collapsed
               ? `${styles.projectCollapseToggle} ${styles.projectCollapseToggleCollapsed}`
@@ -320,7 +321,7 @@ export function ProjectSection({
           data-testid={`board-project-collapse-${project.key}`}
         >
           <Icons.IconChevronDown size={14} />
-        </button>
+        </Button>
         <div className={styles.projectBarLeft}>
           <ProjectChip
             projectKey={project.key}
@@ -341,8 +342,9 @@ export function ProjectSection({
           className={styles.projectBarRight}
           data-testid={`board-project-actions-${project.key}`}
         >
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             className={styles.projectSettingsButton}
             onClick={() => onOpenSettings(project.project_id)}
             title="Project settings"
@@ -350,7 +352,7 @@ export function ProjectSection({
             data-testid={`board-project-settings-${project.key}`}
           >
             <Icons.IconSettings size={14} />
-          </button>
+          </Button>
         </div>
       </div>
       {/* While any project is being dragged, every section collapses to just

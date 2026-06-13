@@ -7,6 +7,16 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 vi.mock("@hydra/ui", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Kbd: ({ children }: { children: React.ReactNode }) => <kbd>{children}</kbd>,
+  Button: ({
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    variant?: string;
+    size?: string;
+  }) => {
+    const { variant: _variant, size: _size, ...rest } = props;
+    return <button {...rest}>{children}</button>;
+  },
   Icons: new Proxy(
     {},
     {
