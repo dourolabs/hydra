@@ -53,28 +53,11 @@
   max-width: 100%;
 }
 
-/* "Has activity" treatment for tabs whose badge prop is set (e.g. the
-   Sessions tab when active session count > 0). Mirrors the Sidebar's
-   `.itemActive` highlight verbatim: subtle bg-3 lozenge behind the cell
-   + brightened fg-0 text/icon. The accent top-border completes the
-   "this cell wants attention" cue. */
-.tab[data-has-activity="true"] {
+/* Selected-tab treatment — mirrors the Sidebar's `.itemActive` highlight
+   (background lozenge + brightened text) and adds the accent top-border
+   that doubles as the bar's "you're here" indicator. */
+.tabActive {
   background: var(--bg-3);
   color: var(--fg-0);
   border-top-color: var(--acc);
-}
-
-/* The current-route tab wins on text color: accent text + filled icon.
-   Background from has-activity (if any) stays — when Sessions is both
-   selected and has activity, the lozenge underlines that. */
-.tab.tabActive {
-  color: var(--acc);
-  border-top-color: var(--acc);
-}
-
-.tab.tabActive .icon {
-  /* Filled-icon treatment for active state: every icon in @hydra/ui draws
-     strokes in currentColor. Setting fill: currentColor turns the outlined
-     glyph into a filled one without needing separate icon variants. */
-  fill: currentColor;
 }
