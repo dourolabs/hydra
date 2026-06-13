@@ -19,10 +19,13 @@ test.describe("Mobile Issues Board @mobile:issues-board", () => {
     // The mobile board picker must appear when more than one project exists.
     await expect(page.getByTestId("board-mobile-picker")).toBeVisible();
 
-    // Only one project section should be mounted at a time. `board-project-bar-…`
-    // is on the project bar so its count is the section count.
-    const bars = page.locator('[data-testid^="board-project-bar-"]');
-    await expect(bars).toHaveCount(1);
+    // Only one project section should be mounted at a time. The `<section>`
+    // root carries `data-testid="board-project-<key>"`; nested
+    // `board-project-bar-…` / `board-project-body-…` testids live on inner
+    // divs, so scoping by tag isolates the section root regardless of
+    // `hideBar`.
+    const sections = page.locator('section[data-testid^="board-project-"]');
+    await expect(sections).toHaveCount(1);
   });
 
   test("picker selection persists across navigations @mobile:issues-board", async ({
@@ -45,12 +48,12 @@ test.describe("Mobile Issues Board @mobile:issues-board", () => {
     if (count < 2) {
       test.skip(true, "Need at least two seeded projects for this assertion");
     }
-    const secondTestId = await options.nth(1).getAttribute("data-testid");
-    if (!secondTestId) throw new Error("missing data-testid on picker row");
-    await options.nth(1).click();
+    // Capture the row's label *before* clicking — the click closes the picker
+    // and unmounts the row, so reading textContent after would return null.
     const initiallySelectedLabel = (
-      await page.getByTestId(secondTestId).textContent()
+      await options.nth(1).textContent()
     )?.trim();
+    await options.nth(1).click();
 
     // Navigate away and back; the selection should be restored.
     await page.goto("/sessions");

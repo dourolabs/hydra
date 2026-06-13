@@ -58,7 +58,7 @@ import {
   SortableProjectSection,
   type ProjectSectionProps,
 } from "./ProjectSection";
-import type { IssueDropHandler } from "./BoardColumn";
+import { TouchDragHoverProvider, type IssueDropHandler } from "./BoardColumn";
 import styles from "./IssuesBoard.module.css";
 
 interface IssuesBoardProps {
@@ -713,6 +713,7 @@ export function IssuesBoard({
     : 0;
 
   return (
+    <TouchDragHoverProvider>
     <div className={styles.kanban}>
       {showMobilePicker &&
         (() => {
@@ -836,5 +837,6 @@ export function IssuesBoard({
         />
       )}
     </div>
+    </TouchDragHoverProvider>
   );
 }

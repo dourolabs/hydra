@@ -1,4 +1,11 @@
-import { useEffect } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { Link } from "react-router-dom";
 import { Avatar, FlowPill, Icons, TypeChip } from "@hydra/ui";
@@ -29,6 +36,29 @@ import styles from "./IssuesBoard.module.css";
 // drop handler to disambiguate from arbitrary OS-level drags (file drops,
 // text selections, etc.) so neither side preventDefaults the wrong drop.
 export const ISSUE_CARD_DRAG_MIME = "application/x.hydra-issue-card";
+
+// During a touch-drag the source card publishes the column it's currently
+// over via this context. Each `BoardColumn` reads it and self-applies the
+// drop-target highlight when its own `touchDropId` matches — keeping the
+// hover style declarative instead of mutating a queried node's classList.
+interface TouchDragHoverContextValue {
+  hoverId: string | null;
+  setHoverId: (id: string | null) => void;
+}
+const TouchDragHoverContext = createContext<TouchDragHoverContextValue>({
+  hoverId: null,
+  setHoverId: () => {},
+});
+
+export function TouchDragHoverProvider({ children }: { children: ReactNode }) {
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const value = useMemo(() => ({ hoverId, setHoverId }), [hoverId]);
+  return (
+    <TouchDragHoverContext.Provider value={value}>
+      {children}
+    </TouchDragHoverContext.Provider>
+  );
+}
 
 export interface IssueDragPayload {
   issueId: string;
@@ -138,8 +168,14 @@ function BoardColumn({
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const assignTo = status.on_enter?.assign_to ?? null;
   const isInteractive = status.interactive === true;
+  // Long-press touch drag uses this id to hit-test which column the finger is
+  // over. The HTML5 drag-and-drop path is unchanged and stays the only flow
+  // on desktop.
+  const touchDropId = `${project.project_id}::${status.key}`;
+  const { hoverId } = useContext(TouchDragHoverContext);
   const colClasses = [styles.col];
   if (isDragging) colClasses.push(styles.colDragging);
+  if (hoverId === touchDropId) colClasses.push(styles.colTouchDropOver);
 
   const handleColumnDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     if (!e.dataTransfer.types.includes(ISSUE_CARD_DRAG_MIME)) return;
@@ -162,11 +198,6 @@ function BoardColumn({
       statusKey: status.key,
     });
   };
-
-  // Long-press touch drag uses this id to hit-test which column the finger is
-  // over. The HTML5 drag-and-drop path is unchanged and stays the only flow
-  // on desktop.
-  const touchDropId = `${project.project_id}::${status.key}`;
 
   return (
     <div
@@ -345,20 +376,16 @@ function BoardIssueCard({
     },
   });
 
-  // Toggle a highlight class on the column the finger is currently over so
-  // the user has a visible drop preview during the touch-drag gesture.
+  // Publish the column under the finger so the matching `BoardColumn` can
+  // self-apply the drop-target highlight via context — no DOM querying or
+  // imperative classList mutation.
+  const { setHoverId } = useContext(TouchDragHoverContext);
+  const touchHoverId = touchDrag.state.hoverTargetId;
   useEffect(() => {
-    const hoverId = touchDrag.state.hoverTargetId;
-    if (!hoverId) return;
-    const el = document.querySelector(
-      `[data-touch-drop-id="${CSS.escape(hoverId)}"]`,
-    );
-    if (!el) return;
-    el.classList.add(styles.colTouchDropOver);
-    return () => {
-      el.classList.remove(styles.colTouchDropOver);
-    };
-  }, [touchDrag.state.hoverTargetId]);
+    if (touchHoverId === null) return;
+    setHoverId(touchHoverId);
+    return () => setHoverId(null);
+  }, [touchHoverId, setHoverId]);
 
   const handleCardDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     const payload: IssueDragPayload = {

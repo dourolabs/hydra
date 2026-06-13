@@ -32,7 +32,7 @@ interface TouchDragState {
  * testing; `touchend` over a resolved drop target invokes `onDrop`.
  *
  * Returns `state` (so the caller can style the source as "dragging" and
- * highlight the hovered drop target via `data-touch-drag-over`) and
+ * publish the hovered drop target id to a sibling for highlighting) and
  * `handlers` (spread onto the source element).
  */
 export function useTouchDrag<T>(opts: TouchDragOptions<T>): {
