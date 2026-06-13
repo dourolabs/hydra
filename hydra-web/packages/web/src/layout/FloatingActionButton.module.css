@@ -1,0 +1,44 @@
+.fab {
+  position: fixed;
+  right: 16px;
+  /* Sit ~16px above the mobile bottom-tab bar (which is itself --mobile-nav-height
+     tall plus --safe-area-bottom for the iOS home indicator). */
+  bottom: calc(var(--mobile-nav-height) + 16px + var(--safe-area-bottom));
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--acc);
+  color: var(--acc-fg-on);
+  border: none;
+  cursor: pointer;
+  /* Above content and the bottom-tab bar (z-index 5), below modals (100+). */
+  z-index: 8;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.2),
+    0 6px 14px rgba(0, 0, 0, 0.25);
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease;
+}
+
+.fab:hover {
+  background: var(--acc-bright);
+}
+
+.fab:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 3px;
+}
+
+.fab:active {
+  transform: translateY(1px);
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
