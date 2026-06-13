@@ -126,6 +126,10 @@ describe("useBoardIssuesByProject", () => {
     // No per-cell project/status filter on the bulk call.
     expect(arg.project_id).toBeUndefined();
     expect(arg.status).toBeUndefined();
+    // No global `limit` on the bulk call — the backend applies `limit` as a
+    // global cap *after* per-bucket truncation, so a default 50 would
+    // silently empty later projects' cells in a populated workspace.
+    expect(arg.limit).toBeUndefined();
   });
 
   it("groups bulk response across multiple projects into the correct cells", async () => {

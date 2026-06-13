@@ -45,12 +45,11 @@ export interface IssueFilters {
 function buildQuery(
   filters: IssueFilters,
   cursor?: string | null,
-  limit: number = PAGE_SIZE,
+  limit?: number,
   sort?: SearchIssuesQuery["sort"],
 ): Partial<SearchIssuesQuery> {
-  const query: Partial<SearchIssuesQuery> = {
-    limit,
-  };
+  const query: Partial<SearchIssuesQuery> = {};
+  if (limit !== undefined) query.limit = limit;
   // `SearchIssuesQuery.status` is now `string` (StatusKey) on the wire after
   // backend [[i-dlcqjubx]]; no cast required.
   if (filters.status) query.status = filters.status;

@@ -304,7 +304,7 @@ describe("Issue list filtering", () => {
         name: key,
         statuses,
         creator: "testuser",
-        deleted: false,
+        archived: false,
         priority,
       };
     }
