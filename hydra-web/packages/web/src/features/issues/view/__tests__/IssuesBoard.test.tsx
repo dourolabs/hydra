@@ -35,6 +35,10 @@ vi.mock("../../../projects/useProjects", () => ({
 
 vi.mock("../../usePaginatedIssues", () => ({
   useBoardIssuesByProject: () => cellsByProject,
+  // Must mirror the live export — IssuesBoard's optimistic drag-drop reads
+  // the query-cache shape via this marker, and `vi.mock` would otherwise
+  // leave it undefined.
+  BOARD_BULK_QUERY_KEY_MARKER: "board-bulk",
 }));
 
 vi.mock("../../../dashboard/usePageIssueTrees", () => ({
