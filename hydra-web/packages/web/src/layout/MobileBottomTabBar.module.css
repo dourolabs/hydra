@@ -58,16 +58,22 @@
   height: 14px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--acc);
-  color: var(--acc-fg-on);
+  /* Use the in-progress amber so the badge reads as "live activity" — same
+     token the SiteHeader cluster-dot pulses with and the in-progress Badge
+     variant uses. `--bg-0` gives high-contrast dark text on amber. */
+  background: var(--s-progress);
+  color: var(--bg-0);
   font-family: var(--f-sans);
   font-size: var(--t-xxs);
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0;
   box-sizing: border-box;
-  /* Subtle ring to separate the badge from the icon strokes underneath. */
-  box-shadow: 0 0 0 2px var(--bg-1);
+  /* Subtle ring to separate the badge from the icon strokes underneath and
+     a soft glow to echo the SiteHeader pulse-dot treatment. */
+  box-shadow:
+    0 0 0 2px var(--bg-1),
+    0 0 0 4px color-mix(in srgb, var(--s-progress) 22%, transparent);
 }
 
 .badgeDot {
