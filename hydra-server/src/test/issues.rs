@@ -1123,7 +1123,7 @@ fn test_form() -> Form {
                 requires: vec!["name".to_string(), "env".to_string()],
                 effect: Effect::UpdateIssue {
                     status: hydra_common::api::v1::projects::StatusKey::try_new("closed").unwrap(),
-                    set_feedback_from: None,
+                    add_comment_from: None,
                 },
             },
             Action {
@@ -1215,13 +1215,13 @@ async fn submit_form_action_valid_submission() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::Result<()> {
-    // `Effect::UpdateIssue { set_feedback_from: Some(field) }` writes
-    // the named form-field value into `issue.feedback` in the same write
-    // that sets `status`. This powers the same-issue review hand-off —
-    // the reviewer's `request_changes` action both moves the issue back
-    // to in-development and stamps the review comment as feedback so
-    // the SWE respawn picks it up.
+async fn submit_form_action_posts_comment_from_field_atomically() -> anyhow::Result<()> {
+    // `Effect::UpdateIssue { add_comment_from: Some(field) }` posts an
+    // issue comment whose body is the named form-field value, together
+    // with the status transition. This powers the same-issue review
+    // hand-off — the reviewer's `request_changes` action both moves the
+    // issue back to in-development and records the review comment so the
+    // SWE respawn picks it up.
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -1246,7 +1246,7 @@ async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::R
             requires: vec!["review_comment".to_string()],
             effect: Effect::UpdateIssue {
                 status: hydra_common::api::v1::projects::StatusKey::try_new("in-progress").unwrap(),
-                set_feedback_from: Some("review_comment".to_string()),
+                add_comment_from: Some("review_comment".to_string()),
             },
         }],
     };
@@ -1281,21 +1281,36 @@ async fn submit_form_action_writes_feedback_from_field_atomically() -> anyhow::R
         .json()
         .await?;
     assert_eq!(fetched.issue.status.key.as_str(), "in-progress");
+
+    let comments: hydra_common::api::v1::comments::ListCommentsResponse = client
+        .get(format!(
+            "{}/v1/issues/{}/comments",
+            server.base_url(),
+            issue_id
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     assert_eq!(
-        fetched.issue.feedback,
-        Some("please address X and Y".to_string()),
-        "set_feedback_from must copy the named field's value into issue.feedback"
+        comments.comments.len(),
+        1,
+        "add_comment_from must post exactly one comment"
+    );
+    assert_eq!(
+        comments.comments[0].body, "please address X and Y",
+        "add_comment_from must use the named field's value as the comment body"
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn submit_form_action_set_feedback_from_rejects_missing_field() -> anyhow::Result<()> {
-    // A misconfigured action that names a `set_feedback_from` field but
-    // does not list it in `requires` (so the field can legally be absent
-    // from a submission) must fail loudly rather than silently stamping
-    // an empty feedback string.
+async fn submit_form_action_add_comment_from_skips_when_field_absent() -> anyhow::Result<()> {
+    // When the named `add_comment_from` field is absent from the
+    // submission (e.g. the action does not list it in `requires`), the
+    // status transition still applies but no comment is posted.
     let server = spawn_test_server().await?;
     let client = test_client();
 
@@ -1313,7 +1328,6 @@ async fn submit_form_action_set_feedback_from_rejects_missing_field() -> anyhow:
             },
             default: None,
         }],
-        // Note: `requires` intentionally empty — this is the misconfiguration.
         actions: vec![Action {
             id: "request_changes".to_string(),
             label: "Request changes".to_string(),
@@ -1321,13 +1335,13 @@ async fn submit_form_action_set_feedback_from_rejects_missing_field() -> anyhow:
             requires: vec![],
             effect: Effect::UpdateIssue {
                 status: hydra_common::api::v1::projects::StatusKey::try_new("in-progress").unwrap(),
-                set_feedback_from: Some("review_comment".to_string()),
+                add_comment_from: Some("review_comment".to_string()),
             },
         }],
     };
     let issue_id = create_issue_with_form(&client, &server.base_url(), form).await?;
 
-    let resp = client
+    let _: SubmitFormResponse = client
         .post(format!(
             "{}/v1/issues/{}/actions",
             server.base_url(),
@@ -1338,8 +1352,10 @@ async fn submit_form_action_set_feedback_from_rejects_missing_field() -> anyhow:
             HashMap::new(),
         ))
         .send()
+        .await?
+        .error_for_status()?
+        .json()
         .await?;
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
 
     let fetched: IssueVersionRecord = client
         .get(format!("{}/v1/issues/{}", server.base_url(), issue_id))
@@ -1348,8 +1364,25 @@ async fn submit_form_action_set_feedback_from_rejects_missing_field() -> anyhow:
         .json()
         .await?;
     assert_eq!(
-        fetched.issue.feedback, None,
-        "issue.feedback must not be touched when the action fails"
+        fetched.issue.status.key.as_str(),
+        "in-progress",
+        "status transition must still apply when the field is absent"
+    );
+
+    let comments: hydra_common::api::v1::comments::ListCommentsResponse = client
+        .get(format!(
+            "{}/v1/issues/{}/comments",
+            server.base_url(),
+            issue_id
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        comments.comments.is_empty(),
+        "no comment must be posted when the named field is absent"
     );
 
     Ok(())

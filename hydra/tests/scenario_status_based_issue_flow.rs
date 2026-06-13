@@ -2,6 +2,7 @@ mod harness;
 
 use anyhow::{Context, Result};
 use hydra_common::{
+    api::v1::comments::ListCommentsQuery,
     issues::{
         IssueDependencyType, IssueInput, IssueType, SessionSettings, SubmitFormRequest,
         UpsertIssueRequest,
@@ -43,7 +44,7 @@ actions:
     effect:
       type: update_issue
       status: in-development
-      set_feedback_from: review_comment
+      add_comment_from: review_comment
 "#;
 
 fn agent_principal(name: &str) -> Principal {
@@ -322,9 +323,14 @@ async fn status_based_flow_approve_path() -> Result<()> {
         child_after.issue.status.unblocks_parents,
         "`done` must mark unblocks_parents so the parent can close"
     );
+    let approve_comments = user
+        .client()
+        .list_issue_comments(&child_id, &ListCommentsQuery::default())
+        .await
+        .context("list comments after approve")?;
     assert!(
-        child_after.issue.feedback.is_none(),
-        "approve action should not set feedback (no set_feedback_from declared)"
+        approve_comments.comments.is_empty(),
+        "approve action should not post a comment (no add_comment_from declared)"
     );
 
     Ok(())
@@ -363,10 +369,19 @@ async fn status_based_flow_reject_path() -> Result<()> {
         "in-development",
         "reject action should transition child back to `in-development`"
     );
+    let reject_comments = user
+        .client()
+        .list_issue_comments(&child_id, &ListCommentsQuery::default())
+        .await
+        .context("list comments after reject")?;
     assert_eq!(
-        child_after.issue.feedback.as_deref(),
-        Some("needs work"),
-        "reject should copy review_comment into issue.feedback via set_feedback_from"
+        reject_comments.comments.len(),
+        1,
+        "reject should post exactly one comment via add_comment_from"
+    );
+    assert_eq!(
+        reject_comments.comments[0].body, "needs work",
+        "reject should post the review_comment field as the comment body"
     );
     assert_eq!(
         child_after.issue.assignee.as_ref(),

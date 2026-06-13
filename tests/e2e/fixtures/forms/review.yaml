@@ -3,12 +3,12 @@ prompt: |
 
   Review the patch attached to this issue. Use **Approve** to advance the
   issue to `pending-release`, or **Request changes** to send it back to
-  `in-development` with your comment recorded as the issue feedback.
+  `in-development` with your comment recorded as an issue comment.
 
 fields:
   - key: review_comment
     label: Review comment
-    description: Feedback for the SWE. Required when requesting changes; copied into issue.feedback.
+    description: Feedback for the SWE. Required when requesting changes; posted as an issue comment.
     input:
       type: textarea
       placeholder: "What needs to change, or why this is approved..."
@@ -30,4 +30,4 @@ actions:
     effect:
       type: update_issue
       status: in-development
-      set_feedback_from: review_comment
+      add_comment_from: review_comment
