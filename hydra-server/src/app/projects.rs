@@ -142,13 +142,19 @@ pub async fn resolve_status_with_cache(
 /// Companion to [`resolve_status_with_cache`] for callers that also need
 /// direct project access (e.g. checking whether a target status key is
 /// declared) over the same cache.
+///
+/// `include_deleted=true` is intentional: a soft-deleted project's
+/// `Project.statuses` is still authoritative for resolving the status
+/// definitions of issues that still reference it. Filtering tombstoned
+/// projects out here causes the issue-list / get-issue routes to 500
+/// on every orphan row (see `routes/issue_response.rs`).
 pub async fn project_cached<'a>(
     cache: &'a mut HashMap<ProjectId, Project>,
     store: &dyn ReadOnlyStore,
     project_id: &ProjectId,
 ) -> Result<&'a Project, ResolveStatusError> {
     if !cache.contains_key(project_id) {
-        let project = match store.get_project(project_id, false).await {
+        let project = match store.get_project(project_id, true).await {
             Ok(versioned) => versioned.item,
             Err(StoreError::ProjectNotFound(_)) => {
                 return Err(ResolveStatusError::ProjectNotFound(project_id.clone()));

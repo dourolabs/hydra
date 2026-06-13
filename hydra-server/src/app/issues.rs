@@ -2112,14 +2112,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn issue_not_ready_when_own_status_resolution_fails() {
-        // Mirror of the blocker/child status-resolution-failure
-        // pattern, applied to the issue's own status. The store
-        // refuses to add an issue with an unknown status outright, so
-        // we instead soft-delete the owning project after the issue
-        // is registered: that takes `resolve_status` down the
-        // `ProjectNotFound` branch, which the new own-status check
-        // must convert into `Ok(false)` with a warn log.
+    async fn issue_ready_when_owning_project_is_soft_deleted() {
+        // `project_cached` resolves through `get_project(..., true)`, so a
+        // soft-deleted owning project still surfaces its status list —
+        // `resolve_status` succeeds and readiness falls through to the
+        // declared status flags (`suppress_sessions=false` here). This
+        // protects the orphan-500 read-path fix (`build_issue_response`
+        // no longer 500s when a parent project is archived).
         let state = test_state();
         let project_id = seed_parked_project(&state, false).await;
 
@@ -2137,6 +2136,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!state.is_issue_ready(&issue_id).await.unwrap());
+        assert!(state.is_issue_ready(&issue_id).await.unwrap());
     }
 }
