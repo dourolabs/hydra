@@ -12,6 +12,7 @@ import { createDocumentRoutes } from "./documents.js";
 import type {
   Issue,
   Patch,
+  Project,
   Session,
   Document,
   Status,
@@ -286,6 +287,137 @@ describe("Issue list filtering", () => {
         (i: { issue: { project_id: string } }) => i.issue.project_id === "engineering-v2",
       ),
     ).toBe(true);
+  });
+
+  // PR-2 wired the issues list page to `sort=project_status_time_desc`.
+  // Mock parity with the backend ordering — (project.priority ASC,
+  // status.position ASC, created_at DESC, id DESC) — keeps the list-page
+  // section order stable under `pnpm dev` against `@hydra/mock-server`.
+  describe("sort=project_status_time_desc", () => {
+    function placeholderProject(
+      key: string,
+      priority: number,
+      statuses: StatusDefinition[],
+    ): Project {
+      return {
+        key,
+        name: key,
+        statuses,
+        creator: "testuser",
+        deleted: false,
+        priority,
+      };
+    }
+
+    function statusDef(key: StatusKey, position: number): StatusDefinition {
+      return {
+        key,
+        label: key,
+        color: "#888888",
+        position,
+        unblocks_parents: false,
+        unblocks_dependents: false,
+        cascades_to_children: false,
+      };
+    }
+
+    function issueWith(
+      projectId: string,
+      status: StatusDefinition,
+    ): Issue {
+      const base = makeIssue();
+      return { ...base, project_id: projectId, status };
+    }
+
+    it("orders issues by (project.priority ASC, status.position ASC, created_at DESC, id DESC)", async () => {
+      // Two projects with distinct priorities; lower priority sorts first.
+      store.create(
+        "projects",
+        "j-low",
+        placeholderProject("low", 0, [
+          statusDef("open", 0),
+          statusDef("in-progress", 1),
+        ]),
+        null,
+      );
+      store.create(
+        "projects",
+        "j-high",
+        placeholderProject("high", 10, [statusDef("open", 0)]),
+        null,
+      );
+
+      // Within `j-low`, `open` (position 0) precedes `in-progress`
+      // (position 1); within a status, newer `created_at` wins (we control
+      // creation order via sequential `store.create` calls separated by a
+      // small async delay so each entry gets a strictly-later `created_at`
+      // timestamp — without that gap, `Date.now()` ties and we'd fall
+      // through to the id-DESC tiebreaker, masking the created_at tier).
+      const tick = () => new Promise((r) => setTimeout(r, 2));
+      store.create(
+        "issues",
+        "i-low-prog-old",
+        issueWith("j-low", statusDef("in-progress", 1)),
+        "issue",
+      );
+      await tick();
+      store.create(
+        "issues",
+        "i-low-open-old",
+        issueWith("j-low", statusDef("open", 0)),
+        "issue",
+      );
+      await tick();
+      store.create(
+        "issues",
+        "i-low-open-new",
+        issueWith("j-low", statusDef("open", 0)),
+        "issue",
+      );
+      await tick();
+      store.create(
+        "issues",
+        "i-high-open",
+        issueWith("j-high", statusDef("open", 0)),
+        "issue",
+      );
+
+      const data = await listIssues({ sort: "project_status_time_desc" });
+      const ids = data.issues.map((i: { issue_id: string }) => i.issue_id);
+      expect(ids).toEqual([
+        "i-low-open-new",
+        "i-low-open-old",
+        "i-low-prog-old",
+        "i-high-open",
+      ]);
+    });
+
+    it("falls through to id DESC as the final tiebreaker", async () => {
+      // Two issues with the same project + status + created_at must be
+      // resolved by id DESC. Force the same timestamp by creating both
+      // synchronously — the mock store uses `Date.now()` at create-time
+      // so back-to-back creates with no async gap tie on `created_at`.
+      store.create("issues", "i-a", makeIssue(), "issue");
+      store.create("issues", "i-b", makeIssue(), "issue");
+      const data = await listIssues({ sort: "project_status_time_desc" });
+      const ids = data.issues.map((i: { issue_id: string }) => i.issue_id);
+      // No timestamp guarantee — assert only that *one* of the two orders
+      // is produced, AND that id DESC controls when timestamps tie.
+      // Practically: timestamps are typically equal here; check id DESC.
+      expect(ids[0]).toBe("i-b");
+      expect(ids[1]).toBe("i-a");
+    });
+
+    it("preserves the existing updated_at DESC default when sort is omitted", async () => {
+      store.create("issues", "i-1", makeIssue(), "issue");
+      store.create("issues", "i-2", makeIssue(), "issue");
+      store.create("issues", "i-3", makeIssue(), "issue");
+      // Touch i-1 last so it floats to the top under updated_at DESC.
+      store.update("issues", "i-1", makeIssue(), "issue");
+      const data = await listIssues();
+      const ids = data.issues.map((i: { issue_id: string }) => i.issue_id);
+      expect(ids[0]).toBe("i-1");
+    });
   });
 
   it("AND-composes multi-status, project_id, and assignee", async () => {
