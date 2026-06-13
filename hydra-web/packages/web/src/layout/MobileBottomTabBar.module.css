@@ -54,24 +54,23 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 14px;
+  min-width: 16px;
   height: 14px;
   padding: 0 4px;
   border-radius: 999px;
-  /* Use the in-progress amber so the badge reads as "live activity" — same
-     token the SiteHeader cluster-dot uses and the in-progress Badge variant
-     uses. `--bg-0` gives high-contrast dark text on amber. */
-  background: var(--s-progress);
-  color: var(--bg-0);
+  /* Tinted-pill treatment mirroring the live RunTime pill
+     (Runtime.module.css `.rtInstrument.isLive`): low-opacity amber wash,
+     slightly stronger amber border, amber text. Reads as "in progress"
+     without the visual weight of a solid amber chip. */
+  background: color-mix(in oklch, var(--s-progress) 14%, transparent);
+  border: 1px solid color-mix(in oklch, var(--s-progress) 35%, transparent);
+  color: var(--s-progress);
   font-family: var(--f-sans);
   font-size: var(--t-xxs);
   font-weight: 500;
   line-height: 1;
   letter-spacing: 0;
   box-sizing: border-box;
-  /* 2px ring against the bar's background separates the badge from the
-     icon strokes underneath without drawing extra attention. */
-  box-shadow: 0 0 0 2px var(--bg-1);
 }
 
 .badgeDot {
@@ -79,6 +78,10 @@
   width: 8px;
   height: 8px;
   padding: 0;
+  /* The dot variant is presence-only — fill with a solid amber so it stays
+     legible at this size; the tinted wash + border would all but disappear. */
+  background: var(--s-progress);
+  border-color: transparent;
 }
 
 .label {
