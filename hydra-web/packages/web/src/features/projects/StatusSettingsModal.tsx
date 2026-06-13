@@ -193,9 +193,9 @@ function EditStatusModal({
         const updated = nextStatuses[index];
         return apiClient.updateProjectStatus(projectId, statusKey, updated);
       }
-      // Pure delete (without bulk move) — `moveAndDeleteMutation`
-      // covers the bulk-move-then-delete branch directly.
-      return apiClient.deleteProjectStatus(projectId, statusKey);
+      // Archive without bulk move — `moveAndDeleteMutation` covers the
+      // bulk-move-then-archive branch directly.
+      return apiClient.archiveProjectStatus(projectId, statusKey);
     },
     onMutate: async ({ nextStatuses }) => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
@@ -390,7 +390,7 @@ function EditStatusModal({
         });
       }
       try {
-        return await apiClient.deleteProjectStatus(projectId, statusKey);
+        return await apiClient.archiveProjectStatus(projectId, statusKey);
       } catch (err) {
         if (previous) {
           queryClient.setQueryData(PROJECTS_QUERY_KEY, previous);

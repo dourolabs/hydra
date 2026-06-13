@@ -330,7 +330,8 @@ pub trait HydraClientInterface: Send + Sync {
         project_ref: &ProjectRef,
         request: &UpsertProjectRequest,
     ) -> Result<UpsertProjectResponse>;
-    async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse>;
+    async fn archive_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse>;
+    async fn unarchive_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse>;
     async fn create_project_status(
         &self,
         project_ref: &ProjectRef,
@@ -342,7 +343,12 @@ pub trait HydraClientInterface: Send + Sync {
         status_key: &StatusKey,
         request: &StatusDefinition,
     ) -> Result<UpsertProjectStatusResponse>;
-    async fn delete_project_status(
+    async fn archive_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+    ) -> Result<UpsertProjectResponse>;
+    async fn unarchive_project_status(
         &self,
         project_ref: &ProjectRef,
         status_key: &StatusKey,
@@ -1722,21 +1728,45 @@ impl HydraClient {
             .context("failed to decode update project response")
     }
 
-    /// Call `DELETE /v1/projects/:project_ref` to soft-delete a project.
-    pub async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
-        let url = self.endpoint(&format!("/v1/projects/{project_ref}"))?;
+    /// Call `POST /v1/projects/:project_ref/archive` to archive a
+    /// project. Cascade-archives every non-archived issue the
+    /// project owns. Idempotent.
+    pub async fn archive_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/archive"))?;
         let response = self
-            .authed(self.http.delete(url))
+            .authed(self.http.post(url))
             .send()
             .await
-            .context("failed to submit delete project request")?
-            .error_for_status_with_body("hydra-server returned an error while deleting project")
+            .context("failed to submit archive project request")?
+            .error_for_status_with_body("hydra-server returned an error while archiving project")
             .await?;
 
         response
             .json::<UpsertProjectResponse>()
             .await
-            .context("failed to decode delete project response")
+            .context("failed to decode archive project response")
+    }
+
+    /// Call `POST /v1/projects/:project_ref/unarchive` to unarchive a
+    /// project. No reverse cascade — previously cascade-archived
+    /// issues stay archived.
+    pub async fn unarchive_project(
+        &self,
+        project_ref: &ProjectRef,
+    ) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!("/v1/projects/{project_ref}/unarchive"))?;
+        let response = self
+            .authed(self.http.post(url))
+            .send()
+            .await
+            .context("failed to submit unarchive project request")?
+            .error_for_status_with_body("hydra-server returned an error while unarchiving project")
+            .await?;
+
+        response
+            .json::<UpsertProjectResponse>()
+            .await
+            .context("failed to decode unarchive project response")
     }
 
     /// Call `POST /v1/projects/:project_ref/statuses` to add a new
@@ -1790,28 +1820,54 @@ impl HydraClient {
             .context("failed to decode update status response")
     }
 
-    /// Call `DELETE /v1/projects/:project_ref/statuses/:status_key`
-    /// to remove a status. The server-side FK on
-    /// `issues_v2.status_sequence` is the authoritative guard against
-    /// removing a status that still has issues against it.
-    pub async fn delete_project_status(
+    /// Call `POST /v1/projects/:project_ref/statuses/:status_key/archive`
+    /// to archive a status (flip `archived = true` in place) and
+    /// cascade-archive every non-archived issue at that status.
+    /// Idempotent.
+    pub async fn archive_project_status(
         &self,
         project_ref: &ProjectRef,
         status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse> {
-        let url = self.endpoint(&format!("/v1/projects/{project_ref}/statuses/{status_key}"))?;
+        let url = self.endpoint(&format!(
+            "/v1/projects/{project_ref}/statuses/{status_key}/archive"
+        ))?;
         let response = self
-            .authed(self.http.delete(url))
+            .authed(self.http.post(url))
             .send()
             .await
-            .context("failed to submit delete status request")?
-            .error_for_status_with_body("hydra-server rejected delete status request")
+            .context("failed to submit archive status request")?
+            .error_for_status_with_body("hydra-server rejected archive status request")
             .await?;
 
         response
             .json::<UpsertProjectResponse>()
             .await
-            .context("failed to decode delete status response")
+            .context("failed to decode archive status response")
+    }
+
+    /// Call `POST /v1/projects/:project_ref/statuses/:status_key/unarchive`
+    /// to unarchive a status. No reverse cascade.
+    pub async fn unarchive_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+    ) -> Result<UpsertProjectResponse> {
+        let url = self.endpoint(&format!(
+            "/v1/projects/{project_ref}/statuses/{status_key}/unarchive"
+        ))?;
+        let response = self
+            .authed(self.http.post(url))
+            .send()
+            .await
+            .context("failed to submit unarchive status request")?
+            .error_for_status_with_body("hydra-server rejected unarchive status request")
+            .await?;
+
+        response
+            .json::<UpsertProjectResponse>()
+            .await
+            .context("failed to decode unarchive status response")
     }
 
     /// Call `GET /v1/projects/:project_ref/statuses` to list the
@@ -3077,8 +3133,12 @@ impl HydraClientInterface for HydraClient {
         HydraClient::update_project(self, project_ref, request).await
     }
 
-    async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
-        HydraClient::delete_project(self, project_ref).await
+    async fn archive_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        HydraClient::archive_project(self, project_ref).await
+    }
+
+    async fn unarchive_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        HydraClient::unarchive_project(self, project_ref).await
     }
 
     async fn create_project_status(
@@ -3098,12 +3158,20 @@ impl HydraClientInterface for HydraClient {
         HydraClient::update_project_status(self, project_ref, status_key, request).await
     }
 
-    async fn delete_project_status(
+    async fn archive_project_status(
         &self,
         project_ref: &ProjectRef,
         status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse> {
-        HydraClient::delete_project_status(self, project_ref, status_key).await
+        HydraClient::archive_project_status(self, project_ref, status_key).await
+    }
+
+    async fn unarchive_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+    ) -> Result<UpsertProjectResponse> {
+        HydraClient::unarchive_project_status(self, project_ref, status_key).await
     }
 
     async fn get_project_statuses(

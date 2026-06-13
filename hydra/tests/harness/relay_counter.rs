@@ -352,8 +352,12 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.update_project(project_ref, request).await
     }
 
-    async fn delete_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
-        self.inner.delete_project(project_ref).await
+    async fn archive_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        self.inner.archive_project(project_ref).await
+    }
+
+    async fn unarchive_project(&self, project_ref: &ProjectRef) -> Result<UpsertProjectResponse> {
+        self.inner.unarchive_project(project_ref).await
     }
 
     async fn create_project_status(
@@ -375,13 +379,23 @@ impl HydraClientInterface for RelayCallCountingClient {
             .await
     }
 
-    async fn delete_project_status(
+    async fn archive_project_status(
         &self,
         project_ref: &ProjectRef,
         status_key: &StatusKey,
     ) -> Result<UpsertProjectResponse> {
         self.inner
-            .delete_project_status(project_ref, status_key)
+            .archive_project_status(project_ref, status_key)
+            .await
+    }
+
+    async fn unarchive_project_status(
+        &self,
+        project_ref: &ProjectRef,
+        status_key: &StatusKey,
+    ) -> Result<UpsertProjectResponse> {
+        self.inner
+            .unarchive_project_status(project_ref, status_key)
             .await
     }
 

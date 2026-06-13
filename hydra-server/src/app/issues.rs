@@ -2113,12 +2113,16 @@ mod tests {
 
     #[tokio::test]
     async fn issue_ready_when_owning_project_is_soft_deleted() {
-        // `project_cached` resolves through `get_project(..., true)`, so a
-        // soft-deleted owning project still surfaces its status list —
-        // `resolve_status` succeeds and readiness falls through to the
-        // declared status flags (`suppress_sessions=false` here). This
-        // protects the orphan-500 read-path fix (`build_issue_response`
-        // no longer 500s when a parent project is archived).
+        // `project_cached` resolves through `get_project(..., true)`, so an
+        // archived owning project still surfaces its status list — even
+        // when the orphan state is reached through a non-cascading code
+        // path (here: a raw `update_project` that flips `archived=true`
+        // without using `archive_project`, which would have also
+        // cascade-archived the issue). This protects the orphan-500
+        // read-path fix (`build_issue_response` no longer 500s) against
+        // any future write path that leaves orphan-with-live-issue
+        // state on disk.
+        use hydra_common::api::v1::projects::Project;
         let state = test_state();
         let project_id = seed_parked_project(&state, false).await;
 
@@ -2131,8 +2135,15 @@ mod tests {
             .await
             .unwrap();
 
+        // Flip `project.archived = true` without going through
+        // `archive_project`, so the issue's `deleted` flag stays false
+        // and the read-path tolerance fix is the only thing keeping
+        // status resolution alive.
+        let current = store.get_project(&project_id, true).await.unwrap();
+        let mut archived: Project = current.item;
+        archived.archived = true;
         store
-            .delete_project(&project_id, &ActorRef::test())
+            .update_project(&project_id, archived, &ActorRef::test())
             .await
             .unwrap();
 

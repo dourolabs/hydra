@@ -162,7 +162,7 @@ export function ProjectForm({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => apiClient.deleteProject(projectId!),
+    mutationFn: () => apiClient.archiveProject(projectId!),
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
       const previous =

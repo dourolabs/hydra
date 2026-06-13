@@ -198,8 +198,11 @@ export function createProjectRoutes(store: Store): Hono {
     return c.json(resp);
   });
 
-  // DELETE /v1/projects/:projectRef/statuses/:statusKey
-  app.delete("/v1/projects/:projectRef/statuses/:statusKey", (c) => {
+  // POST /v1/projects/:projectRef/statuses/:statusKey/archive — flip
+  // `archived = true` on the status row in place. The row stays in
+  // the project's status list so historical issues continue to
+  // resolve through it.
+  app.post("/v1/projects/:projectRef/statuses/:statusKey/archive", (c) => {
     const projectRef = c.req.param("projectRef");
     const statusKey = c.req.param("statusKey");
     const resolved = resolveProjectRef(store, projectRef);
@@ -214,11 +217,38 @@ export function createProjectRoutes(store: Store): Hono {
         400,
       );
     }
-    const nextStatuses = project.statuses.filter((s) => s.key !== statusKey);
-    const nextProject: Project = {
-      ...project,
-      statuses: nextStatuses,
+    const nextStatuses = project.statuses.map((s) =>
+      s.key === statusKey ? { ...s, archived: true } : s,
+    );
+    const nextProject: Project = { ...project, statuses: nextStatuses };
+    const entry = store.update<Project>(COLLECTION, resolved.id, nextProject, null);
+    const resp: UpsertProjectResponse = {
+      project_id: resolved.id,
+      version: entry.version,
     };
+    return c.json(resp);
+  });
+
+  // POST /v1/projects/:projectRef/statuses/:statusKey/unarchive
+  app.post("/v1/projects/:projectRef/statuses/:statusKey/unarchive", (c) => {
+    const projectRef = c.req.param("projectRef");
+    const statusKey = c.req.param("statusKey");
+    const resolved = resolveProjectRef(store, projectRef);
+    if (!resolved) {
+      return c.json({ error: `project '${projectRef}' not found` }, 404);
+    }
+    const project = resolved.entry.data;
+    const idx = project.statuses.findIndex((s) => s.key === statusKey);
+    if (idx === -1) {
+      return c.json(
+        { error: `status '${statusKey}' does not exist on project '${resolved.id}'` },
+        400,
+      );
+    }
+    const nextStatuses = project.statuses.map((s) =>
+      s.key === statusKey ? { ...s, archived: false } : s,
+    );
+    const nextProject: Project = { ...project, statuses: nextStatuses };
     const entry = store.update<Project>(COLLECTION, resolved.id, nextProject, null);
     const resp: UpsertProjectResponse = {
       project_id: resolved.id,
@@ -271,14 +301,31 @@ export function createProjectRoutes(store: Store): Hono {
     return c.json(resp);
   });
 
-  // DELETE /v1/projects/:projectRef
-  app.delete("/v1/projects/:projectRef", (c) => {
+  // POST /v1/projects/:projectRef/archive
+  app.post("/v1/projects/:projectRef/archive", (c) => {
     const projectRef = c.req.param("projectRef");
     const resolved = resolveProjectRef(store, projectRef);
     if (!resolved) {
       return c.json({ error: `project '${projectRef}' not found` }, 404);
     }
-    const entry = store.delete<Project>(COLLECTION, resolved.id, null);
+    const nextProject: Project = { ...resolved.entry.data, archived: true };
+    const entry = store.update<Project>(COLLECTION, resolved.id, nextProject, null);
+    const resp: UpsertProjectResponse = {
+      project_id: resolved.id,
+      version: entry.version,
+    };
+    return c.json(resp);
+  });
+
+  // POST /v1/projects/:projectRef/unarchive
+  app.post("/v1/projects/:projectRef/unarchive", (c) => {
+    const projectRef = c.req.param("projectRef");
+    const resolved = resolveProjectRef(store, projectRef);
+    if (!resolved) {
+      return c.json({ error: `project '${projectRef}' not found` }, 404);
+    }
+    const nextProject: Project = { ...resolved.entry.data, archived: false };
+    const entry = store.update<Project>(COLLECTION, resolved.id, nextProject, null);
     const resp: UpsertProjectResponse = {
       project_id: resolved.id,
       version: entry.version,

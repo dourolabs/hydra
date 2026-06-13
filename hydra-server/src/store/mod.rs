@@ -1265,13 +1265,37 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Archives a project by setting its `archived` flag to true.
+    /// Archives a project by setting its `archived` flag to true and
+    /// cascade-archives every non-archived issue currently in the
+    /// project. Issues are archived by flipping `issue.deleted = true`
+    /// — the field rename for issues is sequenced into a sibling
+    /// cleanup, but the semantic intent here is the same as
+    /// `archive_status`'s cascade. The whole operation is one store
+    /// transaction so a partial cascade can't observe.
     ///
-    /// This creates a new version of the project with `archived: true`.
-    /// The project can still be retrieved via `get_project` with
-    /// `include_archived: true` but is filtered from `list_projects` by
-    /// default. Returns the version number of the archival record.
-    async fn delete_project(
+    /// Returns the new project version plus the ids of every issue
+    /// that was flipped by the cascade (already-archived issues are
+    /// omitted). [`StoreWithEvents::archive_project`] emits one
+    /// `IssueDeleted` event per cascaded issue so SSE subscribers see
+    /// the transitions.
+    ///
+    /// Idempotent: archiving an already-archived project is a no-op
+    /// and returns the existing version with an empty cascade list.
+    async fn archive_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError>;
+
+    /// Unarchives a project by flipping `archived` back to false.
+    /// Returns the new project version. **No reverse cascade**: issues
+    /// that were archived as part of the original
+    /// [`Store::archive_project`] stay archived. Callers
+    /// individually unarchive any issues they want back.
+    ///
+    /// Idempotent: unarchiving an already-active project is a no-op
+    /// and returns the existing version.
+    async fn unarchive_project(
         &self,
         id: &ProjectId,
         actor: &ActorRef,
@@ -1314,14 +1338,39 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<(StatusDefinition, VersionNumber), StoreError>;
 
-    /// Delete a status from a project. The DB FK on
-    /// `issues_v2.status_sequence` rejects the delete if any issue
-    /// still references the row — surfaced as
-    /// `StoreError::InvalidIssueStatus`.
+    /// Archive a status on a project: flip
+    /// `statuses.archived = TRUE` in place (the row stays in the
+    /// table so the FK from `issues_v2.status_sequence` is never
+    /// tripped) and cascade-archive every non-archived issue
+    /// currently at `(project_id, status_key)` by flipping
+    /// `issue.deleted = true`. The whole operation runs in one store
+    /// transaction.
     ///
-    /// Returns the project's new version number, or
-    /// `StoreError::ProjectNotFound` when the project does not exist.
-    async fn delete_status(
+    /// Returns the project's new version (bumped per the existing
+    /// status-mutation pattern) plus the ids of every issue flipped
+    /// by the cascade.
+    ///
+    /// `StoreError::ProjectNotFound` when the project does not exist;
+    /// `StoreError::InvalidIssueStatus` when the status key is not
+    /// declared on the project. Idempotent on already-archived
+    /// statuses (the cascade is also idempotent — already-archived
+    /// issues are skipped).
+    async fn archive_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError>;
+
+    /// Unarchive a status: flip `statuses.archived = FALSE` in place.
+    /// Returns the project's new version. **No reverse cascade**:
+    /// issues that were archived as part of the original
+    /// [`Store::archive_status`] stay archived.
+    ///
+    /// `StoreError::ProjectNotFound` when the project does not exist;
+    /// `StoreError::InvalidIssueStatus` when the status key is not
+    /// declared on the project. Idempotent on already-active statuses.
+    async fn unarchive_status(
         &self,
         id: &ProjectId,
         status_key: &StatusKey,

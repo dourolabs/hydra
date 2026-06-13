@@ -1384,6 +1384,7 @@ impl PostgresStoreV2 {
             })?,
             None => Default::default(),
         };
+        def.archived = row.archived;
         Ok(def)
     }
 
@@ -1395,7 +1396,7 @@ impl PostgresStoreV2 {
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json, archived \
              FROM metis.statuses WHERE project_id = $1 ORDER BY position, sequence",
         )
         .bind(project_id)
@@ -1417,7 +1418,7 @@ impl PostgresStoreV2 {
             out.entry(id.clone()).or_default();
         }
         let rows = sqlx::query_as::<_, StatusRow>(
-            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json \
+            "SELECT project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json, archived \
              FROM metis.statuses WHERE project_id = ANY($1) ORDER BY project_id, position, sequence",
         )
         .bind(project_ids)
@@ -1429,6 +1430,90 @@ impl PostgresStoreV2 {
             out.entry(row.project_id.clone()).or_default().push(def);
         }
         Ok(out)
+    }
+
+    /// Cascade-archive every non-archived issue in this project (or
+    /// in `(project_id, status_sequence_filter)` when `Some`) by
+    /// flipping `issue.deleted = TRUE` on the row's next version.
+    /// Returns the ids of every issue actually flipped.
+    ///
+    /// The `metis.issues_v2` `BEFORE INSERT` trigger flips the prior
+    /// `is_latest = TRUE` row off automatically — no manual UPDATE.
+    /// Carries all other columns forward by `INSERT ... SELECT` from
+    /// the prior latest version, so the cascade does not lose any
+    /// field. Relationships ARE preserved untouched — cascade does
+    /// not mutate the `object_relationships` rows.
+    async fn cascade_archive_issues_pg(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        project_id: &str,
+        status_sequence_filter: Option<i64>,
+        actor: &ActorRef,
+    ) -> Result<Vec<IssueId>, StoreError> {
+        let actor_json = actor_to_json(actor);
+
+        let ids: Vec<String> = match status_sequence_filter {
+            Some(seq) => sqlx::query_scalar(
+                "SELECT id FROM metis.issues_v2 \
+                 WHERE project_id = $1 AND status_sequence = $2 \
+                       AND is_latest = TRUE AND deleted = FALSE",
+            )
+            .bind(project_id)
+            .bind(seq)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?,
+            None => sqlx::query_scalar(
+                "SELECT id FROM metis.issues_v2 \
+                 WHERE project_id = $1 AND is_latest = TRUE AND deleted = FALSE",
+            )
+            .bind(project_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?,
+        };
+
+        let mut cascaded = Vec::with_capacity(ids.len());
+        for id_str in ids {
+            let current_version: Option<i64> = sqlx::query_scalar(
+                "SELECT version_number FROM metis.issues_v2 \
+                 WHERE id = $1 AND is_latest = TRUE LIMIT 1",
+            )
+            .bind(&id_str)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?;
+            let Some(current_version) = current_version else {
+                continue;
+            };
+            let next_version = current_version.checked_add(1).ok_or_else(|| {
+                StoreError::Internal(format!("version number overflow for issue '{id_str}'"))
+            })?;
+
+            sqlx::query(
+                "INSERT INTO metis.issues_v2 \
+                  (id, version_number, issue_type, title, description, creator, \
+                   progress, status_sequence, assignee, assignee_principal, \
+                   job_settings, deleted, actor, form, form_response, feedback, \
+                   project_id) \
+                 SELECT id, $2, issue_type, title, description, creator, progress, \
+                        status_sequence, assignee, assignee_principal, job_settings, \
+                        TRUE, $3, form, form_response, feedback, project_id \
+                 FROM metis.issues_v2 \
+                 WHERE id = $1 AND version_number = $4",
+            )
+            .bind(&id_str)
+            .bind(next_version)
+            .bind(&actor_json)
+            .bind(current_version)
+            .execute(&mut **tx)
+            .await
+            .map_err(map_sqlx_error)?;
+
+            let issue_id = IssueId::try_from(id_str.clone())
+                .map_err(|e| StoreError::Internal(format!("invalid issue id stored: {e}")))?;
+            cascaded.push(issue_id);
+        }
+        Ok(cascaded)
     }
 
     /// Insert a single `metis.statuses` row for `add_status`. Pulled
@@ -1451,8 +1536,8 @@ impl PostgresStoreV2 {
             })?;
         let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
         sqlx::query(
-            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+            "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json, archived) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(project_id)
         .bind(sequence)
@@ -1470,6 +1555,7 @@ impl PostgresStoreV2 {
         .bind(status.suppress_sessions)
         .bind(status.position)
         .bind(session_settings_json.as_deref())
+        .bind(status.archived)
         .execute(&mut **tx)
         .await
         .map_err(map_sqlx_error)?;
@@ -1930,6 +2016,11 @@ struct StatusRow {
     // project `session_settings_json`. NULL deserializes to
     // `SessionSettings::default()` in `status_row_to_definition`.
     session_settings_json: Option<String>,
+    // No `#[sqlx(default)]`: every SELECT on `metis.statuses` must
+    // project `archived`. `archive_status` flips the column in place;
+    // an unprojected column would silently surface `false` for
+    // archived rows and corrupt resolution.
+    archived: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2499,21 +2590,6 @@ fn is_project_key_unique_violation_pg(err: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db_err) = err {
         if db_err.code().as_deref() == Some("23505") {
             return db_err.constraint() == Some("projects_key_unique_active_idx");
-        }
-    }
-    false
-}
-
-/// True iff `err` is a Postgres FK-violation on
-/// `issues_v2_status_sequence_fkey` — the RESTRICT that blocks deleting
-/// a `metis.statuses` row while an `issues_v2` row still references it.
-/// Used by `delete_status` to translate the raw sqlx error into
-/// [`StoreError::InvalidIssueStatus`] so the route layer can surface a
-/// 400 instead of an opaque 500.
-fn is_status_sequence_fk_violation_pg(err: &sqlx::Error) -> bool {
-    if let sqlx::Error::Database(db_err) = err {
-        if db_err.code().as_deref() == Some("23503") {
-            return db_err.constraint() == Some("issues_v2_status_sequence_fkey");
         }
     }
     false
@@ -6063,14 +6139,71 @@ impl Store for PostgresStoreV2 {
         Ok(next_version)
     }
 
-    async fn delete_project(
+    async fn archive_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let row: Option<(i64, i64, bool)> = sqlx::query_as::<_, (i64, i64, bool)>(&format!(
+            "SELECT version_number, next_status_sequence, archived FROM {TABLE_PROJECTS} \
+             WHERE id = $1 AND is_latest = true FOR UPDATE"
+        ))
+        .bind(id.as_ref())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let (latest_version, current_next_seq, already_archived) =
+            row.ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
+        let latest_version = VersionNumber::try_from(latest_version).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+
+        if already_archived {
+            return Ok((latest_version, Vec::new()));
+        }
+
+        let next_version = latest_version.checked_add(1).ok_or_else(|| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+        let next_version_i64 = i64::try_from(next_version).map_err(|_| {
+            StoreError::Internal(format!("version number overflow for project '{id}'"))
+        })?;
+
+        let current = Self::load_project_for_status_mutation_pg(&mut tx, id).await?;
+        let mut archived_project = Self::row_to_project(&current, Vec::new())?;
+        archived_project.archived = true;
+
+        // The BEFORE INSERT trigger on `metis.projects` flips the
+        // previous `is_latest = TRUE` row off — no manual UPDATE here.
+        Self::insert_project_row_in_tx(
+            &mut *tx,
+            id,
+            next_version_i64,
+            &archived_project,
+            Some(&actor_to_json(actor)),
+            current_next_seq,
+        )
+        .await?;
+
+        let cascaded = Self::cascade_archive_issues_pg(&mut tx, id.as_ref(), None, actor).await?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((next_version, cascaded))
+    }
+
+    async fn unarchive_project(
         &self,
         id: &ProjectId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_project(id, true).await?;
+        if !current.item.archived {
+            return Ok(current.version);
+        }
         let mut project = current.item;
-        project.archived = true;
+        project.archived = false;
         self.update_project(id, project, actor).await
     }
 
@@ -6179,8 +6312,8 @@ impl Store for PostgresStoreV2 {
             })?;
         let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
         sqlx::query(
-            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, max_simultaneous_sessions = $11, suppress_sessions = $12, position = $13, session_settings_json = $14 \
-             WHERE project_id = $15 AND sequence = $16",
+            "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, max_simultaneous_sessions = $11, suppress_sessions = $12, position = $13, session_settings_json = $14, archived = $15 \
+             WHERE project_id = $16 AND sequence = $17",
         )
         .bind(status.key.as_str())
         .bind(&status.label)
@@ -6196,6 +6329,7 @@ impl Store for PostgresStoreV2 {
         .bind(status.suppress_sessions)
         .bind(status.position)
         .bind(session_settings_json.as_deref())
+        .bind(status.archived)
         .bind(id.as_ref())
         .bind(sequence)
         .execute(&mut *tx)
@@ -6216,7 +6350,67 @@ impl Store for PostgresStoreV2 {
         Ok((status, next_version))
     }
 
-    async fn delete_status(
+    async fn archive_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(map_sqlx_error)?;
+
+        let project_row = Self::load_project_for_status_mutation_pg(&mut tx, id).await?;
+        let latest_version = VersionNumber::try_from(project_row.version_number).map_err(|_| {
+            StoreError::Internal(format!("invalid version number stored for project '{id}'"))
+        })?;
+
+        let row: Option<(i64, bool)> = sqlx::query_as::<_, (i64, bool)>(
+            "SELECT sequence, archived FROM metis.statuses \
+             WHERE project_id = $1 AND key = $2 LIMIT 1",
+        )
+        .bind(id.as_ref())
+        .bind(status_key.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let (sequence, already_archived) = row.ok_or_else(|| {
+            StoreError::InvalidIssueStatus(format!(
+                "status '{}' does not exist on project '{id}'",
+                status_key.as_str()
+            ))
+        })?;
+
+        if already_archived {
+            return Ok((latest_version, Vec::new()));
+        }
+
+        sqlx::query(
+            "UPDATE metis.statuses SET archived = TRUE \
+             WHERE project_id = $1 AND sequence = $2",
+        )
+        .bind(id.as_ref())
+        .bind(sequence)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+
+        let cascaded =
+            Self::cascade_archive_issues_pg(&mut tx, id.as_ref(), Some(sequence), actor).await?;
+
+        let next_version = Self::bump_project_version_for_status_mutation_pg(
+            &mut tx,
+            id,
+            &project_row,
+            latest_version,
+            actor,
+            project_row.next_status_sequence,
+        )
+        .await?;
+
+        tx.commit().await.map_err(map_sqlx_error)?;
+        Ok((next_version, cascaded))
+    }
+
+    async fn unarchive_status(
         &self,
         id: &ProjectId,
         status_key: &StatusKey,
@@ -6229,27 +6423,35 @@ impl Store for PostgresStoreV2 {
             StoreError::Internal(format!("invalid version number stored for project '{id}'"))
         })?;
 
-        let result = sqlx::query("DELETE FROM metis.statuses WHERE project_id = $1 AND key = $2")
-            .bind(id.as_ref())
-            .bind(status_key.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| {
-                if is_status_sequence_fk_violation_pg(&err) {
-                    StoreError::InvalidIssueStatus(format!(
-                        "cannot remove status '{}' from project '{id}': an issue still references it",
-                        status_key.as_str()
-                    ))
-                } else {
-                    map_sqlx_error(err)
-                }
-            })?;
-        if result.rows_affected() == 0 {
-            return Err(StoreError::InvalidIssueStatus(format!(
+        let row: Option<(i64, bool)> = sqlx::query_as::<_, (i64, bool)>(
+            "SELECT sequence, archived FROM metis.statuses \
+             WHERE project_id = $1 AND key = $2 LIMIT 1",
+        )
+        .bind(id.as_ref())
+        .bind(status_key.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
+        let (sequence, already_archived) = row.ok_or_else(|| {
+            StoreError::InvalidIssueStatus(format!(
                 "status '{}' does not exist on project '{id}'",
                 status_key.as_str()
-            )));
+            ))
+        })?;
+
+        if !already_archived {
+            return Ok(latest_version);
         }
+
+        sqlx::query(
+            "UPDATE metis.statuses SET archived = FALSE \
+             WHERE project_id = $1 AND sequence = $2",
+        )
+        .bind(id.as_ref())
+        .bind(sequence)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_sqlx_error)?;
 
         let next_version = Self::bump_project_version_for_status_mutation_pg(
             &mut tx,
@@ -11280,7 +11482,7 @@ mod tests {
             "Engineering Renamed"
         );
 
-        let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        let (v3, _) = store.archive_project(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 5);
         let after_delete = store.list_projects(false).await.unwrap();
         assert_eq!(after_delete.len(), 1);
@@ -11462,7 +11664,7 @@ mod tests {
             .add_project(sample_project_pg(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        store.archive_project(&id, &ActorRef::test()).await.unwrap();
 
         let key = ProjectKey::try_new("engineering").unwrap();
 
@@ -11720,19 +11922,19 @@ mod tests {
     /// unique index applies only to `is_latest AND NOT archived`.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn add_project_after_delete_releases_key_pg(pool: PgStorePool) {
+    async fn add_project_after_archive_releases_key_pg(pool: PgStorePool) {
         let store = PostgresStoreV2::new(pool);
         let (id, _) = store
             .add_project(sample_project_pg(), &ActorRef::test())
             .await
             .unwrap();
-        store.delete_project(&id, &ActorRef::test()).await.unwrap();
+        store.archive_project(&id, &ActorRef::test()).await.unwrap();
         let result = store
             .add_project(sample_project_pg(), &ActorRef::test())
             .await;
         assert!(
             result.is_ok(),
-            "expected re-add after delete, got {result:?}"
+            "expected re-add after archive, got {result:?}"
         );
     }
 
@@ -11947,7 +12149,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn delete_status_then_add_does_not_reuse_sequence_pg(pool: PgStorePool) {
+    async fn archive_status_then_add_does_not_reuse_sequence_pg(pool: PgStorePool) {
         use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
         let (project_id, _) = store
@@ -11961,7 +12163,7 @@ mod tests {
                 .unwrap();
         }
         store
-            .delete_status(
+            .archive_status(
                 &project_id,
                 &StatusKey::try_new("c").unwrap(),
                 &ActorRef::test(),
@@ -11989,6 +12191,15 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(x_seq, 4);
+
+        let archived: bool = sqlx::query_scalar(
+            "SELECT archived FROM metis.statuses WHERE project_id = $1 AND key = 'c'",
+        )
+        .bind(project_id.as_ref())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(archived, "archived row must remain with archived = TRUE");
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -12053,7 +12264,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn delete_status_rejects_removal_with_active_issue_pg(pool: PgStorePool) {
+    async fn archive_status_cascade_archives_active_issues_pg(pool: PgStorePool) {
         use crate::domain::issues::{Issue, IssueType};
         use hydra_common::api::v1::projects::StatusKey;
         let store = PostgresStoreV2::new(pool.clone());
@@ -12083,18 +12294,114 @@ mod tests {
             None,
             None,
         );
-        store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
 
-        let res = store
-            .delete_status(
+        let (_, cascaded) = store
+            .archive_status(
                 &project_id,
                 &StatusKey::try_new("b").unwrap(),
                 &ActorRef::test(),
             )
-            .await;
+            .await
+            .unwrap();
+        assert_eq!(cascaded, vec![issue_id.clone()]);
+        let fetched = store.get_issue(&issue_id, true).await.unwrap();
+        assert!(fetched.item.deleted, "cascade must flip issue.deleted");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn archive_project_cascades_to_all_non_archived_issues_pg(pool: PgStorePool) {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("pcas"), &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_status(&project_id, cutover_status_def_pg("a"), &ActorRef::test())
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for title in ["one", "two"] {
+            let issue = Issue::new(
+                IssueType::Task,
+                title.to_string(),
+                "x".to_string(),
+                hydra_common::api::v1::users::Username::from("alice").into(),
+                String::new(),
+                StatusKey::try_new("a").unwrap(),
+                project_id.clone(),
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                None,
+                None,
+                None,
+            );
+            let (id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+            ids.push(id);
+        }
+        let (_, cascaded) = store
+            .archive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(cascaded.len(), 2);
+        for id in &ids {
+            let fetched = store.get_issue(id, true).await.unwrap();
+            assert!(fetched.item.deleted);
+        }
+        let p = store.get_project(&project_id, true).await.unwrap();
+        assert!(p.item.archived);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn unarchive_project_does_not_reverse_cascade_pg(pool: PgStorePool) {
+        use crate::domain::issues::{Issue, IssueType};
+        use hydra_common::api::v1::projects::StatusKey;
+        let store = PostgresStoreV2::new(pool.clone());
+        let (project_id, _) = store
+            .add_project(cutover_empty_project_pg("unp"), &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .add_status(&project_id, cutover_status_def_pg("a"), &ActorRef::test())
+            .await
+            .unwrap();
+        let issue = Issue::new(
+            IssueType::Task,
+            "x".to_string(),
+            "x".to_string(),
+            hydra_common::api::v1::users::Username::from("alice").into(),
+            String::new(),
+            StatusKey::try_new("a").unwrap(),
+            project_id.clone(),
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (issue_id, _) = store.add_issue(issue, &ActorRef::test()).await.unwrap();
+        store
+            .archive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        store
+            .unarchive_project(&project_id, &ActorRef::test())
+            .await
+            .unwrap();
+        let p = store.get_project(&project_id, true).await.unwrap();
+        assert!(!p.item.archived);
+        let i = store.get_issue(&issue_id, true).await.unwrap();
         assert!(
-            matches!(res, Err(StoreError::InvalidIssueStatus(_))),
-            "expected InvalidIssueStatus when removing a status with active issues, got {res:?}"
+            i.item.deleted,
+            "cascade-archived issue stays archived after unarchive_project"
         );
     }
 

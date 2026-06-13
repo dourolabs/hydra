@@ -359,6 +359,15 @@ async fn migration_roundtrip() -> Result<()> {
             "rename_projects_deleted_to_archived: baseline rows round-trip through PostgresStoreV2::get_project as Project.archived",
         )?;
 
+    add_statuses_archived_schema_invariants(&pool)
+        .await
+        .context(
+            "add_statuses_archived: column is BOOLEAN NOT NULL DEFAULT FALSE on metis.statuses",
+        )?;
+    add_statuses_archived_defaults_to_false(&pool)
+        .await
+        .context("add_statuses_archived: existing rows backfill to FALSE via column default")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -405,6 +414,12 @@ async fn migration_roundtrip() -> Result<()> {
         .context(
             "rename_projects_deleted_to_archived: idempotent rerun preserves the baseline rows' archived state",
         )?;
+    add_statuses_archived_schema_invariants(&pool)
+        .await
+        .context("add_statuses_archived: idempotent rerun keeps the column in place")?;
+    add_statuses_archived_defaults_to_false(&pool)
+        .await
+        .context("add_statuses_archived: idempotent rerun keeps existing FALSE values")?;
 
     Ok(())
 }
@@ -4334,6 +4349,58 @@ async fn rename_projects_deleted_to_archived_baseline_roundtrip(pool: &PgPool) -
         .collect();
     if listed_ids != vec!["j-renarchb"] {
         bail!("list_projects(false) baseline filter: expected only j-renarchb; got {listed_ids:?}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260716000000_add_statuses_archived. Adds `archived BOOLEAN NOT NULL
+// DEFAULT FALSE` to `metis.statuses` — the foundation for Phase 3's
+// `archive_status` (flip in place + cascade issues). Existing rows
+// backfill to FALSE via the column default.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_archived_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "statuses", "archived").await? {
+        bail!("expected `metis.statuses.archived` column to exist post-rollforward");
+    }
+    if column_is_nullable(pool, "statuses", "archived").await? {
+        bail!("expected `metis.statuses.archived` to be NOT NULL");
+    }
+    let row = sqlx::query(
+        "SELECT column_default FROM information_schema.columns \
+         WHERE table_schema = 'metis' AND table_name = 'statuses' \
+           AND column_name = 'archived'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up column_default for metis.statuses.archived")?;
+    let default_text: Option<String> = row.try_get("column_default")?;
+    let default_text = default_text
+        .ok_or_else(|| anyhow::anyhow!("metis.statuses.archived has no declared default"))?;
+    if !default_text.eq_ignore_ascii_case("false") {
+        bail!("expected metis.statuses.archived DEFAULT false; got {default_text:?}");
+    }
+    Ok(())
+}
+
+async fn add_statuses_archived_defaults_to_false(pool: &PgPool) -> Result<()> {
+    let rows = sqlx::query("SELECT project_id, sequence, archived FROM metis.statuses")
+        .fetch_all(pool)
+        .await
+        .context("read metis.statuses for archived default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one metis.statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: bool = row.try_get("archived")?;
+        if value {
+            bail!(
+                "metis.statuses({project_id}, sequence={sequence}): expected archived=false (no backfill); got true"
+            );
+        }
     }
     Ok(())
 }

@@ -798,9 +798,20 @@ export class HydraApiClient {
     return this.put(`/v1/projects/${encodeURIComponent(projectRef)}`, request);
   }
 
-  /** DELETE /v1/projects/:projectRef — accepts either an id (`j-…`) or key. */
-  deleteProject(projectRef: ProjectRef): Promise<UpsertProjectResponse> {
-    return this.del(`/v1/projects/${encodeURIComponent(projectRef)}`);
+  /**
+   * POST /v1/projects/:projectRef/archive — archive a project, cascading
+   * to every non-archived issue it owns. Idempotent.
+   */
+  archiveProject(projectRef: ProjectRef): Promise<UpsertProjectResponse> {
+    return this.post(`/v1/projects/${encodeURIComponent(projectRef)}/archive`);
+  }
+
+  /**
+   * POST /v1/projects/:projectRef/unarchive — unarchive a project.
+   * No reverse cascade.
+   */
+  unarchiveProject(projectRef: ProjectRef): Promise<UpsertProjectResponse> {
+    return this.post(`/v1/projects/${encodeURIComponent(projectRef)}/unarchive`);
   }
 
   /** GET /v1/projects/:projectRef/statuses — accepts either an id (`j-…`) or key. */
@@ -833,13 +844,30 @@ export class HydraApiClient {
   }
 
   /**
-   * DELETE /v1/projects/:projectRef/statuses/:statusKey — remove a
-   * status. Fails with 400 if any issue still references the
-   * status.
+   * POST /v1/projects/:projectRef/statuses/:statusKey/archive —
+   * archive a status (flip `archived = true` in place) and
+   * cascade-archive every non-archived issue at that status.
+   * Idempotent.
    */
-  deleteProjectStatus(projectRef: ProjectRef, statusKey: string): Promise<UpsertProjectResponse> {
-    return this.del(
-      `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}`,
+  archiveProjectStatus(
+    projectRef: ProjectRef,
+    statusKey: string,
+  ): Promise<UpsertProjectResponse> {
+    return this.post(
+      `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}/archive`,
+    );
+  }
+
+  /**
+   * POST /v1/projects/:projectRef/statuses/:statusKey/unarchive —
+   * unarchive a status. No reverse cascade.
+   */
+  unarchiveProjectStatus(
+    projectRef: ProjectRef,
+    statusKey: string,
+  ): Promise<UpsertProjectResponse> {
+    return this.post(
+      `/v1/projects/${encodeURIComponent(projectRef)}/statuses/${encodeURIComponent(statusKey)}/unarchive`,
     );
   }
 

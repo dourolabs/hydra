@@ -2108,11 +2108,15 @@ async fn list_issues_bucket_by_returns_200_with_null_cursor() -> anyhow::Result<
     Ok(())
 }
 
-/// Regression test for the orphan-issue 500 bug: soft-deleting a project
+/// Regression test for the orphan-issue 500 bug: archiving a project
 /// that still has issues must not break the issue-list or get-issue
-/// endpoints. The read path resolves each issue's status through the
-/// project; a `ProjectNotFound` from a soft-deleted parent used to
-/// bubble out as a 500.
+/// endpoints. Post-Phase-3, `archive_project` cascade-archives every
+/// non-archived issue, so the orphan-with-live-issue state cannot
+/// arise at write time. The test still exercises read-path
+/// tolerance: with `include_deleted=true` the cascade-archived
+/// issue's status is resolved through the archived project (whose
+/// status list still surfaces because `project_cached` requests
+/// `include_archived=true`).
 #[tokio::test]
 async fn list_and_get_issues_tolerate_soft_deleted_parent_project() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;
@@ -2142,46 +2146,52 @@ async fn list_and_get_issues_tolerate_soft_deleted_parent_project() -> anyhow::R
         .await?;
 
     let project_id = crate::domain::projects::default_project_id();
-    let delete_resp = client
-        .delete(format!("{base}/v1/projects/{project_id}"))
+    let archive_resp = client
+        .post(format!("{base}/v1/projects/{project_id}/archive"))
         .send()
         .await?;
     assert!(
-        delete_resp.status().is_success(),
-        "soft-delete must succeed; got {}",
-        delete_resp.status()
+        archive_resp.status().is_success(),
+        "archive must succeed; got {}",
+        archive_resp.status()
     );
 
-    let list_resp = client.get(format!("{base}/v1/issues")).send().await?;
+    let list_resp = client
+        .get(format!("{base}/v1/issues?include_deleted=true"))
+        .send()
+        .await?;
     assert_eq!(
         list_resp.status(),
         StatusCode::OK,
-        "list /v1/issues must not 500 when a referenced project is soft-deleted"
+        "list /v1/issues must not 500 when a referenced project is archived"
     );
     let list: ListIssuesResponse = list_resp.json().await?;
-    assert!(
-        list.issues.iter().any(|r| r.issue_id == created.issue_id),
-        "list response must still surface the orphan issue"
-    );
     let orphan = list
         .issues
         .iter()
         .find(|r| r.issue_id == created.issue_id)
-        .expect("orphan present");
+        .expect("cascade-archived issue surfaces with include_deleted=true");
     assert_eq!(
         orphan.issue.status.key.as_str(),
         "open",
-        "status key must be preserved on the orphan summary"
+        "status key must be preserved on the cascade-archived summary"
+    );
+    assert!(
+        orphan.issue.deleted,
+        "cascade-archive must flip issue.deleted = true"
     );
 
     let get_resp = client
-        .get(format!("{base}/v1/issues/{}", created.issue_id))
+        .get(format!(
+            "{base}/v1/issues/{}?include_deleted=true",
+            created.issue_id
+        ))
         .send()
         .await?;
     assert_eq!(
         get_resp.status(),
         StatusCode::OK,
-        "GET /v1/issues/<id> must not 500 when the parent project is soft-deleted"
+        "GET /v1/issues/<id> must not 500 when the parent project is archived"
     );
     let fetched: IssueVersionRecord = get_resp.json().await?;
     assert_eq!(fetched.issue_id, created.issue_id);

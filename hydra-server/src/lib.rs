@@ -375,9 +375,15 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         )
         .route(
             "/v1/projects/:project_ref",
-            get(routes::projects::get_project)
-                .put(routes::projects::update_project)
-                .delete(routes::projects::delete_project),
+            get(routes::projects::get_project).put(routes::projects::update_project),
+        )
+        .route(
+            "/v1/projects/:project_ref/archive",
+            post(routes::projects::archive_project),
+        )
+        .route(
+            "/v1/projects/:project_ref/unarchive",
+            post(routes::projects::unarchive_project),
         )
         .route(
             "/v1/projects/:project_ref/statuses",
@@ -386,8 +392,15 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         )
         .route(
             "/v1/projects/:project_ref/statuses/:status_key",
-            put(routes::projects::update_project_status)
-                .delete(routes::projects::delete_project_status),
+            put(routes::projects::update_project_status),
+        )
+        .route(
+            "/v1/projects/:project_ref/statuses/:status_key/archive",
+            post(routes::projects::archive_project_status),
+        )
+        .route(
+            "/v1/projects/:project_ref/statuses/:status_key/unarchive",
+            post(routes::projects::unarchive_project_status),
         )
         .route(
             "/v1/repositories",

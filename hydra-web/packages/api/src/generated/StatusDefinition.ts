@@ -65,4 +65,11 @@ export type StatusDefinition = {
    * `SessionSettings::merge` and `apply_session_settings_defaults`.
    */
   session_settings?: SessionSettings;
+  /**
+   * Set by `archive_status` and cleared by `unarchive_status`.
+   * Archived statuses stay in the project's `statuses` list
+   * (resolution of historical issues keeps working), but the
+   * frontend filters them out of the active picker UI.
+   */
+  archived?: boolean;
 };

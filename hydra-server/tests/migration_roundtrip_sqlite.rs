@@ -196,6 +196,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     rename_projects_deleted_to_archived_baseline_roundtrip(&pool).await?;
     rename_projects_deleted_to_archived_migration_is_idempotent(&pool).await?;
 
+    add_statuses_archived_schema_invariants(&pool).await?;
+    add_statuses_archived_defaults_to_false(&pool).await?;
+    add_statuses_archived_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -3791,5 +3795,61 @@ async fn rename_projects_deleted_to_archived_migration_is_idempotent(
     )?;
     rename_projects_deleted_to_archived_schema_invariants(pool).await?;
     rename_projects_deleted_to_archived_baseline_roundtrip(pool).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260716000000_add_statuses_archived. Schema-only ALTER TABLE that
+// adds `archived BOOLEAN NOT NULL DEFAULT FALSE` to `statuses` — the
+// foundation for Phase 3's `archive_status` (flip in place + cascade to
+// issues). Existing rows backfill to FALSE via the column default.
+// ---------------------------------------------------------------------------
+
+async fn add_statuses_archived_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "statuses", "archived").await? {
+        bail!("expected `statuses.archived` column to exist post-rollforward");
+    }
+    if column_is_nullable(pool, "statuses", "archived").await? {
+        bail!("expected `statuses.archived` to be NOT NULL");
+    }
+    let row =
+        sqlx::query("SELECT dflt_value FROM pragma_table_info('statuses') WHERE name = 'archived'")
+            .fetch_one(pool)
+            .await
+            .context("read pragma_table_info default for statuses.archived")?;
+    let default_text: Option<String> = row.try_get(0)?;
+    let default_text =
+        default_text.ok_or_else(|| anyhow::anyhow!("statuses.archived has no declared default"))?;
+    if !default_text.eq_ignore_ascii_case("FALSE") && default_text != "0" {
+        bail!("expected statuses.archived DEFAULT FALSE; got {default_text:?}");
+    }
+    Ok(())
+}
+
+async fn add_statuses_archived_defaults_to_false(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT project_id, sequence, archived FROM statuses")
+        .fetch_all(pool)
+        .await
+        .context("read statuses for archived default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one statuses row to assert backfill against");
+    }
+    for row in &rows {
+        let project_id: String = row.try_get("project_id")?;
+        let sequence: i64 = row.try_get("sequence")?;
+        let value: bool = row.try_get("archived")?;
+        if value {
+            bail!("statuses({project_id}, sequence={sequence}): expected archived=false; got true");
+        }
+    }
+    Ok(())
+}
+
+async fn add_statuses_archived_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm add_statuses_archived idempotency")?;
+    add_statuses_archived_schema_invariants(pool).await?;
+    add_statuses_archived_defaults_to_false(pool).await?;
     Ok(())
 }

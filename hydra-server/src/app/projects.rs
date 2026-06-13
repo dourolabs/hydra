@@ -55,12 +55,20 @@ impl AppState {
         self.store.update_project(id, project, actor).await
     }
 
-    pub async fn delete_project(
+    pub async fn archive_project(
         &self,
         id: &ProjectId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.store.delete_project(id, actor).await
+        self.store.archive_project(id, actor).await
+    }
+
+    pub async fn unarchive_project(
+        &self,
+        id: &ProjectId,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.store.unarchive_project(id, actor).await
     }
 
     pub async fn add_status(
@@ -84,13 +92,22 @@ impl AppState {
             .await
     }
 
-    pub async fn delete_status(
+    pub async fn archive_status(
         &self,
         id: &ProjectId,
         status_key: &StatusKey,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        self.store.delete_status(id, status_key, actor).await
+        self.store.archive_status(id, status_key, actor).await
+    }
+
+    pub async fn unarchive_status(
+        &self,
+        id: &ProjectId,
+        status_key: &StatusKey,
+        actor: &ActorRef,
+    ) -> Result<VersionNumber, StoreError> {
+        self.store.unarchive_status(id, status_key, actor).await
     }
 
     /// Resolve an issue's `(project_id, status)` pair to a

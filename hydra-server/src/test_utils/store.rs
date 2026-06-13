@@ -782,7 +782,15 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_project(
+    async fn archive_project(
+        &self,
+        _id: &ProjectId,
+        _actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        fail()
+    }
+
+    async fn unarchive_project(
         &self,
         _id: &ProjectId,
         _actor: &ActorRef,
@@ -809,7 +817,16 @@ impl Store for FailingStore {
         fail()
     }
 
-    async fn delete_status(
+    async fn archive_status(
+        &self,
+        _id: &ProjectId,
+        _status_key: &StatusKey,
+        _actor: &ActorRef,
+    ) -> Result<(VersionNumber, Vec<IssueId>), StoreError> {
+        fail()
+    }
+
+    async fn unarchive_status(
         &self,
         _id: &ProjectId,
         _status_key: &StatusKey,
