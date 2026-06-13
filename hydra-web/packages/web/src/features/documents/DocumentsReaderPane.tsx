@@ -33,6 +33,8 @@ interface DocumentsReaderPaneProps {
   onSelectFolder: (path: string) => void;
   getChildren: (prefix: string | null) => PathChildEntry[];
   pathsLoading: boolean;
+  onOpenTree?: () => void;
+  onCreate?: () => void;
 }
 
 export function DocumentsReaderPane({
@@ -40,6 +42,8 @@ export function DocumentsReaderPane({
   onSelectFolder,
   getChildren,
   pathsLoading,
+  onOpenTree,
+  onCreate,
 }: DocumentsReaderPaneProps) {
   const isRoot = activePath === ROOT_PATH;
   const prefix = isRoot ? null : activePath;
@@ -75,25 +79,48 @@ export function DocumentsReaderPane({
   return (
     <div className={styles.pane} data-testid="documents-reader-pane">
       <div className={styles.breadcrumb}>
-        {breadcrumbs.map((b, i) => {
-          const isLast = i === breadcrumbs.length - 1;
-          return (
-            <span key={b.path}>
-              {i > 0 && <span className={styles.crumbSep}>/</span>}
-              <span
-                className={isLast ? styles.crumbCurrent : styles.crumb}
-                onClick={isLast ? undefined : () => onSelectFolder(b.path)}
-              >
-                {b.name}
+        {onOpenTree != null && (
+          <button
+            type="button"
+            className={styles.treeToggle}
+            onClick={onOpenTree}
+            aria-label="Open document tree"
+            data-testid="documents-tree-toggle"
+          >
+            <Icons.IconFolder size={14} />
+          </button>
+        )}
+        <div className={styles.crumbsList}>
+          {breadcrumbs.map((b, i) => {
+            const isLast = i === breadcrumbs.length - 1;
+            return (
+              <span key={b.path} className={styles.crumbSegment}>
+                {i > 0 && <span className={styles.crumbSep}>/</span>}
+                <span
+                  className={isLast ? styles.crumbCurrent : styles.crumb}
+                  onClick={isLast ? undefined : () => onSelectFolder(b.path)}
+                >
+                  {b.name}
+                </span>
               </span>
-            </span>
-          );
-        })}
-        <span className={styles.crumbSpacer} />
+            );
+          })}
+        </div>
         <span className={styles.crumbMeta}>
           {totalFiles} {totalFiles === 1 ? "file" : "files"} · {totalFolders}{" "}
           {totalFolders === 1 ? "folder" : "folders"}
         </span>
+        {onCreate != null && (
+          <button
+            type="button"
+            className={styles.createButton}
+            onClick={onCreate}
+            aria-label="New document"
+            data-testid="documents-create-inline"
+          >
+            <Icons.IconPlus size={14} />
+          </button>
+        )}
       </div>
 
       <div className={styles.paneBody}>

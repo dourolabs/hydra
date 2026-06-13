@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import styles from "./PageHead.module.css";
 
 interface PageHeadProps {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   actions?: ReactNode;
 }
@@ -15,7 +15,7 @@ export function PageHead({ eyebrow, title, actions }: PageHeadProps) {
   return (
     <div className={styles.pageHead}>
       <div className={styles.headLeft}>
-        <span className={styles.eyebrow}>{eyebrow}</span>
+        {eyebrow != null && <span className={styles.eyebrow}>{eyebrow}</span>}
         <h1 className={styles.pageTitle}>{title}</h1>
       </div>
       <span className={styles.headSpacer} />

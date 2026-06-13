@@ -9,7 +9,7 @@
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--line);
   font-family: var(--f-mono);
@@ -17,7 +17,28 @@
   color: var(--fg-1);
   background: var(--bg-0);
   flex-shrink: 0;
-  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Path segments live in their own scroll/clip container so the breadcrumb
+   stays a single row on 768–900 px tablets (where it previously wrapped onto
+   2–3 lines). Deep paths scroll horizontally; the meta stays pinned right. */
+.crumbsList {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: thin;
+}
+
+.crumbSegment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .crumb {
@@ -37,14 +58,63 @@
   color: var(--fg-3);
 }
 
-.crumbSpacer {
-  flex: 1;
-}
-
 .crumbMeta {
   font-family: var(--f-mono);
   font-size: var(--t-xs);
   color: var(--fg-2);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Mobile-only tree-drawer toggle, rendered at the start of the breadcrumb so
+   it sits next to "where you are" rather than competing with the global
+   sidebar hamburger up in SiteHeader. Uses IconFolder (not IconMenu) so it
+   reads as "open the folder panel," not a second hamburger. */
+.treeToggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-1);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--tx-fast), color var(--tx-fast),
+    border-color var(--tx-fast);
+}
+
+.treeToggle:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+  border-color: var(--line-strong);
+}
+
+/* Mobile-only inline "+ new document" trigger that lives on the breadcrumb
+   row alongside the folder toggle and path, so the dedicated PageHead row
+   can collapse on narrow screens. Visual style mirrors a primary action. */
+.createButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--acc);
+  border: 1px solid var(--acc);
+  border-radius: var(--radius-sm);
+  color: var(--acc-fg-on);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--tx-fast), border-color var(--tx-fast);
+}
+
+.createButton:hover {
+  background: var(--acc-bright);
+  border-color: var(--acc-bright);
 }
 
 .paneBody {
@@ -137,6 +207,18 @@
 
 @media (max-width: 768px) {
   .breadcrumb {
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .treeToggle,
+  .createButton {
+    display: inline-flex;
+  }
+
+  /* The "12 files · 3 folders" caption is useful context but optional on a
+     narrow row — drop it so the breadcrumb path itself gets the space. */
+  .crumbMeta {
     display: none;
   }
 }

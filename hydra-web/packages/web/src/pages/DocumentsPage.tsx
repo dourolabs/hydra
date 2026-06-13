@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Icons, Spinner } from "@hydra/ui";
 import { DocumentCreateModal } from "../features/documents/DocumentCreateModal";
 import {
@@ -8,18 +8,21 @@ import {
 import { DocumentsReaderPane } from "../features/documents/DocumentsReaderPane";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
 import { useBatchedDocumentPaths } from "../features/documents/useBatchedDocumentPaths";
-import { useDocumentCount } from "../features/documents/useDocumentCount";
 import { useUncategorizedDocuments } from "../features/documents/useUncategorizedDocuments";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
 import styles from "./DocumentsPage.module.css";
 
 const ROOT_PATH = "/";
+const MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 
 export function DocumentsPage() {
   useBreadcrumbs([{ label: "Workspace", to: "/" }], "Documents");
   const [createOpen, setCreateOpen] = useState(false);
   const [activePath, setActivePath] = useState<string>(ROOT_PATH);
+  const [treeOpen, setTreeOpen] = useState(false);
+  const isMobile = useMediaQuery(MOBILE_MEDIA_QUERY);
 
   const { expandedPaths, onToggle, autoExpand } = useDocumentTreeExpandState();
 
@@ -35,7 +38,6 @@ export function DocumentsPage() {
     useBatchedDocumentPaths(prefixes);
 
   const { data: uncategorized } = useUncategorizedDocuments(true);
-  const { data: totalCount } = useDocumentCount();
 
   const topLevelEntries = useMemo(() => childrenMap.get(ROOT_PATH) ?? [], [childrenMap]);
   const topLevelFolders = useMemo(() => topLevelEntries.filter(isFolderEntry), [topLevelEntries]);
@@ -45,22 +47,48 @@ export function DocumentsPage() {
     autoExpand(topLevelPaths);
   }, [topLevelPaths, autoExpand]);
 
+  // Snap the drawer closed when crossing into desktop; otherwise its open state
+  // lingers and the inline tree renders on top of a stale `treeOpen=true`.
+  useEffect(() => {
+    if (!isMobile) setTreeOpen(false);
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (!treeOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTreeOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [treeOpen]);
+
+  const onSelectPath = useCallback(
+    (path: string) => {
+      setActivePath(path);
+      setTreeOpen(false);
+    },
+    [],
+  );
+
   const totalDocs = topLevelEntries.length + (uncategorized?.documents.length ?? 0);
-  const displayCount = totalCount ?? totalDocs;
-  const totalLabel = displayCount === 1 ? "1 DOC" : `${displayCount} DOCS`;
+
+  const drawerActive = isMobile && treeOpen;
 
   return (
     <div className={styles.page}>
-      <PageHead
-        eyebrow={`KNOWLEDGE · ${totalLabel}`}
-        title="Documents"
-        actions={
-          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-            <Icons.IconPlus />
-            New document
-          </Button>
-        }
-      />
+      {isMobile ? (
+        <h1 className={styles.visuallyHiddenTitle}>Documents</h1>
+      ) : (
+        <PageHead
+          title="Documents"
+          actions={
+            <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+              <Icons.IconPlus />
+              New document
+            </Button>
+          }
+        />
+      )}
 
       {error && <div className={styles.errorBanner}>Failed to load documents: {error.message}</div>}
 
@@ -72,16 +100,28 @@ export function DocumentsPage() {
 
       {!isLoading && (
         <div className={styles.treeLayout}>
-          <aside className={styles.tree} aria-label="Document tree">
+          {drawerActive && (
+            <div
+              className={styles.drawerBackdrop}
+              onClick={() => setTreeOpen(false)}
+              aria-hidden="true"
+              data-testid="documents-tree-backdrop"
+            />
+          )}
+          <aside
+            className={`${styles.tree}${drawerActive ? ` ${styles.treeDrawerOpen}` : ""}`}
+            aria-label="Document tree"
+            aria-hidden={isMobile && !treeOpen ? true : undefined}
+          >
             <ul className={styles.treeRoot} role="tree">
               <li>
                 <div
                   className={`${styles.folderRow}${activePath === ROOT_PATH ? ` ${styles.folderRowActive}` : ""}`}
-                  onClick={() => setActivePath(ROOT_PATH)}
+                  onClick={() => onSelectPath(ROOT_PATH)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setActivePath(ROOT_PATH);
+                      onSelectPath(ROOT_PATH);
                     }
                   }}
                   role="treeitem"
@@ -102,7 +142,7 @@ export function DocumentsPage() {
                   entry={entry}
                   depth={1}
                   activePath={activePath}
-                  onSelect={setActivePath}
+                  onSelect={onSelectPath}
                   expandedPaths={expandedPaths}
                   onToggleExpand={onToggle}
                   getChildren={getChildren}
@@ -114,9 +154,11 @@ export function DocumentsPage() {
 
           <DocumentsReaderPane
             activePath={activePath}
-            onSelectFolder={setActivePath}
+            onSelectFolder={onSelectPath}
             getChildren={getChildren}
             pathsLoading={isFetching}
+            onOpenTree={isMobile ? () => setTreeOpen(true) : undefined}
+            onCreate={isMobile ? () => setCreateOpen(true) : undefined}
           />
         </div>
       )}

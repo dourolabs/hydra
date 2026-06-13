@@ -6,6 +6,21 @@
   background: var(--bg-0);
 }
 
+/* On mobile the PageHead is dropped to reclaim the row — actions live in the
+   reader-pane breadcrumb instead. Keep an H1 in the a11y tree so the page is
+   still announced; SiteHeader's breadcrumb already names it visually. */
+.visuallyHiddenTitle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .errorBanner {
   margin: 16px 24px;
   padding: 10px 14px;
@@ -32,6 +47,7 @@
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .tree {
@@ -111,17 +127,58 @@
   flex-shrink: 0;
 }
 
-@media (max-width: 900px) {
-  .treeLayout {
-    grid-template-columns: 220px 1fr;
-  }
+.drawerBackdrop {
+  display: none;
 }
 
 @media (max-width: 768px) {
   .treeLayout {
     grid-template-columns: 1fr;
   }
+
+  /* The tree becomes an overlay drawer that mirrors AppLayout's sidebar:
+     fixed-positioned slot translated off-canvas by default, slides in when
+     .treeDrawerOpen is set. */
   .tree {
-    display: none;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(80vw, 320px);
+    z-index: 30;
+    transform: translateX(-100%);
+    transition: transform var(--tx-norm);
+    box-shadow: 8px 0 24px oklch(0 0 0 / 0.45);
+    padding-top: 16px;
+  }
+
+  .treeDrawerOpen {
+    transform: translateX(0);
+  }
+
+  .drawerBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--bg-overlay);
+    z-index: 20;
+    animation: documents-backdrop-fade var(--tx-norm);
+  }
+}
+
+@keyframes documents-backdrop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree,
+  .drawerBackdrop {
+    transition: none;
+    animation: none;
   }
 }
