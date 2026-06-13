@@ -2107,3 +2107,85 @@ async fn list_issues_bucket_by_returns_200_with_null_cursor() -> anyhow::Result<
     );
     Ok(())
 }
+
+/// Regression test for the orphan-issue 500 bug: soft-deleting a project
+/// that still has issues must not break the issue-list or get-issue
+/// endpoints. The read path resolves each issue's status through the
+/// project; a `ProjectNotFound` from a soft-deleted parent used to
+/// bubble out as a 500.
+#[tokio::test]
+async fn list_and_get_issues_tolerate_soft_deleted_parent_project() -> anyhow::Result<()> {
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let created: UpsertIssueResponse = client
+        .post(format!("{base}/v1/issues"))
+        .json(&UpsertIssueRequest::new(
+            issue(
+                IssueType::Task,
+                "orphan-test",
+                default_user(),
+                String::new(),
+                status("open"),
+                None,
+                vec![],
+                Vec::new(),
+            )
+            .into(),
+            None,
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let project_id = crate::domain::projects::default_project_id();
+    let delete_resp = client
+        .delete(format!("{base}/v1/projects/{project_id}"))
+        .send()
+        .await?;
+    assert!(
+        delete_resp.status().is_success(),
+        "soft-delete must succeed; got {}",
+        delete_resp.status()
+    );
+
+    let list_resp = client.get(format!("{base}/v1/issues")).send().await?;
+    assert_eq!(
+        list_resp.status(),
+        StatusCode::OK,
+        "list /v1/issues must not 500 when a referenced project is soft-deleted"
+    );
+    let list: ListIssuesResponse = list_resp.json().await?;
+    assert!(
+        list.issues.iter().any(|r| r.issue_id == created.issue_id),
+        "list response must still surface the orphan issue"
+    );
+    let orphan = list
+        .issues
+        .iter()
+        .find(|r| r.issue_id == created.issue_id)
+        .expect("orphan present");
+    assert_eq!(
+        orphan.issue.status.key.as_str(),
+        "open",
+        "status key must be preserved on the orphan summary"
+    );
+
+    let get_resp = client
+        .get(format!("{base}/v1/issues/{}", created.issue_id))
+        .send()
+        .await?;
+    assert_eq!(
+        get_resp.status(),
+        StatusCode::OK,
+        "GET /v1/issues/<id> must not 500 when the parent project is soft-deleted"
+    );
+    let fetched: IssueVersionRecord = get_resp.json().await?;
+    assert_eq!(fetched.issue_id, created.issue_id);
+    assert_eq!(fetched.issue.status.key.as_str(), "open");
+
+    Ok(())
+}
