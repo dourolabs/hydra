@@ -47,6 +47,10 @@
     padding: 0 var(--space-2);
     gap: 9px;
   }
+  .popRow {
+    min-height: 44px;
+    padding: var(--space-2) 12px;
+  }
 }
 
 .pillChevron {
