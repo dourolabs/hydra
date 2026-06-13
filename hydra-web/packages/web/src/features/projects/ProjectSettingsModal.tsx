@@ -6,12 +6,15 @@ interface ProjectSettingsModalProps {
   open: boolean;
   onClose: () => void;
   project: ProjectRecord;
+  /** Active-issue count for the archive-confirmation hint. */
+  issueCount?: number;
 }
 
 export function ProjectSettingsModal({
   open,
   onClose,
   project,
+  issueCount,
 }: ProjectSettingsModalProps) {
   return (
     <Modal
@@ -24,6 +27,7 @@ export function ProjectSettingsModal({
         initial={project.project}
         creator={project.project.creator}
         onClose={onClose}
+        issueCount={issueCount}
       />
     </Modal>
   );

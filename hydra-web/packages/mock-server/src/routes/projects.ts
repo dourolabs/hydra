@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Store } from "../store.js";
 import type {
+  Issue,
   ListProjectsResponse,
   Project,
   ProjectRecord,
@@ -12,6 +13,27 @@ import type {
 } from "@hydra/api";
 
 const COLLECTION = "projects";
+const ISSUES_COLLECTION = "issues";
+
+/**
+ * Cascade-archive every non-archived issue matching `predicate`. Mirrors
+ * the real server's cascade in `archive_project` / `archive_status`:
+ * idempotent on already-archived issues. Returns the number of issues
+ * that flipped.
+ */
+function cascadeArchiveIssues(
+  store: Store,
+  predicate: (issue: Issue) => boolean,
+): number {
+  const items = store.list<Issue>(ISSUES_COLLECTION);
+  let count = 0;
+  for (const { id, entry } of items) {
+    if (!predicate(entry.data)) continue;
+    store.delete<Issue>(ISSUES_COLLECTION, id, "issue");
+    count += 1;
+  }
+  return count;
+}
 
 /**
  * True iff `value` matches the `[a-z]-...` shape reserved for
@@ -222,6 +244,13 @@ export function createProjectRoutes(store: Store): Hono {
     );
     const nextProject: Project = { ...project, statuses: nextStatuses };
     const entry = store.update<Project>(COLLECTION, resolved.id, nextProject, null);
+    // Cascade-archive every non-archived issue in this (project, status).
+    // `Issue.status` is a resolved `StatusDefinition`; match by `key`.
+    cascadeArchiveIssues(
+      store,
+      (issue) =>
+        issue.project_id === resolved.id && issue.status.key === statusKey,
+    );
     const resp: UpsertProjectResponse = {
       project_id: resolved.id,
       version: entry.version,
@@ -310,6 +339,8 @@ export function createProjectRoutes(store: Store): Hono {
     }
     const nextProject: Project = { ...resolved.entry.data, archived: true };
     const entry = store.update<Project>(COLLECTION, resolved.id, nextProject, null);
+    // Cascade-archive every non-archived issue in this project.
+    cascadeArchiveIssues(store, (issue) => issue.project_id === resolved.id);
     const resp: UpsertProjectResponse = {
       project_id: resolved.id,
       version: entry.version,
