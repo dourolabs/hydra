@@ -246,4 +246,10 @@
     background: var(--bg-overlay);
     z-index: 1099;
   }
+  /* iOS Safari auto-zooms the viewport when focusing inputs with
+     font-size < 16px. Bump the search field on mobile so the picker
+     doesn't zoom on open (autoFocus) or on tap. */
+  .searchInput {
+    font-size: 16px;
+  }
 }
