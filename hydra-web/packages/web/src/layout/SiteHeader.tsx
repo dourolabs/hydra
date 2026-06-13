@@ -73,6 +73,13 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
           <span className={styles.clusterStatusLabel} data-testid="site-header-sessions-label">
             {sessionsLabel}
           </span>
+          <span
+            className={styles.clusterStatusCount}
+            data-testid="site-header-sessions-count"
+            aria-hidden="true"
+          >
+            {activeSessionCount}
+          </span>
         </Link>
 
         <button
