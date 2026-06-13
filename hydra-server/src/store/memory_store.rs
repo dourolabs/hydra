@@ -23,8 +23,10 @@ use crate::domain::{
 };
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
-use hydra_common::api::v1::issues::SearchIssuesQuery;
-use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
+use hydra_common::api::v1::issues::{IssueSort, SearchIssuesQuery};
+use hydra_common::api::v1::pagination::{
+    CursorKeys, DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT,
+};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
@@ -220,6 +222,32 @@ impl MemoryStore {
             next_session_event_seq: AtomicU64::new(1),
             comments: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Returns the priority of the project owning an issue. Used by the
+    /// `project_status_time` issue sort. Falls back to `0.0` when the
+    /// project row is missing (synthesized rows from broken fixtures), so
+    /// the sort stays total instead of panicking.
+    fn project_priority_for(&self, project_id: &ProjectId) -> f64 {
+        self.projects
+            .get(project_id)
+            .and_then(|entry| Self::latest_versioned(entry.value()))
+            .map(|v| v.item.priority)
+            .unwrap_or(0.0)
+    }
+
+    /// Returns the `position` of `(project_id, status_key)`. Used by the
+    /// `project_status_time` issue sort. Falls back to `0.0` when the
+    /// status is missing from the index (legacy rows pre-statuses), same
+    /// rationale as [`Self::project_priority_for`].
+    fn status_position_for(&self, project_id: &ProjectId, status_key: &StatusKey) -> f64 {
+        let Some(idx_mutex) = self.statuses_indexes.get(project_id) else {
+            return 0.0;
+        };
+        let idx = idx_mutex.lock().expect("statuses index mutex poisoned");
+        idx.sequence_for_key(status_key)
+            .and_then(|seq| idx.rows.get(&seq).map(|d| d.position))
+            .unwrap_or(0.0)
     }
 
     /// Resolve `(project_id, status_key)` to a `statuses.sequence`.
@@ -999,13 +1027,35 @@ impl ReadOnlyStore for MemoryStore {
                 (issue_id, latest)
             })
             .collect();
-        apply_memory_pagination(
-            items,
-            |(_id, v)| v.timestamp,
-            |(id, _v)| id.as_ref(),
-            &query.cursor,
-            query.limit,
-        )
+        match query.sort {
+            Some(IssueSort::ProjectStatusTimeDesc) => {
+                let keyed = items
+                    .into_iter()
+                    .map(|(id, v)| {
+                        let priority = self.project_priority_for(&v.item.project_id);
+                        let position = self.status_position_for(&v.item.project_id, &v.item.status);
+                        (priority, position, id, v)
+                    })
+                    .collect();
+                apply_memory_pagination_project_status_time(keyed, &query.cursor, query.limit)
+            }
+            Some(IssueSort::CreatedAtDesc) | None => apply_memory_pagination(
+                items,
+                |(_id, v)| v.timestamp,
+                |(id, _v)| id.as_ref(),
+                &query.cursor,
+                query.limit,
+            ),
+            // `IssueSort` is `#[non_exhaustive]`; unknown variants fall back to
+            // the default ordering so forward-rolled clients keep working.
+            Some(_) => apply_memory_pagination(
+                items,
+                |(_id, v)| v.timestamp,
+                |(id, _v)| id.as_ref(),
+                &query.cursor,
+                query.limit,
+            ),
+        }
     }
 
     async fn count_issues(&self, query: &SearchIssuesQuery) -> Result<u64, StoreError> {
@@ -3305,10 +3355,18 @@ fn apply_memory_pagination<T>(
     if let Some(cursor_str) = cursor {
         let decoded = DecodedCursor::decode(cursor_str)
             .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        let (cursor_ts, cursor_id) = match decoded.keys {
+            CursorKeys::CreatedAtId { timestamp, id } => (timestamp, id),
+            CursorKeys::ProjectStatusTime { .. } => {
+                return Err(StoreError::Internal(
+                    "cursor variant does not match created_at_desc sort".to_string(),
+                ));
+            }
+        };
         items.retain(|item| {
             let ts = get_timestamp(item);
             let id = get_id(item);
-            (ts, id) < (decoded.timestamp, decoded.id.as_str())
+            (ts, id) < (cursor_ts, cursor_id.as_str())
         });
     }
 
@@ -3319,6 +3377,76 @@ fn apply_memory_pagination<T>(
     }
 
     Ok(items)
+}
+
+/// Sorts `(priority, position, id, versioned)` tuples by
+/// `(priority ASC, position ASC, timestamp DESC, id DESC)`, applies the
+/// `ProjectStatusTime` cursor predicate, and truncates to `limit + 1` for
+/// next-page detection. Mirror of the SQL stores' keyset predicate so a
+/// cursor produced by either backend paginates identically.
+fn apply_memory_pagination_project_status_time(
+    mut items: Vec<(f64, f64, IssueId, Versioned<Issue>)>,
+    cursor: &Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+    items.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| b.3.timestamp.cmp(&a.3.timestamp))
+            .then_with(|| b.2.as_ref().cmp(a.2.as_ref()))
+    });
+
+    if let Some(cursor_str) = cursor {
+        let decoded = DecodedCursor::decode(cursor_str)
+            .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
+        let (cursor_priority, cursor_position, cursor_ts, cursor_id) = match decoded.keys {
+            CursorKeys::ProjectStatusTime {
+                project_priority,
+                status_position,
+                timestamp,
+                id,
+            } => (project_priority, status_position, timestamp, id),
+            CursorKeys::CreatedAtId { .. } => {
+                return Err(StoreError::Internal(
+                    "cursor variant does not match project_status_time_desc sort".to_string(),
+                ));
+            }
+        };
+        items.retain(|(priority, position, id, v)| {
+            // Lexicographic keyset for `(priority ASC, position ASC, ts DESC, id DESC)`.
+            // Total ordering against NaN-free production data; NaN-input
+            // would have failed the cursor parse already.
+            if *priority > cursor_priority {
+                return true;
+            }
+            if *priority < cursor_priority {
+                return false;
+            }
+            if *position > cursor_position {
+                return true;
+            }
+            if *position < cursor_position {
+                return false;
+            }
+            if v.timestamp < cursor_ts {
+                return true;
+            }
+            if v.timestamp > cursor_ts {
+                return false;
+            }
+            id.as_ref() < cursor_id.as_str()
+        });
+    }
+
+    let stripped: Vec<(IssueId, Versioned<Issue>)> =
+        items.into_iter().map(|(_, _, id, v)| (id, v)).collect();
+    let mut stripped = stripped;
+    if let Some(limit) = limit {
+        let effective = (limit.min(PAGINATION_MAX_LIMIT) + 1) as usize;
+        stripped.truncate(effective);
+    }
+    Ok(stripped)
 }
 
 #[cfg(test)]
@@ -7422,10 +7550,10 @@ mod tests {
         let page1 = store.list_issues(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page1[1].1.timestamp,
-            id: page1[1].0.to_string(),
-        }
+        let cursor = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page1[1].1.timestamp,
+            page1[1].0.to_string(),
+        )
         .encode();
 
         // Page 2: use cursor, limit=2
@@ -7435,10 +7563,10 @@ mod tests {
         let page2 = store.list_issues(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page2[1].1.timestamp,
-            id: page2[1].0.to_string(),
-        }
+        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page2[1].1.timestamp,
+            page2[1].0.to_string(),
+        )
         .encode();
 
         // Page 3: only 1 item remaining (no extra = last page)
@@ -7476,6 +7604,202 @@ mod tests {
         assert_eq!(results.len(), 3);
     }
 
+    /// Helper for the `project_status_time` tests: builds a project with
+    /// `priority`, `key` and a status whose `position` is set explicitly.
+    /// Returns the project id and status key.
+    async fn seed_project_with_status(
+        store: &MemoryStore,
+        key: &str,
+        priority: f64,
+        status_key: &str,
+        status_position: f64,
+    ) -> (ProjectId, hydra_common::api::v1::projects::StatusKey) {
+        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        let project = Project::new(
+            ProjectKey::try_new(key).unwrap(),
+            key.to_string(),
+            Vec::new(),
+            ApiUsername::from("alice"),
+            false,
+            priority,
+        );
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let mut def = StatusDefinition::new(
+            StatusKey::try_new(status_key).unwrap(),
+            status_key.to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        def.position = status_position;
+        let status_key_typed = def.key.clone();
+        store
+            .add_status(&project_id, def, &ActorRef::test())
+            .await
+            .unwrap();
+        (project_id, status_key_typed)
+    }
+
+    async fn add_issue_in(
+        store: &MemoryStore,
+        project_id: &ProjectId,
+        status_key: &hydra_common::api::v1::projects::StatusKey,
+    ) -> IssueId {
+        let mut issue = sample_issue(vec![]);
+        issue.project_id = project_id.clone();
+        issue.status = status_key.clone();
+        store.add_issue(issue, &ActorRef::test()).await.unwrap().0
+    }
+
+    /// `sort=project_status_time` must order by
+    /// `(project.priority ASC, status.position ASC, created_at DESC, id DESC)`.
+    #[tokio::test]
+    async fn list_issues_project_status_time_orders_by_priority_then_position_then_time() {
+        use hydra_common::api::v1::issues::IssueSort;
+        let store = MemoryStore::new();
+        // Project A (priority 100): statuses pos=10, pos=20.
+        // Project B (priority 200): status pos=5.
+        let (proj_a, a_low) = seed_project_with_status(&store, "proj-a", 100.0, "todo", 10.0).await;
+        let (_, a_high) = seed_project_with_status_existing(&store, &proj_a, "doing", 20.0).await;
+        let (proj_b, b_only) = seed_project_with_status(&store, "proj-b", 200.0, "open", 5.0).await;
+
+        // Issue order created: B.open, A.doing(old), A.todo, A.doing(new)
+        let i_b1 = add_issue_in(&store, &proj_b, &b_only).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let i_a_doing_old = add_issue_in(&store, &proj_a, &a_high).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let i_a_todo = add_issue_in(&store, &proj_a, &a_low).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let i_a_doing_new = add_issue_in(&store, &proj_a, &a_high).await;
+
+        let mut query = SearchIssuesQuery::default();
+        query.sort = Some(IssueSort::ProjectStatusTimeDesc);
+        let results = store.list_issues(&query).await.unwrap();
+
+        // Expected order:
+        //   proj A (priority 100), status "todo" (pos 10): [i_a_todo]
+        //   proj A (priority 100), status "doing" (pos 20):
+        //     newer created_at first  → [i_a_doing_new, i_a_doing_old]
+        //   proj B (priority 200), status "open" (pos 5): [i_b1]
+        let ordered: Vec<IssueId> = results.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(ordered, vec![i_a_todo, i_a_doing_new, i_a_doing_old, i_b1]);
+    }
+
+    /// Default sort (no `sort` param) must keep the historical
+    /// `created_at DESC, id DESC` behaviour untouched.
+    #[tokio::test]
+    async fn list_issues_default_sort_is_unchanged_when_sort_omitted() {
+        let store = MemoryStore::new();
+        let actor = ActorRef::test();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            ids.push(id);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        ids.reverse(); // newest first
+        let results = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        let observed: Vec<IssueId> = results.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(observed, ids);
+    }
+
+    /// Paging through `sort=project_status_time` must visit every row
+    /// exactly once (no duplicates, no skips) across all pages.
+    #[tokio::test]
+    async fn list_issues_project_status_time_paginates_without_duplicates_or_skips() {
+        use hydra_common::api::v1::issues::IssueSort;
+        let store = MemoryStore::new();
+        let (proj_a, a_low) = seed_project_with_status(&store, "pa", 100.0, "todo", 10.0).await;
+        let (_, a_high) = seed_project_with_status_existing(&store, &proj_a, "doing", 20.0).await;
+        let (proj_b, b_only) = seed_project_with_status(&store, "pb", 200.0, "open", 5.0).await;
+
+        // 6 issues spread across the (project, status) cells.
+        let mut all = Vec::new();
+        for (proj, status) in [
+            (&proj_a, &a_low),
+            (&proj_a, &a_high),
+            (&proj_b, &b_only),
+            (&proj_a, &a_low),
+            (&proj_b, &b_only),
+            (&proj_a, &a_high),
+        ] {
+            all.push(add_issue_in(&store, proj, status).await);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        let mut query = SearchIssuesQuery::default();
+        query.sort = Some(IssueSort::ProjectStatusTimeDesc);
+        let full = store.list_issues(&query).await.unwrap();
+        let full_ids: Vec<IssueId> = full.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(full_ids.len(), all.len());
+
+        // Page in chunks of 2 and accumulate.
+        let mut visited: Vec<IssueId> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut q = SearchIssuesQuery::default();
+            q.sort = Some(IssueSort::ProjectStatusTimeDesc);
+            q.limit = Some(2);
+            q.cursor = cursor.clone();
+            let page = store.list_issues(&q).await.unwrap();
+            // store returns limit+1 to drive next_cursor; mirror the route's
+            // truncation by taking only `limit` items into the cursor.
+            let kept = page.iter().take(2).collect::<Vec<_>>();
+            for (id, _) in &kept {
+                visited.push((*id).clone());
+            }
+            if page.len() <= 2 {
+                break;
+            }
+            let last = kept.last().unwrap();
+            let priority = store.project_priority_for(&last.1.item.project_id);
+            let position = store.status_position_for(&last.1.item.project_id, &last.1.item.status);
+            cursor = Some(
+                hydra_common::api::v1::pagination::DecodedCursor::project_status_time(
+                    priority,
+                    position,
+                    last.1.timestamp,
+                    last.0.as_ref(),
+                )
+                .encode(),
+            );
+        }
+        assert_eq!(visited, full_ids, "paged traversal must match full result");
+    }
+
+    /// Helper companion to [`seed_project_with_status`] that adds another
+    /// status row to an existing project.
+    async fn seed_project_with_status_existing(
+        store: &MemoryStore,
+        project_id: &ProjectId,
+        status_key: &str,
+        status_position: f64,
+    ) -> ((), hydra_common::api::v1::projects::StatusKey) {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        let mut def = StatusDefinition::new(
+            StatusKey::try_new(status_key).unwrap(),
+            status_key.to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        def.position = status_position;
+        let status_key_typed = def.key.clone();
+        store
+            .add_status(project_id, def, &ActorRef::test())
+            .await
+            .unwrap();
+        ((), status_key_typed)
+    }
+
     #[tokio::test]
     async fn patches_pagination_returns_correct_pages() {
         let store = MemoryStore::new();
@@ -7491,10 +7815,10 @@ mod tests {
         let page1 = store.list_patches(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page1[1].1.timestamp,
-            id: page1[1].0.to_string(),
-        }
+        let cursor = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page1[1].1.timestamp,
+            page1[1].0.to_string(),
+        )
         .encode();
 
         let mut query2 = SearchPatchesQuery::default();
@@ -7503,10 +7827,10 @@ mod tests {
         let page2 = store.list_patches(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page2[1].1.timestamp,
-            id: page2[1].0.to_string(),
-        }
+        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page2[1].1.timestamp,
+            page2[1].0.to_string(),
+        )
         .encode();
 
         let mut query3 = SearchPatchesQuery::default();
@@ -7544,10 +7868,10 @@ mod tests {
         let page1 = store.list_documents(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page1[1].1.timestamp,
-            id: page1[1].0.to_string(),
-        }
+        let cursor = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page1[1].1.timestamp,
+            page1[1].0.to_string(),
+        )
         .encode();
 
         let mut query2 = SearchDocumentsQuery::default();
@@ -7556,10 +7880,10 @@ mod tests {
         let page2 = store.list_documents(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page2[1].1.timestamp,
-            id: page2[1].0.to_string(),
-        }
+        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page2[1].1.timestamp,
+            page2[1].0.to_string(),
+        )
         .encode();
 
         let mut query3 = SearchDocumentsQuery::default();
@@ -7597,10 +7921,10 @@ mod tests {
         let page1 = store.list_sessions(&query).await.unwrap();
         assert_eq!(page1.len(), 3);
 
-        let cursor = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page1[1].1.timestamp,
-            id: page1[1].0.to_string(),
-        }
+        let cursor = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page1[1].1.timestamp,
+            page1[1].0.to_string(),
+        )
         .encode();
 
         let mut query2 = SearchSessionsQuery::default();
@@ -7609,10 +7933,10 @@ mod tests {
         let page2 = store.list_sessions(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page2[1].1.timestamp,
-            id: page2[1].0.to_string(),
-        }
+        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page2[1].1.timestamp,
+            page2[1].0.to_string(),
+        )
         .encode();
 
         let mut query3 = SearchSessionsQuery::default();
@@ -7653,10 +7977,10 @@ mod tests {
         assert_eq!(page1.len(), 3);
 
         // Simulate what the route handler does: truncate to limit and encode cursor
-        let cursor = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page1[1].1.updated_at,
-            id: page1[1].0.to_string(),
-        }
+        let cursor = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page1[1].1.updated_at,
+            page1[1].0.to_string(),
+        )
         .encode();
 
         // Page 2: use cursor, limit=2
@@ -7666,10 +7990,10 @@ mod tests {
         let page2 = store.list_labels(&query2).await.unwrap();
         assert_eq!(page2.len(), 3);
 
-        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor {
-            timestamp: page2[1].1.updated_at,
-            id: page2[1].0.to_string(),
-        }
+        let cursor2 = hydra_common::api::v1::pagination::DecodedCursor::created_at_id(
+            page2[1].1.updated_at,
+            page2[1].0.to_string(),
+        )
         .encode();
 
         // Page 3: use cursor2, limit=2
