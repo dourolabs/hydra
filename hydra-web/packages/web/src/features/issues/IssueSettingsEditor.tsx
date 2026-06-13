@@ -183,6 +183,14 @@ function Row({
               disabled={pending}
               data-testid={`issue-settings-input-${String(field.key)}`}
               aria-label={field.label}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              data-1p-ignore="true"
+              data-lpignore="true"
+              data-bwignore="true"
+              data-form-type="other"
             />
             {errorMsg && (
               <div
