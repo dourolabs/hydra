@@ -3075,6 +3075,7 @@
           "unblocks_parents": false,
           "unblocks_dependents": false,
           "cascades_to_children": false,
+          "position": 1000.0,
           "prompt_path": "/projects/default/statuses/open.md"
         },
         {
@@ -3084,6 +3085,7 @@
           "unblocks_parents": false,
           "unblocks_dependents": false,
           "cascades_to_children": false,
+          "position": 2000.0,
           "prompt_path": "/projects/default/statuses/in-progress.md"
         },
         {
@@ -3093,6 +3095,7 @@
           "unblocks_parents": true,
           "unblocks_dependents": true,
           "cascades_to_children": false,
+          "position": 3000.0,
           "prompt_path": null
         },
         {
@@ -3102,6 +3105,7 @@
           "unblocks_parents": true,
           "unblocks_dependents": false,
           "cascades_to_children": true,
+          "position": 4000.0,
           "prompt_path": null
         },
         {
@@ -3111,6 +3115,7 @@
           "unblocks_parents": true,
           "unblocks_dependents": false,
           "cascades_to_children": true,
+          "position": 5000.0,
           "prompt_path": null
         }
       ]
@@ -3129,6 +3134,7 @@
           "unblocks_parents": false,
           "unblocks_dependents": false,
           "cascades_to_children": false,
+          "position": 1000.0,
           "prompt_path": null
         },
         {
@@ -3138,6 +3144,7 @@
           "unblocks_parents": false,
           "unblocks_dependents": false,
           "cascades_to_children": false,
+          "position": 2000.0,
           "on_enter": { "assign_to": { "Agent": { "name": "pm" } }, "attach_form": null },
           "prompt_path": "/projects/engineering-v2/statuses/backlog.md"
         },
@@ -3148,6 +3155,7 @@
           "unblocks_parents": false,
           "unblocks_dependents": false,
           "cascades_to_children": false,
+          "position": 3000.0,
           "prompt_path": null
         },
         {
@@ -3157,6 +3165,7 @@
           "unblocks_parents": false,
           "unblocks_dependents": false,
           "cascades_to_children": false,
+          "position": 4000.0,
           "on_enter": { "assign_to": { "Agent": { "name": "swe" } }, "attach_form": null },
           "prompt_path": "/projects/engineering-v2/statuses/in-development.md"
         },
@@ -3167,6 +3176,7 @@
           "unblocks_parents": false,
           "unblocks_dependents": false,
           "cascades_to_children": false,
+          "position": 5000.0,
           "on_enter": {
             "assign_to": { "Agent": { "name": "reviewer" } },
             "attach_form": "/forms/review.yaml"
@@ -3180,6 +3190,7 @@
           "unblocks_parents": true,
           "unblocks_dependents": true,
           "cascades_to_children": false,
+          "position": 6000.0,
           "prompt_path": null
         }
       ]

@@ -174,10 +174,21 @@ function makeIssueNormalizer(
     // Prefer an inline definition when the fixture provides one;
     // otherwise resolve `(project_id, key)` against the seed's project
     // status list — mirroring `AppState::resolve_status` server-side.
-    const resolved: StatusDefinition =
-      typeof issue.status !== "string"
-        ? issue.status
-        : (issue.resolved_status ?? resolveSeedStatus(projects, project_id, issue.status));
+    //
+    // When an inline definition is present, backfill missing project-side
+    // fields (e.g. `position`) from the project's status list so newer
+    // fields keep working against older fixtures that pre-date them.
+    let resolved: StatusDefinition;
+    if (typeof issue.status !== "string") {
+      resolved = issue.status;
+    } else if (issue.resolved_status) {
+      const projectDef = lookupSeedStatus(projects, project_id, issue.status);
+      resolved = projectDef
+        ? { ...projectDef, ...issue.resolved_status }
+        : issue.resolved_status;
+    } else {
+      resolved = resolveSeedStatus(projects, project_id, issue.status);
+    }
     return {
       ...issue,
       status: resolved,
@@ -206,6 +217,20 @@ function resolveSeedStatus(
     );
   }
   return def;
+}
+
+// Soft variant of `resolveSeedStatus`: returns `null` instead of throwing.
+// Used as the project-side base for the inline-`resolved_status` overlay so
+// missing fields (e.g. `position`) get backfilled — the inline block is then
+// treated as an override, not a complete replacement.
+function lookupSeedStatus(
+  projects: Record<string, Project> | undefined,
+  projectId: string,
+  key: string,
+): StatusDefinition | null {
+  const project = projects?.[projectId];
+  if (!project) return null;
+  return project.statuses.find((s) => s.key === key) ?? null;
 }
 
 function normalizePatch(patch: Patch): Patch {
