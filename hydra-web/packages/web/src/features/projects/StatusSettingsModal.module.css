@@ -170,6 +170,8 @@
 }
 
 .pillEmpty {
+  display: inline-flex;
+  align-items: center;
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
@@ -229,5 +231,10 @@
   }
   .moveActions {
     flex-wrap: wrap;
+  }
+  .pillContent,
+  .pillEmpty {
+    min-height: 44px;
+    padding: 0 var(--space-1);
   }
 }
