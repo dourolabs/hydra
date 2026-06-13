@@ -20,6 +20,7 @@ import { useChatCreateModal } from "../features/chat/useChatCreateModal";
 import { FilterBar, type Filter } from "../features/filters";
 import { compareConversationsByBucketThenUpdated } from "../utils/conversationOrder";
 import { AgoTime } from "../components/Runtime/Runtime";
+import { CollapsibleSearch } from "../components/CollapsibleSearch/CollapsibleSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { ChatRailRow } from "../features/related/RailRow";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
@@ -160,19 +161,13 @@ export function ChatListPage() {
       />
 
       <div className={styles.toolbar}>
-        <div className={styles.searchBox}>
-          <span className={styles.searchIcon}>
-            <Icons.IconSearch size={14} />
-          </span>
-          <input
-            type="text"
-            placeholder="Search chats…"
-            value={searchValue}
-            onChange={(e) => handleSearchChange(e.target.value)}
-            aria-label="Search chats"
-            data-testid="chats-search"
-          />
-        </div>
+        <CollapsibleSearch
+          value={searchValue}
+          onChange={handleSearchChange}
+          placeholder="Search chats…"
+          ariaLabel="Search chats"
+          testId="chats-search"
+        />
         <FilterBar
           filters={filters}
           setFilters={setFilters}

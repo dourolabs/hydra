@@ -1,0 +1,111 @@
+/* Inline search input — desktop default, and mobile when expanded.
+   Mirrors the shape of the per-page .searchBox blocks it replaces. */
+.box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  min-height: var(--touch-min);
+  padding: 0 9px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-2);
+  font-size: var(--t-sm);
+  min-width: 200px;
+  transition: border-color var(--tx-fast);
+}
+
+.box:focus-within {
+  border-color: var(--acc);
+}
+
+.icon {
+  color: var(--fg-2);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--fg-0);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+
+.input::placeholder {
+  color: var(--fg-3);
+}
+
+.clearButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--fg-2);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.clearButton:hover {
+  color: var(--fg-0);
+  background: var(--bg-2);
+}
+
+/* Mobile collapsed state: a 44×44 icon button sitting alongside chip
+   neighbors in the same toolbar row. */
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-min);
+  height: var(--touch-min);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--tx-fast),
+    border-color var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.iconButton:hover {
+  background: var(--bg-2);
+  border-color: var(--line-strong);
+  color: var(--fg-0);
+}
+
+.iconButton:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: -1px;
+}
+
+@media (max-width: 768px) {
+  /* When expanded on mobile, take the full toolbar row so the input has
+     room to breathe — chip neighbors wrap to the next row. */
+  .box {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  /* Prevent iOS Safari from auto-zooming on input focus. */
+  .input {
+    font-size: 16px;
+  }
+}

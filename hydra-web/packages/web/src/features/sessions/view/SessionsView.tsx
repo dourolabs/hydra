@@ -1,11 +1,12 @@
 import { useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Avatar, Badge, Icons } from "@hydra/ui";
+import { Avatar, Badge } from "@hydra/ui";
 import type { SessionSummaryRecord } from "@hydra/api";
 import { normalizeSessionStatus } from "../../../utils/badgeStatus";
 import { TokensCell } from "../TokensCell";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime, RunTime } from "../../../components/Runtime/Runtime";
+import { CollapsibleSearch } from "../../../components/CollapsibleSearch/CollapsibleSearch";
 import { useSingleSessionDuration } from "../../dashboard/useSessionDuration";
 import { SessionRailRow } from "../../related/RailRow";
 import { useSessionLinks } from "../useSessionLinks";
@@ -88,19 +89,13 @@ export function SessionsView({
       <PageHead eyebrow={eyebrow} title="Sessions" />
 
       <div className={styles.toolbar}>
-        <div className={styles.searchBox}>
-          <span className={styles.searchIcon}>
-            <Icons.IconSearch size={14} />
-          </span>
-          <input
-            type="text"
-            placeholder="Search sessions…"
-            value={searchValue}
-            onChange={(e) => onSearchChange(e.target.value)}
-            aria-label="Search sessions"
-            data-testid="sessions-search"
-          />
-        </div>
+        <CollapsibleSearch
+          value={searchValue}
+          onChange={onSearchChange}
+          placeholder="Search sessions…"
+          ariaLabel="Search sessions"
+          testId="sessions-search"
+        />
         <FilterBar
           filters={filters}
           setFilters={setFilters}

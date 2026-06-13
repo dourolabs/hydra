@@ -4,6 +4,7 @@ import type { IssueNeighborhood } from "../flowPill";
 import type { IssueFilters } from "../usePaginatedIssues";
 import { FilterBar, type Filter, type FilterDefinitions } from "../../filters";
 import { PageHead } from "../../../layout/PageHead";
+import { CollapsibleSearch } from "../../../components/CollapsibleSearch/CollapsibleSearch";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
 import styles from "./IssuesView.module.css";
@@ -98,19 +99,13 @@ export function IssuesView({
       />
 
       <div className={styles.toolbar}>
-        <div className={styles.searchBox}>
-          <span className={styles.searchIcon}>
-            <Icons.IconSearch size={14} />
-          </span>
-          <input
-            type="text"
-            placeholder="Search issues…"
-            value={searchValue}
-            onChange={(e) => onSearchChange(e.target.value)}
-            aria-label="Search issues"
-            data-testid="issues-search"
-          />
-        </div>
+        <CollapsibleSearch
+          value={searchValue}
+          onChange={onSearchChange}
+          placeholder="Search issues…"
+          ariaLabel="Search issues"
+          testId="issues-search"
+        />
         <FilterBar
           filters={filters}
           setFilters={setFilters}

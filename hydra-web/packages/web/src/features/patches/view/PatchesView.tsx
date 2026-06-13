@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router-dom";
-import { Avatar, Badge, Icons, Kbd } from "@hydra/ui";
+import { Avatar, Badge } from "@hydra/ui";
 import type { PatchSummaryRecord } from "@hydra/api";
 import { normalizePatchStatus } from "../../../utils/badgeStatus";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { AgoTime } from "../../../components/Runtime/Runtime";
+import { CollapsibleSearch } from "../../../components/CollapsibleSearch/CollapsibleSearch";
 import { PatchRailRow } from "../../related/RailRow";
 import { PatchRepoLink } from "../PatchRepoLink";
 import {
@@ -68,18 +69,13 @@ export function PatchesView({
       <PageHead eyebrow={eyebrow} title="Patches" />
 
       <div className={styles.toolbar}>
-        <div className={styles.searchBox}>
-          <Icons.IconSearch className={styles.searchIcon} size={14} />
-          <input
-            type="text"
-            placeholder="Search patches…"
-            value={searchValue}
-            onChange={(e) => onSearchChange(e.target.value)}
-            aria-label="Search patches"
-            data-testid="patches-search"
-          />
-          <Kbd>/</Kbd>
-        </div>
+        <CollapsibleSearch
+          value={searchValue}
+          onChange={onSearchChange}
+          placeholder="Search patches…"
+          ariaLabel="Search patches"
+          testId="patches-search"
+        />
         <FilterBar
           filters={filters}
           setFilters={setFilters}

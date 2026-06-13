@@ -18,45 +18,6 @@
   flex-wrap: wrap;
 }
 
-.searchBox {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 26px;
-  padding: 0 9px;
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  color: var(--fg-2);
-  font-size: var(--t-sm);
-  min-width: 200px;
-  transition: border-color var(--tx-fast);
-}
-
-.searchBox:focus-within {
-  border-color: var(--acc);
-}
-
-.searchBox input {
-  flex: 1;
-  background: transparent;
-  border: 0;
-  outline: 0;
-  color: var(--fg-0);
-  font-family: var(--f-sans);
-  font-size: var(--t-sm);
-  min-width: 0;
-}
-
-.searchBox input::placeholder {
-  color: var(--fg-3);
-}
-
-.searchIcon {
-  color: var(--fg-2);
-  flex-shrink: 0;
-}
-
 /* ─── Body ─── */
 .body {
   flex: 1;
@@ -252,13 +213,6 @@
 @media (max-width: 768px) {
   .toolbar {
     padding: 8px 16px;
-  }
-
-  /* Force the search box onto its own row instead of letting it squeeze into
-     whatever space is left on row 1, mirroring IssuesView's mobile layout. */
-  .searchBox {
-    min-width: 0;
-    flex: 1 1 100%;
   }
 
   .loadMore {
