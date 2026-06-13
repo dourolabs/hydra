@@ -54,18 +54,19 @@
 }
 
 /* "Has activity" treatment for tabs whose badge prop is set (e.g. the
-   Sessions tab when active session count > 0). Mirrors the bright-text
-   highlight applied to the active item in the Sidebar (`.itemActive`'s
-   `color: var(--fg-0)`) and adds the accent top-border so the tab reads
-   as "look here" without a separate amber chip. */
+   Sessions tab when active session count > 0). Mirrors the Sidebar's
+   `.itemActive` highlight verbatim: subtle bg-3 lozenge behind the cell
+   + brightened fg-0 text/icon. The accent top-border completes the
+   "this cell wants attention" cue. */
 .tab[data-has-activity="true"] {
+  background: var(--bg-3);
   color: var(--fg-0);
   border-top-color: var(--acc);
 }
 
-/* The current-route tab wins over the has-activity treatment: accent text
-   + filled icon, same as before. .tab.tabActive bumps the specificity
-   above the attribute selector above. */
+/* The current-route tab wins on text color: accent text + filled icon.
+   Background from has-activity (if any) stays — when Sessions is both
+   selected and has activity, the lozenge underlines that. */
 .tab.tabActive {
   color: var(--acc);
   border-top-color: var(--acc);
