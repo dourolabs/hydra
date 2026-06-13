@@ -33,6 +33,7 @@ interface DocumentsReaderPaneProps {
   onSelectFolder: (path: string) => void;
   getChildren: (prefix: string | null) => PathChildEntry[];
   pathsLoading: boolean;
+  onOpenTree?: () => void;
 }
 
 export function DocumentsReaderPane({
@@ -40,6 +41,7 @@ export function DocumentsReaderPane({
   onSelectFolder,
   getChildren,
   pathsLoading,
+  onOpenTree,
 }: DocumentsReaderPaneProps) {
   const isRoot = activePath === ROOT_PATH;
   const prefix = isRoot ? null : activePath;
@@ -75,6 +77,17 @@ export function DocumentsReaderPane({
   return (
     <div className={styles.pane} data-testid="documents-reader-pane">
       <div className={styles.breadcrumb}>
+        {onOpenTree != null && (
+          <button
+            type="button"
+            className={styles.treeToggle}
+            onClick={onOpenTree}
+            aria-label="Open document tree"
+            data-testid="documents-tree-toggle"
+          >
+            <Icons.IconFolder size={14} />
+          </button>
+        )}
         <div className={styles.crumbsList}>
           {breadcrumbs.map((b, i) => {
             const isLast = i === breadcrumbs.length - 1;

@@ -8,7 +8,6 @@ import {
 import { DocumentsReaderPane } from "../features/documents/DocumentsReaderPane";
 import { useDocumentTreeExpandState } from "../features/documents/useDocumentTreeExpandState";
 import { useBatchedDocumentPaths } from "../features/documents/useBatchedDocumentPaths";
-import { useDocumentCount } from "../features/documents/useDocumentCount";
 import { useUncategorizedDocuments } from "../features/documents/useUncategorizedDocuments";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
@@ -39,7 +38,6 @@ export function DocumentsPage() {
     useBatchedDocumentPaths(prefixes);
 
   const { data: uncategorized } = useUncategorizedDocuments(true);
-  const { data: totalCount } = useDocumentCount();
 
   const topLevelEntries = useMemo(() => childrenMap.get(ROOT_PATH) ?? [], [childrenMap]);
   const topLevelFolders = useMemo(() => topLevelEntries.filter(isFolderEntry), [topLevelEntries]);
@@ -73,34 +71,18 @@ export function DocumentsPage() {
   );
 
   const totalDocs = topLevelEntries.length + (uncategorized?.documents.length ?? 0);
-  const displayCount = totalCount ?? totalDocs;
-  const totalLabel = displayCount === 1 ? "1 DOC" : `${displayCount} DOCS`;
 
   const drawerActive = isMobile && treeOpen;
 
   return (
     <div className={styles.page}>
       <PageHead
-        eyebrow={`KNOWLEDGE · ${totalLabel}`}
         title="Documents"
         actions={
-          <>
-            <button
-              type="button"
-              className={styles.treeToggle}
-              onClick={() => setTreeOpen(true)}
-              aria-label="Open document tree"
-              aria-expanded={treeOpen}
-              data-testid="documents-tree-toggle"
-            >
-              <Icons.IconMenu size={14} />
-              <span>Documents</span>
-            </button>
-            <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-              <Icons.IconPlus />
-              New document
-            </Button>
-          </>
+          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+            <Icons.IconPlus />
+            New document
+          </Button>
         }
       />
 
@@ -171,6 +153,7 @@ export function DocumentsPage() {
             onSelectFolder={onSelectPath}
             getChildren={getChildren}
             pathsLoading={isFetching}
+            onOpenTree={isMobile ? () => setTreeOpen(true) : undefined}
           />
         </div>
       )}

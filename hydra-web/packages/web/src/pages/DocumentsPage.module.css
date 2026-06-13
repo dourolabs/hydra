@@ -112,29 +112,6 @@
   flex-shrink: 0;
 }
 
-/* ─── Mobile drawer toggle (hidden on desktop) ─── */
-.treeToggle {
-  display: none;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 10px;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  color: var(--fg-1);
-  font-family: var(--f-sans);
-  font-size: var(--t-sm);
-  cursor: pointer;
-  transition: background var(--tx-fast), color var(--tx-fast), border-color var(--tx-fast);
-}
-
-.treeToggle:hover {
-  background: var(--bg-2);
-  color: var(--fg-0);
-  border-color: var(--line-strong);
-}
-
 .drawerBackdrop {
   display: none;
 }
@@ -171,10 +148,6 @@
     background: var(--bg-overlay);
     z-index: 20;
     animation: documents-backdrop-fade var(--tx-norm);
-  }
-
-  .treeToggle {
-    display: inline-flex;
   }
 }
 
