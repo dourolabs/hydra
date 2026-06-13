@@ -24,6 +24,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { ChatRailRow } from "../features/related/RailRow";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
 import styles from "./ChatListPage.module.css";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -240,6 +241,12 @@ export function ChatListPage() {
           </div>
         )}
       </div>
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="New chat"
+        onClick={openChatCreate}
+        testId="chats-fab"
+      />
     </div>
   );
 }

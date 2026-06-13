@@ -64,7 +64,7 @@ test.describe("Header create menu @nav:header-create-menu", () => {
     await expect(page.getByTestId("site-header-create-menu")).toBeHidden();
   });
 
-  test("menu is reachable and stays within the viewport on mobile @nav:header-create-menu", async ({
+  test("create menu is hidden on mobile (replaced by section FABs) @nav:header-create-menu", async ({
     authenticatedPage: page,
   }) => {
     // Start with the mobile drawer dismissed so the backdrop doesn't intercept clicks.
@@ -79,15 +79,7 @@ test.describe("Header create menu @nav:header-create-menu", () => {
     await page.goto("/?selected=all");
     await expect(page.getByTestId("sidebar-backdrop")).toBeHidden();
 
-    const trigger = page.getByTestId("site-header-create");
-    await trigger.click();
-
-    const menu = page.getByTestId("site-header-create-menu");
-    await expect(menu).toBeVisible();
-
-    const box = await menu.boundingBox();
-    expect(box, "menu should have a bounding box").not.toBeNull();
-    expect(box!.x).toBeGreaterThanOrEqual(0);
-    expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+    // The desktop create-menu trigger is not rendered on mobile.
+    await expect(page.getByTestId("site-header-create")).toHaveCount(0);
   });
 });

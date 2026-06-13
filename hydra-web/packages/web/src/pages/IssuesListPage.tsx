@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Icons } from "@hydra/ui";
 import {
   usePaginatedIssues,
   useIssueCount,
@@ -13,6 +14,8 @@ import {
 } from "../features/issues/view/IssuesView";
 import { usePageIssueTrees } from "../features/dashboard/usePageIssueTrees";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
+import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { useIssueFilters } from "../features/issues/issueFilters";
 import {
   filtersFromUrl,
@@ -200,6 +203,7 @@ export function IssuesListPage() {
   const { user } = useAuth();
   const currentUser = user ? actorDisplayName(user.actor) : "";
   const currentPrincipalPath = user ? actorPrincipalPath(user.actor) : null;
+  const { open: openIssueCreate } = useIssueCreateModal();
 
   // Filters are mirrored between URL params and local state. The local state
   // is the source of truth for chip `_uid`s (used by FilterBar to anchor the
@@ -454,6 +458,12 @@ export function IssuesListPage() {
         searchValue={searchValue}
         onSearchChange={handleSearchChange}
         onFilterMenuOpenChange={setAddMenuOpen}
+      />
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="New issue"
+        onClick={openIssueCreate}
+        testId="issues-fab"
       />
     </div>
   );

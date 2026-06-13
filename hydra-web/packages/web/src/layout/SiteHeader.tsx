@@ -5,6 +5,7 @@ import { useAuth } from "../features/auth/useAuth";
 import { useActiveSessionCount } from "../features/sessions/useActiveSessionCount";
 import { useChatCreateModal } from "../features/chat/useChatCreateModal";
 import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { useBreadcrumbsState } from "./useBreadcrumbs";
 import { HeaderActionMenu } from "./HeaderActionMenu";
@@ -24,6 +25,7 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
   const { data: activeSessionCount = 0 } = useActiveSessionCount(displayName);
   const { open: openIssueCreate } = useIssueCreateModal();
   const { open: openChatCreate } = useChatCreateModal();
+  const isMobile = useIsMobile();
 
   const onToggleSidebar = hidden ? onShow : onHide;
   const toggleLabel = hidden ? "Show sidebar" : "Hide sidebar";
@@ -93,27 +95,29 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
           <Kbd>⌘K</Kbd>
         </button>
 
-        <HeaderActionMenu
-          triggerLabel="Create new"
-          triggerTestId="site-header-create"
-          menuTestId="site-header-create-menu"
-          items={[
-            {
-              key: "new-issue",
-              label: "New issue",
-              icon: <Icons.IconIssue size={14} />,
-              onSelect: openIssueCreate,
-              testId: "site-header-new-issue",
-            },
-            {
-              key: "new-conversation",
-              label: "New conversation",
-              icon: <Icons.IconChat size={14} />,
-              onSelect: openChatCreate,
-              testId: "site-header-new-conversation",
-            },
-          ]}
-        />
+        {!isMobile && (
+          <HeaderActionMenu
+            triggerLabel="Create new"
+            triggerTestId="site-header-create"
+            menuTestId="site-header-create-menu"
+            items={[
+              {
+                key: "new-issue",
+                label: "New issue",
+                icon: <Icons.IconIssue size={14} />,
+                onSelect: openIssueCreate,
+                testId: "site-header-new-issue",
+              },
+              {
+                key: "new-conversation",
+                label: "New conversation",
+                icon: <Icons.IconChat size={14} />,
+                onSelect: openChatCreate,
+                testId: "site-header-new-conversation",
+              },
+            ]}
+          />
+        )}
       </div>
     </header>
   );
