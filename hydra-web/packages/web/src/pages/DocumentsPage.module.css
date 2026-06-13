@@ -6,6 +6,21 @@
   background: var(--bg-0);
 }
 
+/* On mobile the PageHead is dropped to reclaim the row — actions live in the
+   reader-pane breadcrumb instead. Keep an H1 in the a11y tree so the page is
+   still announced; SiteHeader's breadcrumb already names it visually. */
+.visuallyHiddenTitle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .errorBanner {
   margin: 16px 24px;
   padding: 10px 14px;

@@ -34,6 +34,7 @@ interface DocumentsReaderPaneProps {
   getChildren: (prefix: string | null) => PathChildEntry[];
   pathsLoading: boolean;
   onOpenTree?: () => void;
+  onCreate?: () => void;
 }
 
 export function DocumentsReaderPane({
@@ -42,6 +43,7 @@ export function DocumentsReaderPane({
   getChildren,
   pathsLoading,
   onOpenTree,
+  onCreate,
 }: DocumentsReaderPaneProps) {
   const isRoot = activePath === ROOT_PATH;
   const prefix = isRoot ? null : activePath;
@@ -108,6 +110,17 @@ export function DocumentsReaderPane({
           {totalFiles} {totalFiles === 1 ? "file" : "files"} · {totalFolders}{" "}
           {totalFolders === 1 ? "folder" : "folders"}
         </span>
+        {onCreate != null && (
+          <button
+            type="button"
+            className={styles.createButton}
+            onClick={onCreate}
+            aria-label="New document"
+            data-testid="documents-create-inline"
+          >
+            <Icons.IconPlus size={14} />
+          </button>
+        )}
       </div>
 
       <div className={styles.paneBody}>

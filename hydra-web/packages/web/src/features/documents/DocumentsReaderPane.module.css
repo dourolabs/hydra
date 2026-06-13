@@ -93,6 +93,30 @@
   border-color: var(--line-strong);
 }
 
+/* Mobile-only inline "+ new document" trigger that lives on the breadcrumb
+   row alongside the folder toggle and path, so the dedicated PageHead row
+   can collapse on narrow screens. Visual style mirrors a primary action. */
+.createButton {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--acc);
+  border: 1px solid var(--acc);
+  border-radius: var(--radius-sm);
+  color: var(--acc-fg-on);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--tx-fast), border-color var(--tx-fast);
+}
+
+.createButton:hover {
+  background: var(--acc-bright);
+  border-color: var(--acc-bright);
+}
+
 .paneBody {
   flex: 1;
   overflow: auto;
@@ -187,7 +211,8 @@
     padding: 8px 12px;
   }
 
-  .treeToggle {
+  .treeToggle,
+  .createButton {
     display: inline-flex;
   }
 

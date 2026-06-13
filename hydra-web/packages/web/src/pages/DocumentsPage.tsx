@@ -76,15 +76,19 @@ export function DocumentsPage() {
 
   return (
     <div className={styles.page}>
-      <PageHead
-        title="Documents"
-        actions={
-          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
-            <Icons.IconPlus />
-            New document
-          </Button>
-        }
-      />
+      {isMobile ? (
+        <h1 className={styles.visuallyHiddenTitle}>Documents</h1>
+      ) : (
+        <PageHead
+          title="Documents"
+          actions={
+            <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+              <Icons.IconPlus />
+              New document
+            </Button>
+          }
+        />
+      )}
 
       {error && <div className={styles.errorBanner}>Failed to load documents: {error.message}</div>}
 
@@ -154,6 +158,7 @@ export function DocumentsPage() {
             getChildren={getChildren}
             pathsLoading={isFetching}
             onOpenTree={isMobile ? () => setTreeOpen(true) : undefined}
+            onCreate={isMobile ? () => setCreateOpen(true) : undefined}
           />
         </div>
       )}
