@@ -88,3 +88,49 @@
   color: var(--fg-1);
   flex-shrink: 0;
 }
+
+.mobileBackdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .menu {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    min-width: 0;
+    max-width: none;
+    max-height: 80dvh;
+    overflow-y: auto;
+    padding: 18px 6px max(var(--space-3), env(safe-area-inset-bottom));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: 0;
+    box-shadow: var(--shadow-pop);
+    z-index: 1100;
+  }
+  .menu::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    background: var(--line-strong);
+    border-radius: 999px;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .menuItem {
+    padding: 10px 12px;
+    font-size: var(--t-md, var(--t-sm));
+  }
+  .mobileBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--bg-overlay);
+    z-index: 1099;
+  }
+}
