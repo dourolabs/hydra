@@ -11,7 +11,7 @@ export type Project = {
   name: string;
   statuses: Array<StatusDefinition>;
   creator: Username;
-  deleted?: boolean;
+  archived?: boolean;
   /**
    * Doc-store path for the project-layer prompt slice that gets
    * concatenated into a session's `system_prompt` at create-time.

@@ -1642,7 +1642,7 @@ impl HydraClient {
         Ok(delete_response.repository)
     }
 
-    /// Call `GET /v1/projects` to list non-deleted projects.
+    /// Call `GET /v1/projects` to list non-archived projects.
     pub async fn list_projects(&self) -> Result<ListProjectsResponse> {
         let url = self.endpoint("/v1/projects")?;
         let response = self

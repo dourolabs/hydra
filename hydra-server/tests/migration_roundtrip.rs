@@ -43,7 +43,7 @@ use hydra_server::domain::sessions::{AgentConfig, Session, SessionEvent, Session
 use hydra_server::domain::task_status::Status;
 use hydra_server::domain::users::Username;
 use hydra_server::store::postgres_v2::{self, MIGRATOR, PostgresStoreV2};
-use hydra_server::store::{ReadOnlyStore, RelationshipType, Store};
+use hydra_server::store::{ReadOnlyStore, RelationshipType, Store, StoreError};
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -348,6 +348,17 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("create_issue_comments: re-applying body is a no-op")?;
 
+    rename_projects_deleted_to_archived_schema_invariants(&pool)
+        .await
+        .context(
+            "rename_projects_deleted_to_archived: metis.projects.deleted renamed to archived; partial unique index preserved",
+        )?;
+    rename_projects_deleted_to_archived_baseline_roundtrip(&pool)
+        .await
+        .context(
+            "rename_projects_deleted_to_archived: baseline rows round-trip through PostgresStoreV2::get_project as Project.archived",
+        )?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -383,6 +394,16 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context(
             "add_statuses_session_settings: idempotent rerun keeps existing NULLs on backfilled rows",
+        )?;
+    rename_projects_deleted_to_archived_schema_invariants(&pool)
+        .await
+        .context(
+            "rename_projects_deleted_to_archived: idempotent rerun keeps the column renamed",
+        )?;
+    rename_projects_deleted_to_archived_baseline_roundtrip(&pool)
+        .await
+        .context(
+            "rename_projects_deleted_to_archived: idempotent rerun preserves the baseline rows' archived state",
         )?;
 
     Ok(())
@@ -3002,7 +3023,7 @@ async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()>
     // from `metis.statuses` and compare against
     // `default_project_seed()`.
     let row = sqlx::query(
-        "SELECT id, version_number, key, name, creator, deleted, \
+        "SELECT id, version_number, key, name, creator, archived, \
                 actor::text AS actor, is_latest, prompt_path \
          FROM metis.projects WHERE id = 'j-defaul'",
     )
@@ -3015,7 +3036,7 @@ async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()>
     let key: String = row.try_get("key")?;
     let name: String = row.try_get("name")?;
     let creator: String = row.try_get("creator")?;
-    let deleted: bool = row.try_get("deleted")?;
+    let archived: bool = row.try_get("archived")?;
     let is_latest: bool = row.try_get("is_latest")?;
     let actor: Option<String> = row.try_get("actor")?;
     let prompt_path: Option<String> = row.try_get("prompt_path")?;
@@ -3035,8 +3056,8 @@ async fn seed_default_project_migration_inserts_row(pool: &PgPool) -> Result<()>
     if creator != "system" {
         bail!("j-defaul: expected creator='system'; got {creator:?}");
     }
-    if deleted {
-        bail!("j-defaul: expected deleted=FALSE; got TRUE");
+    if archived {
+        bail!("j-defaul: expected archived=FALSE; got TRUE");
     }
     if !is_latest {
         bail!("j-defaul: expected is_latest=TRUE; got FALSE");
@@ -3423,7 +3444,7 @@ async fn add_projects_priority_backfill_domain_roundtrip(pool: &PgPool) -> Resul
     let listed = store
         .list_projects(false)
         .await
-        .context("PostgresStoreV2::list_projects(include_deleted = false)")?;
+        .context("PostgresStoreV2::list_projects(include_archived = false)")?;
 
     let want: &[(&str, f64)] = &[
         ("j-prione", 1000.0),
@@ -4202,16 +4223,23 @@ async fn reserve_hydra_id_shape_domain_roundtrip(pool: &PgPool) -> Result<()> {
 }
 
 async fn reserve_hydra_id_shape_migration_is_idempotent(pool: &PgPool) -> Result<()> {
-    // Re-execute the migration body verbatim. The reserved-shape
-    // WHERE clauses match nothing post-rewrite (every renamed key
-    // starts with `renamed-`, second byte `e`), so the body's
-    // iteration is empty and no further UPDATEs run. Re-asserting
-    // the expected post-rewrite key set confirms.
+    // Re-execute the migration body. The reserved-shape WHERE clauses
+    // match nothing post-rewrite (every renamed key starts with
+    // `renamed-`, second byte `e`), so the body's iteration is empty
+    // and no further UPDATEs run. Re-asserting the expected post-
+    // rewrite key set confirms.
+    //
+    // The on-disk body still references `projects.deleted`, but a
+    // subsequent migration (20260715000000) renamed that column to
+    // `projects.archived`. Patch the loaded body to track the rename
+    // so the literal replay still exercises the body's idempotency
+    // against the current schema.
     let body = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("migrations/20260615000000_reserve_hydra_id_shape_in_keys.sql"),
     )
     .context("read postgres reserve_hydra_id_shape migration body for idempotency rerun")?;
+    let body = body.replace("NOT p2.deleted", "NOT p2.archived");
     sqlx::raw_sql(&body)
         .execute(pool)
         .await
@@ -4219,6 +4247,94 @@ async fn reserve_hydra_id_shape_migration_is_idempotent(pool: &PgPool) -> Result
     reserve_hydra_id_shape_rewrites_project_keys(pool).await?;
     reserve_hydra_id_shape_rewrites_status_keys(pool).await?;
     reserve_hydra_id_shape_no_reserved_shape_remains(pool).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260715000000_rename_projects_deleted_to_archived. Pure column
+// rename: `metis.projects.deleted` → `metis.projects.archived`. No
+// semantic change. The partial unique index
+// `projects_key_unique_active_idx` has its `WHERE` clause auto-rewritten
+// by Postgres's `ALTER TABLE RENAME COLUMN`, so no explicit index touch.
+// ---------------------------------------------------------------------------
+
+async fn rename_projects_deleted_to_archived_schema_invariants(pool: &PgPool) -> Result<()> {
+    if column_exists(pool, "projects", "deleted").await? {
+        bail!("expected metis.projects.deleted column to be renamed away post-rollforward");
+    }
+    if !column_exists(pool, "projects", "archived").await? {
+        bail!("expected metis.projects.archived column to exist post-rollforward");
+    }
+    let row = sqlx::query(
+        "SELECT EXISTS(SELECT 1 FROM pg_indexes \
+         WHERE schemaname = 'metis' AND indexname = 'projects_key_unique_active_idx')",
+    )
+    .fetch_one(pool)
+    .await?;
+    let exists: bool = row.get(0);
+    if !exists {
+        bail!(
+            "expected partial unique index `projects_key_unique_active_idx` to survive the rename"
+        );
+    }
+    Ok(())
+}
+
+/// Insert a row at the OLD `deleted` shape (via the baseline fixture
+/// `20260713000000__pre_rename_projects_deleted_to_archived.sql`) and
+/// confirm the rename migration preserves the value, round-tripping
+/// through the current Store API as `Project.archived`.
+async fn rename_projects_deleted_to_archived_baseline_roundtrip(pool: &PgPool) -> Result<()> {
+    let store = PostgresStoreV2::new(pool.clone());
+
+    let archived_id = parse_project_id("j-renarcha")?;
+    let archived = store
+        .get_project(&archived_id, true)
+        .await
+        .context("PostgresStoreV2::get_project(j-renarcha, include_archived=true)")?;
+    if !archived.item.archived {
+        bail!(
+            "j-renarcha: expected archived=true after rename; got archived={}",
+            archived.item.archived
+        );
+    }
+    if archived.item.key.as_str() != "rename-archived" {
+        bail!(
+            "j-renarcha: expected key='rename-archived'; got {:?}",
+            archived.item.key
+        );
+    }
+
+    let archived_hidden = store.get_project(&archived_id, false).await;
+    assert!(
+        matches!(archived_hidden, Err(StoreError::ProjectNotFound(_))),
+        "j-renarcha must not surface through include_archived=false; got {archived_hidden:?}"
+    );
+
+    let live_id = parse_project_id("j-renarchb")?;
+    let live = store
+        .get_project(&live_id, false)
+        .await
+        .context("PostgresStoreV2::get_project(j-renarchb, include_archived=false)")?;
+    if live.item.archived {
+        bail!(
+            "j-renarchb: expected archived=false after rename; got archived={}",
+            live.item.archived
+        );
+    }
+
+    let listed = store
+        .list_projects(false)
+        .await
+        .context("PostgresStoreV2::list_projects(false) post-rename")?;
+    let listed_ids: Vec<&str> = listed
+        .iter()
+        .map(|(pid, _)| pid.as_ref())
+        .filter(|id| matches!(*id, "j-renarcha" | "j-renarchb"))
+        .collect();
+    if listed_ids != vec!["j-renarchb"] {
+        bail!("list_projects(false) baseline filter: expected only j-renarchb; got {listed_ids:?}");
+    }
     Ok(())
 }
 

@@ -1292,7 +1292,7 @@ impl PostgresStoreV2 {
     {
         let query = format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence) \
+             (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         );
         sqlx::query(&query)
@@ -1301,7 +1301,7 @@ impl PostgresStoreV2 {
             .bind(project.key.as_str())
             .bind(&project.name)
             .bind(project.creator.as_str())
-            .bind(project.deleted)
+            .bind(project.archived)
             .bind(actor)
             .bind(project.prompt_path.as_deref())
             .bind(project.priority)
@@ -1331,7 +1331,7 @@ impl PostgresStoreV2 {
             row.name.clone(),
             statuses,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
-            row.deleted,
+            row.archived,
             row.priority,
         );
         project.prompt_path = row.prompt_path.clone();
@@ -1485,7 +1485,7 @@ impl PostgresStoreV2 {
         id: &ProjectId,
     ) -> Result<ProjectRow, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
-            "SELECT id, version_number, key, name, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
              prompt_path, priority, next_status_sequence \
              FROM {TABLE_PROJECTS} \
@@ -1521,7 +1521,7 @@ impl PostgresStoreV2 {
         let actor_json = actor_to_json(actor);
         sqlx::query(&format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence) \
+             (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         ))
         .bind(id.as_ref())
@@ -1529,7 +1529,7 @@ impl PostgresStoreV2 {
         .bind(&row.key)
         .bind(&row.name)
         .bind(&row.creator)
-        .bind(row.deleted)
+        .bind(row.archived)
         .bind(&actor_json)
         .bind(row.prompt_path.as_deref())
         .bind(row.priority)
@@ -1882,7 +1882,7 @@ struct ProjectRow {
     key: String,
     name: String,
     creator: String,
-    deleted: bool,
+    archived: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -4186,10 +4186,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_project(
         &self,
         id: &ProjectId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Project>, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
-            "SELECT id, version_number, key, name, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
              prompt_path, priority, next_status_sequence \
              FROM {TABLE_PROJECTS} \
@@ -4206,7 +4206,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let statuses = Self::fetch_statuses_for_project(&self.pool, &row.id).await?;
         let project = Self::row_to_project(&row, statuses)?;
 
-        if project.deleted && !include_deleted {
+        if project.archived && !include_archived {
             return Err(StoreError::ProjectNotFound(id.clone()));
         }
 
@@ -4235,23 +4235,23 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_project_by_key(
         &self,
         key: &ProjectKey,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
         // The partial unique index `projects_key_unique_active_idx`
-        // covers `(is_latest, key) WHERE is_latest AND NOT deleted`.
-        // The happy path hits it directly; the `include_deleted` branch
+        // covers `(is_latest, key) WHERE is_latest AND NOT archived`.
+        // The happy path hits it directly; the `include_archived` branch
         // widens the filter to scan tombstoned rows too.
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
+            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
              p.prompt_path, p.priority, p.next_status_sequence \
              FROM {TABLE_PROJECTS} p \
              WHERE p.is_latest = true AND p.key = $1"
         );
-        if !include_deleted {
-            sql.push_str(" AND p.deleted = false");
+        if !include_archived {
+            sql.push_str(" AND p.archived = false");
         }
-        sql.push_str(" ORDER BY p.deleted ASC, p.created_at DESC LIMIT 1");
+        sql.push_str(" ORDER BY p.archived ASC, p.created_at DESC LIMIT 1");
 
         let row = sqlx::query_as::<_, ProjectRow>(&sql)
             .bind(key.as_str())
@@ -4296,17 +4296,17 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn list_projects(
         &self,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.deleted, p.actor, p.created_at, p.updated_at, \
+            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
              p.prompt_path, p.priority, p.next_status_sequence \
              FROM {TABLE_PROJECTS} p \
              WHERE p.is_latest = true"
         );
-        if !include_deleted {
-            sql.push_str(" AND p.deleted = false");
+        if !include_archived {
+            sql.push_str(" AND p.archived = false");
         }
         // `p.id` is the stable tiebreak: it's an immutable per-project value,
         // so updating a project (which inserts a new is_latest row with a
@@ -6111,7 +6111,7 @@ impl Store for PostgresStoreV2 {
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_project(id, true).await?;
         let mut project = current.item;
-        project.deleted = true;
+        project.archived = true;
         self.update_project(id, project, actor).await
     }
 
@@ -11381,7 +11381,7 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
-    async fn get_project_by_key_respects_include_deleted_pg(pool: PgStorePool) {
+    async fn get_project_by_key_respects_include_archived_pg(pool: PgStorePool) {
         use hydra_common::api::v1::projects::ProjectKey;
         let store = PostgresStoreV2::new(pool);
         let (id, _) = store
@@ -11398,16 +11398,16 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none(),
-            "soft-deleted key must not surface when include_deleted: false"
+            "archived key must not surface when include_archived: false"
         );
 
         let (resolved_id, versioned) = store
             .get_project_by_key(&key, true)
             .await
             .unwrap()
-            .expect("soft-deleted key must surface when include_deleted: true");
+            .expect("archived key must surface when include_archived: true");
         assert_eq!(resolved_id, id);
-        assert!(versioned.item.deleted);
+        assert!(versioned.item.archived);
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -11642,8 +11642,8 @@ mod tests {
         );
     }
 
-    /// A soft-deleted project frees its key for re-use — the partial
-    /// unique index applies only to `is_latest AND NOT deleted`.
+    /// An archived project frees its key for re-use — the partial
+    /// unique index applies only to `is_latest AND NOT archived`.
     #[sqlx::test(migrations = "./migrations")]
     #[ignore]
     async fn add_project_after_delete_releases_key_pg(pool: PgStorePool) {

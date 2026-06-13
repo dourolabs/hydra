@@ -1,0 +1,12 @@
+-- Rename `metis.projects.deleted` to `metis.projects.archived`.
+-- Sister to the SQLite migration at the same version. Phase 2 of
+-- the project deleted -> archived rename: a pure column rename —
+-- no semantic change, no cascade, no behavior change. The CLI /
+-- route names (`hydra projects delete`, `DELETE /v1/projects/:ref`)
+-- stay the same in this phase and continue to toggle the renamed
+-- field.
+--
+-- Postgres's `ALTER TABLE ... RENAME COLUMN` updates references in
+-- indexes (including the WHERE clause of the partial unique index
+-- `projects_key_unique_active_idx`) automatically.
+ALTER TABLE metis.projects RENAME COLUMN deleted TO archived;

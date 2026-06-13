@@ -327,7 +327,7 @@ impl ReadOnlyStore for FailingStore {
     async fn get_project(
         &self,
         _id: &ProjectId,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Versioned<Project>, StoreError> {
         fail()
     }
@@ -335,14 +335,14 @@ impl ReadOnlyStore for FailingStore {
     async fn get_project_by_key(
         &self,
         _key: &ProjectKey,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
         fail()
     }
 
     async fn list_projects(
         &self,
-        _include_deleted: bool,
+        _include_archived: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         fail()
     }

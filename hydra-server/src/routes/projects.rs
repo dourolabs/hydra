@@ -113,7 +113,7 @@ pub async fn create_project(
     Ok(Json(UpsertProjectResponse::new(project_id, version)))
 }
 
-/// GET /v1/projects — list non-deleted projects.
+/// GET /v1/projects — list non-archived projects.
 pub async fn list_projects(
     State(state): State<AppState>,
     Extension(actor): Extension<Actor>,

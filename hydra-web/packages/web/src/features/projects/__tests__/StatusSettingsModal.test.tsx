@@ -451,7 +451,7 @@ function makeProject(statuses: StatusDefinition[]): ProjectRecord {
       name: "Engineering",
       statuses,
       creator: "alice" as never,
-      deleted: false,
+      archived: false,
       prompt_path: null,
       priority: 0,
     },

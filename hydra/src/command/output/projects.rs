@@ -41,8 +41,8 @@ fn write_project_details<W: Write>(record: &ProjectRecord, writer: &mut W) -> Re
     writeln!(writer, "  name: {}", project.name)?;
     writeln!(writer, "  version: {}", record.version)?;
     writeln!(writer, "  creator: {}", project.creator)?;
-    if project.deleted {
-        writeln!(writer, "  deleted: true")?;
+    if project.archived {
+        writeln!(writer, "  archived: true")?;
     }
     writeln!(writer, "  statuses:")?;
     for status in &project.statuses {

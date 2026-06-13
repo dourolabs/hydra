@@ -130,7 +130,7 @@ export function IssuesBoard({
   const projects: BoardProjectDescriptor[] = useMemo(() => {
     const out: BoardProjectDescriptor[] = [];
     const realProjects = (allProjects ?? []).filter(
-      (record) => !record.project.deleted,
+      (record) => !record.project.archived,
     );
 
     if (baseFilters.project_id) {
