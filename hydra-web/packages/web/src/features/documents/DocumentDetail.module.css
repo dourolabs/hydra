@@ -73,7 +73,7 @@
 .floatingActions {
   position: absolute;
   top: 0;
-  right: 0;
+  right: var(--safe-area-x);
   z-index: 1;
 }
 
@@ -175,7 +175,7 @@
 
 @media (max-width: 600px) {
   .inner {
-    padding: 16px;
+    padding: 16px max(16px, var(--safe-area-x));
     gap: 12px;
   }
   .editTextarea {

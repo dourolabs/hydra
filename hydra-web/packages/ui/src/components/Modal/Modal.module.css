@@ -5,7 +5,10 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 12vh;
+  padding-top: max(12vh, var(--safe-area-top));
+  padding-left: var(--safe-area-x);
+  padding-right: var(--safe-area-x);
+  padding-bottom: var(--safe-area-bottom);
   z-index: 1000;
   animation: hydra-modal-fade-in var(--tx-fast);
 }
@@ -89,11 +92,11 @@
 
 @media (max-width: 768px) {
   .backdrop {
-    padding-top: 6vh;
+    padding-top: max(6vh, var(--safe-area-top));
   }
 
   .modal {
-    min-width: calc(100vw - 1rem);
-    max-height: calc(100dvh - var(--mobile-nav-height, 0px) - 2rem);
+    min-width: calc(100vw - 1rem - 2 * var(--safe-area-x));
+    max-height: calc(100dvh - var(--mobile-nav-height, 0px) - 2rem - var(--safe-area-top) - var(--safe-area-bottom));
   }
 }

@@ -192,12 +192,19 @@
   --mobile-nav-height: 56px;
 
   /* ----- Safe-area insets -----
-     Wraps env(safe-area-inset-bottom) in a CSS variable so layout rules can
-     reference it via var() (which composes with calc() and is overridable in
-     tests, unlike env() which is read-only). On devices without a bottom
-     safe area (Android Chrome, desktop) env() resolves to 0 and this is a
-     no-op. */
+     Wraps env(safe-area-inset-*) in CSS variables so layout rules can
+     reference them via var() (which composes with calc() and is overridable
+     in tests, unlike env() which is read-only). On devices without a safe
+     area in a given direction (Android Chrome, desktop) env() resolves to 0
+     and the rule is a no-op.
+
+     --safe-area-x is the larger of the left/right insets so a single token
+     covers symmetric padding rules (modal margin, composer padding, sticky
+     toolbars). Asymmetric callers (a top-right floating action) can use it
+     on the relevant side. */
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-x: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
 }
 
 /* ============================================================

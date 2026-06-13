@@ -56,7 +56,13 @@
     top: 0;
     left: 0;
     bottom: 0;
-    width: min(80vw, 320px);
+    /* Drawer hugs the left edge of the device; expand its width by the
+       left safe-area inset and pad its content the same amount so the
+       hit area extends under the notch but content clears it. */
+    width: calc(min(80vw, 320px) + env(safe-area-inset-left, 0px));
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-top: var(--safe-area-top);
+    padding-bottom: var(--safe-area-bottom);
     transform: translateX(-100%);
     z-index: 30;
     background: var(--bg-1);
