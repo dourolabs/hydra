@@ -73,7 +73,7 @@
   padding: 10px 14px;
   border-radius: var(--radius-md);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* Hold preview cards in the same right-side column as the user bubble. */
