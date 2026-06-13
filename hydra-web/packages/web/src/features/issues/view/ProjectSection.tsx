@@ -26,6 +26,7 @@ import type {
   SessionSummaryRecord,
   StatusDefinition,
 } from "@hydra/api";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import { ProjectChip } from "../../projects/ProjectChip";
 import {
   PROJECTS_QUERY_KEY,
@@ -164,6 +165,11 @@ export function ProjectSection({
 }: ProjectSectionProps & SortableSectionHandleProps) {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
+  // On mobile only one project's columns are visible at a time and the user
+  // pans between them by swiping; reorder-via-drag would just compete with
+  // that gesture, so drag handles on column headers are skipped.
+  const isMobile = useIsMobile();
+  const allowStatusReorder = !isMobile;
   const reorderMutation = useMutation({
     mutationFn: async ({
       nextStatuses,
@@ -261,6 +267,7 @@ export function ProjectSection({
     return (
       <SortableBoardColumn
         key={status.key}
+        allowReorder={allowStatusReorder}
         project={project}
         projectRecord={projectRecord}
         status={status}

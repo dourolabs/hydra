@@ -79,7 +79,10 @@ export function transformToCss(
   return `translate3d(${transform.x}px, ${transform.y}px, 0) scaleX(${transform.scaleX}) scaleY(${transform.scaleY})`;
 }
 
-export function SortableBoardColumn(props: BoardColumnProps) {
+export function SortableBoardColumn({
+  allowReorder = true,
+  ...props
+}: BoardColumnProps & { allowReorder?: boolean }) {
   const {
     attributes,
     listeners,
@@ -87,7 +90,14 @@ export function SortableBoardColumn(props: BoardColumnProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: props.status.key, animateLayoutChanges: () => false });
+  } = useSortable({
+    id: props.status.key,
+    animateLayoutChanges: () => false,
+    // When false, dnd-kit returns empty listeners; the column header also
+    // skips the `touch-action: none` class below so native horizontal
+    // swipe-to-pan keeps working on the header on mobile.
+    disabled: !allowReorder,
+  });
   const style: React.CSSProperties = {
     transform: transformToCss(transform),
     transition: transition ?? undefined,
@@ -99,7 +109,9 @@ export function SortableBoardColumn(props: BoardColumnProps) {
       setNodeRef={setNodeRef}
       style={style}
       isDragging={isDragging}
-      dragHandleProps={{ ...attributes, ...listeners }}
+      dragHandleProps={
+        allowReorder ? { ...attributes, ...listeners } : undefined
+      }
     />
   );
 }

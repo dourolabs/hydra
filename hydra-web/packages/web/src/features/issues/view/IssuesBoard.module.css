@@ -678,12 +678,16 @@
     width: 82vw;
     flex: 0 0 82vw;
     scroll-snap-align: start;
+    /* Force flick momentum to land on the very next snap point instead of
+       carrying past several columns. */
+    scroll-snap-stop: always;
   }
 
   .colGhost {
     width: 82vw;
     flex: 0 0 82vw;
     scroll-snap-align: start;
+    scroll-snap-stop: always;
   }
 
   .newProjectGhost {
