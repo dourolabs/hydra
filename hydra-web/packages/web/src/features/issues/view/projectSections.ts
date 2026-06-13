@@ -17,13 +17,6 @@ export interface ProjectSection {
   issues: IssueSummaryRecord[];
 }
 
-export function findDefaultProject(
-  projects: ProjectRecord[] | undefined,
-): ProjectRecord | null {
-  if (!projects || projects.length === 0) return null;
-  return projects.find((p) => p.project.key === "default") ?? null;
-}
-
 export function buildSections(
   issues: IssueSummaryRecord[],
   projects: ProjectRecord[] | undefined,
@@ -31,8 +24,17 @@ export function buildSections(
   if (!projects || projects.length === 0) {
     return { sections: [], flat: true };
   }
-  const defaultProject = findDefaultProject(projects);
 
+  const projectById = new Map<string, ProjectRecord>();
+  for (const p of projects) projectById.set(p.project_id, p);
+
+  // Bucket issues by project_id while preserving first-occurrence order from
+  // the server-ordered issues array. The list endpoint (PR-1) emits issues
+  // sorted by (project.priority ASC, status.position ASC, created_at DESC,
+  // id DESC) when `sort=project_status_time_desc`, so first-occurrence
+  // iteration here yields sections in project.priority order with no
+  // client-side reshuffle — and within each bucket the issues remain in the
+  // status.position / created_at order the server produced.
   const byProject = new Map<string, IssueSummaryRecord[]>();
   for (const rec of issues) {
     const key = rec.issue.project_id;
@@ -44,17 +46,10 @@ export function buildSections(
     }
   }
 
-  const ordered: ProjectRecord[] = [];
-  if (defaultProject) ordered.push(defaultProject);
-  for (const p of projects) {
-    if (p === defaultProject) continue;
-    ordered.push(p);
-  }
-
   const sections: ProjectSection[] = [];
-  for (const project of ordered) {
-    const bucket = byProject.get(project.project_id);
-    if (!bucket || bucket.length === 0) continue;
+  for (const [key, bucket] of byProject) {
+    const project = projectById.get(key);
+    if (!project) continue;
     sections.push({
       groupKey: project.project_id,
       projectKey: project.project.key,
@@ -64,6 +59,9 @@ export function buildSections(
     });
   }
 
+  // Orphan bucket: any project_id that didn't resolve to a known project
+  // (project was archived / not yet returned by useProjects()). Surface
+  // those issues at the end rather than silently dropping them.
   for (const [key, bucket] of byProject) {
     if (sections.some((s) => s.groupKey === key)) continue;
     sections.push({

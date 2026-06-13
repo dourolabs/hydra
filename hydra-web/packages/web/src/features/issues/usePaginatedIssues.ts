@@ -39,6 +39,7 @@ function buildQuery(
   filters: IssueFilters,
   cursor?: string | null,
   limit: number = PAGE_SIZE,
+  sort?: SearchIssuesQuery["sort"],
 ): Partial<SearchIssuesQuery> {
   const query: Partial<SearchIssuesQuery> = {
     limit,
@@ -55,8 +56,17 @@ function buildQuery(
   if (filters.project_id) query.project_id = filters.project_id;
   if (filters.include_deleted) query.include_deleted = true;
   if (cursor) query.cursor = cursor;
+  if (sort) query.sort = sort;
   return query;
 }
+
+// The Issues list page renders sections in project order (PR-1 + PR-2):
+// the server emits issues already sorted by
+// (project.priority ASC, status.position ASC, created_at DESC, id DESC),
+// and the renderer in `projectSections.buildSections` groups by `project_id`
+// in first-occurrence order. The board (`useBoardIssuesByProject`) and the
+// count query intentionally stay on the default sort.
+const LIST_PAGE_SORT: SearchIssuesQuery["sort"] = "project_status_time_desc";
 
 /**
  * Paginated issues hook using cursor-based pagination with React Query's
@@ -65,9 +75,16 @@ function buildQuery(
  */
 export function usePaginatedIssues(filters: IssueFilters, enabled = true) {
   return useInfiniteQuery<ListIssuesResponse, Error>({
-    queryKey: ["paginatedIssues", filters],
+    queryKey: ["paginatedIssues", filters, "sort", LIST_PAGE_SORT],
     queryFn: ({ pageParam }) =>
-      apiClient.listIssues(buildQuery(filters, pageParam as string | undefined)),
+      apiClient.listIssues(
+        buildQuery(
+          filters,
+          pageParam as string | undefined,
+          PAGE_SIZE,
+          LIST_PAGE_SORT,
+        ),
+      ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     placeholderData: keepPreviousData,

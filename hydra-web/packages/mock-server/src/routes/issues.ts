@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { Store } from "../store.js";
+import type { Store, VersionedEntity } from "../store.js";
 import { generateId } from "../id.js";
 import type {
   Issue,
@@ -16,6 +16,7 @@ import type {
   AddCommentResponse,
   ListCommentsResponse,
   ActorRef,
+  Project,
 } from "@hydra/api";
 import { getLabelsForObject, resolveLabelNames } from "./labels.js";
 import { resolveStatusDef } from "../statusResolver.js";
@@ -180,6 +181,7 @@ export function createIssueRoutes(store: Store): Hono {
     const limitParam = c.req.query("limit");
     const cursorParam = c.req.query("cursor");
     const countParam = c.req.query("count");
+    const sortParam = c.req.query("sort");
 
     const items = store.list<Issue>(COLLECTION, includeDeleted);
 
@@ -261,10 +263,49 @@ export function createIssueRoutes(store: Store): Hono {
       });
     }
 
-    // Sort by last-update time descending (most recently updated first) for stable pagination
-    filtered.sort((a, b) => {
-      return b.entry.timestamp.localeCompare(a.entry.timestamp);
-    });
+    // `sort=project_status_time_desc` mirrors PR-1's backend ordering:
+    // (project.priority ASC, status.position ASC, created_at DESC, id DESC).
+    // Default (`sort` omitted) preserves the historical updated_at DESC mock
+    // shape so callers that don't set sort are unaffected.
+    if (sortParam === "project_status_time_desc") {
+      const priorityCache = new Map<string, number>();
+      const projectPriority = (projectId: string): number => {
+        const cached = priorityCache.get(projectId);
+        if (cached !== undefined) return cached;
+        const proj = store.get<Project>("projects", projectId);
+        const value = proj?.data.priority ?? 0;
+        priorityCache.set(projectId, value);
+        return value;
+      };
+      const sortableEntries: Array<{
+        id: string;
+        entry: VersionedEntity<Issue>;
+        priority: number;
+        position: number;
+        createdAt: string;
+      }> = filtered.map(({ id, entry }) => ({
+        id,
+        entry,
+        priority: projectPriority(entry.data.project_id),
+        position: entry.data.status.position ?? 0,
+        createdAt: store.getCreationTime(COLLECTION, id) ?? "",
+      }));
+      sortableEntries.sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        if (a.position !== b.position) return a.position - b.position;
+        if (a.createdAt !== b.createdAt) {
+          return b.createdAt.localeCompare(a.createdAt);
+        }
+        return b.id.localeCompare(a.id);
+      });
+      filtered = sortableEntries.map(({ id, entry }) => ({ id, entry }));
+    } else {
+      // Sort by last-update time descending (most recently updated first)
+      // for stable pagination
+      filtered.sort((a, b) => {
+        return b.entry.timestamp.localeCompare(a.entry.timestamp);
+      });
+    }
 
     const totalCount = filtered.length;
 
