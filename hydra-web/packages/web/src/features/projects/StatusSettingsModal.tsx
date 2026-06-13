@@ -193,8 +193,8 @@ function EditStatusModal({
         const updated = nextStatuses[index];
         return apiClient.updateProjectStatus(projectId, statusKey, updated);
       }
-      // Pure delete (without bulk move) — `moveAndDeleteMutation`
-      // covers the bulk-move-then-delete branch directly.
+      // Archive without bulk move — `moveAndDeleteMutation` covers the
+      // bulk-move-then-archive branch directly.
       return apiClient.archiveProjectStatus(projectId, statusKey);
     },
     onMutate: async ({ nextStatuses }) => {
