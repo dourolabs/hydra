@@ -1,3 +1,11 @@
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { Link } from "react-router-dom";
 import { Avatar, FlowPill, Icons, TypeChip } from "@hydra/ui";
@@ -18,14 +26,39 @@ import type {
   BoardProjectDescriptor,
 } from "../usePaginatedIssues";
 import { AgoTime } from "../../../components/Runtime/Runtime";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import { RestoreIssueButton } from "../RestoreIssueButton";
 import { CardRuntime } from "./CardRuntime";
+import { useTouchDrag } from "./useTouchDrag";
 import styles from "./IssuesBoard.module.css";
 
 // Custom dataTransfer MIME for issue-card drags. Picked up by the column
 // drop handler to disambiguate from arbitrary OS-level drags (file drops,
 // text selections, etc.) so neither side preventDefaults the wrong drop.
 export const ISSUE_CARD_DRAG_MIME = "application/x.hydra-issue-card";
+
+// During a touch-drag the source card publishes the column it's currently
+// over via this context. Each `BoardColumn` reads it and self-applies the
+// drop-target highlight when its own `touchDropId` matches — keeping the
+// hover style declarative instead of mutating a queried node's classList.
+interface TouchDragHoverContextValue {
+  hoverId: string | null;
+  setHoverId: (id: string | null) => void;
+}
+const TouchDragHoverContext = createContext<TouchDragHoverContextValue>({
+  hoverId: null,
+  setHoverId: () => {},
+});
+
+export function TouchDragHoverProvider({ children }: { children: ReactNode }) {
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  const value = useMemo(() => ({ hoverId, setHoverId }), [hoverId]);
+  return (
+    <TouchDragHoverContext.Provider value={value}>
+      {children}
+    </TouchDragHoverContext.Provider>
+  );
+}
 
 export interface IssueDragPayload {
   issueId: string;
@@ -76,7 +109,10 @@ export function transformToCss(
   return `translate3d(${transform.x}px, ${transform.y}px, 0) scaleX(${transform.scaleX}) scaleY(${transform.scaleY})`;
 }
 
-export function SortableBoardColumn(props: BoardColumnProps) {
+export function SortableBoardColumn({
+  allowReorder = true,
+  ...props
+}: BoardColumnProps & { allowReorder?: boolean }) {
   const {
     attributes,
     listeners,
@@ -84,7 +120,14 @@ export function SortableBoardColumn(props: BoardColumnProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: props.status.key, animateLayoutChanges: () => false });
+  } = useSortable({
+    id: props.status.key,
+    animateLayoutChanges: () => false,
+    // When false, dnd-kit returns empty listeners; the column header also
+    // skips the `touch-action: none` class below so native horizontal
+    // swipe-to-pan keeps working on the header on mobile.
+    disabled: !allowReorder,
+  });
   const style: React.CSSProperties = {
     transform: transformToCss(transform),
     transition: transition ?? undefined,
@@ -96,7 +139,9 @@ export function SortableBoardColumn(props: BoardColumnProps) {
       setNodeRef={setNodeRef}
       style={style}
       isDragging={isDragging}
-      dragHandleProps={{ ...attributes, ...listeners }}
+      dragHandleProps={
+        allowReorder ? { ...attributes, ...listeners } : undefined
+      }
     />
   );
 }
@@ -123,8 +168,14 @@ function BoardColumn({
   const showInitialLoading = (cell?.isLoading ?? false) && colIssues.length === 0;
   const assignTo = status.on_enter?.assign_to ?? null;
   const isInteractive = status.interactive === true;
+  // Long-press touch drag uses this id to hit-test which column the finger is
+  // over. The HTML5 drag-and-drop path is unchanged and stays the only flow
+  // on desktop.
+  const touchDropId = `${project.project_id}::${status.key}`;
+  const { hoverId } = useContext(TouchDragHoverContext);
   const colClasses = [styles.col];
   if (isDragging) colClasses.push(styles.colDragging);
+  if (hoverId === touchDropId) colClasses.push(styles.colTouchDropOver);
 
   const handleColumnDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     if (!e.dataTransfer.types.includes(ISSUE_CARD_DRAG_MIME)) return;
@@ -154,6 +205,9 @@ function BoardColumn({
       style={style}
       className={colClasses.join(" ")}
       data-testid={`board-col-${project.key}-${status.key}`}
+      data-touch-drop-id={touchDropId}
+      data-project-id={project.project_id}
+      data-status-key={status.key}
       onDragOver={handleColumnDragOver}
       onDrop={handleColumnDrop}
     >
@@ -224,108 +278,19 @@ function BoardColumn({
         {!hideIssues && showInitialLoading && (
           <div className={styles.colEmpty}>Loading…</div>
         )}
-        {colIssues.map((rec) => {
-          const issue = rec.issue;
-          const id = rec.issue_id;
-          const pill = computeFlowPillState(neighborhoodMap.get(id));
-          const conversation = conversationsByIssue.get(id);
-          const archived = issue.deleted === true;
-          const cardClass = archived
-            ? `${styles.card} ${styles.cardArchived}`
-            : styles.card;
-
-          const handleCardDragStart = (
-            e: React.DragEvent<HTMLDivElement>,
-          ) => {
-            const payload: IssueDragPayload = {
-              issueId: id,
-              sourceProjectId: project.project_id,
-              sourceStatusKey: status.key,
-            };
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData(
-              ISSUE_CARD_DRAG_MIME,
-              JSON.stringify(payload),
-            );
-          };
-          return (
-            <div
-              key={id}
-              className={cardClass}
-              onClick={() => onCardClick(id)}
-              draggable
-              onDragStart={handleCardDragStart}
-              data-testid={`board-card-${id}`}
-              data-archived={archived ? "true" : undefined}
-            >
-              {conversation && (
-                <Link
-                  to={`/chat/${conversation.conversation_id}`}
-                  className={styles.cardChatButton}
-                  title={
-                    conversation.status === "idle"
-                      ? "Resume conversation"
-                      : "Join conversation"
-                  }
-                  aria-label={
-                    conversation.status === "idle"
-                      ? "Resume conversation"
-                      : "Join conversation"
-                  }
-                  onClick={(e) => e.stopPropagation()}
-                  data-conversation-status={conversation.status}
-                  data-testid={`board-card-conversation-${id}`}
-                >
-                  <Icons.IconChat size={14} />
-                </Link>
-              )}
-              {(archived || (issue.type && issue.type !== "unknown")) && (
-                <div className={styles.cardHead}>
-                  {issue.type && issue.type !== "unknown" && (
-                    <TypeChip type={issue.type} />
-                  )}
-                  {archived && (
-                    <span
-                      className={styles.cardArchivedTag}
-                      data-testid={`board-card-archived-${id}`}
-                    >
-                      ARCHIVED
-                    </span>
-                  )}
-                  {archived && (
-                    <RestoreIssueButton
-                      issueId={id}
-                      className={styles.cardRestoreButton}
-                      data-testid={`board-card-restore-${id}`}
-                    />
-                  )}
-                </div>
-              )}
-              <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
-              <div className={styles.cardFoot}>
-                {issue.assignee && (
-                  <Avatar
-                    name={principalDisplayName(issue.assignee)}
-                    kind={principalAvatarKind(issue.assignee)}
-                    size="md"
-                  />
-                )}
-                <CardRuntime sessions={sessionsByIssue.get(id)} />
-                <AgoTime iso={rec.timestamp} />
-                <span className={styles.cardFootSpacer} />
-                {pill && (
-                  <FlowPill
-                    phase={pill.phase}
-                    num={pill.num}
-                    den={pill.den}
-                    title={pill.title}
-                    data-testid={`board-card-flowpill-${id}`}
-                  />
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {colIssues.map((rec) => (
+          <BoardIssueCard
+            key={rec.issue_id}
+            record={rec}
+            project={project}
+            statusKey={status.key}
+            neighborhood={neighborhoodMap.get(rec.issue_id)}
+            sessions={sessionsByIssue.get(rec.issue_id)}
+            conversation={conversationsByIssue.get(rec.issue_id)}
+            onCardClick={onCardClick}
+            onIssueDrop={onIssueDrop}
+          />
+        ))}
         {cell?.hasNextPage && (
           <div className={styles.colLoadMore}>
             <button
@@ -353,6 +318,170 @@ function BoardColumn({
             <span className={styles.colAddIssueIcon}>+</span>
             Add issue
           </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface BoardIssueCardProps {
+  record: BoardCellQuery["issues"][number];
+  project: BoardProjectDescriptor;
+  statusKey: string;
+  neighborhood: IssueNeighborhood | undefined;
+  sessions: SessionSummaryRecord[] | undefined;
+  conversation: ConversationSummary | undefined;
+  onCardClick: (id: string) => void;
+  onIssueDrop: IssueDropHandler;
+}
+
+// Cards keep the HTML5 draggable path for desktop unchanged. Touch devices —
+// where HTML5 drag events don't fire from finger input — get a long-press
+// shim that synthesises an equivalent flow via `useTouchDrag`, hit-testing
+// the column under the finger on release and calling the same `onIssueDrop`
+// handler the desktop drop path uses.
+function BoardIssueCard({
+  record,
+  project,
+  statusKey,
+  neighborhood,
+  sessions,
+  conversation,
+  onCardClick,
+  onIssueDrop,
+}: BoardIssueCardProps) {
+  const issue = record.issue;
+  const id = record.issue_id;
+  const pill = computeFlowPillState(neighborhood);
+  const archived = issue.deleted === true;
+  const isMobile = useIsMobile();
+
+  const touchDrag = useTouchDrag<IssueDragPayload>({
+    enabled: isMobile,
+    payload: {
+      issueId: id,
+      sourceProjectId: project.project_id,
+      sourceStatusKey: statusKey,
+    },
+    resolveDropTarget: (el) =>
+      el ? el.closest("[data-touch-drop-id]") : null,
+    onDrop: (payload, target) => {
+      const targetProjectId = target.getAttribute("data-project-id");
+      const targetStatusKey = target.getAttribute("data-status-key");
+      if (!targetProjectId || !targetStatusKey) return;
+      onIssueDrop(payload, {
+        projectId: targetProjectId,
+        statusKey: targetStatusKey,
+      });
+    },
+  });
+
+  // Publish the column under the finger so the matching `BoardColumn` can
+  // self-apply the drop-target highlight via context — no DOM querying or
+  // imperative classList mutation.
+  const { setHoverId } = useContext(TouchDragHoverContext);
+  const touchHoverId = touchDrag.state.hoverTargetId;
+  useEffect(() => {
+    if (touchHoverId === null) return;
+    setHoverId(touchHoverId);
+    return () => setHoverId(null);
+  }, [touchHoverId, setHoverId]);
+
+  const handleCardDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    const payload: IssueDragPayload = {
+      issueId: id,
+      sourceProjectId: project.project_id,
+      sourceStatusKey: statusKey,
+    };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData(ISSUE_CARD_DRAG_MIME, JSON.stringify(payload));
+  };
+
+  // Tap-vs-drag: on touch devices the long-press hold elevates the gesture
+  // into a drag. Suppress the synthetic click that would otherwise navigate
+  // to the issue detail page after the drop lands.
+  const handleClick = () => {
+    if (touchDrag.state.isDragging) return;
+    onCardClick(id);
+  };
+
+  const classes = [styles.card];
+  if (archived) classes.push(styles.cardArchived);
+  if (touchDrag.state.isDragging) classes.push(styles.cardTouchDragging);
+
+  return (
+    <div
+      className={classes.join(" ")}
+      onClick={handleClick}
+      draggable
+      onDragStart={handleCardDragStart}
+      onTouchStart={touchDrag.handlers.onTouchStart}
+      data-testid={`board-card-${id}`}
+      data-archived={archived ? "true" : undefined}
+    >
+      {conversation && (
+        <Link
+          to={`/chat/${conversation.conversation_id}`}
+          className={styles.cardChatButton}
+          title={
+            conversation.status === "idle"
+              ? "Resume conversation"
+              : "Join conversation"
+          }
+          aria-label={
+            conversation.status === "idle"
+              ? "Resume conversation"
+              : "Join conversation"
+          }
+          onClick={(e) => e.stopPropagation()}
+          data-conversation-status={conversation.status}
+          data-testid={`board-card-conversation-${id}`}
+        >
+          <Icons.IconChat size={14} />
+        </Link>
+      )}
+      {(archived || (issue.type && issue.type !== "unknown")) && (
+        <div className={styles.cardHead}>
+          {issue.type && issue.type !== "unknown" && (
+            <TypeChip type={issue.type} />
+          )}
+          {archived && (
+            <span
+              className={styles.cardArchivedTag}
+              data-testid={`board-card-archived-${id}`}
+            >
+              ARCHIVED
+            </span>
+          )}
+          {archived && (
+            <RestoreIssueButton
+              issueId={id}
+              className={styles.cardRestoreButton}
+              data-testid={`board-card-restore-${id}`}
+            />
+          )}
+        </div>
+      )}
+      <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
+      <div className={styles.cardFoot}>
+        {issue.assignee && (
+          <Avatar
+            name={principalDisplayName(issue.assignee)}
+            kind={principalAvatarKind(issue.assignee)}
+            size="md"
+          />
+        )}
+        <CardRuntime sessions={sessions} />
+        <AgoTime iso={record.timestamp} />
+        <span className={styles.cardFootSpacer} />
+        {pill && (
+          <FlowPill
+            phase={pill.phase}
+            num={pill.num}
+            den={pill.den}
+            title={pill.title}
+            data-testid={`board-card-flowpill-${id}`}
+          />
         )}
       </div>
     </div>

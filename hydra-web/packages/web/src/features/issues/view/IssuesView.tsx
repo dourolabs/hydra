@@ -5,6 +5,7 @@ import type { IssueFilters } from "../usePaginatedIssues";
 import { FilterBar, type Filter, type FilterDefinitions } from "../../filters";
 import { PageHead } from "../../../layout/PageHead";
 import { CollapsibleSearch } from "../../../components/CollapsibleSearch/CollapsibleSearch";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
 import styles from "./IssuesView.module.css";
@@ -65,38 +66,45 @@ export function IssuesView({
   onSearchChange,
   onFilterMenuOpenChange,
 }: IssuesViewProps) {
+  // On mobile, the eyebrow + title row is suppressed and the segmented
+  // layout control moves into the toolbar so everything chrome-ish sits on
+  // one row. Rendering it in exactly one place keeps testids unique.
+  const isMobile = useIsMobile();
+  const layoutSegmentedControl = (
+    <div className={styles.segmented} role="tablist" aria-label="Layout">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={layout === "table"}
+        className={layout === "table" ? styles.segmentedActive : undefined}
+        onClick={() => onLayoutChange("table")}
+        data-testid="issues-layout-table"
+      >
+        <Icons.IconMenu size={14} />
+        <span className={styles.segmentedLabel}>Table</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={layout === "board"}
+        className={layout === "board" ? styles.segmentedActive : undefined}
+        onClick={() => onLayoutChange("board")}
+        data-testid="issues-layout-board"
+      >
+        <Icons.IconDot size={14} />
+        <span className={styles.segmentedLabel}>Board</span>
+      </button>
+    </div>
+  );
   return (
     <div className={styles.page}>
-      <PageHead
-        eyebrow={eyebrow}
-        title={title}
-        actions={
-          <div className={styles.segmented} role="tablist" aria-label="Layout">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={layout === "table"}
-              className={layout === "table" ? styles.segmentedActive : undefined}
-              onClick={() => onLayoutChange("table")}
-              data-testid="issues-layout-table"
-            >
-              <Icons.IconMenu size={14} />
-              <span className={styles.segmentedLabel}>Table</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={layout === "board"}
-              className={layout === "board" ? styles.segmentedActive : undefined}
-              onClick={() => onLayoutChange("board")}
-              data-testid="issues-layout-board"
-            >
-              <Icons.IconDot size={14} />
-              <span className={styles.segmentedLabel}>Board</span>
-            </button>
-          </div>
-        }
-      />
+      {!isMobile && (
+        <PageHead
+          eyebrow={eyebrow}
+          title={title}
+          actions={layoutSegmentedControl}
+        />
+      )}
 
       <div className={styles.toolbar}>
         <CollapsibleSearch
@@ -114,6 +122,7 @@ export function IssuesView({
           total={totalCount}
           onMenuOpenChange={onFilterMenuOpenChange}
         />
+        {isMobile && layoutSegmentedControl}
       </div>
 
       <div className={styles.body}>

@@ -609,6 +609,36 @@
   outline-offset: 1px;
 }
 
+.mobilePicker {
+  display: none;
+}
+
+.mobilePickerValue {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobilePickerKey {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--fg-2);
+}
+
+.mobilePickerName {
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobilePickerEmpty {
+  color: var(--fg-3);
+}
+
 @media (max-width: 768px) {
   /* Mobile keeps per-project horizontal scrolling: each project's 82vw
      columns scroll within the project, so a single page-wide scrollbar
@@ -616,6 +646,12 @@
   .kanban {
     width: auto;
     min-width: 0;
+    gap: 10px;
+    padding: 10px 16px;
+  }
+
+  .mobilePicker {
+    display: block;
   }
 
   .projectBar {
@@ -642,12 +678,16 @@
     width: 82vw;
     flex: 0 0 82vw;
     scroll-snap-align: start;
+    /* Force flick momentum to land on the very next snap point instead of
+       carrying past several columns. */
+    scroll-snap-stop: always;
   }
 
   .colGhost {
     width: 82vw;
     flex: 0 0 82vw;
     scroll-snap-align: start;
+    scroll-snap-stop: always;
   }
 
   .newProjectGhost {
@@ -657,4 +697,16 @@
     align-self: center;
     justify-content: center;
   }
+}
+
+/* Touch-drag visual state — applied via class while a long-press card drag
+   is in progress. Source card dims; the column under the finger highlights
+   so the drop intent is clearly readable. */
+.cardTouchDragging {
+  opacity: 0.5;
+}
+
+.colTouchDropOver {
+  outline: 2px solid var(--acc);
+  outline-offset: -2px;
 }

@@ -29,6 +29,12 @@ import type { BoardCellQuery } from "../../usePaginatedIssues";
 let projectsData: ProjectRecord[] | undefined = [];
 let cellsByProject: Map<string, Map<string, BoardCellQuery>> = new Map();
 
+// Force desktop branch by default. Tests that need mobile override this.
+let mobileMatches = false;
+vi.mock("../../../../hooks/useMediaQuery", () => ({
+  useMediaQuery: () => mobileMatches,
+}));
+
 vi.mock("../../../projects/useProjects", () => ({
   useProjects: () => ({ data: projectsData }),
 }));
@@ -80,6 +86,8 @@ vi.mock("@dnd-kit/core", () => ({
   },
   DragOverlay: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
   PointerSensor: function PointerSensor() {},
+  MouseSensor: function MouseSensor() {},
+  TouchSensor: function TouchSensor() {},
   KeyboardSensor: function KeyboardSensor() {},
   useSensor: () => ({}),
   useSensors: () => [],
@@ -214,6 +222,48 @@ vi.mock("@hydra/ui", () => ({
     const { variant: _variant, size: _size, ...rest } = props;
     return <button {...rest}>{children}</button>;
   },
+  Picker: ({
+    label,
+    open,
+    onToggle,
+    value,
+    children,
+    "data-testid": testId,
+  }: {
+    label: string;
+    open: boolean;
+    onToggle: () => void;
+    value: React.ReactNode;
+    children: React.ReactNode;
+    "data-testid"?: string;
+  }) => (
+    <div data-testid={testId}>
+      <button type="button" aria-label={label} onClick={onToggle}>
+        {value}
+      </button>
+      {open ? <div>{children}</div> : null}
+    </div>
+  ),
+  PickerRow: ({
+    active,
+    onClick,
+    children,
+    "data-testid": testId,
+  }: {
+    active?: boolean;
+    onClick: () => void;
+    children: React.ReactNode;
+    "data-testid"?: string;
+  }) => (
+    <button
+      type="button"
+      data-testid={testId}
+      data-active={active ? "true" : undefined}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  ),
   Icons: {
     IconSettings: () => <span data-testid="icon-settings" />,
     IconSpark: () => <span data-testid="icon-spark" />,
@@ -393,6 +443,7 @@ function renderBoard(
 }
 
 beforeEach(() => {
+  mobileMatches = false;
   projectsData = [];
   cellsByProject = new Map();
   conversationsByIssueMap = new Map();
@@ -1659,5 +1710,118 @@ describe("IssuesBoard chat button", () => {
     renderBoard();
 
     expect(screen.queryByTestId("board-card-conversation-i-aaa")).toBeNull();
+  });
+});
+
+describe("IssuesBoard mobile single-board view", () => {
+  beforeEach(() => {
+    mobileMatches = true;
+    window.localStorage.clear();
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+      makeProject("j-design", "design", DEFAULT_STATUSES, "Design"),
+    ];
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("renders the mobile board picker when multiple projects exist", () => {
+    renderBoard();
+    expect(screen.getByTestId("board-mobile-picker")).toBeDefined();
+  });
+
+  it("shows only the first project section by default", () => {
+    renderBoard();
+    expect(screen.getByTestId("board-project-engineering")).toBeDefined();
+    expect(screen.queryByTestId("board-project-design")).toBeNull();
+  });
+
+  it("switching the picker swaps which project section is rendered", () => {
+    renderBoard();
+
+    fireEvent.click(
+      screen.getByTestId("board-mobile-picker").querySelector("button")!,
+    );
+    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
+
+    expect(screen.queryByTestId("board-project-engineering")).toBeNull();
+    expect(screen.getByTestId("board-project-design")).toBeDefined();
+  });
+
+  it("persists the picker selection in localStorage", () => {
+    renderBoard();
+
+    fireEvent.click(
+      screen.getByTestId("board-mobile-picker").querySelector("button")!,
+    );
+    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
+
+    expect(
+      window.localStorage.getItem("hydra:board-mobile-selected-project"),
+    ).toBe("j-design");
+  });
+
+  it("rehydrates the picker selection from localStorage on mount", () => {
+    window.localStorage.setItem(
+      "hydra:board-mobile-selected-project",
+      "j-design",
+    );
+    renderBoard();
+
+    expect(screen.getByTestId("board-project-design")).toBeDefined();
+    expect(screen.queryByTestId("board-project-engineering")).toBeNull();
+  });
+
+  it("suppresses the picker when scoped to a single project", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <IssuesBoard
+            baseFilters={{ project_id: "j-eng" }}
+            filterRootId={null}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId("board-mobile-picker")).toBeNull();
+  });
+
+  it("suppresses the picker when only one project exists", () => {
+    projectsData = [
+      makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
+    ];
+    renderBoard();
+    expect(screen.queryByTestId("board-mobile-picker")).toBeNull();
+  });
+
+  it("hides the '+ New project' ghost row when the picker is active", () => {
+    renderBoard();
+    expect(screen.queryByTestId("board-new-project")).toBeNull();
+  });
+
+  it("disables project reordering on mobile (no SortableContext over project ids)", () => {
+    renderBoard();
+    // With reorder disabled there should only be the per-project status
+    // SortableContext, not the project-level one. Status keys are strings.
+    for (const items of sortableItemsList) {
+      const hasProjectIds = items.some(
+        (id) => typeof id === "string" && id.startsWith("j-"),
+      );
+      expect(hasProjectIds).toBe(false);
+    }
+  });
+
+  it("falls back to the first project when the stored selection no longer exists", () => {
+    window.localStorage.setItem(
+      "hydra:board-mobile-selected-project",
+      "j-deleted",
+    );
+    renderBoard();
+    expect(screen.getByTestId("board-project-engineering")).toBeDefined();
   });
 });

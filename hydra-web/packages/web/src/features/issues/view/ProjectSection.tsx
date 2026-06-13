@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   useSensor,
   useSensors,
@@ -25,6 +26,7 @@ import type {
   SessionSummaryRecord,
   StatusDefinition,
 } from "@hydra/api";
+import { useIsMobile } from "../../../hooks/useIsMobile";
 import { ProjectChip } from "../../projects/ProjectChip";
 import {
   PROJECTS_QUERY_KEY,
@@ -69,6 +71,10 @@ export interface ProjectSectionProps {
   onAddStatus: (projectId: string) => void;
   onAddIssue: (projectId: string, statusKey: string) => void;
   onIssueDrop: IssueDropHandler;
+  // Suppress the project bar entirely. Used by the mobile single-board view,
+  // where the picker above the board already shows the project's key and
+  // name and reordering / collapsing don't apply.
+  hideBar?: boolean;
 }
 
 interface SortableSectionHandleProps {
@@ -151,6 +157,7 @@ export function ProjectSection({
   onAddStatus,
   onAddIssue,
   onIssueDrop,
+  hideBar,
   sortableSetNodeRef,
   sortableStyle,
   sortableIsDragging,
@@ -158,6 +165,11 @@ export function ProjectSection({
 }: ProjectSectionProps & SortableSectionHandleProps) {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
+  // On mobile only one project's columns are visible at a time and the user
+  // pans between them by swiping; reorder-via-drag would just compete with
+  // that gesture, so drag handles on column headers are skipped.
+  const isMobile = useIsMobile();
+  const allowStatusReorder = !isMobile;
   const reorderMutation = useMutation({
     mutationFn: async ({
       nextStatuses,
@@ -195,8 +207,16 @@ export function ProjectSection({
     },
   });
 
+  // Mouse + Touch sensors so touch devices require a long-press hold before a
+  // column drag begins. With a single PointerSensor `{ distance: 4 }`, any
+  // touch drift competes with native scrolling. Splitting the sensors lets
+  // mouse users keep the immediate 4px-threshold drag while touch users
+  // explicitly opt in via a 250ms press.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -247,6 +267,7 @@ export function ProjectSection({
     return (
       <SortableBoardColumn
         key={status.key}
+        allowReorder={allowStatusReorder}
         project={project}
         projectRecord={projectRecord}
         status={status}
@@ -292,6 +313,7 @@ export function ProjectSection({
       className={sectionClasses.join(" ")}
       data-testid={`board-project-${project.key}`}
     >
+      {!hideBar && (
       <div
         className={barClasses.join(" ")}
         data-testid={`board-project-bar-${project.key}`}
@@ -355,6 +377,7 @@ export function ProjectSection({
           </Button>
         </div>
       </div>
+      )}
       {/* While any project is being dragged, every section collapses to just
           the bar above. This keeps the reorder list a row of uniform-height
           headers (reliable drop targets) and hides the body of the section
@@ -362,12 +385,12 @@ export function ProjectSection({
       {!dragActive && (
         <div
           className={
-            collapsed
+            collapsed && !hideBar
               ? `${styles.projectGroupBody} ${styles.projectGroupBodyCollapsed}`
               : styles.projectGroupBody
           }
           data-testid={`board-project-body-${project.key}`}
-          aria-hidden={collapsed}
+          aria-hidden={collapsed && !hideBar}
         >
           <div className={styles.projectGroupBodyInner}>
             <DndContext
