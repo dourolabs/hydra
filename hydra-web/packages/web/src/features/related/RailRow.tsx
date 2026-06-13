@@ -30,7 +30,6 @@ import { PatchRepoLink } from "../patches/PatchRepoLink";
 import { ProjectChip } from "../projects/ProjectChip";
 import { useProjects } from "../projects/useProjects";
 import { RestoreIssueButton } from "../issues/RestoreIssueButton";
-import { ArchiveIssueButton } from "../issues/ArchiveIssueButton";
 import styles from "./RailRow.module.css";
 
 function resolveProjectKey(
@@ -114,7 +113,7 @@ export function IssueRailRow({ record, sessions, neighborhood, linkSearch }: Iss
           {resolved.label && (
             <span className={styles.statusLabel}>{resolved.label}</span>
           )}
-          {archived ? (
+          {archived && (
             <>
               <span
                 className={styles.archivedTag}
@@ -128,12 +127,6 @@ export function IssueRailRow({ record, sessions, neighborhood, linkSearch }: Iss
                 data-testid={`related-rail-row-restore-${record.issue_id}`}
               />
             </>
-          ) : (
-            <ArchiveIssueButton
-              issueId={record.issue_id}
-              className={styles.rowActionButton}
-              data-testid={`related-rail-row-archive-${record.issue_id}`}
-            />
           )}
           {issue.type && issue.type !== "unknown" && <TypeChip type={issue.type} />}
           {issue.assignee && assigneeName && (
