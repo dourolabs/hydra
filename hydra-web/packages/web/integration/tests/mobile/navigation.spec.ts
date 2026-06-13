@@ -12,7 +12,9 @@ async function setSidebarHidden(page: Page) {
 }
 
 async function openMobileDrawer(page: Page): Promise<void> {
-  await page.getByTestId("site-header-toggle-sidebar").click();
+  // The hamburger is hidden on mobile (replaced by the bottom-tab bar's
+  // "More" cell); reach the sidebar drawer through that.
+  await page.getByTestId("mobile-bottom-tab-more").click();
   await expect(page.getByTestId("sidebar-backdrop")).toBeVisible();
 }
 

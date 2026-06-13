@@ -12,6 +12,7 @@ import { useDocumentCount } from "../features/documents/useDocumentCount";
 import { useUncategorizedDocuments } from "../features/documents/useUncategorizedDocuments";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
 import styles from "./DocumentsPage.module.css";
 
 const ROOT_PATH = "/";
@@ -122,6 +123,12 @@ export function DocumentsPage() {
       )}
 
       <DocumentCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="New document"
+        onClick={() => setCreateOpen(true)}
+        testId="documents-fab"
+      />
     </div>
   );
 }

@@ -72,7 +72,7 @@ test.describe("Responsive layout — main content visibility @layout:responsive"
 });
 
 test.describe("Responsive layout — mobile drawer mechanics @layout:responsive-drawer", () => {
-  test("mobile drawer can be opened via hamburger and dismissed via backdrop @layout:responsive-drawer", async ({
+  test("mobile drawer can be opened via More tab and dismissed via backdrop @layout:responsive-drawer", async ({
     authenticatedPage: page,
   }) => {
     // Start in the dismissed state so the drawer must be explicitly opened.
@@ -94,8 +94,9 @@ test.describe("Responsive layout — mobile drawer mechanics @layout:responsive-
     expect(box).not.toBeNull();
     expect(box!.x).toBeLessThan(0);
 
-    // Open via the hamburger toggle.
-    await page.getByTestId("site-header-toggle-sidebar").click();
+    // The hamburger is hidden on mobile; the bottom-tab bar's "More" cell
+    // is the canonical drawer entry point.
+    await page.getByTestId("mobile-bottom-tab-more").click();
     await expect(page.getByTestId("sidebar-backdrop")).toBeVisible();
     await page.waitForTimeout(250);
 

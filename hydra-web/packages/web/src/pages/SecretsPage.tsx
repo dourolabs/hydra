@@ -5,6 +5,7 @@ import { useSecrets } from "../features/secrets/useSecrets";
 import { SecretsSection } from "../features/secrets/SecretsSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
 import styles from "./SecretsPage.module.css";
 
 export function SecretsPage() {
@@ -31,6 +32,12 @@ export function SecretsPage() {
       <div className={styles.body}>
         <SecretsSection adding={adding} onAddingChange={setAdding} />
       </div>
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="Add secret"
+        onClick={() => setAdding(true)}
+        testId="secrets-fab"
+      />
     </div>
   );
 }

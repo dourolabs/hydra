@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
 import styles from "./PageHead.module.css";
 
 interface PageHeadProps {
@@ -7,11 +8,16 @@ interface PageHeadProps {
   actions?: ReactNode;
 }
 
-// Shared list-page header. Desktop renders a tall column with eyebrow + H1
-// over a row of actions. Mobile collapses to a single thin row of eyebrow +
-// actions; the H1 is hidden because the breadcrumb in SiteHeader already
-// names the page.
+// Desktop list-page header (eyebrow + H1 + actions). On mobile the visible
+// row is suppressed entirely — the SiteHeader breadcrumb names the page, and
+// each consumer migrates its actions into its own toolbar / FAB. The H1
+// stays in the DOM as an accessibility landmark and as the readiness signal
+// integration tests use to wait for layout.
 export function PageHead({ eyebrow, title, actions }: PageHeadProps) {
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return <h1 className={styles.srOnlyTitle}>{title}</h1>;
+  }
   return (
     <div className={styles.pageHead}>
       <div className={styles.headLeft}>

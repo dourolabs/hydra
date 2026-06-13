@@ -4,6 +4,7 @@ import { useAgents } from "../hooks/useAgents";
 import { AgentsSection } from "../features/agents/AgentsSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
 import styles from "./AgentsPage.module.css";
 
 export function AgentsPage() {
@@ -32,6 +33,12 @@ export function AgentsPage() {
           onCreateOpenChange={setCreateOpen}
         />
       </div>
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="Add agent"
+        onClick={() => setCreateOpen(true)}
+        testId="agents-fab"
+      />
     </div>
   );
 }

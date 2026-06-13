@@ -1,9 +1,9 @@
 import { test, expect } from "../fixtures/auth";
 
-const VIEWPORTS = [
-  { name: "desktop 1440x900", width: 1440, height: 900 },
-  { name: "mobile 375x812", width: 375, height: 812 },
-];
+// Only desktop matters here: the hamburger is the only Tooltip-wrapped
+// trigger in SiteHeader, and the hamburger is hidden on mobile (replaced by
+// the bottom-tab "More" cell).
+const VIEWPORTS = [{ name: "desktop 1440x900", width: 1440, height: 900 }];
 
 // Only triggers that are wrapped in a Tooltip in SiteHeader.tsx render a
 // role="tooltip" on hover. Today that is the hamburger only — search,

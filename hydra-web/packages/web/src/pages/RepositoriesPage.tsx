@@ -4,6 +4,7 @@ import { useRepositories } from "../hooks/useRepositories";
 import { RepositoriesSection } from "../features/repositories/RepositoriesSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
 import styles from "./RepositoriesPage.module.css";
 
 export function RepositoriesPage() {
@@ -32,6 +33,12 @@ export function RepositoriesPage() {
           onCreateOpenChange={setCreateOpen}
         />
       </div>
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="Add repository"
+        onClick={() => setCreateOpen(true)}
+        testId="repositories-fab"
+      />
     </div>
   );
 }
