@@ -232,9 +232,4 @@
   .moveActions {
     flex-wrap: wrap;
   }
-  .pillContent,
-  .pillEmpty {
-    min-height: 44px;
-    padding: 0 var(--space-1);
-  }
 }

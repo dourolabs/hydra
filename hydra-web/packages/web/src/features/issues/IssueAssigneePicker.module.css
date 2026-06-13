@@ -13,14 +13,6 @@
   font-style: italic;
 }
 
-@media (max-width: 768px) {
-  .pillContent,
-  .pillEmpty {
-    min-height: 44px;
-    padding: 0 var(--space-1);
-  }
-}
-
 .popSection {
   font-family: var(--f-mono);
   font-size: 10px;

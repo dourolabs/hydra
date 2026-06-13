@@ -19,14 +19,6 @@
   font-style: italic;
 }
 
-@media (max-width: 768px) {
-  .pillContent,
-  .pillEmpty {
-    min-height: 44px;
-    padding: 0 var(--space-1);
-  }
-}
-
 .popCode {
   font-family: var(--f-mono);
   font-size: var(--t-xs);

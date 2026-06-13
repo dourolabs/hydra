@@ -41,6 +41,14 @@
   background: var(--acc-soft);
 }
 
+@media (max-width: 768px) {
+  .pill {
+    min-height: 44px;
+    padding: 0 var(--space-2);
+    gap: 9px;
+  }
+}
+
 .pillChevron {
   color: var(--fg-2);
   display: inline-flex;
