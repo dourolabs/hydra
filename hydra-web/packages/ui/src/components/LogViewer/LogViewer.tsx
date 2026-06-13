@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback, type ReactElement } from "react";
-import { List, useListRef, type RowComponentProps } from "react-window";
+import { List, useListRef, useDynamicRowHeight, type RowComponentProps } from "react-window";
 import AnsiToHtml from "ansi-to-html";
+import { useViewerWrap } from "../../hooks/useViewerWrap";
+import { IconWrap, IconNoWrap } from "../Icon/Icon";
 import styles from "./LogViewer.module.css";
 
 export interface LogViewerProps {
@@ -22,6 +24,7 @@ const ansiConverter = new AnsiToHtml({
 interface RowExtraProps {
   getHtml: (index: number) => string;
   lineNumberWidth: string;
+  wrap: boolean;
 }
 
 function LogRow({
@@ -29,10 +32,15 @@ function LogRow({
   style,
   getHtml,
   lineNumberWidth,
+  wrap,
 }: RowComponentProps<RowExtraProps>): ReactElement {
   const html = getHtml(index);
   return (
-    <div className={styles.row} style={style} data-testid="log-row">
+    <div
+      className={`${styles.row}${wrap ? ` ${styles.rowWrap}` : ""}`}
+      style={style}
+      data-testid="log-row"
+    >
       <span
         className={styles.lineNumber}
         style={{ minWidth: lineNumberWidth }}
@@ -40,7 +48,7 @@ function LogRow({
         {index + 1}
       </span>
       <span
-        className={styles.lineContent}
+        className={`${styles.lineContent}${wrap ? ` ${styles.lineContentWrap}` : ""}`}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>
@@ -56,6 +64,16 @@ export function LogViewer({
   const listRefObj = useListRef(null);
   const userScrolledRef = useRef(false);
   const programmaticScrollRef = useRef(false);
+
+  const [wrap, setWrap] = useViewerWrap("log");
+
+  // Dynamic row heights for wrap mode — measures rendered rows. Always
+  // instantiated so the hook order is stable, but only passed to <List/>
+  // when wrap is on (fixed-height is more efficient otherwise).
+  const dynamicRowHeight = useDynamicRowHeight({
+    defaultRowHeight: ROW_HEIGHT,
+    key: wrap ? "wrap" : "nowrap",
+  });
 
   // Incremental ANSI conversion cache
   const htmlCacheRef = useRef<string[]>([]);
@@ -127,11 +145,29 @@ export function LogViewer({
     prevAutoScroll.current = autoScroll;
   }, [autoScroll, lines.length, listRefObj]);
 
-  const cls = [styles.logViewer, className].filter(Boolean).join(" ");
+  const cls = [styles.logViewer, wrap ? styles.wrap : null, className]
+    .filter(Boolean)
+    .join(" ");
+
+  const toolbar = (
+    <div className={styles.toolbar}>
+      <button
+        type="button"
+        className={styles.toolbarButton}
+        onClick={() => setWrap(!wrap)}
+        aria-pressed={wrap}
+        aria-label={wrap ? "Disable line wrap" : "Enable line wrap"}
+        title={wrap ? "Disable line wrap" : "Enable line wrap"}
+      >
+        {wrap ? <IconWrap size={14} /> : <IconNoWrap size={14} />}
+      </button>
+    </div>
+  );
 
   if (lines.length === 0) {
     return (
       <div className={cls}>
+        {toolbar}
         <div className={styles.empty}>No log output</div>
       </div>
     );
@@ -139,12 +175,13 @@ export function LogViewer({
 
   return (
     <div className={cls}>
+      {toolbar}
       <List<RowExtraProps>
         listRef={listRefObj}
         rowComponent={LogRow}
         rowCount={lines.length}
-        rowHeight={ROW_HEIGHT}
-        rowProps={{ getHtml, lineNumberWidth }}
+        rowHeight={wrap ? dynamicRowHeight : ROW_HEIGHT}
+        rowProps={{ getHtml, lineNumberWidth, wrap }}
         overscanCount={50}
         className={styles.list}
       />

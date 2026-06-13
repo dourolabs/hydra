@@ -5,6 +5,7 @@
   overflow: auto;
   scrollbar-width: thin; /* Firefox */
   scrollbar-color: var(--color-border) transparent;
+  position: relative;
 }
 
 .container::-webkit-scrollbar {
@@ -21,6 +22,48 @@
   border-radius: var(--radius-xs);
 }
 
+.toolbar {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-1);
+  background: linear-gradient(
+    to bottom,
+    var(--color-bg-secondary),
+    color-mix(in srgb, var(--color-bg-secondary) 80%, transparent)
+  );
+  pointer-events: none;
+}
+
+.toolbarButton {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.toolbarButton:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+
+.toolbarButton[aria-pressed="true"] {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  border-color: var(--color-text-tertiary);
+}
+
 .diff {
   margin: 0;
   padding: var(--space-3);
@@ -29,6 +72,11 @@
   line-height: 1.5;
   white-space: pre;
   tab-size: 4;
+}
+
+.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .addition {
