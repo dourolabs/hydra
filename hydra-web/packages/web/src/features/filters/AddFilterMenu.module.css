@@ -31,6 +31,111 @@
   padding-top: 4px;
 }
 
+.sectionRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 6px;
+}
+
+.sectionRow .section {
+  padding-right: 0;
+}
+
+.clearAll {
+  background: transparent;
+  border: 0;
+  color: var(--fg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--tx-fast);
+}
+
+.clearAll:hover {
+  color: var(--fg-0);
+}
+
+.activeRow {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 4px;
+}
+
+.activeRowMain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--f-sans);
+  font-size: var(--t-sm);
+  color: var(--fg-1);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.activeRowMain:hover {
+  background: var(--bg-2);
+  color: var(--fg-0);
+}
+
+.activeRowStatic {
+  cursor: default;
+}
+
+.activeRowStatic:hover {
+  background: transparent;
+  color: var(--fg-1);
+}
+
+.activeRowValues {
+  color: var(--fg-2);
+  font-family: var(--f-sans);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+
+.activeRowRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--tx-fast),
+    color var(--tx-fast);
+}
+
+.activeRowRemove:hover {
+  color: var(--fg-0);
+  background: var(--bg-2);
+}
+
+.divider {
+  height: 1px;
+  background: var(--line);
+  margin: 8px 10px;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -111,9 +216,19 @@
     transform: translateX(-50%);
     pointer-events: none;
   }
-  .row {
+  .row,
+  .activeRowMain,
+  .activeRowRemove {
     min-height: 44px;
+  }
+  .row {
     padding: var(--space-2) 12px;
+  }
+  .activeRowMain {
+    padding: var(--space-2) 12px;
+  }
+  .activeRowRemove {
+    min-width: 44px;
   }
   .mobileBackdrop {
     display: block;

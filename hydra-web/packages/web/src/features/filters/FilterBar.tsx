@@ -94,8 +94,10 @@ export function FilterBar<T>({
 
   const openPicker = useCallback((uid: string) => {
     const el = chipRefs.current.get(uid);
-    if (!el) return;
-    setPickerAnchor(computeAnchor(el.getBoundingClientRect()));
+    // On mobile we hide inline chips, so there's no anchor to compute against;
+    // ValuePicker's mobile styles position it as a bottom sheet regardless of
+    // the anchor we pass in.
+    setPickerAnchor(el ? computeAnchor(el.getBoundingClientRect()) : {});
     setPickerOpenUid(uid);
   }, []);
 
@@ -107,8 +109,7 @@ export function FilterBar<T>({
   useLayoutEffect(() => {
     if (!pendingOpenUid) return;
     const el = chipRefs.current.get(pendingOpenUid);
-    if (!el) return;
-    setPickerAnchor(computeAnchor(el.getBoundingClientRect()));
+    setPickerAnchor(el ? computeAnchor(el.getBoundingClientRect()) : {});
     setPickerOpenUid(pendingOpenUid);
     setPendingOpenUid(null);
   }, [pendingOpenUid]);
@@ -187,28 +188,40 @@ export function FilterBar<T>({
       `${total} results`
     );
 
+  // On mobile, drop the inline chip row entirely — the filter icon's badge
+  // surfaces the count, and the AddFilterMenu becomes the single place to see,
+  // edit, and remove active filters.
+  const handlePickExisting = useCallback(
+    (uid: string) => {
+      closeMenu();
+      openPicker(uid);
+    },
+    [closeMenu, openPicker],
+  );
+
   return (
     <div className={styles.bar} role="toolbar" aria-label="Filters">
       <div className={styles.chips}>
-        {filters.map((filter) => {
-          const def = definitions[filter.id];
-          if (!def) return null;
-          const isPresence = def.kind === "presence";
-          return (
-            <FilterChip
-              key={filter._uid}
-              filter={filter}
-              definition={def}
-              open={pickerOpenUid === filter._uid}
-              onOpen={isPresence ? undefined : () => openPicker(filter._uid)}
-              onRemove={() => handleRemove(filter._uid)}
-              chipRef={(el) => {
-                if (el) chipRefs.current.set(filter._uid, el);
-                else chipRefs.current.delete(filter._uid);
-              }}
-            />
-          );
-        })}
+        {!isMobile &&
+          filters.map((filter) => {
+            const def = definitions[filter.id];
+            if (!def) return null;
+            const isPresence = def.kind === "presence";
+            return (
+              <FilterChip
+                key={filter._uid}
+                filter={filter}
+                definition={def}
+                open={pickerOpenUid === filter._uid}
+                onOpen={isPresence ? undefined : () => openPicker(filter._uid)}
+                onRemove={() => handleRemove(filter._uid)}
+                chipRef={(el) => {
+                  if (el) chipRefs.current.set(filter._uid, el);
+                  else chipRefs.current.delete(filter._uid);
+                }}
+              />
+            );
+          })}
 
         <button
           ref={addButtonRef}
@@ -222,7 +235,7 @@ export function FilterBar<T>({
         >
           <Icons.IconFilter size={12} />
           <span className={styles.addButtonLabel}>Filter</span>
-          {filters.length >= 2 && (
+          {hasFilters && (
             <span
               className={styles.addButtonBadge}
               aria-hidden="true"
@@ -233,7 +246,7 @@ export function FilterBar<T>({
           )}
         </button>
 
-        {hasFilters && (
+        {!isMobile && hasFilters && (
           <button
             type="button"
             className={styles.clearButton}
@@ -254,8 +267,12 @@ export function FilterBar<T>({
       {menuOpen && menuAnchor && (
         <AddFilterMenu
           definitions={definitions}
+          filters={isMobile ? filters : undefined}
           anchorStyle={menuAnchor}
           onPick={handlePick}
+          onPickExisting={handlePickExisting}
+          onRemoveExisting={handleRemove}
+          onClearAll={handleClearAll}
           onClose={closeMenu}
         />
       )}
