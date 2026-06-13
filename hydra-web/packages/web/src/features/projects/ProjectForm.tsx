@@ -27,12 +27,14 @@ export interface ProjectFormProps {
   projectId?: ProjectId | null;
   /** Existing project, edit mode only. */
   initial?: Project;
+  /** Active-issue count for the archive-confirmation hint (edit mode). */
+  issueCount?: number;
 }
 
 // Shared Name + inline-prompt form behind both the New Project modal and the
 // Project Settings modal, so the two stay identical. The key is derived from
 // the name (never an editable field) and shown read-only alongside the prompt
-// path; renaming re-keys the project end-to-end. Edit mode adds a Delete
+// path; renaming re-keys the project end-to-end. Edit mode adds an Archive
 // control and preserves the project's existing statuses (those are managed on
 // the board, not here).
 export function ProjectForm({
@@ -40,6 +42,7 @@ export function ProjectForm({
   onClose,
   projectId,
   initial,
+  issueCount,
 }: ProjectFormProps) {
   const isEdit = !!projectId;
   const { addToast } = useToast();
@@ -180,13 +183,19 @@ export function ProjectForm({
         queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
       }
       addToast(
-        err instanceof Error ? err.message : "Failed to delete project",
+        err instanceof Error ? err.message : "Failed to archive project",
         "error",
       );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
-      addToast("Project deleted", "success");
+      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
+      addToast(
+        issueCount && issueCount > 0
+          ? `Project archived (${issueCount} issue(s) cascaded)`
+          : "Project archived",
+        "success",
+      );
       setDeleteOpen(false);
       onClose();
     },
@@ -248,7 +257,7 @@ export function ProjectForm({
             disabled={saveMutation.isPending || deleteMutation.isPending}
             data-testid="project-form-delete"
           >
-            Delete project
+            Archive project
           </Button>
         )}
         <span className={styles.actionsSpacer} />
@@ -282,6 +291,13 @@ export function ProjectForm({
           onClose={() => setDeleteOpen(false)}
           entityName={initial?.name ?? key}
           entityLabel="Project"
+          actionLabel="Archive"
+          pendingLabel="Archiving..."
+          description={
+            issueCount && issueCount > 0
+              ? `${issueCount} issue(s) in this project will be archived.`
+              : undefined
+          }
           onConfirm={() => deleteMutation.mutate()}
           isPending={deleteMutation.isPending}
         />

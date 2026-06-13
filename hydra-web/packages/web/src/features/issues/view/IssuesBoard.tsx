@@ -134,6 +134,11 @@ export function IssuesBoard({
       (record) => !record.project.archived,
     );
 
+    // Archived statuses stay in the project record for collision checks /
+    // historical resolution, but never render as active columns on the board.
+    const activeStatuses = (record: ProjectRecord) =>
+      record.project.statuses.filter((s) => !s.archived);
+
     if (baseFilters.project_id) {
       const match = realProjects.find(
         (p) => p.project_id === baseFilters.project_id,
@@ -143,7 +148,7 @@ export function IssuesBoard({
           project_id: match.project_id,
           key: match.project.key,
           name: match.project.name,
-          statuses: match.project.statuses,
+          statuses: activeStatuses(match),
         });
       }
       return out;
@@ -154,7 +159,7 @@ export function IssuesBoard({
         project_id: record.project_id,
         key: record.project.key,
         name: record.project.name,
-        statuses: record.project.statuses,
+        statuses: activeStatuses(record),
       });
     }
     return out;
@@ -245,6 +250,23 @@ export function IssuesBoard({
       (allProjects ?? []).find((p) => p.project_id === settingsProjectId) ?? null
     );
   }, [allProjects, settingsProjectId]);
+
+  // Estimated active-issue count for the project-archive confirmation. The
+  // board only knows about loaded pages; treat any project with paged-out
+  // cells as non-empty (positive sentinel) so the confirmation hint never
+  // under-reports.
+  const settingsProjectIssueCount = useMemo(() => {
+    if (!settingsProjectId) return 0;
+    const perStatus = cells.get(settingsProjectId);
+    if (!perStatus) return 0;
+    let loaded = 0;
+    let hasMore = false;
+    for (const cell of perStatus.values()) {
+      loaded += cell.issues.length;
+      if (cell.hasNextPage) hasMore = true;
+    }
+    return hasMore ? Math.max(loaded, 1) : loaded;
+  }, [cells, settingsProjectId]);
 
   const handleGearClick = (
     projectRecord: ProjectRecord,
@@ -652,6 +674,7 @@ export function IssuesBoard({
           open
           onClose={() => setSettingsProjectId(null)}
           project={settingsProject}
+          issueCount={settingsProjectIssueCount}
         />
       )}
       {gearTarget && gearProjectRecord && (

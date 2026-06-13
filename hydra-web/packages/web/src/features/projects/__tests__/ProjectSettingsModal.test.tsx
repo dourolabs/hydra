@@ -190,14 +190,24 @@ vi.mock("../../../components/DeleteConfirmModal/DeleteConfirmModal", () => ({
   DeleteConfirmModal: ({
     open,
     onConfirm,
+    actionLabel,
+    description,
   }: {
     open: boolean;
     onConfirm: () => void;
+    actionLabel?: string;
+    description?: ReactNode;
   }) =>
     open ? (
-      <button data-testid="confirm-delete" onClick={onConfirm}>
-        Confirm delete
-      </button>
+      <div data-testid="confirm-delete-modal">
+        <span data-testid="confirm-delete-action-label">
+          {actionLabel ?? ""}
+        </span>
+        <span data-testid="confirm-delete-description">{description}</span>
+        <button data-testid="confirm-delete" onClick={onConfirm}>
+          {actionLabel ?? "Confirm delete"}
+        </button>
+      </div>
     ) : null,
 }));
 
@@ -397,7 +407,7 @@ describe("ProjectSettingsModal", () => {
     expect(updateProjectSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("Delete project confirms and deletes the project", async () => {
+  it("Delete project confirms and archives the project", async () => {
     const onClose = vi.fn();
     render(
       <ProjectSettingsModal open onClose={onClose} project={makeProject()} />,
@@ -413,6 +423,41 @@ describe("ProjectSettingsModal", () => {
       "j-engine",
     );
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the archive confirmation with an issue-count hint when issueCount > 0", () => {
+    render(
+      <ProjectSettingsModal
+        open
+        onClose={() => {}}
+        project={makeProject()}
+        issueCount={7}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("project-form-delete"));
+    expect(
+      screen.getByTestId("confirm-delete-description").textContent,
+    ).toContain("7 issue(s)");
+    expect(
+      screen.getByTestId("confirm-delete-action-label").textContent,
+    ).toBe("Archive");
+  });
+
+  it("omits the issue-count hint when issueCount is 0", () => {
+    render(
+      <ProjectSettingsModal
+        open
+        onClose={() => {}}
+        project={makeProject()}
+        issueCount={0}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("project-form-delete"));
+    expect(
+      screen.getByTestId("confirm-delete-description").textContent,
+    ).toBe("");
   });
 
   it("invokes onClose when the modal close button is clicked", () => {

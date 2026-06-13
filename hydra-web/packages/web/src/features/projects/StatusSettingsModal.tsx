@@ -12,10 +12,8 @@ import {
   Select,
   Textarea,
 } from "@hydra/ui";
-import type { SelectOption } from "@hydra/ui";
 import type {
   DocumentPath,
-  IssueSummaryRecord,
   ListProjectsResponse,
   Principal,
   ProjectRecord,
@@ -42,6 +40,7 @@ import {
   type AutoArchiveUnit,
 } from "./statusDefaults";
 import { upsertPromptDoc, usePromptDocumentBody } from "./promptDocument";
+import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import styles from "./StatusSettingsModal.module.css";
 
 export interface StatusSettingsModalProps {
@@ -129,20 +128,14 @@ function EditStatusModal({
   const [draft, setDraft] = useState<StatusDefinition | null>(
     () => initialStatus?.status ?? null,
   );
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [moveTargetKey, setMoveTargetKey] = useState<string>("");
-  const [moveProgress, setMoveProgress] = useState<{
-    current: number;
-    total: number;
-  } | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   // Resync local draft whenever the modal is opened against a different
   // status (gear click on another column reuses the same component instance).
   useEffect(() => {
     if (!open) return;
     setDraft(initialStatus?.status ?? null);
-    setConfirmingDelete(false);
-    setMoveProgress(null);
+    setArchiveOpen(false);
   }, [open, initialStatus]);
 
   const projectId = projectRecord.project_id;
@@ -181,10 +174,13 @@ function EditStatusModal({
   } = usePromptDocumentBody(initialPromptPath);
   const promptPath = promptPathFor(projectKey, derivedKey);
 
+  // Save covers both edit (status definition update) and archive (cascade
+  // through the per-status archive route). The backend cascade handles the
+  // issue archives — the client just flips the optimistic statuses list.
   const saveMutation = useMutation({
     mutationFn: async (next: {
       nextStatuses: StatusDefinition[];
-      action: "edit" | "delete";
+      action: "edit" | "archive";
     }) => {
       const { nextStatuses, action } = next;
       if (action === "edit") {
@@ -193,8 +189,6 @@ function EditStatusModal({
         const updated = nextStatuses[index];
         return apiClient.updateProjectStatus(projectId, statusKey, updated);
       }
-      // Archive without bulk move — `moveAndDeleteMutation` covers the
-      // bulk-move-then-archive branch directly.
       return apiClient.archiveProjectStatus(projectId, statusKey);
     },
     onMutate: async ({ nextStatuses }) => {
@@ -226,6 +220,7 @@ function EditStatusModal({
       queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
       queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
+      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
       queryClient.invalidateQueries({ queryKey: ["documentByPath"] });
       queryClient.invalidateQueries({ queryKey: ["documentPaths"] });
       queryClient.invalidateQueries({ queryKey: ["documentsAtPath"] });
@@ -233,40 +228,8 @@ function EditStatusModal({
   });
 
   const onlyStatus = statuses.length <= 1;
-  const hasIssues = issueCount > 0;
-  const canDelete = !onlyStatus;
-  const deleteTooltip = onlyStatus
-    ? "Cannot delete the only status"
-    : hasIssues
-    ? `Will move ${issueCount} open issue(s) to a sibling status`
-    : "";
-
-  // Neighbor statuses available for the bulk-move (excludes the to-delete one).
-  const moveOptions: SelectOption[] = useMemo(
-    () =>
-      statuses
-        .filter((_, i) => i !== index)
-        .map((s) => ({ value: s.key as string, label: s.label || (s.key as string) })),
-    [statuses, index],
-  );
-
-  // Default neighbor: left of the to-delete column, or the right neighbor when
-  // to-delete is the leftmost. `index === -1` ("not found") falls back to "".
-  const defaultMoveTargetKey = useMemo(() => {
-    if (index < 0) return "";
-    const left = statuses[index - 1];
-    if (left) return left.key as string;
-    const right = statuses[index + 1];
-    return right ? (right.key as string) : "";
-  }, [statuses, index]);
-
-  // Reset the move-target selection whenever the modal re-targets a status or
-  // the user re-enters the confirming-delete substep — keeps the default
-  // neighbor in sync with the current `index`.
-  useEffect(() => {
-    if (!confirmingDelete) return;
-    setMoveTargetKey(defaultMoveTargetKey);
-  }, [confirmingDelete, defaultMoveTargetKey]);
+  const canArchive = !onlyStatus;
+  const archiveTooltip = onlyStatus ? "Cannot archive the only status" : "";
 
   const handleSave = useCallback(async () => {
     if (!draft || index < 0 || keyError || !draft.label.trim()) return;
@@ -312,124 +275,38 @@ function EditStatusModal({
     onClose,
   ]);
 
-  const handleDelete = useCallback(() => {
-    if (!canDelete || index < 0) return;
-    const next = statuses.filter((_, i) => i !== index);
+  // Archive flips `archived = true` on the status row; the backend cascade
+  // archives every non-archived issue at that status. The optimistic update
+  // sets `archived = true` on the affected status so the column drops out of
+  // the board's active view before the response lands.
+  const handleArchive = useCallback(() => {
+    if (!canArchive || index < 0) return;
+    const next = statuses.map((s, i) =>
+      i === index ? { ...s, archived: true } : s,
+    );
     saveMutation.mutate(
-      { nextStatuses: next, action: "delete" },
+      { nextStatuses: next, action: "archive" },
       {
         onSuccess: () => {
-          addToast("Status deleted", "success");
+          addToast(
+            issueCount > 0
+              ? `Status archived (${issueCount} issue(s) cascaded)`
+              : "Status archived",
+            "success",
+          );
+          setArchiveOpen(false);
           onClose();
         },
       },
     );
-  }, [canDelete, index, statuses, saveMutation, addToast, onClose]);
-
-  // Bulk-move every issue at the to-delete status onto `moveTargetKey`, then
-  // drop the status from the project's `statuses`. Errors halt the move
-  // before the project save fires so we never orphan a status with a partial
-  // migration. We do the per-issue work outside of `saveMutation` because it
-  // needs sequential progress reporting.
-  const moveAndDeleteMutation = useMutation({
-    mutationFn: async (targetKey: string) => {
-      if (index < 0) throw new Error("Status not found in project");
-
-      // 1) Enumerate every issue at the to-delete status (paginated).
-      const ids: string[] = [];
-      let cursor: string | null = null;
-      let more = true;
-      while (more) {
-        const resp = await apiClient.listIssues({
-          project_id: projectId,
-          status: statusKey,
-          limit: null,
-          ...(cursor ? { cursor } : {}),
-        });
-        for (const rec of resp.issues as IssueSummaryRecord[]) {
-          ids.push(rec.issue_id as string);
-        }
-        cursor = resp.next_cursor ?? null;
-        more = !!cursor;
-      }
-
-      // 2) Sequentially patch each issue's status to the neighbor. Refetch
-      //    the full Issue body first so we don't clobber the description /
-      //    session_settings with the truncated summary shape.
-      setMoveProgress({ current: 0, total: ids.length });
-      for (let i = 0; i < ids.length; i++) {
-        const id = ids[i];
-        setMoveProgress({ current: i + 1, total: ids.length });
-        try {
-          const record = await apiClient.getIssue(id);
-          await apiClient.updateIssue(id, {
-            issue: { ...record.issue, status: targetKey },
-            session_id: null,
-          });
-        } catch (err) {
-          const reason = err instanceof Error ? err.message : "request failed";
-          throw new Error(
-            `Move halted at issue ${id}: ${reason}. No statuses were deleted.`,
-          );
-        }
-      }
-
-      // 3) Optimistic update + DELETE the status via the per-status route.
-      const nextStatuses = statuses.filter((_, i) => i !== index);
-      const nextProject = {
-        ...projectRecord.project,
-        statuses: nextStatuses,
-      };
-
-      await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
-      const previous =
-        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
-      if (previous) {
-        queryClient.setQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY, {
-          projects: applyOptimisticUpsert(previous.projects, projectId, nextProject),
-        });
-      }
-      try {
-        return await apiClient.archiveProjectStatus(projectId, statusKey);
-      } catch (err) {
-        if (previous) {
-          queryClient.setQueryData(PROJECTS_QUERY_KEY, previous);
-        }
-        throw err;
-      }
-    },
-    onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
-      queryClient.invalidateQueries({ queryKey: ["project", response.project_id] });
-      queryClient.invalidateQueries({ queryKey: ["project-statuses"] });
-      queryClient.invalidateQueries({ queryKey: ["paginatedIssues"] });
-      addToast(`Moved ${issueCount} issue(s) and deleted status`, "success");
-      setMoveProgress(null);
-      onClose();
-    },
-    onError: (err) => {
-      addToast(
-        err instanceof Error ? err.message : "Failed to move issues",
-        "error",
-      );
-      setMoveProgress(null);
-    },
-  });
-
-  const handleMoveAndDelete = useCallback(() => {
-    if (!canDelete || index < 0 || !hasIssues) return;
-    if (!moveTargetKey) {
-      addToast("Pick a status to move issues to", "error");
-      return;
-    }
-    moveAndDeleteMutation.mutate(moveTargetKey);
   }, [
-    canDelete,
+    canArchive,
     index,
-    hasIssues,
-    moveTargetKey,
-    moveAndDeleteMutation,
+    statuses,
+    saveMutation,
     addToast,
+    onClose,
+    issueCount,
   ]);
 
   if (!draft || index < 0) {
@@ -470,94 +347,23 @@ function EditStatusModal({
 
       <div className={styles.actions} data-testid="status-settings-actions">
         <div className={styles.actionsLeft}>
-          {confirmingDelete ? (
-            hasIssues ? (
-              <div
-                className={styles.moveBlock}
-                data-testid="status-settings-move-block"
-              >
-                <label className={styles.label}>
-                  Move {issueCount} issue(s) to:
-                  <Select
-                    options={moveOptions}
-                    value={moveTargetKey}
-                    onChange={(e) => setMoveTargetKey(e.target.value)}
-                    data-testid="status-settings-move-target"
-                  />
-                </label>
-                <div className={styles.moveActions}>
-                  {moveProgress && moveProgress.total > 0 && (
-                    <span
-                      className={styles.label}
-                      data-testid="status-settings-move-progress"
-                    >
-                      Moving {moveProgress.current} of {moveProgress.total}…
-                    </span>
-                  )}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setConfirmingDelete(false)}
-                    disabled={moveAndDeleteMutation.isPending}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={handleMoveAndDelete}
-                    disabled={
-                      moveAndDeleteMutation.isPending || !moveTargetKey
-                    }
-                    data-testid="status-settings-move-confirm"
-                  >
-                    {moveAndDeleteMutation.isPending
-                      ? "Moving…"
-                      : `Move ${issueCount} and delete`}
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <span className={styles.label}>Delete this status?</span>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setConfirmingDelete(false)}
-                  disabled={saveMutation.isPending}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleDelete}
-                  disabled={saveMutation.isPending}
-                  data-testid="status-settings-delete-confirm"
-                >
-                  {saveMutation.isPending ? "Deleting…" : "Confirm delete"}
-                </Button>
-              </>
-            )
-          ) : (
-            <Button
-              variant="danger-subtle"
-              size="sm"
-              onClick={() => setConfirmingDelete(true)}
-              disabled={!canDelete || saveMutation.isPending}
-              title={deleteTooltip || undefined}
-              data-testid="status-settings-delete"
-            >
-              Delete status
-            </Button>
-          )}
+          <Button
+            variant="danger-subtle"
+            size="md"
+            onClick={() => setArchiveOpen(true)}
+            disabled={!canArchive || saveMutation.isPending}
+            title={archiveTooltip || undefined}
+            data-testid="status-settings-archive"
+          >
+            Archive status
+          </Button>
         </div>
         <div className={styles.actionsRight}>
           <Button
             variant="secondary"
             size="md"
             onClick={onClose}
-            disabled={saveMutation.isPending || moveAndDeleteMutation.isPending}
+            disabled={saveMutation.isPending}
           >
             Cancel
           </Button>
@@ -567,7 +373,6 @@ function EditStatusModal({
             onClick={handleSave}
             disabled={
               saveMutation.isPending ||
-              moveAndDeleteMutation.isPending ||
               !!keyError ||
               !draft.label.trim()
             }
@@ -577,6 +382,21 @@ function EditStatusModal({
           </Button>
         </div>
       </div>
+      <DeleteConfirmModal
+        open={archiveOpen}
+        onClose={() => setArchiveOpen(false)}
+        entityName={draft.label || draft.key}
+        entityLabel="Status"
+        actionLabel="Archive"
+        pendingLabel="Archiving..."
+        description={
+          issueCount > 0
+            ? `${issueCount} issue(s) in this status will be archived.`
+            : undefined
+        }
+        onConfirm={handleArchive}
+        isPending={saveMutation.isPending}
+      />
     </Modal>
   );
 }
