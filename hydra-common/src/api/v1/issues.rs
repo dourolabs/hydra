@@ -554,6 +554,23 @@ impl UpsertIssueResponse {
 
 use super::serde_helpers::{deserialize_comma_separated, serialize_comma_separated};
 
+/// Sort order for issue list responses. Defaults to `created_at_desc` (the
+/// historical behavior) when omitted on the wire, so existing clients see
+/// no change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+// wire-casing-exempt: parent spec [[i-zowlkous]] pins the wire form as `created_at_desc` / `project_status_time_desc` so it lines up 1:1 with the SQL `ORDER BY` column names.
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum IssueSort {
+    /// `(created_at DESC, id DESC)` — the default and only legacy sort.
+    CreatedAtDesc,
+    /// `(project.priority ASC, status.position ASC, created_at DESC, id DESC)`
+    /// — groups by project, then by status pipeline order.
+    ProjectStatusTimeDesc,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -620,6 +637,10 @@ pub struct SearchIssuesQuery {
     /// When true, include `total_count` in the response.
     #[serde(default)]
     pub count: Option<bool>,
+    /// Sort order. Omitting keeps the historical `created_at DESC, id DESC`
+    /// behaviour; `project_status_time_desc` groups by project then status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<IssueSort>,
 }
 
 impl SearchIssuesQuery {
@@ -643,6 +664,7 @@ impl SearchIssuesQuery {
             limit: None,
             cursor: None,
             count: None,
+            sort: None,
         }
     }
 }
@@ -890,6 +912,56 @@ mod tests {
         value.parse().unwrap()
     }
 
+    /// Wire-contract check for [`IssueSort`]. Frontend / stored cursors and
+    /// scheduled queries embed these literals; renaming would break in-flight
+    /// clients silently.
+    #[test]
+    fn issue_sort_serializes_to_snake_case_literals() {
+        assert_eq!(
+            serde_json::to_value(IssueSort::CreatedAtDesc).unwrap(),
+            json!("created_at_desc")
+        );
+        assert_eq!(
+            serde_json::to_value(IssueSort::ProjectStatusTimeDesc).unwrap(),
+            json!("project_status_time_desc")
+        );
+        assert_eq!(
+            serde_json::from_value::<IssueSort>(json!("created_at_desc")).unwrap(),
+            IssueSort::CreatedAtDesc
+        );
+        assert_eq!(
+            serde_json::from_value::<IssueSort>(json!("project_status_time_desc")).unwrap(),
+            IssueSort::ProjectStatusTimeDesc
+        );
+    }
+
+    #[test]
+    fn search_issues_query_serializes_sort_param() {
+        let query = SearchIssuesQuery {
+            sort: Some(IssueSort::ProjectStatusTimeDesc),
+            ..SearchIssuesQuery::default()
+        };
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            params.get("sort").map(String::as_str),
+            Some("project_status_time_desc"),
+        );
+    }
+
+    #[test]
+    fn search_issues_query_omits_sort_when_none() {
+        let query = SearchIssuesQuery::default();
+        let params = serialize_query_params(&query)
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+        assert!(
+            !params.contains_key("sort"),
+            "sort=None must not be present on the wire (preserve default behaviour)",
+        );
+    }
+
     #[test]
     fn search_issues_query_serializes_with_reqwest() {
         let query = SearchIssuesQuery {
@@ -907,6 +979,7 @@ mod tests {
             limit: None,
             cursor: None,
             count: None,
+            sort: None,
         };
 
         let params = serialize_query_params(&query)

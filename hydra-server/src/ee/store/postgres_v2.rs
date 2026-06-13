@@ -28,9 +28,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hydra_common::api::v1::conversations::SearchConversationsQuery;
 use hydra_common::api::v1::documents::SearchDocumentsQuery;
-use hydra_common::api::v1::issues::SearchIssuesQuery;
 use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
-use hydra_common::api::v1::pagination::{DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT};
+use hydra_common::api::v1::issues::{IssueSort, SearchIssuesQuery};
+use hydra_common::api::v1::pagination::{
+    CursorKeys, DecodedCursor, MAX_LIMIT as PAGINATION_MAX_LIMIT,
+};
 use hydra_common::api::v1::patches::SearchPatchesQuery;
 use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
 use hydra_common::api::v1::sessions::SearchSessionsQuery;
@@ -2745,6 +2747,16 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchIssuesQuery,
     ) -> Result<Vec<(IssueId, Versioned<Issue>)>, StoreError> {
+        // The `projects` join only carries `p.priority` for the
+        // `project_status_time` sort; skip it under the default sort so
+        // legacy test fixtures that seed `metis.statuses` rows without a
+        // matching `metis.projects` row keep returning their issues.
+        let projects_join = match query.sort {
+            Some(IssueSort::ProjectStatusTimeDesc) => format!(
+                " INNER JOIN {TABLE_PROJECTS} p ON p.id = i.project_id AND p.is_latest = true"
+            ),
+            _ => String::new(),
+        };
         // Filter to the latest version of each issue using the is_latest
         // column maintained by a BEFORE INSERT trigger, avoiding correlated
         // subqueries or DISTINCT ON.
@@ -2755,10 +2767,23 @@ impl ReadOnlyStore for PostgresStoreV2 {
              (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
              i.form, i.form_response, i.feedback, i.project_id \
              FROM {TABLE_ISSUES_V2} i \
-             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence"
+             INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}"
         );
         let (mut predicates, mut bindings) = build_issues_predicates_pg(query);
         predicates.push("i.is_latest = true".to_string());
+
+        let sort = match query.sort {
+            Some(IssueSort::ProjectStatusTimeDesc) => CursorSort::ProjectStatusTime {
+                priority_col: "p.priority",
+                position_col: "s.position",
+                timestamp_col: "i.created_at",
+                id_col: "i.id",
+            },
+            _ => CursorSort::CreatedAtId {
+                timestamp_col: "i.created_at",
+                id_col: "i.id",
+            },
+        };
 
         apply_pagination_sql_pg(
             &mut sql,
@@ -2766,8 +2791,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "i.created_at",
-            "i.id",
+            sort,
         )?;
 
         let mut query_builder = sqlx::query_as::<_, IssueRow>(&sql);
@@ -3106,8 +3130,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "created_at",
-            "id",
+            CursorSort::CreatedAtId {
+                timestamp_col: "created_at",
+                id_col: "id",
+            },
         )?;
 
         let mut query_builder = sqlx::query_as::<_, PatchRow>(&sql);
@@ -3297,8 +3323,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "created_at",
-            "id",
+            CursorSort::CreatedAtId {
+                timestamp_col: "created_at",
+                id_col: "id",
+            },
         )?;
 
         let mut query_builder = sqlx::query_as::<_, DocumentRow>(&sql);
@@ -3589,8 +3617,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "created_at",
-            "id",
+            CursorSort::CreatedAtId {
+                timestamp_col: "created_at",
+                id_col: "id",
+            },
         )?;
 
         let mut query_builder = sqlx::query_as::<_, TaskRow>(&sql);
@@ -3836,8 +3866,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 &mut bindings,
                 &query.cursor,
                 query.limit,
-                "updated_at",
-                "id",
+                CursorSort::CreatedAtId {
+                    timestamp_col: "updated_at",
+                    id_col: "id",
+                },
             )?;
         } else {
             if !predicates.is_empty() {
@@ -4679,8 +4711,10 @@ impl ReadOnlyStore for PostgresStoreV2 {
             &mut bindings,
             &query.cursor,
             query.limit,
-            "created_at",
-            "id",
+            CursorSort::CreatedAtId {
+                timestamp_col: "created_at",
+                id_col: "id",
+            },
         )?;
 
         let mut query_builder = sqlx::query_as::<_, ConversationRow>(&sql);
@@ -6370,32 +6404,101 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
     })
 }
 
+/// Per-query sort descriptor for pagination helpers. See the SQLite
+/// dialect copy in `sqlite_store.rs` — same shape, same semantics.
+#[derive(Debug, Clone, Copy)]
+enum CursorSort<'a> {
+    CreatedAtId {
+        timestamp_col: &'a str,
+        id_col: &'a str,
+    },
+    ProjectStatusTime {
+        priority_col: &'a str,
+        position_col: &'a str,
+        timestamp_col: &'a str,
+        id_col: &'a str,
+    },
+}
+
 /// Appends cursor-based keyset pagination to a SQL query (PostgreSQL dialect).
 ///
 /// Adds the cursor WHERE predicate into `predicates`, and appends
 /// ORDER BY / LIMIT clauses to `sql`. Returns the effective limit if set.
-///
-/// The `timestamp_col` is the SQL column name used for the timestamp
-/// component of the cursor (e.g. `"created_at"` or `"updated_at"`).
 fn apply_pagination_sql_pg(
     sql: &mut String,
     predicates: &mut Vec<String>,
     bindings: &mut Vec<String>,
     cursor: &Option<String>,
     limit: Option<u32>,
-    timestamp_col: &str,
-    id_col: &str,
+    sort: CursorSort<'_>,
 ) -> Result<Option<u32>, StoreError> {
     if let Some(cursor_str) = cursor {
         let decoded = DecodedCursor::decode(cursor_str)
             .map_err(|e| StoreError::Internal(format!("invalid cursor: {e}")))?;
-        let ts_idx = bindings.len() + 1;
-        let id_idx = bindings.len() + 2;
-        predicates.push(format!(
-            "({timestamp_col}, {id_col}) < (${ts_idx}::timestamptz, ${id_idx})"
-        ));
-        bindings.push(decoded.timestamp.to_rfc3339());
-        bindings.push(decoded.id);
+        match (sort, decoded.keys) {
+            (
+                CursorSort::CreatedAtId {
+                    timestamp_col,
+                    id_col,
+                },
+                CursorKeys::CreatedAtId { timestamp, id },
+            ) => {
+                let ts_idx = bindings.len() + 1;
+                let id_idx = bindings.len() + 2;
+                predicates.push(format!(
+                    "({timestamp_col}, {id_col}) < (${ts_idx}::timestamptz, ${id_idx})"
+                ));
+                bindings.push(timestamp.to_rfc3339());
+                bindings.push(id);
+            }
+            (
+                CursorSort::ProjectStatusTime {
+                    priority_col,
+                    position_col,
+                    timestamp_col,
+                    id_col,
+                },
+                CursorKeys::ProjectStatusTime {
+                    project_priority,
+                    status_position,
+                    timestamp,
+                    id,
+                },
+            ) => {
+                // Mixed ASC/DESC keyset predicate, same shape as the
+                // SQLite dialect. Bind order matches the placeholder
+                // sequence below: priority×2, position×2, ts×2, id.
+                let start = bindings.len() + 1;
+                let pri_a = start;
+                let pri_b = start + 1;
+                let pos_a = start + 2;
+                let pos_b = start + 3;
+                let ts_a = start + 4;
+                let ts_b = start + 5;
+                let id_p = start + 6;
+                predicates.push(format!(
+                    "({priority_col} > ${pri_a}::double precision \
+                     OR ({priority_col} = ${pri_b}::double precision AND ({position_col} > ${pos_a}::double precision \
+                       OR ({position_col} = ${pos_b}::double precision AND ({timestamp_col} < ${ts_a}::timestamptz \
+                         OR ({timestamp_col} = ${ts_b}::timestamptz AND {id_col} < ${id_p}))))))"
+                ));
+                let priority_str = project_priority.to_string();
+                let position_str = status_position.to_string();
+                let ts_str = timestamp.to_rfc3339();
+                bindings.push(priority_str.clone());
+                bindings.push(priority_str);
+                bindings.push(position_str.clone());
+                bindings.push(position_str);
+                bindings.push(ts_str.clone());
+                bindings.push(ts_str);
+                bindings.push(id);
+            }
+            _ => {
+                return Err(StoreError::Internal(
+                    "cursor variant does not match requested sort".to_string(),
+                ));
+            }
+        }
     }
 
     if !predicates.is_empty() {
@@ -6403,7 +6506,21 @@ fn apply_pagination_sql_pg(
         sql.push_str(&predicates.join(" AND "));
     }
 
-    sql.push_str(&format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"));
+    let order_by = match sort {
+        CursorSort::CreatedAtId {
+            timestamp_col,
+            id_col,
+        } => format!(" ORDER BY {timestamp_col} DESC, {id_col} DESC"),
+        CursorSort::ProjectStatusTime {
+            priority_col,
+            position_col,
+            timestamp_col,
+            id_col,
+        } => format!(
+            " ORDER BY {priority_col} ASC, {position_col} ASC, {timestamp_col} DESC, {id_col} DESC"
+        ),
+    };
+    sql.push_str(&order_by);
 
     let effective_limit = limit.map(|l| l.min(PAGINATION_MAX_LIMIT));
     if let Some(limit) = effective_limit {
@@ -12335,5 +12452,218 @@ mod tests {
         // DESC by sequence — agent comment was inserted second, so it's first.
         assert_eq!(page.comments[0].actor, agent_actor);
         assert_eq!(page.comments[1].actor, user_actor);
+    }
+
+    // ---- `sort=project_status_time` tests ---------------------------------
+
+    /// Add a project and a single status with explicit `priority` / `position`.
+    async fn seed_project_with_status_pg(
+        store: &PostgresStoreV2,
+        key: &str,
+        priority: f64,
+        status_key: &str,
+        status_position: f64,
+    ) -> (ProjectId, hydra_common::api::v1::projects::StatusKey) {
+        use hydra_common::api::v1::projects::{Project, ProjectKey, StatusDefinition, StatusKey};
+        use hydra_common::api::v1::users::Username as ApiUsername;
+        let project = Project::new(
+            ProjectKey::try_new(key).unwrap(),
+            key.to_string(),
+            Vec::new(),
+            ApiUsername::from("alice"),
+            false,
+            priority,
+        );
+        let (project_id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+        let mut def = StatusDefinition::new(
+            StatusKey::try_new(status_key).unwrap(),
+            status_key.to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        def.position = status_position;
+        let typed_key = def.key.clone();
+        store
+            .add_status(&project_id, def, &ActorRef::test())
+            .await
+            .unwrap();
+        (project_id, typed_key)
+    }
+
+    async fn add_status_in_project_pg(
+        store: &PostgresStoreV2,
+        project_id: &ProjectId,
+        status_key: &str,
+        status_position: f64,
+    ) -> hydra_common::api::v1::projects::StatusKey {
+        use hydra_common::api::v1::projects::{StatusDefinition, StatusKey};
+        let mut def = StatusDefinition::new(
+            StatusKey::try_new(status_key).unwrap(),
+            status_key.to_string(),
+            "#cccccc".parse().unwrap(),
+            false,
+            false,
+            false,
+            None,
+        );
+        def.position = status_position;
+        let typed_key = def.key.clone();
+        store
+            .add_status(project_id, def, &ActorRef::test())
+            .await
+            .unwrap();
+        typed_key
+    }
+
+    async fn add_issue_in_pg(
+        store: &PostgresStoreV2,
+        project_id: &ProjectId,
+        status_key: &hydra_common::api::v1::projects::StatusKey,
+    ) -> IssueId {
+        let mut issue = sample_issue(vec![]);
+        issue.project_id = project_id.clone();
+        issue.status = status_key.clone();
+        store.add_issue(issue, &ActorRef::test()).await.unwrap().0
+    }
+
+    /// `sort=project_status_time` orders by
+    /// `(p.priority ASC, s.position ASC, i.created_at DESC, i.id DESC)`.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_project_status_time_orders_correctly_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::issues::IssueSort;
+        let store = PostgresStoreV2::new(pool);
+        let (proj_a, a_low) =
+            seed_project_with_status_pg(&store, "proj-a", 100.0, "todo", 10.0).await;
+        let a_high = add_status_in_project_pg(&store, &proj_a, "doing", 20.0).await;
+        let (proj_b, b_only) =
+            seed_project_with_status_pg(&store, "proj-b", 200.0, "open", 5.0).await;
+
+        let i_b1 = add_issue_in_pg(&store, &proj_b, &b_only).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let i_a_doing_old = add_issue_in_pg(&store, &proj_a, &a_high).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let i_a_todo = add_issue_in_pg(&store, &proj_a, &a_low).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let i_a_doing_new = add_issue_in_pg(&store, &proj_a, &a_high).await;
+
+        let mut query = SearchIssuesQuery::default();
+        query.sort = Some(IssueSort::ProjectStatusTimeDesc);
+        let results = store.list_issues(&query).await.unwrap();
+        // Filter to the projects under test — the default project seed
+        // contributes no issues here, but exclude it from the assertion
+        // just in case any fixture leaks one.
+        let ordered: Vec<IssueId> = results
+            .iter()
+            .filter(|(_, v)| v.item.project_id == proj_a || v.item.project_id == proj_b)
+            .map(|(id, _)| id.clone())
+            .collect();
+        assert_eq!(ordered, vec![i_a_todo, i_a_doing_new, i_a_doing_old, i_b1]);
+    }
+
+    /// Default sort behaviour must stay byte-for-byte the legacy
+    /// `(created_at DESC, id DESC)` when `sort` is omitted.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_default_sort_unchanged_pg(pool: PgStorePool) {
+        let store = PostgresStoreV2::new(pool);
+        let actor = ActorRef::test();
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (id, _) = store.add_issue(sample_issue(vec![]), &actor).await.unwrap();
+            ids.push(id);
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        ids.reverse();
+        let results = store
+            .list_issues(&SearchIssuesQuery::default())
+            .await
+            .unwrap();
+        let observed: Vec<IssueId> = results.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(observed, ids);
+    }
+
+    /// Paging with `sort=project_status_time` must visit every row exactly
+    /// once: no duplicates, no skips. Exercises the SQL keyset predicate
+    /// against a real Postgres backend.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn list_issues_project_status_time_paginates_without_dup_or_skip_pg(pool: PgStorePool) {
+        use hydra_common::api::v1::issues::IssueSort;
+        let store = PostgresStoreV2::new(pool);
+        let (proj_a, a_low) = seed_project_with_status_pg(&store, "pa", 100.0, "todo", 10.0).await;
+        let a_high = add_status_in_project_pg(&store, &proj_a, "doing", 20.0).await;
+        let (proj_b, b_only) = seed_project_with_status_pg(&store, "pb", 200.0, "open", 5.0).await;
+
+        for (proj, status) in [
+            (&proj_a, &a_low),
+            (&proj_a, &a_high),
+            (&proj_b, &b_only),
+            (&proj_a, &a_low),
+            (&proj_b, &b_only),
+            (&proj_a, &a_high),
+        ] {
+            add_issue_in_pg(&store, proj, status).await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        let mut query = SearchIssuesQuery::default();
+        query.sort = Some(IssueSort::ProjectStatusTimeDesc);
+        let full = store.list_issues(&query).await.unwrap();
+        let full_ids: Vec<IssueId> = full.iter().map(|(id, _)| id.clone()).collect();
+        assert_eq!(full_ids.len(), 6);
+
+        let projects: std::collections::HashMap<ProjectId, f64> = store
+            .list_projects(false)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(id, v)| (id, v.item.priority))
+            .collect();
+        let mut visited: Vec<IssueId> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut q = SearchIssuesQuery::default();
+            q.sort = Some(IssueSort::ProjectStatusTimeDesc);
+            q.limit = Some(2);
+            q.cursor = cursor.clone();
+            let page = store.list_issues(&q).await.unwrap();
+            let kept: Vec<_> = page.iter().take(2).collect();
+            for (id, _) in &kept {
+                visited.push((*id).clone());
+            }
+            if page.len() <= 2 {
+                break;
+            }
+            let last = kept.last().unwrap();
+            let priority = projects
+                .get(&last.1.item.project_id)
+                .copied()
+                .unwrap_or(0.0);
+            let project = store
+                .get_project(&last.1.item.project_id, false)
+                .await
+                .unwrap();
+            let position = project
+                .item
+                .statuses
+                .iter()
+                .find(|s| s.key == last.1.item.status)
+                .map(|s| s.position)
+                .unwrap_or(0.0);
+            cursor = Some(
+                DecodedCursor::project_status_time(
+                    priority,
+                    position,
+                    last.1.timestamp,
+                    last.0.as_ref(),
+                )
+                .encode(),
+            );
+        }
+        assert_eq!(visited, full_ids);
     }
 }

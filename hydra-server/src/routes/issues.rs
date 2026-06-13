@@ -2,7 +2,7 @@ use crate::domain::actors::{Actor, ActorRef};
 use crate::routes::issue_response::{build_issue_response, build_issue_summary_response};
 use crate::{
     app::{AppState, SubmitFormActionError, UpsertIssueError},
-    store::StoreError,
+    store::{ReadOnlyStore, StoreError},
 };
 use anyhow::anyhow;
 use axum::http::StatusCode;
@@ -16,7 +16,9 @@ use hydra_common::{
     HydraId, IssueId,
     api::v1::{
         ApiError, issues as api_issues,
-        pagination::{compute_next_cursor, effective_limit},
+        pagination::{
+            CursorKeys, compute_next_cursor, compute_next_cursor_with_keys, effective_limit,
+        },
     },
 };
 use serde::Deserialize;
@@ -297,12 +299,39 @@ pub async fn list_issues(
         filtered.push(record);
     }
 
-    let next_cursor = compute_next_cursor(
-        &mut filtered,
-        eff_limit,
-        |r| &r.timestamp,
-        |r| r.issue_id.as_ref(),
-    );
+    let next_cursor = match query.sort {
+        Some(api_issues::IssueSort::ProjectStatusTimeDesc) => {
+            // Project priority isn't carried on the issue record; fetch it
+            // once here so the cursor for the last row can encode the full
+            // four-key tuple `(priority, position, created_at, id)`.
+            let projects = state
+                .store
+                .list_projects(true)
+                .await
+                .map_err(|err| map_issue_error(err, None))?;
+            let priority_by_project: std::collections::HashMap<_, f64> = projects
+                .iter()
+                .map(|(id, v)| (id.clone(), v.item.priority))
+                .collect();
+            compute_next_cursor_with_keys(&mut filtered, eff_limit, |r| {
+                CursorKeys::ProjectStatusTime {
+                    project_priority: priority_by_project
+                        .get(&r.issue.project_id)
+                        .copied()
+                        .unwrap_or(0.0),
+                    status_position: r.issue.status.position,
+                    timestamp: r.timestamp,
+                    id: r.issue_id.as_ref().to_string(),
+                }
+            })
+        }
+        _ => compute_next_cursor(
+            &mut filtered,
+            eff_limit,
+            |r| &r.timestamp,
+            |r| r.issue_id.as_ref(),
+        ),
+    };
 
     // Compute total_count when count=true
     let total_count = if query.count == Some(true) {
