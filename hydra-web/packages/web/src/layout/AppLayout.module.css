@@ -64,11 +64,12 @@
   }
 
   .main {
-    /* safe-area-inset-bottom reserves room for the iOS Safari home
-       indicator; 8px is a small visual breathing room above it. On
-       platforms without a home indicator (Android, desktop)
-       --safe-area-bottom resolves to 0 and only the 8px remains. */
-    padding-bottom: calc(8px + var(--safe-area-bottom));
+    /* Reserve room for the persistent MobileBottomTabBar (--mobile-nav-height)
+       plus the iOS Safari home-indicator safe area. The bar is position: fixed
+       at bottom: 0 with its own safe-area padding; this padding pushes the
+       scroll container's content (including any sticky-bottom child such as
+       the chat composer) up so it never sits under the bar. */
+    padding-bottom: calc(var(--mobile-nav-height) + var(--safe-area-bottom));
   }
 }
 

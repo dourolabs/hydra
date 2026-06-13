@@ -1,0 +1,66 @@
+.bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  height: calc(var(--mobile-nav-height) + var(--safe-area-bottom));
+  padding-bottom: var(--safe-area-bottom);
+  background: var(--bg-1);
+  border-top: 1px solid var(--line);
+  z-index: 5;
+}
+
+.tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  border-top: 2px solid transparent;
+  color: var(--fg-2);
+  text-decoration: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 4px 2px;
+  min-width: 0;
+  /* Disable iOS tap-highlight tint on the bar. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: -2px;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.label {
+  font-size: var(--t-xxs);
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.tabActive {
+  color: var(--acc);
+  border-top-color: var(--acc);
+}
+
+.tabActive .icon {
+  /* Filled-icon treatment for active state: every icon in @hydra/ui draws
+     strokes in currentColor. Setting fill: currentColor turns the outlined
+     glyph into a filled one without needing separate icon variants. */
+  fill: currentColor;
+}

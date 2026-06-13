@@ -14,6 +14,7 @@ import { useIssueCreateModal } from "../features/dashboard/useIssueCreateModal";
 import { ChatCreateModal } from "../features/chat/ChatCreateModal";
 import { ChatCreateModalProvider } from "../features/chat/ChatCreateModalProvider";
 import { useChatCreateModal } from "../features/chat/useChatCreateModal";
+import { MobileBottomTabBar } from "./MobileBottomTabBar";
 import { Sidebar } from "./Sidebar";
 import { SiteHeader } from "./SiteHeader";
 import { BreadcrumbsProvider } from "./BreadcrumbsProvider";
@@ -122,6 +123,7 @@ export function AppLayout() {
                 <Outlet />
               </main>
             </div>
+            {isMobile && <MobileBottomTabBar onOpenSidebar={show} />}
             <GlobalSearchModal open={searchOpen} onClose={closeSearch} />
             <GlobalIssueCreateModal />
             <GlobalChatCreateModal />

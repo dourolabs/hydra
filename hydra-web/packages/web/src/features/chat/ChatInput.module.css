@@ -12,7 +12,10 @@
   flex-shrink: 0;
   position: sticky;
   bottom: 0;
-  z-index: 1;
+  /* Sits above the mobile bottom-tab bar (z-index 5) so any incidental
+     overlap during sticky reflow keeps the composer in front. The bar's
+     padding-bottom in AppLayout already prevents visual collision. */
+  z-index: 10;
 }
 
 .inner {
