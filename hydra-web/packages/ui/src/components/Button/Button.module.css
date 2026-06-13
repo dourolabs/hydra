@@ -114,27 +114,22 @@
   width: 34px;
 }
 
-/* Mobile touch-target floor (WCAG 2.5.5 / Apple HIG): icon-only and small
-   buttons must measure at least 44×44 CSS px on touch viewports. Applies to
-   both `.iconOnly` (square hit area) and `.sm` (small text buttons), which
-   are otherwise 24–28px and below the floor. */
+/* Mobile touch-target floor (WCAG 2.5.5 / Apple HIG): every Button variant
+   measures at least 44 CSS px tall on touch viewports. `.button` carries the
+   floor for all text buttons (default/sm/lg); `.iconOnly` widens to a 44×44
+   square. `min-height` wins over the desktop fixed `height` so the desktop
+   sizing block is unchanged. */
 @media (max-width: 768px) {
-  .iconOnly {
-    min-width: 44px;
+  .button {
     min-height: 44px;
-    width: 44px;
-    height: 44px;
   }
 
+  .iconOnly,
   .iconOnly.sm,
   .iconOnly.lg {
     min-width: 44px;
     min-height: 44px;
     width: 44px;
     height: 44px;
-  }
-
-  .sm {
-    min-height: 44px;
   }
 }

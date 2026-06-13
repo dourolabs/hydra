@@ -40,6 +40,12 @@
   --pad-y: 8px;
   --gap: 8px;
 
+  /* Minimum tap target for interactive elements. Resolves to 0 on desktop
+     (no floor) and 44px on touch viewports — non-Button interactives can
+     reference `min-height: var(--touch-min)` to opt into the floor without
+     hardcoding a media query. */
+  --touch-min: 0px;
+
   /* Legacy spacing scale */
   --space-0: 2px;
   --space-1: 4px;
@@ -275,6 +281,7 @@
 @media (max-width: 768px) {
   :root {
     --row-h: 40px;
+    --touch-min: 44px;
   }
 }
 
