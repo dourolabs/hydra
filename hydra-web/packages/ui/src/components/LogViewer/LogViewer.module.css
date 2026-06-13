@@ -7,16 +7,30 @@
   font-size: var(--font-size-sm);
   /* Must match ROW_HEIGHT in LogViewer.tsx so virtualized rows don't bleed. */
   line-height: 20px;
-  display: flex;
-  flex-direction: column;
+  position: relative;
 }
 
 .toolbar {
-  display: flex;
-  justify-content: flex-end;
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
   padding: var(--space-1);
-  border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.logViewer:hover .toolbar,
+.logViewer:focus-within .toolbar {
+  opacity: 1;
+}
+
+/* On touch devices (no hover), keep the toolbar visible. */
+@media (hover: none) {
+  .toolbar {
+    opacity: 1;
+  }
 }
 
 .toolbarButton {
@@ -31,6 +45,18 @@
   background: var(--color-bg-secondary);
   color: var(--color-text-secondary);
   cursor: pointer;
+  pointer-events: none;
+}
+
+.logViewer:hover .toolbarButton,
+.logViewer:focus-within .toolbarButton {
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .toolbarButton {
+    pointer-events: auto;
+  }
 }
 
 .toolbarButton:hover {
@@ -45,8 +71,7 @@
 }
 
 .list {
-  flex: 1;
-  min-height: 0;
+  height: 100%;
 }
 
 .row {
