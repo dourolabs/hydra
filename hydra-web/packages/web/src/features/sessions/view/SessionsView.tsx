@@ -15,6 +15,7 @@ import {
   type Filter,
   type FilterDefinitions,
 } from "../../filters";
+import { PageHead } from "../../../layout/PageHead";
 import styles from "./SessionsView.module.css";
 
 /* RailRow cards engage at ≤1024px so the fixed-column table doesn't surface a
@@ -84,13 +85,7 @@ export function SessionsView({
 
   return (
     <div className={styles.page}>
-      <div className={styles.pageHead}>
-        <div className={styles.headLeft}>
-          <span className={styles.eyebrow}>{eyebrow}</span>
-          <h1 className={styles.pageTitle}>Sessions</h1>
-        </div>
-        <span className={styles.headSpacer} />
-      </div>
+      <PageHead eyebrow={eyebrow} title="Sessions" />
 
       <div className={styles.toolbar}>
         <div className={styles.searchBox}>
