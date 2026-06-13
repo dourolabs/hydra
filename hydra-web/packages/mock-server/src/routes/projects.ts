@@ -109,7 +109,7 @@ export function createProjectRoutes(store: Store): Hono {
       name: body.name,
       statuses: [],
       creator: "mock-user",
-      deleted: false,
+      archived: false,
       prompt_path: body.prompt_path ?? undefined,
       priority: body.priority ?? 0,
     };

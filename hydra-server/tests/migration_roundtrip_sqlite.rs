@@ -40,7 +40,7 @@ use hydra_server::domain::projects::default_project_seed;
 use hydra_server::domain::sessions::SessionMode;
 use hydra_server::domain::users::Username;
 use hydra_server::store::sqlite_store::{self, MIGRATOR, SqliteStore};
-use hydra_server::store::{ReadOnlyStore, RelationshipType, Store};
+use hydra_server::store::{ReadOnlyStore, RelationshipType, Store, StoreError};
 use sqlx::{Row, SqlitePool};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -191,6 +191,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_statuses_session_settings_defaults_to_null(&pool).await?;
     add_statuses_session_settings_migration_is_idempotent(&pool).await?;
     add_statuses_session_settings_store_roundtrip(&pool).await?;
+
+    rename_projects_deleted_to_archived_schema_invariants(&pool).await?;
+    rename_projects_deleted_to_archived_baseline_roundtrip(&pool).await?;
+    rename_projects_deleted_to_archived_migration_is_idempotent(&pool).await?;
 
     Ok(())
 }
@@ -1766,7 +1770,7 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
     sqlx::query(
         "INSERT INTO projects \
            (id, version_number, key, name, \
-            creator, deleted, actor, prompt_path, next_status_sequence, is_latest) \
+            creator, archived, actor, prompt_path, next_status_sequence, is_latest) \
          VALUES (?1, 1, ?2, ?3, ?4, 0, NULL, ?5, 2, 1)",
     )
     .bind(project_id)
@@ -2092,7 +2096,7 @@ async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result
     // `projects` row still carries the rest of the seed payload.
     let row = sqlx::query(
         "SELECT id, version_number, key, name, \
-                creator, deleted, actor, is_latest, prompt_path \
+                creator, archived, actor, is_latest, prompt_path \
          FROM projects WHERE id = 'j-defaul'",
     )
     .fetch_one(pool)
@@ -2104,7 +2108,7 @@ async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result
     let key: String = row.try_get("key")?;
     let name: String = row.try_get("name")?;
     let creator: String = row.try_get("creator")?;
-    let deleted: i64 = row.try_get("deleted")?;
+    let archived: i64 = row.try_get("archived")?;
     let is_latest: i64 = row.try_get("is_latest")?;
     let actor: Option<String> = row.try_get("actor")?;
     let prompt_path: Option<String> = row.try_get("prompt_path")?;
@@ -2124,8 +2128,8 @@ async fn seed_default_project_migration_inserts_row(pool: &SqlitePool) -> Result
     if creator != "system" {
         bail!("j-defaul: expected creator='system'; got {creator:?}");
     }
-    if deleted != 0 {
-        bail!("j-defaul: expected deleted=0; got {deleted}");
+    if archived != 0 {
+        bail!("j-defaul: expected archived=0; got {archived}");
     }
     if is_latest != 1 {
         bail!("j-defaul: expected is_latest=1; got {is_latest}");
@@ -2560,7 +2564,7 @@ async fn add_projects_priority_backfill_domain_roundtrip(pool: &SqlitePool) -> R
     let listed = store
         .list_projects(false)
         .await
-        .context("SqliteStore::list_projects(include_deleted = false)")?;
+        .context("SqliteStore::list_projects(include_archived = false)")?;
 
     let want: &[(&str, f64)] = &[
         ("j-prione", 1000.0),
@@ -3445,16 +3449,22 @@ async fn reserve_hydra_id_shape_domain_roundtrip(pool: &SqlitePool) -> Result<()
 }
 
 async fn reserve_hydra_id_shape_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
-    // Re-execute the migration body verbatim. The reserved-shape
-    // WHERE clauses match nothing post-rewrite, so the body's plan
-    // tables stay empty, the UPDATEs touch no rows, and the audit
-    // SELECTs print zero lines. Re-assert the expected post-rewrite
-    // key set to confirm.
+    // Re-execute the migration body. The reserved-shape WHERE clauses
+    // match nothing post-rewrite, so the body's plan tables stay empty,
+    // the UPDATEs touch no rows, and the audit SELECTs print zero lines.
+    // Re-assert the expected post-rewrite key set to confirm.
+    //
+    // The on-disk body still references `projects.deleted`, but a
+    // subsequent migration (20260715000000) renamed that column to
+    // `projects.archived`. Patch the loaded body to track the rename
+    // so the literal replay still exercises the body's idempotency
+    // against the current schema.
     let body = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("sqlite-migrations/20260615000000_reserve_hydra_id_shape_in_keys.sql"),
     )
     .context("read sqlite reserve_hydra_id_shape migration body for idempotency rerun")?;
+    let body = body.replace("p2.deleted", "p2.archived");
     sqlx::raw_sql(&body)
         .execute(pool)
         .await
@@ -3687,5 +3697,99 @@ async fn add_statuses_session_settings_store_roundtrip(pool: &SqlitePool) -> Res
             );
         }
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260715000000_rename_projects_deleted_to_archived. Pure column
+// rename: `projects.deleted` → `projects.archived`. No semantic change.
+// The partial unique index `projects_key_unique_active_idx` has its
+// `WHERE` clause auto-rewritten by SQLite's `ALTER TABLE RENAME COLUMN`,
+// so no explicit index touch.
+// ---------------------------------------------------------------------------
+
+async fn rename_projects_deleted_to_archived_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if column_exists(pool, "projects", "deleted").await? {
+        bail!("expected `projects.deleted` column to be renamed away post-rollforward");
+    }
+    if !column_exists(pool, "projects", "archived").await? {
+        bail!("expected `projects.archived` column to exist post-rollforward");
+    }
+    if !index_exists(pool, "projects_key_unique_active_idx").await? {
+        bail!(
+            "expected partial unique index `projects_key_unique_active_idx` to survive the rename"
+        );
+    }
+    Ok(())
+}
+
+/// Insert a row at the OLD `deleted` shape (via the baseline fixture
+/// `20260713000000__pre_rename_projects_deleted_to_archived.sql`) and
+/// confirm the rename migration preserves the value, round-tripping
+/// through the current Store API as `Project.archived`.
+async fn rename_projects_deleted_to_archived_baseline_roundtrip(pool: &SqlitePool) -> Result<()> {
+    let store = SqliteStore::new(pool.clone());
+
+    let archived_id = ProjectId::from_str("j-renarcha").context("parse j-renarcha")?;
+    let archived = store
+        .get_project(&archived_id, true)
+        .await
+        .context("SqliteStore::get_project(j-renarcha, include_archived=true)")?;
+    if !archived.item.archived {
+        bail!(
+            "j-renarcha: expected archived=true after rename; got archived={}",
+            archived.item.archived
+        );
+    }
+    if archived.item.key.as_str() != "rename-archived" {
+        bail!(
+            "j-renarcha: expected key='rename-archived'; got {:?}",
+            archived.item.key
+        );
+    }
+
+    // include_archived=false hides the archived row.
+    let archived_hidden = store.get_project(&archived_id, false).await;
+    assert!(
+        matches!(archived_hidden, Err(StoreError::ProjectNotFound(_))),
+        "j-renarcha must not surface through include_archived=false; got {archived_hidden:?}"
+    );
+
+    let live_id = ProjectId::from_str("j-renarchb").context("parse j-renarchb")?;
+    let live = store
+        .get_project(&live_id, false)
+        .await
+        .context("SqliteStore::get_project(j-renarchb, include_archived=false)")?;
+    if live.item.archived {
+        bail!(
+            "j-renarchb: expected archived=false after rename; got archived={}",
+            live.item.archived
+        );
+    }
+
+    // list_projects(false) surfaces only the live row.
+    let listed = store
+        .list_projects(false)
+        .await
+        .context("SqliteStore::list_projects(false) post-rename")?;
+    let listed_ids: Vec<&str> = listed
+        .iter()
+        .map(|(pid, _)| pid.as_ref())
+        .filter(|id| matches!(*id, "j-renarcha" | "j-renarchb"))
+        .collect();
+    if listed_ids != vec!["j-renarchb"] {
+        bail!("list_projects(false) baseline filter: expected only j-renarchb; got {listed_ids:?}");
+    }
+    Ok(())
+}
+
+async fn rename_projects_deleted_to_archived_migration_is_idempotent(
+    pool: &SqlitePool,
+) -> Result<()> {
+    sqlite_store::run_migrations(pool, None).await.context(
+        "re-apply sqlite migrations to confirm rename_projects_deleted_to_archived idempotency",
+    )?;
+    rename_projects_deleted_to_archived_schema_invariants(pool).await?;
+    rename_projects_deleted_to_archived_baseline_roundtrip(pool).await?;
     Ok(())
 }

@@ -349,7 +349,7 @@ function makeProject(
       name: name ?? key,
       statuses,
       creator: "alice",
-      deleted: false,
+      archived: false,
       priority: 0,
     },
   };

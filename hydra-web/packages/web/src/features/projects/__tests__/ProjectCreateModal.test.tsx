@@ -204,7 +204,7 @@ function makeProject(key: string, name: string): ProjectRecord {
       name,
       statuses: [],
       creator: "alice" as never,
-      deleted: false,
+      archived: false,
       prompt_path: null,
       priority: 0,
     },

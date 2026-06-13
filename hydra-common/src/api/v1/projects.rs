@@ -292,7 +292,7 @@ pub struct Project {
     pub statuses: Vec<StatusDefinition>,
     pub creator: Username,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     /// Doc-store path for the project-layer prompt slice that gets
     /// concatenated into a session's `system_prompt` at create-time.
     /// `None` contributes an empty slice.
@@ -311,7 +311,7 @@ impl Project {
         name: String,
         statuses: Vec<StatusDefinition>,
         creator: Username,
-        deleted: bool,
+        archived: bool,
         priority: f64,
     ) -> Self {
         Self {
@@ -319,7 +319,7 @@ impl Project {
             name,
             statuses,
             creator,
-            deleted,
+            archived,
             prompt_path: None,
             priority,
         }

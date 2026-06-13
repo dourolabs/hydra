@@ -113,7 +113,7 @@ const projectAlpha: ProjectRecord = {
     key: "alpha",
     name: "Alpha",
     statuses: [],
-    deleted: false,
+    archived: false,
   } as unknown as ProjectRecord["project"],
 };
 
@@ -124,7 +124,7 @@ const projectBeta: ProjectRecord = {
     key: "beta",
     name: "Beta",
     statuses: [],
-    deleted: false,
+    archived: false,
   } as unknown as ProjectRecord["project"],
 };
 

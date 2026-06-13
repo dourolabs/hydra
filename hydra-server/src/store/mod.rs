@@ -826,11 +826,11 @@ pub trait ReadOnlyStore: Send + Sync {
 
     // ---- Project (read-only) ----
 
-    /// Returns `StoreError::ProjectNotFound` for deleted projects unless `include_deleted` is true.
+    /// Returns `StoreError::ProjectNotFound` for archived projects unless `include_archived` is true.
     async fn get_project(
         &self,
         id: &ProjectId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Project>, StoreError>;
 
     /// Lookup a project by its [`ProjectKey`] via the partial unique
@@ -838,21 +838,21 @@ pub trait ReadOnlyStore: Send + Sync {
     /// no active row matches the key — distinct from a deeper store
     /// error so the route layer can map "miss" to a 404 cleanly.
     ///
-    /// `include_deleted`: when `false`, soft-deleted projects are
+    /// `include_archived`: when `false`, archived projects are
     /// filtered out (the partial index already excludes them, but the
     /// memory store mirrors this branch explicitly).
     async fn get_project_by_key(
         &self,
         key: &ProjectKey,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError>;
 
     /// Lists all projects.
     ///
-    /// By default, deleted projects are filtered out unless `include_deleted: true`.
+    /// By default, archived projects are filtered out unless `include_archived: true`.
     async fn list_projects(
         &self,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError>;
 
     // ---- Object relationships (read-only) ----
@@ -1256,7 +1256,7 @@ pub trait Store: ReadOnlyStore {
     ///
     /// Returns the new version number, `StoreError::ProjectNotFound` if
     /// the project does not exist, or `StoreError::ProjectKeyExists` if
-    /// the new [`ProjectKey`] would collide with another non-deleted
+    /// the new [`ProjectKey`] would collide with another non-archived
     /// project.
     async fn update_project(
         &self,
@@ -1265,12 +1265,12 @@ pub trait Store: ReadOnlyStore {
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError>;
 
-    /// Soft-deletes a project by setting its `deleted` flag to true.
+    /// Archives a project by setting its `archived` flag to true.
     ///
-    /// This creates a new version of the project with `deleted: true`.
+    /// This creates a new version of the project with `archived: true`.
     /// The project can still be retrieved via `get_project` with
-    /// `include_deleted: true` but is filtered from `list_projects` by
-    /// default. Returns the version number of the deletion record.
+    /// `include_archived: true` but is filtered from `list_projects` by
+    /// default. Returns the version number of the archival record.
     async fn delete_project(
         &self,
         id: &ProjectId,

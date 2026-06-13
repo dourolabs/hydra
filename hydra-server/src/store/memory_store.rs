@@ -434,9 +434,9 @@ impl MemoryStore {
         ProjectId::generate(len).expect("length within bounds")
     }
 
-    /// Returns true if any live (latest, non-deleted) project other than
+    /// Returns true if any live (latest, non-archived) project other than
     /// `excluded_id` carries the given [`ProjectKey`]. Mirrors the partial
-    /// unique index on `(projects.key) WHERE is_latest AND NOT deleted` in
+    /// unique index on `(projects.key) WHERE is_latest AND NOT archived` in
     /// the SQL backends.
     fn project_key_in_use(
         &self,
@@ -448,7 +448,7 @@ impl MemoryStore {
                 return false;
             }
             match Self::latest_versioned(entry.value()) {
-                Some(v) if !v.item.deleted => &v.item.key == key,
+                Some(v) if !v.item.archived => &v.item.key == key,
                 _ => false,
             }
         })
@@ -1901,7 +1901,7 @@ impl ReadOnlyStore for MemoryStore {
     async fn get_project(
         &self,
         id: &ProjectId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Project>, StoreError> {
         let entry = self
             .projects
@@ -1910,7 +1910,7 @@ impl ReadOnlyStore for MemoryStore {
         let mut versioned = Self::latest_versioned(entry.value())
             .ok_or_else(|| StoreError::ProjectNotFound(id.clone()))?;
 
-        if !include_deleted && versioned.item.deleted {
+        if !include_archived && versioned.item.archived {
             return Err(StoreError::ProjectNotFound(id.clone()));
         }
 
@@ -1927,13 +1927,13 @@ impl ReadOnlyStore for MemoryStore {
     async fn get_project_by_key(
         &self,
         key: &ProjectKey,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
-        // Prefer an active (non-deleted) row when one exists — mirrors
+        // Prefer an active (non-archived) row when one exists — mirrors
         // the partial unique index `projects_key_unique_active_idx` used
         // by the SQL backends, which only constrains uniqueness on
-        // non-deleted rows.
-        let mut deleted_match: Option<(ProjectId, Versioned<Project>)> = None;
+        // non-archived rows.
+        let mut archived_match: Option<(ProjectId, Versioned<Project>)> = None;
         for entry in self.projects.iter() {
             let Some(mut versioned) = Self::latest_versioned(entry.value()) else {
                 continue;
@@ -1945,27 +1945,27 @@ impl ReadOnlyStore for MemoryStore {
                 let idx = idx_mutex.lock().expect("statuses index mutex poisoned");
                 versioned.item.statuses = idx.ordered_statuses();
             }
-            if versioned.item.deleted {
-                if include_deleted && deleted_match.is_none() {
-                    deleted_match = Some((entry.key().clone(), versioned));
+            if versioned.item.archived {
+                if include_archived && archived_match.is_none() {
+                    archived_match = Some((entry.key().clone(), versioned));
                 }
                 continue;
             }
             return Ok(Some((entry.key().clone(), versioned)));
         }
-        Ok(deleted_match)
+        Ok(archived_match)
     }
 
     async fn list_projects(
         &self,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         let mut items: Vec<(ProjectId, Versioned<Project>)> = self
             .projects
             .iter()
             .filter_map(|entry| {
                 let mut versioned = Self::latest_versioned(entry.value())?;
-                if !include_deleted && versioned.item.deleted {
+                if !include_archived && versioned.item.archived {
                     return None;
                 }
                 if let Some(idx_mutex) = self.statuses_indexes.get(entry.key()) {
@@ -3210,7 +3210,7 @@ impl Store for MemoryStore {
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_project(id, true).await?;
         let mut project = current.item;
-        project.deleted = true;
+        project.archived = true;
         self.update_project(id, project, actor).await
     }
 
@@ -10544,20 +10544,20 @@ mod tests {
 
         let v3 = store.delete_project(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 5);
-        // List excludes deleted by default — the default seed remains.
+        // List excludes archived by default — the default seed remains.
         let after_delete = store.list_projects(false).await.unwrap();
         assert_eq!(after_delete.len(), 1);
         assert_eq!(after_delete[0].0, default_id);
-        // List includes deleted on request — engineering reappears.
+        // List includes archived on request — engineering reappears.
         assert_eq!(store.list_projects(true).await.unwrap().len(), 2);
-        // Get without include_deleted returns NotFound.
+        // Get without include_archived returns NotFound.
         assert!(matches!(
             store.get_project(&id, false).await,
             Err(StoreError::ProjectNotFound(_))
         ));
-        // Get with include_deleted returns the tombstoned row.
+        // Get with include_archived returns the tombstoned row.
         let tombstoned = store.get_project(&id, true).await.unwrap();
-        assert!(tombstoned.item.deleted);
+        assert!(tombstoned.item.archived);
     }
 
     /// `suppress_sessions` is stored directly on the inline
@@ -10632,7 +10632,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_project_by_key_respects_include_deleted() {
+    async fn get_project_by_key_respects_include_archived() {
         use hydra_common::api::v1::projects::ProjectKey;
         let store = MemoryStore::new();
         let (id, _) = store
@@ -10649,16 +10649,16 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none(),
-            "soft-deleted key must not surface when include_deleted: false"
+            "archived key must not surface when include_archived: false"
         );
 
         let resurrected = store
             .get_project_by_key(&key, true)
             .await
             .unwrap()
-            .expect("soft-deleted key must surface when include_deleted: true");
+            .expect("archived key must surface when include_archived: true");
         assert_eq!(resurrected.0, id);
-        assert!(resurrected.1.item.deleted);
+        assert!(resurrected.1.item.archived);
     }
 
     #[tokio::test]
@@ -10685,8 +10685,8 @@ mod tests {
         );
     }
 
-    /// A soft-deleted project frees its key for re-use, mirroring the
-    /// partial unique index `WHERE is_latest AND NOT deleted`.
+    /// An archived project frees its key for re-use, mirroring the
+    /// partial unique index `WHERE is_latest AND NOT archived`.
     #[tokio::test]
     async fn add_project_after_delete_releases_key() {
         let store = MemoryStore::new();

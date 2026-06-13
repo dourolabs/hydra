@@ -88,7 +88,7 @@ export function ProjectForm({
       // Statuses are owned by the board's column controls, not this form.
       statuses: initial?.statuses ?? [],
       creator: (initial?.creator ?? creator) as Project["creator"],
-      deleted: false,
+      archived: false,
       prompt_path: (promptPath || null) as DocumentPath | null,
       priority: initial?.priority ?? 0,
     }),

@@ -253,7 +253,7 @@ struct ProjectRow {
     key: String,
     name: String,
     creator: String,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -1095,7 +1095,7 @@ impl SqliteStore {
             row.name.clone(),
             statuses,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
-            row.deleted,
+            row.archived,
             row.priority,
         );
         project.prompt_path = row.prompt_path.clone();
@@ -1210,7 +1210,7 @@ impl SqliteStore {
         E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
     {
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence, is_latest)
+            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, is_latest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
         ))
         .bind(id.as_ref())
@@ -1218,7 +1218,7 @@ impl SqliteStore {
         .bind(project.key.as_str())
         .bind(&project.name)
         .bind(project.creator.as_str())
-        .bind(project.deleted)
+        .bind(project.archived)
         .bind(actor)
         .bind(project.prompt_path.as_deref())
         .bind(project.priority)
@@ -1244,7 +1244,7 @@ impl SqliteStore {
         id: &ProjectId,
     ) -> Result<ProjectRow, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
-            "SELECT id, version_number, key, name, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at, \
              NULL AS creation_time, prompt_path, priority, next_status_sequence \
              FROM {TABLE_PROJECTS} \
              WHERE id = ?1 AND is_latest = 1 \
@@ -1286,7 +1286,7 @@ impl SqliteStore {
 
         let actor_json = actor_to_json_string(actor);
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, deleted, actor, prompt_path, priority, next_status_sequence, is_latest) \
+            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, is_latest) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
         ))
         .bind(id.as_ref())
@@ -1294,7 +1294,7 @@ impl SqliteStore {
         .bind(&row.key)
         .bind(&row.name)
         .bind(&row.creator)
-        .bind(row.deleted)
+        .bind(row.archived)
         .bind(&actor_json)
         .bind(row.prompt_path.as_deref())
         .bind(row.priority)
@@ -4422,10 +4422,10 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_project(
         &self,
         id: &ProjectId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Project>, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
-            "SELECT id, version_number, key, name, creator, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = ?1) AS creation_time,
              prompt_path, priority, next_status_sequence
              FROM {TABLE_PROJECTS}
@@ -4442,7 +4442,7 @@ impl ReadOnlyStore for SqliteStore {
         let statuses = Self::fetch_statuses_for_project(&self.pool, &row.id).await?;
         let project = Self::row_to_project(&row, statuses)?;
 
-        if project.deleted && !include_deleted {
+        if project.archived && !include_archived {
             return Err(StoreError::ProjectNotFound(id.clone()));
         }
 
@@ -4472,23 +4472,23 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_project_by_key(
         &self,
         key: &ProjectKey,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
         // The partial index `projects_key_unique_active_idx` covers
-        // `(is_latest = 1 AND deleted = 0)`. The happy path hits the
-        // index directly; the `include_deleted` branch widens the
+        // `(is_latest = 1 AND archived = 0)`. The happy path hits the
+        // index directly; the `include_archived` branch widens the
         // filter to scan tombstones too.
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.deleted, p.actor, p.created_at, p.updated_at,
+            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time,
              p.prompt_path, p.priority, p.next_status_sequence
              FROM {TABLE_PROJECTS} p
              WHERE p.is_latest = 1 AND p.key = ?1"
         );
-        if !include_deleted {
-            sql.push_str(" AND p.deleted = 0");
+        if !include_archived {
+            sql.push_str(" AND p.archived = 0");
         }
-        sql.push_str(" ORDER BY p.deleted ASC, p.created_at DESC LIMIT 1");
+        sql.push_str(" ORDER BY p.archived ASC, p.created_at DESC LIMIT 1");
 
         let row = sqlx::query_as::<_, ProjectRow>(&sql)
             .bind(key.as_str())
@@ -4534,17 +4534,17 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn list_projects(
         &self,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.deleted, p.actor, p.created_at, p.updated_at,
+            "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time,
              p.prompt_path, p.priority, p.next_status_sequence
              FROM {TABLE_PROJECTS} p
              WHERE p.is_latest = 1"
         );
-        if !include_deleted {
-            sql.push_str(" AND p.deleted = 0");
+        if !include_archived {
+            sql.push_str(" AND p.archived = 0");
         }
         // `p.id` is the stable tiebreak: it's an immutable per-project value,
         // so updating a project (which inserts a new is_latest row with a
@@ -6320,7 +6320,7 @@ impl Store for SqliteStore {
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_project(id, true).await?;
         let mut project = current.item;
-        project.deleted = true;
+        project.archived = true;
         self.update_project(id, project, actor).await
     }
 
@@ -14259,7 +14259,7 @@ mod tests {
             Err(StoreError::ProjectNotFound(_))
         ));
         let tombstoned = store.get_project(&id, true).await.unwrap();
-        assert!(tombstoned.item.deleted);
+        assert!(tombstoned.item.archived);
     }
 
     /// Custom statuses with `suppress_sessions: true` must round-trip
@@ -14349,7 +14349,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_project_by_key_respects_include_deleted_sqlite() {
+    async fn get_project_by_key_respects_include_archived_sqlite() {
         use hydra_common::api::v1::projects::ProjectKey;
         let store = create_test_store().await;
         let (id, _) = store
@@ -14366,16 +14366,16 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none(),
-            "soft-deleted key must not surface when include_deleted: false"
+            "archived key must not surface when include_archived: false"
         );
 
         let (resolved_id, versioned) = store
             .get_project_by_key(&key, true)
             .await
             .unwrap()
-            .expect("soft-deleted key must surface when include_deleted: true");
+            .expect("archived key must surface when include_archived: true");
         assert_eq!(resolved_id, id);
-        assert!(versioned.item.deleted);
+        assert!(versioned.item.archived);
     }
 
     #[tokio::test]
@@ -14678,8 +14678,8 @@ mod tests {
         );
     }
 
-    /// A soft-deleted project frees its key for re-use — the partial
-    /// unique index applies only to `is_latest = 1 AND deleted = 0`.
+    /// An archived project frees its key for re-use — the partial
+    /// unique index applies only to `is_latest = 1 AND archived = 0`.
     #[tokio::test]
     async fn add_project_after_delete_releases_key_sqlite() {
         let store = create_test_store().await;

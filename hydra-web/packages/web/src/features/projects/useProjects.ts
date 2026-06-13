@@ -6,7 +6,7 @@ export function useProjects() {
   return useQuery({
     queryKey: ["projects"],
     queryFn: () => apiClient.listProjects(),
-    select: (data) => data.projects.filter((p) => !p.project.deleted),
+    select: (data) => data.projects.filter((p) => !p.project.archived),
   });
 }
 

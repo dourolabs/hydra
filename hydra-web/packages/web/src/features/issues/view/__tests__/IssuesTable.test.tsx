@@ -143,7 +143,7 @@ function makeProject(
       name,
       statuses,
       creator: "alice",
-      deleted: false,
+      archived: false,
       priority: 0,
     },
   };

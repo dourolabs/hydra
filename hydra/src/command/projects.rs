@@ -539,7 +539,7 @@ async fn update_project(
         request.name,
         current.project.statuses,
         current.project.creator,
-        current.project.deleted,
+        current.project.archived,
         current.project.priority,
     );
     project.prompt_path = prompt_path;

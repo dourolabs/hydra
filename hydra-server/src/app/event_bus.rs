@@ -1795,24 +1795,24 @@ impl ReadOnlyStore for StoreWithEvents {
     async fn get_project(
         &self,
         id: &ProjectId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Versioned<Project>, StoreError> {
-        self.inner.get_project(id, include_deleted).await
+        self.inner.get_project(id, include_archived).await
     }
 
     async fn get_project_by_key(
         &self,
         key: &ProjectKey,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Option<(ProjectId, Versioned<Project>)>, StoreError> {
-        self.inner.get_project_by_key(key, include_deleted).await
+        self.inner.get_project_by_key(key, include_archived).await
     }
 
     async fn list_projects(
         &self,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<Vec<(ProjectId, Versioned<Project>)>, StoreError> {
-        self.inner.list_projects(include_deleted).await
+        self.inner.list_projects(include_archived).await
     }
 
     // ---- Object relationships (read-only) ----
