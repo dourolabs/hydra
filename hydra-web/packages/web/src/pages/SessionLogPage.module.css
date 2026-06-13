@@ -208,7 +208,10 @@
     gap: 8px;
   }
   .headerTop {
-    gap: 8px;
+    /* Row-gap keeps wrapped lines from collapsing onto each other when the
+       Creator/Badge/Kill button can't fit on one line. */
+    gap: 8px 10px;
+    row-gap: 14px;
   }
   /* Drop the "Creator" eyebrow label at mobile widths — the avatar + name
      already make the creator identity clear, and the label widens the row
@@ -244,10 +247,13 @@
     min-width: 0;
     flex-wrap: wrap;
   }
+  /* Long timestamps and ids wrap rather than ellipsis-truncate in the 2-col
+     mobile grid — truncation hid the seconds on most phones. */
   .metaValue,
   .metaLink {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
   }
 }

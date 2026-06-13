@@ -17,7 +17,10 @@ import {
 } from "../../filters";
 import styles from "./SessionsView.module.css";
 
-const MOBILE_QUERY = "(max-width: 768px)";
+/* RailRow cards engage at ≤1024px so the fixed-column table doesn't surface a
+   horizontal scrollbar in the 768–1024 tablet band before the mobile path
+   kicks in. */
+const MOBILE_QUERY = "(max-width: 1024px)";
 
 function SessionRuntimeCell({ record }: { record: SessionSummaryRecord }) {
   const { durationText, status } = useSingleSessionDuration(record);
