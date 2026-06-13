@@ -106,12 +106,6 @@ pub enum SubmitFormActionError {
     ValidationFailed {
         field_errors: HashMap<String, String>,
     },
-    #[error(
-        "form action's `set_feedback_from = {field_key}` references a field \
-         not present in the submitted response; the action should list it \
-         under `requires:`"
-    )]
-    SetFeedbackFromMissingField { field_key: String },
     #[error("issue store operation failed")]
     Store {
         #[source]
@@ -675,27 +669,46 @@ impl AppState {
         let effect = action.effect.clone();
         issue.form_response = Some(form_response.clone());
 
-        match effect {
+        // Resolve the optional comment body before any writes so we can
+        // sequence `add_comment` (which validates the issue exists and
+        // allocates a per-issue sequence) before `update_issue`, giving us
+        // a rollback-on-comment-failure guarantee: if the comment insert
+        // fails, the status transition is never applied. Absent, null, or
+        // whitespace-only values are treated as "no comment".
+        let comment_body = match &effect {
             Effect::UpdateIssue {
-                status,
-                set_feedback_from,
-            } => {
-                issue.status = status;
-                if let Some(field_key) = set_feedback_from {
-                    let coerced = match form_response.values.get(&field_key) {
-                        None | Some(Value::Null) => {
-                            return Err(SubmitFormActionError::SetFeedbackFromMissingField {
-                                field_key,
-                            });
-                        }
-                        Some(Value::String(s)) => s.clone(),
-                        Some(other) => other.to_string(),
-                    };
-                    issue.feedback = Some(coerced);
+                add_comment_from: Some(field_key),
+                ..
+            } => match form_response.values.get(field_key) {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => {
+                    let trimmed = s.trim();
+                    (!trimmed.is_empty()).then(|| s.clone())
                 }
+                Some(other) => {
+                    let coerced = other.to_string();
+                    (!coerced.trim().is_empty()).then_some(coerced)
+                }
+            },
+            _ => None,
+        };
+
+        match effect {
+            Effect::UpdateIssue { status, .. } => {
+                issue.status = status;
             }
             Effect::RecordOnly => {}
             _ => {}
+        }
+
+        if let Some(body) = comment_body {
+            self.store
+                .add_comment(&issue_id, body, &actor)
+                .await
+                .map_err(|source| SubmitFormActionError::Store {
+                    source,
+                    issue_id: issue_id.clone(),
+                })?;
         }
 
         let version = self

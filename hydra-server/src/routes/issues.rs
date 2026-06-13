@@ -612,9 +612,6 @@ pub async fn submit_form_action(
             let body = api_issues::FormValidationError::new(field_errors);
             Err((StatusCode::BAD_REQUEST, Json(body)).into_response())
         }
-        Err(err @ SubmitFormActionError::SetFeedbackFromMissingField { .. }) => {
-            Err(ApiError::bad_request(err.to_string()).into_response())
-        }
         Err(SubmitFormActionError::Store { issue_id, source }) => {
             info!(issue_id = %issue_id, outcome = "store_error", "submit_form_action completed");
             Err(map_issue_error(source, Some(&issue_id)).into_response())

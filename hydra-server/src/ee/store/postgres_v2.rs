@@ -7131,7 +7131,7 @@ mod tests {
                         requires: vec!["name".to_string(), "agree".to_string()],
                         effect: Effect::UpdateIssue {
                             status: status("closed"),
-                            set_feedback_from: None,
+                            add_comment_from: None,
                         },
                     },
                     Action {
