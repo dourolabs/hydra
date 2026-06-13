@@ -107,5 +107,7 @@ export * as Icons from "./components/Icon";
 export { useKeyboardClick } from "./hooks/useKeyboardClick";
 export type { KeyboardClickProps } from "./hooks/useKeyboardClick";
 
+export { useViewerWrap } from "./hooks/useViewerWrap";
+
 export { ErrorBoundary } from "./components/ErrorBoundary";
 export type { ErrorBoundaryProps } from "./components/ErrorBoundary";

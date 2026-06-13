@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { useViewerWrap } from "../../hooks/useViewerWrap";
+import { IconWrap, IconNoWrap } from "../Icon/Icon";
 import styles from "./DiffViewer.module.css";
 
 export interface DiffViewerProps {
@@ -41,6 +43,7 @@ function parseDiff(diff: string, maxLines?: number): { lines: DiffLine[]; trunca
 
 export function DiffViewer({ diff, maxLines, className }: DiffViewerProps) {
   const { lines, truncated } = useMemo(() => parseDiff(diff, maxLines), [diff, maxLines]);
+  const [wrap, setWrap] = useViewerWrap("diff");
 
   if (lines.length === 0) {
     return <p className={styles.empty}>No diff available.</p>;
@@ -48,7 +51,19 @@ export function DiffViewer({ diff, maxLines, className }: DiffViewerProps) {
 
   return (
     <div className={`${styles.container}${className ? ` ${className}` : ""}`}>
-      <pre className={styles.diff}>
+      <div className={styles.toolbar}>
+        <button
+          type="button"
+          className={styles.toolbarButton}
+          onClick={() => setWrap(!wrap)}
+          aria-pressed={wrap}
+          aria-label={wrap ? "Disable line wrap" : "Enable line wrap"}
+          title={wrap ? "Disable line wrap" : "Enable line wrap"}
+        >
+          {wrap ? <IconWrap size={14} /> : <IconNoWrap size={14} />}
+        </button>
+      </div>
+      <pre className={`${styles.diff} ${wrap ? styles.wrap : ""}`}>
         {lines.map((line, i) => (
           <span key={i} className={styles[line.type]}>
             {line.content}

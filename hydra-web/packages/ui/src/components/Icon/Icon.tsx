@@ -256,3 +256,20 @@ export const IconEdit = (p: IconProps) => (
     <path d="M11 3l2 2" />
   </IconBase>
 );
+
+export const IconWrap = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M2 4h12" />
+    <path d="M2 8h9a2 2 0 0 1 0 4H7" />
+    <path d="M9 10l-2 2 2 2" />
+    <path d="M2 12h3" />
+  </IconBase>
+);
+
+export const IconNoWrap = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M2 4h12" />
+    <path d="M2 8h12" />
+    <path d="M2 12h12" />
+  </IconBase>
+);

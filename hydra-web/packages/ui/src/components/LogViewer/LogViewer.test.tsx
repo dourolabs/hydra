@@ -11,6 +11,7 @@ interface RowProps {
   style: object;
   getHtml: (index: number) => string;
   lineNumberWidth: string;
+  wrap: boolean;
 }
 
 vi.mock("react-window", () => ({
@@ -21,7 +22,11 @@ vi.mock("react-window", () => ({
   }: {
     rowCount: number;
     rowComponent: ComponentType<RowProps>;
-    rowProps: { getHtml: (index: number) => string; lineNumberWidth: string };
+    rowProps: {
+      getHtml: (index: number) => string;
+      lineNumberWidth: string;
+      wrap: boolean;
+    };
     rowHeight?: number;
     overscanCount?: number;
     style?: object;
@@ -34,6 +39,12 @@ vi.mock("react-window", () => ({
     </div>
   ),
   useListRef: () => ({ current: null }),
+  useDynamicRowHeight: () => ({
+    getAverageRowHeight: () => 20,
+    getRowHeight: () => 20,
+    setRowHeight: () => {},
+    observeRowElements: () => () => {},
+  }),
 }));
 
 const { LogViewer } = await import("./LogViewer");
