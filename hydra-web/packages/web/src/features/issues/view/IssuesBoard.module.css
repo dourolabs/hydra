@@ -235,7 +235,7 @@
 
 .defaultChip {
   font-family: var(--f-mono);
-  font-size: 9px;
+  font-size: var(--t-xs);
   letter-spacing: 0.06em;
   color: var(--fg-2);
   padding: 1px 4px;
@@ -365,7 +365,7 @@
 
 .cardArchivedTag {
   font-family: var(--f-mono);
-  font-size: 9px;
+  font-size: var(--t-xs);
   letter-spacing: 0.06em;
   color: var(--fg-2);
   padding: 1px 4px;

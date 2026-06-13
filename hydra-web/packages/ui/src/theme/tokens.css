@@ -195,6 +195,22 @@
 }
 
 /* ============================================================
+   Mobile type-scale overlay
+   ============================================================
+   The xxs/xs tiers (10/11 px) are used liberally for metadata,
+   table headers, section eyebrows and mono labels. 10–11 px sits
+   below a comfortable mobile-readability floor in real lighting,
+   so on phones we bump both tiers by one step. --t-sm and above
+   already pass; leave them untouched so the desktop hierarchy is
+   preserved when the overlay kicks in. */
+@media (max-width: 768px) {
+  :root {
+    --t-xxs: 11px;
+    --t-xs: 12px;
+  }
+}
+
+/* ============================================================
    Theme variants
    ============================================================ */
 
