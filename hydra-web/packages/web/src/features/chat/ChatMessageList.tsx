@@ -130,6 +130,26 @@ export function ChatMessageList({
   // input. Include its presence in the effect's dep key.
   const activityVisible = shouldRenderActivity(activity);
 
+  // Pin the transcript to its latest message when the soft keyboard appears.
+  // `interactive-widget=resizes-content` (see packages/web/index.html) shrinks
+  // the layout viewport so the flex column re-flows, but the scroll position
+  // inside the message list is preserved — meaning the last message can land
+  // behind the now-sticky composer. The visualViewport resize event fires for
+  // both keyboard-show and keyboard-hide; re-pinning on either is what
+  // matches what users expect.
+  useEffect(() => {
+    const container = containerRef.current;
+    const viewport = window.visualViewport;
+    if (!container || !viewport) return;
+    const handle = () => {
+      container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+    };
+    viewport.addEventListener("resize", handle);
+    return () => {
+      viewport.removeEventListener("resize", handle);
+    };
+  }, []);
+
   useEffect(() => {
     const container = containerRef.current;
     const thread = threadRef.current;

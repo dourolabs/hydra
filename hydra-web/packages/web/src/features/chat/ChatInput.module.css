@@ -1,10 +1,18 @@
 .composer {
   display: flex;
   flex-direction: column;
-  padding: 14px 28px 18px;
+  padding: 14px 28px;
+  /* Reserve the OS home-indicator inset below the actions row; collapses to
+     18px on devices without a bottom safe area. Pairs with sticky positioning
+     so the composer rides any viewport-resize that the soft keyboard
+     triggers (see interactive-widget=resizes-content in index.html). */
+  padding-bottom: max(18px, var(--safe-area-bottom));
   border-top: 1px solid var(--line);
   background: var(--bg-0);
   flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
 }
 
 .inner {
@@ -104,7 +112,8 @@
 
 @media (max-width: 768px) {
   .composer {
-    padding: 12px 16px 14px;
+    padding: 12px 16px;
+    padding-bottom: max(14px, var(--safe-area-bottom));
   }
 
   /* iOS Safari zooms any focused textarea whose computed font-size is <16px. */
