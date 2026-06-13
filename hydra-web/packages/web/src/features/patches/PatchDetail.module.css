@@ -87,9 +87,9 @@
 }
 
 .keyvalText {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .linkAcc {
@@ -205,8 +205,8 @@
 .tabActive::after {
   content: "";
   position: absolute;
-  left: 14px;
-  right: 14px;
+  left: 0;
+  right: 0;
   bottom: -1px;
   height: 2px;
   background: var(--acc);
@@ -279,7 +279,10 @@
   font-family: var(--f-mono);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
+  .inner {
+    padding: 18px 20px 32px;
+  }
   .keyvals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
