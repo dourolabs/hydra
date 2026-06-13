@@ -40,6 +40,7 @@ import {
   type AutoArchiveUnit,
 } from "./statusDefaults";
 import { upsertPromptDoc, usePromptDocumentBody } from "./promptDocument";
+import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import styles from "./StatusSettingsModal.module.css";
 
 export interface StatusSettingsModalProps {
@@ -127,14 +128,14 @@ function EditStatusModal({
   const [draft, setDraft] = useState<StatusDefinition | null>(
     () => initialStatus?.status ?? null,
   );
-  const [confirmingArchive, setConfirmingArchive] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
 
   // Resync local draft whenever the modal is opened against a different
   // status (gear click on another column reuses the same component instance).
   useEffect(() => {
     if (!open) return;
     setDraft(initialStatus?.status ?? null);
-    setConfirmingArchive(false);
+    setArchiveOpen(false);
   }, [open, initialStatus]);
 
   const projectId = projectRecord.project_id;
@@ -293,6 +294,7 @@ function EditStatusModal({
               : "Status archived",
             "success",
           );
+          setArchiveOpen(false);
           onClose();
         },
       },
@@ -345,49 +347,16 @@ function EditStatusModal({
 
       <div className={styles.actions} data-testid="status-settings-actions">
         <div className={styles.actionsLeft}>
-          {confirmingArchive ? (
-            <div
-              className={styles.archiveBlock}
-              data-testid="status-settings-archive-block"
-            >
-              <span
-                className={styles.label}
-                data-testid="status-settings-archive-prompt"
-              >
-                {issueCount > 0
-                  ? `${issueCount} issue(s) in this status will be archived. Continue?`
-                  : "Archive this status?"}
-              </span>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setConfirmingArchive(false)}
-                disabled={saveMutation.isPending}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={handleArchive}
-                disabled={saveMutation.isPending}
-                data-testid="status-settings-archive-confirm"
-              >
-                {saveMutation.isPending ? "Archiving…" : "Confirm archive"}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="danger-subtle"
-              size="sm"
-              onClick={() => setConfirmingArchive(true)}
-              disabled={!canArchive || saveMutation.isPending}
-              title={archiveTooltip || undefined}
-              data-testid="status-settings-archive"
-            >
-              Archive status
-            </Button>
-          )}
+          <Button
+            variant="danger-subtle"
+            size="md"
+            onClick={() => setArchiveOpen(true)}
+            disabled={!canArchive || saveMutation.isPending}
+            title={archiveTooltip || undefined}
+            data-testid="status-settings-archive"
+          >
+            Archive status
+          </Button>
         </div>
         <div className={styles.actionsRight}>
           <Button
@@ -413,6 +382,21 @@ function EditStatusModal({
           </Button>
         </div>
       </div>
+      <DeleteConfirmModal
+        open={archiveOpen}
+        onClose={() => setArchiveOpen(false)}
+        entityName={draft.label || draft.key}
+        entityLabel="Status"
+        actionLabel="Archive"
+        pendingLabel="Archiving..."
+        description={
+          issueCount > 0
+            ? `${issueCount} issue(s) in this status will be archived.`
+            : undefined
+        }
+        onConfirm={handleArchive}
+        isPending={saveMutation.isPending}
+      />
     </Modal>
   );
 }

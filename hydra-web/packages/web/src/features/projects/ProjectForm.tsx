@@ -34,7 +34,7 @@ export interface ProjectFormProps {
 // Shared Name + inline-prompt form behind both the New Project modal and the
 // Project Settings modal, so the two stay identical. The key is derived from
 // the name (never an editable field) and shown read-only alongside the prompt
-// path; renaming re-keys the project end-to-end. Edit mode adds a Delete
+// path; renaming re-keys the project end-to-end. Edit mode adds an Archive
 // control and preserves the project's existing statuses (those are managed on
 // the board, not here).
 export function ProjectForm({
@@ -257,7 +257,7 @@ export function ProjectForm({
             disabled={saveMutation.isPending || deleteMutation.isPending}
             data-testid="project-form-delete"
           >
-            Delete project
+            Archive project
           </Button>
         )}
         <span className={styles.actionsSpacer} />

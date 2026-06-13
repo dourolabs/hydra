@@ -422,6 +422,44 @@ vi.mock("../PromptDocumentEditor.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+vi.mock("../../../components/DeleteConfirmModal/DeleteConfirmModal", () => ({
+  DeleteConfirmModal: ({
+    open,
+    onConfirm,
+    onClose,
+    actionLabel,
+    description,
+  }: {
+    open: boolean;
+    onConfirm: () => void;
+    onClose: () => void;
+    actionLabel?: string;
+    description?: ReactNode;
+  }) =>
+    open ? (
+      <div data-testid="status-settings-archive-modal">
+        <span data-testid="status-settings-archive-action-label">
+          {actionLabel ?? ""}
+        </span>
+        <span data-testid="status-settings-archive-description">
+          {description}
+        </span>
+        <button
+          data-testid="status-settings-archive-cancel"
+          onClick={onClose}
+        >
+          Cancel
+        </button>
+        <button
+          data-testid="status-settings-archive-confirm"
+          onClick={onConfirm}
+        >
+          {actionLabel ?? "Confirm"}
+        </button>
+      </div>
+    ) : null,
+}));
+
 const { StatusSettingsModal } = await import("../StatusSettingsModal");
 
 function makeStatus(
@@ -632,13 +670,19 @@ describe("StatusSettingsModal", () => {
     expect(archive.disabled).toBe(false);
     fireEvent.click(archive);
 
-    // No sibling-status dropdown — replaced by a single confirmation prompt.
+    // No sibling-status dropdown — replaced by a confirmation modal.
     expect(screen.queryByTestId("status-settings-move-target")).toBeNull();
     expect(screen.queryByTestId("status-settings-move-block")).toBeNull();
 
-    const prompt = screen.getByTestId("status-settings-archive-prompt");
-    expect(prompt.textContent).toContain("3 issue(s)");
-    expect(prompt.textContent?.toLowerCase()).toContain("archived");
+    expect(screen.getByTestId("status-settings-archive-modal")).toBeDefined();
+    expect(
+      screen.getByTestId("status-settings-archive-action-label").textContent,
+    ).toBe("Archive");
+    const description = screen.getByTestId(
+      "status-settings-archive-description",
+    );
+    expect(description.textContent).toContain("3 issue(s)");
+    expect(description.textContent?.toLowerCase()).toContain("archived");
     expect(screen.getByTestId("status-settings-archive-confirm")).toBeDefined();
   });
 
@@ -658,9 +702,10 @@ describe("StatusSettingsModal", () => {
     );
 
     fireEvent.click(screen.getByTestId("status-settings-archive"));
-    const prompt = screen.getByTestId("status-settings-archive-prompt");
-    expect(prompt.textContent).not.toContain("issue(s)");
-    expect(prompt.textContent?.toLowerCase()).toContain("archive this status");
+    expect(screen.getByTestId("status-settings-archive-modal")).toBeDefined();
+    expect(
+      screen.getByTestId("status-settings-archive-description").textContent ?? "",
+    ).not.toContain("issue(s)");
   });
 
   it("Archive is disabled when the project has only one status", () => {
@@ -732,15 +777,12 @@ describe("StatusSettingsModal", () => {
     );
 
     fireEvent.click(screen.getByTestId("status-settings-archive"));
-    expect(screen.getByTestId("status-settings-archive-confirm")).toBeDefined();
+    expect(screen.getByTestId("status-settings-archive-modal")).toBeDefined();
 
-    // Click the inline "Cancel" sibling of the confirm action.
-    const block = screen.getByTestId("status-settings-archive-block");
-    const cancel = within(block).getByText("Cancel");
-    fireEvent.click(cancel);
+    fireEvent.click(screen.getByTestId("status-settings-archive-cancel"));
 
-    // Confirmation collapses, the original Archive trigger is visible again.
-    expect(screen.queryByTestId("status-settings-archive-confirm")).toBeNull();
+    // Confirmation modal closes, the original Archive trigger stays visible.
+    expect(screen.queryByTestId("status-settings-archive-modal")).toBeNull();
     expect(screen.getByTestId("status-settings-archive")).toBeDefined();
     expect(mutateSpy).not.toHaveBeenCalled();
   });

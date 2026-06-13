@@ -195,13 +195,6 @@
   flex: 1;
 }
 
-.archiveBlock {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
 @media (max-width: 768px) {
   .body {
     min-width: 0;

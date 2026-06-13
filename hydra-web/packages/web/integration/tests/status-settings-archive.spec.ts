@@ -45,14 +45,15 @@ test.describe("Status settings — Archive status @projects:status-archive", () 
     ).toHaveCount(0);
     await expect(modal.getByTestId("status-settings-delete")).toHaveCount(0);
 
-    // Clicking Archive surfaces the confirmation with a non-zero count.
+    // Clicking Archive opens a separate confirmation dialog with the count.
     await modal.getByTestId("status-settings-archive").click();
-    const prompt = modal.getByTestId("status-settings-archive-prompt");
-    await expect(prompt).toContainText(/\d+ issue\(s\)/);
-    await expect(prompt).toContainText("archived");
+    const confirmDialog = page.getByRole("dialog", { name: /Archive Status/ });
+    await expect(confirmDialog).toBeVisible();
+    await expect(confirmDialog).toContainText(/\d+ issue\(s\)/);
+    await expect(confirmDialog).toContainText("archived");
 
     // Confirm — fires the per-status archive endpoint.
-    await modal.getByTestId("status-settings-archive-confirm").click();
+    await confirmDialog.getByRole("button", { name: "Archive" }).click();
     await expect(modal).toBeHidden();
 
     await expect
@@ -85,11 +86,11 @@ test.describe("Status settings — Archive status @projects:status-archive", () 
     await expect(modal).toBeVisible();
     await modal.getByTestId("status-settings-archive").click();
 
-    const prompt = modal.getByTestId("status-settings-archive-prompt");
-    await expect(prompt).not.toContainText("issue(s)");
-    await expect(prompt).toContainText(/archive this status/i);
+    const confirmDialog = page.getByRole("dialog", { name: /Archive Status/ });
+    await expect(confirmDialog).toBeVisible();
+    await expect(confirmDialog).not.toContainText("issue(s)");
 
-    await modal.getByTestId("status-settings-archive-confirm").click();
+    await confirmDialog.getByRole("button", { name: "Archive" }).click();
     await expect(modal).toBeHidden();
     await expect(page.getByTestId("board-col-default-failed")).toHaveCount(0);
   });

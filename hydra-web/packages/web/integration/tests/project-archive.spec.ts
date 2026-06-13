@@ -36,10 +36,7 @@ test.describe("Project settings — Archive project @projects:archive", () => {
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
-    // Trigger the archive confirmation. The button is labelled "Delete
-    // project" for back-compat with the existing UI even though the
-    // underlying call goes to /archive (we relabel the action to
-    // "Archive" inside the confirmation dialog).
+    // Trigger the archive confirmation.
     await modal.getByTestId("project-form-delete").click();
     // The confirmation modal renders inside its own dialog.
     const confirmDialog = page.getByRole("dialog", { name: /Archive Project/ });
