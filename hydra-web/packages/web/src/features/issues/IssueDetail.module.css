@@ -98,6 +98,7 @@
   padding: 1px 5px;
   border-radius: 3px;
   color: var(--fg-1);
+  overflow-wrap: anywhere;
 }
 
 .description :global(h1),
