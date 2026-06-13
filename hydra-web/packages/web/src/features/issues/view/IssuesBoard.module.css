@@ -686,4 +686,27 @@
     align-self: center;
     justify-content: center;
   }
+
+  /* Touch-target floor for the project-bar controls and per-column gear.
+     The project bar's `.projectBarRight` min-height is also bumped so the
+     row keeps its alignment when the controls expand to 44×44. */
+  .projectCollapseToggle,
+  .projectSettingsButton,
+  .colGear {
+    width: 44px;
+    height: 44px;
+  }
+
+  .projectBarRight {
+    min-height: 44px;
+  }
+
+  .colLoadMoreButton {
+    min-height: 44px;
+  }
+
+  .cardChatButton {
+    width: 44px;
+    height: 44px;
+  }
 }
