@@ -128,10 +128,13 @@ test.describe("Documents @documents:list @documents:view-detail", () => {
     await expect(tree).toHaveCSS("display", "none");
 
     // Navigation up/down still works inside the reader pane: click a
-    // subfolder row to navigate into it.
+    // subfolder row to navigate into it. Assert via a file row (the
+    // `.breadcrumb` meta summary is display:none below 768px).
     const researchRow = reader.getByRole("button", { name: /research/ });
     await researchRow.click();
-    await expect(reader.getByText(/3 files · 0 folders/)).toBeVisible();
+    await expect(
+      reader.getByRole("link", { name: /ADR-001: OAuth2 Migration Strategy/ }),
+    ).toBeVisible();
   });
 
   test("reader pane shows an up-one-level entry that navigates to the parent folder @documents:up-one-level", async ({
