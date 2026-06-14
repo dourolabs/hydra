@@ -24,6 +24,13 @@
   --t-2xl: 24px;
   --t-3xl: 32px;
 
+  /* iOS Safari focus-zoom floor. Inputs/textareas/selects with a
+     computed font-size below 16px get auto-zoomed on focus in iOS
+     Safari. Apply this token (or a wrapping media query containing
+     it) to any input-like control that may render on mobile. Do
+     not reduce — it's load-bearing. */
+  --t-input: 16px;
+
   /* Legacy aliases */
   --font-size-xxs: var(--t-xxs);
   --font-size-xs: var(--t-xs);
