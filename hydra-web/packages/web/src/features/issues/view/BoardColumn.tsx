@@ -419,6 +419,27 @@ function BoardIssueCard({
       data-testid={`board-card-${id}`}
       data-archived={archived ? "true" : undefined}
     >
+      {conversation && (
+        <Link
+          to={`/chat/${conversation.conversation_id}`}
+          className={styles.cardChatIcon}
+          title={
+            conversation.status === "idle"
+              ? "Resume conversation"
+              : "Join conversation"
+          }
+          aria-label={
+            conversation.status === "idle"
+              ? "Resume conversation"
+              : "Join conversation"
+          }
+          onClick={(e) => e.stopPropagation()}
+          data-conversation-status={conversation.status}
+          data-testid={`board-card-conversation-${id}`}
+        >
+          <Icons.IconChat size={14} />
+        </Link>
+      )}
       {(archived || (issue.type && issue.type !== "unknown")) && (
         <div className={styles.cardHead}>
           {issue.type && issue.type !== "unknown" && (
@@ -449,27 +470,6 @@ function BoardIssueCard({
             kind={principalAvatarKind(issue.assignee)}
             size="md"
           />
-        )}
-        {conversation && (
-          <Link
-            to={`/chat/${conversation.conversation_id}`}
-            className={styles.cardChatIcon}
-            title={
-              conversation.status === "idle"
-                ? "Resume conversation"
-                : "Join conversation"
-            }
-            aria-label={
-              conversation.status === "idle"
-                ? "Resume conversation"
-                : "Join conversation"
-            }
-            onClick={(e) => e.stopPropagation()}
-            data-conversation-status={conversation.status}
-            data-testid={`board-card-conversation-${id}`}
-          >
-            <Icons.IconChat size={14} />
-          </Link>
         )}
         <CardRuntime sessions={sessions} />
         <AgoTime iso={record.timestamp} />
