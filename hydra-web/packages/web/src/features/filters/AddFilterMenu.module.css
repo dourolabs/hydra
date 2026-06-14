@@ -100,13 +100,32 @@
 }
 
 .activeRowValues {
-  color: var(--fg-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--fg-0);
+  max-width: 60%;
+  overflow: hidden;
+}
+
+.activeRowPlaceholder {
+  color: var(--fg-3);
   font-family: var(--f-sans);
   font-size: var(--t-xs);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 50%;
+  font-style: italic;
+}
+
+.activeRowOverflow {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  height: 16px;
+  background: var(--bg-3);
+  border-radius: var(--radius-sm);
+  color: var(--fg-1);
+  font-family: var(--f-mono);
+  font-size: var(--t-xs);
 }
 
 .activeRowRemove {

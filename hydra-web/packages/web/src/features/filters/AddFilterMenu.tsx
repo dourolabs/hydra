@@ -1,4 +1,4 @@
-import { useMemo, useRef, type CSSProperties } from "react";
+import { useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Icons } from "@hydra/ui";
 import type {
@@ -45,14 +45,24 @@ function hintForKind<T>(kind: FilterKind, def: FilterDefinitions<T>[string]): st
   return def.entityLabel ?? "relation";
 }
 
-function summarizeValues<T>(filter: Filter, def: FilterDefinition<T>): string {
-  if (def.kind === "presence") return "on";
-  const labels = filter.values
-    .map((v) => def.options.find((opt) => opt.value === v)?.label)
-    .filter((l): l is string => !!l);
-  if (labels.length === 0) return "any…";
-  if (labels.length <= VALUE_PREVIEW) return labels.join(", ");
-  return `${labels.slice(0, VALUE_PREVIEW).join(", ")} +${labels.length - VALUE_PREVIEW}`;
+function renderValueChips<T>(filter: Filter, def: FilterDefinition<T>): ReactNode {
+  if (def.kind === "presence") return null;
+  const selected = filter.values
+    .map((v) => def.options.find((opt) => opt.value === v))
+    .filter((opt): opt is NonNullable<typeof opt> => opt !== undefined);
+  if (selected.length === 0) {
+    return <span className={styles.activeRowPlaceholder}>any…</span>;
+  }
+  const preview = selected.slice(0, VALUE_PREVIEW);
+  const overflow = selected.length - preview.length;
+  return (
+    <>
+      {preview.map((opt) => (
+        <span key={opt.value}>{opt.chip}</span>
+      ))}
+      {overflow > 0 && <span className={styles.activeRowOverflow}>+{overflow}</span>}
+    </>
+  );
 }
 
 export function AddFilterMenu<T>({
@@ -131,9 +141,6 @@ export function AddFilterMenu<T>({
                           <Icon size={14} />
                         </span>
                         <span className={styles.rowLabel}>{def.label}</span>
-                        <span className={styles.activeRowValues}>
-                          {summarizeValues(filter, def)}
-                        </span>
                       </span>
                     ) : (
                       <button
@@ -147,7 +154,7 @@ export function AddFilterMenu<T>({
                         </span>
                         <span className={styles.rowLabel}>{def.label}</span>
                         <span className={styles.activeRowValues}>
-                          {summarizeValues(filter, def)}
+                          {renderValueChips(filter, def)}
                         </span>
                       </button>
                     )}
