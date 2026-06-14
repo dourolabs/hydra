@@ -200,6 +200,11 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_statuses_archived_defaults_to_false(&pool).await?;
     add_statuses_archived_migration_is_idempotent(&pool).await?;
 
+    add_projects_session_settings_schema_invariants(&pool).await?;
+    add_projects_session_settings_defaults_to_null(&pool).await?;
+    add_projects_session_settings_migration_is_idempotent(&pool).await?;
+    add_projects_session_settings_store_roundtrip(&pool).await?;
+
     seed_progress_as_comments_drops_columns(&pool).await?;
     seed_progress_as_comments_seeds_one_comment_per_issue(&pool).await?;
     seed_progress_as_comments_drops_feedback_outright(&pool).await?;
@@ -4009,5 +4014,125 @@ async fn add_statuses_archived_migration_is_idempotent(pool: &SqlitePool) -> Res
         .context("re-apply sqlite migrations to confirm add_statuses_archived idempotency")?;
     add_statuses_archived_schema_invariants(pool).await?;
     add_statuses_archived_defaults_to_false(pool).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260722000000_add_projects_session_settings. Adds the
+// `session_settings_json TEXT NULL` column to `projects` for the per-
+// project `SessionSettings` override layer. Backfills to NULL — the read
+// path then materializes `SessionSettings::default()`.
+// ---------------------------------------------------------------------------
+
+async fn add_projects_session_settings_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "projects", "session_settings_json").await? {
+        bail!("expected `projects.session_settings_json` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "projects", "session_settings_json").await? {
+        bail!("expected `projects.session_settings_json` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_projects_session_settings_defaults_to_null(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT id, version_number, session_settings_json FROM projects")
+        .fetch_all(pool)
+        .await
+        .context("read projects for session_settings_json default check")?;
+    if rows.is_empty() {
+        bail!("expected at least one projects row to assert backfill against");
+    }
+    for row in &rows {
+        let id: String = row.try_get("id")?;
+        let version_number: i64 = row.try_get("version_number")?;
+        let value: Option<String> = row.try_get("session_settings_json")?;
+        if value.is_some() {
+            bail!(
+                "projects({id}, version={version_number}): expected session_settings_json=NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_projects_session_settings_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm projects session_settings idempotency")?;
+    add_projects_session_settings_schema_invariants(pool).await?;
+    Ok(())
+}
+
+/// SqliteStore-level roundtrip on `get_project`/`list_projects` after a
+/// project with non-empty `session_settings` is written. Catches the
+/// `#[sqlx(default)]` foot-gun — every SELECT projection on `projects`
+/// must include the new `session_settings_json` column. A MemoryStore
+/// roundtrip is insufficient.
+async fn add_projects_session_settings_store_roundtrip(pool: &SqlitePool) -> Result<()> {
+    use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
+    use hydra_common::api::v1::projects::ProjectKey;
+
+    let store = SqliteStore::new(pool.clone());
+    let actor = ActorRef::System {
+        worker_name: "project_session_settings_roundtrip_test".to_string(),
+        on_behalf_of: None,
+    };
+    let mut project = hydra_common::api::v1::projects::Project::new(
+        ProjectKey::try_new("psprnd").unwrap(),
+        "Project Session Settings Roundtrip".to_string(),
+        Vec::new(),
+        ApiUsername::from("test"),
+        false,
+        0.0,
+    );
+    let mut session_settings = ApiSessionSettings::default();
+    session_settings.cpu_limit = Some("250m".to_string());
+    session_settings.memory_limit = Some("256Mi".to_string());
+    session_settings.image = Some("hydra-worker:project".to_string());
+    project.session_settings = session_settings.clone();
+    let (project_id, _) = store
+        .add_project(project, &actor)
+        .await
+        .context("add_project for project session_settings roundtrip")?;
+
+    let fetched = store
+        .get_project(&project_id, false)
+        .await
+        .context("get_project for project session_settings roundtrip")?;
+    if fetched.item.session_settings != session_settings {
+        bail!(
+            "project session_settings roundtrip mismatch on get_project: wrote {session_settings:?}, read {:?}",
+            fetched.item.session_settings
+        );
+    }
+
+    let listed = store
+        .list_projects(false)
+        .await
+        .context("list_projects for project session_settings roundtrip")?;
+    let listed_psprnd = listed
+        .iter()
+        .find(|(pid, _)| pid == &project_id)
+        .map(|(_, versioned)| &versioned.item.session_settings)
+        .ok_or_else(|| anyhow::anyhow!("missing psprnd project from list_projects"))?;
+    if listed_psprnd != &session_settings {
+        bail!(
+            "project session_settings roundtrip mismatch on list_projects: wrote {session_settings:?}, read {listed_psprnd:?}"
+        );
+    }
+
+    // The seeded default project (NULL backfill) must round-trip as
+    // SessionSettings::default(), not a deserialization error.
+    let default_seed_id = ProjectId::from_str("j-defaul").context("parse j-defaul")?;
+    let default_project = store
+        .get_project(&default_seed_id, false)
+        .await
+        .context("get_project(j-defaul) post-project session_settings migration")?;
+    if !ApiSessionSettings::is_default(&default_project.item.session_settings) {
+        bail!(
+            "j-defaul unexpectedly carried non-default session_settings: {:?}",
+            default_project.item.session_settings,
+        );
+    }
     Ok(())
 }

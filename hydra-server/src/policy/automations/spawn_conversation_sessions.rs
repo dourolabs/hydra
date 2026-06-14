@@ -365,46 +365,72 @@ async fn spawn_session(
 
 /// Merge a conversation's effective [`crate::domain::issues::SessionSettings`]
 /// from (most → least specific) conversation overrides → per-status
-/// overrides on the spawning issue's resolved status → global default.
-/// Legacy `/chat` conversations carry `spawned_from = None` and skip the
-/// status layer entirely. A `resolve_status` failure degrades to
-/// conversation-only settings + defaults.
+/// overrides on the spawning issue's resolved status → per-project
+/// overrides on the spawning issue's project → global default. Legacy
+/// `/chat` conversations carry `spawned_from = None` and skip both the
+/// status and project layers. A `resolve_status` or `get_project`
+/// failure degrades by skipping just that layer.
 async fn resolve_conversation_session_settings(
     ctx: &AutomationContext<'_>,
     conversation: &Conversation,
 ) -> crate::domain::issues::SessionSettings {
-    let status_settings = match conversation.spawned_from.as_ref() {
+    let (status_settings, project_settings) = match conversation.spawned_from.as_ref() {
         Some(issue_id) => match ctx.store.get_issue(issue_id, false).await {
-            Ok(versioned) => match ctx.app_state.resolve_status(&versioned.item).await {
-                Ok(def) => def.session_settings.into(),
-                Err(err) => {
-                    tracing::warn!(
-                        automation = AUTOMATION_NAME,
-                        conversation.spawned_from = %issue_id,
-                        error = %err,
-                        "failed to resolve status for conversation's spawning issue; \
-                         status-level session_settings unavailable"
-                    );
-                    crate::domain::issues::SessionSettings::default()
-                }
-            },
+            Ok(versioned) => {
+                let issue = &versioned.item;
+                let status_settings = match ctx.app_state.resolve_status(issue).await {
+                    Ok(def) => def.session_settings.into(),
+                    Err(err) => {
+                        tracing::warn!(
+                            automation = AUTOMATION_NAME,
+                            conversation.spawned_from = %issue_id,
+                            error = %err,
+                            "failed to resolve status for conversation's spawning issue; \
+                             status-level session_settings unavailable"
+                        );
+                        crate::domain::issues::SessionSettings::default()
+                    }
+                };
+                let project_settings = match ctx.store.get_project(&issue.project_id, false).await {
+                    Ok(versioned) => versioned.item.session_settings.into(),
+                    Err(err) => {
+                        tracing::warn!(
+                            automation = AUTOMATION_NAME,
+                            conversation.spawned_from = %issue_id,
+                            project_id = %issue.project_id,
+                            error = %err,
+                            "failed to load project for conversation's spawning issue; \
+                             project-level session_settings unavailable"
+                        );
+                        crate::domain::issues::SessionSettings::default()
+                    }
+                };
+                (status_settings, project_settings)
+            }
             Err(err) => {
                 tracing::warn!(
                     automation = AUTOMATION_NAME,
                     conversation.spawned_from = %issue_id,
                     error = %err,
                     "failed to load conversation's spawning issue; \
-                     status-level session_settings unavailable"
+                     status- and project-level session_settings unavailable"
                 );
-                crate::domain::issues::SessionSettings::default()
+                (
+                    crate::domain::issues::SessionSettings::default(),
+                    crate::domain::issues::SessionSettings::default(),
+                )
             }
         },
-        None => crate::domain::issues::SessionSettings::default(),
+        None => (
+            crate::domain::issues::SessionSettings::default(),
+            crate::domain::issues::SessionSettings::default(),
+        ),
     };
     let merged = crate::domain::issues::SessionSettings::merge(
         conversation.session_settings.clone(),
         status_settings,
     );
+    let merged = crate::domain::issues::SessionSettings::merge(merged, project_settings);
     ctx.app_state.apply_session_settings_defaults(merged)
 }
 
@@ -489,6 +515,7 @@ mod tests {
     use crate::domain::users::Username;
     use crate::policy::context::AutomationContext;
     use crate::routes::sessions::mount_spec_from_create_request;
+    use crate::store::ReadOnlyStore;
     use chrono::Utc;
     use hydra_common::SessionId;
     use hydra_common::api::v1::sessions::SearchSessionsQuery;
@@ -1716,5 +1743,106 @@ mod tests {
 
         // No session was spawned for this conversation — the cap blocked it.
         assert_eq!(sessions_for_conversation(&state, &conversation_id).await, 0);
+    }
+
+    /// Locks the conversation-spawn merge chain: conversation overrides
+    /// beat the spawning issue's status overrides, which beat the
+    /// spawning issue's project overrides, which beat the global default.
+    /// Each layer sets a different field; the resolved settings must
+    /// combine the per-field winners.
+    #[tokio::test]
+    async fn resolve_conversation_settings_merges_conversation_status_project_layers() {
+        use crate::app::test_helpers::issue_with_status;
+        use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
+        use hydra_common::api::v1::projects::StatusKey;
+
+        let state = state_with_default_model("default-model");
+        register_default_conversation_agent(&state).await;
+
+        // Project layer: image=A, cpu=A, memory=A
+        let project_id = crate::domain::projects::default_project_id();
+        let mut project = state
+            .store
+            .get_project(&project_id, false)
+            .await
+            .unwrap()
+            .item;
+        let mut project_settings = ApiSessionSettings::default();
+        project_settings.image = Some("project-image".to_string());
+        project_settings.cpu_limit = Some("100m".to_string());
+        project_settings.memory_limit = Some("128Mi".to_string());
+        project.session_settings = project_settings;
+        state
+            .store
+            .update_project(&project_id, project, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Status layer (open): image=B, cpu=B
+        let key = StatusKey::try_new("open").unwrap();
+        let project = state
+            .store
+            .get_project(&project_id, false)
+            .await
+            .unwrap()
+            .item;
+        let mut def = project
+            .statuses
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap()
+            .clone();
+        def.session_settings.image = Some("status-image".to_string());
+        def.session_settings.cpu_limit = Some("200m".to_string());
+        state
+            .store
+            .update_status(&project_id, &key, def, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Issue + conversation: conversation sets image=C only.
+        let issue = issue_with_status("merge precedence", status("open"), vec![]);
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+        let mut conversation = make_conversation(Some("swe"));
+        conversation.spawned_from = Some(issue_id);
+        conversation.session_settings = SessionSettings {
+            image: Some("conversation-image".to_string()),
+            ..SessionSettings::default()
+        };
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let session = spawned_session(&state, &conversation_id).await;
+        assert_eq!(
+            session.image.as_deref(),
+            Some("conversation-image"),
+            "conversation image must beat status image and project image"
+        );
+        assert_eq!(
+            session.cpu_limit.as_deref(),
+            Some("200m"),
+            "status cpu_limit must beat project cpu_limit when conversation is unset"
+        );
+        assert_eq!(
+            session.memory_limit.as_deref(),
+            Some("128Mi"),
+            "project memory_limit must surface when both conversation and status are unset"
+        );
     }
 }

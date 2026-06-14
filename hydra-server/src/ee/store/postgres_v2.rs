@@ -1286,10 +1286,11 @@ impl PostgresStoreV2 {
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
+        let session_settings_json = project_session_settings_to_json(&project.session_settings)?;
         let query = format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+             (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, session_settings_json) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -1302,6 +1303,7 @@ impl PostgresStoreV2 {
             .bind(project.prompt_path.as_deref())
             .bind(project.priority)
             .bind(next_status_sequence)
+            .bind(session_settings_json.as_deref())
             .execute(executor)
             .await
             .map_err(|err| {
@@ -1331,6 +1333,14 @@ impl PostgresStoreV2 {
             row.priority,
         );
         project.prompt_path = row.prompt_path.clone();
+        project.session_settings = match row.session_settings_json.as_deref() {
+            Some(json) => serde_json::from_str(json).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to deserialize project session_settings: {e}"
+                ))
+            })?,
+            None => Default::default(),
+        };
         Ok(project)
     }
 
@@ -1569,7 +1579,7 @@ impl PostgresStoreV2 {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
             "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
-             prompt_path, priority, next_status_sequence \
+             prompt_path, priority, next_status_sequence, session_settings_json \
              FROM {TABLE_PROJECTS} \
              WHERE id = $1 AND is_latest = true \
              FOR UPDATE"
@@ -1603,8 +1613,8 @@ impl PostgresStoreV2 {
         let actor_json = actor_to_json(actor);
         sqlx::query(&format!(
             "INSERT INTO {TABLE_PROJECTS} \
-             (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+             (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, session_settings_json) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
         ))
         .bind(id.as_ref())
         .bind(next_version_i64)
@@ -1616,6 +1626,7 @@ impl PostgresStoreV2 {
         .bind(row.prompt_path.as_deref())
         .bind(row.priority)
         .bind(next_status_sequence)
+        .bind(row.session_settings_json.as_deref())
         .execute(&mut **tx)
         .await
         .map_err(map_sqlx_error)?;
@@ -1981,6 +1992,10 @@ struct ProjectRow {
     // `get_project`/`list_projects` sanity.
     #[allow(dead_code)]
     next_status_sequence: i64,
+    // No `#[sqlx(default)]`: every SELECT on `metis.projects` must
+    // project `session_settings_json`. NULL deserializes to
+    // `SessionSettings::default()` in `row_to_project`.
+    session_settings_json: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2547,6 +2562,22 @@ fn status_session_settings_to_json(
     }
     let json = serde_json::to_string(settings).map_err(|e| {
         StoreError::Internal(format!("failed to serialize status session_settings: {e}"))
+    })?;
+    Ok(Some(json))
+}
+
+/// Serialize a project-level [`ApiSessionSettings`] for storage. Empty
+/// overrides round-trip as SQL NULL so a SELECT that observes NULL
+/// rebuilds `SessionSettings::default()` — the wire shape and the
+/// on-disk shape agree on "no override".
+fn project_session_settings_to_json(
+    settings: &ApiSessionSettings,
+) -> Result<Option<String>, StoreError> {
+    if ApiSessionSettings::is_default(settings) {
+        return Ok(None);
+    }
+    let json = serde_json::to_string(settings).map_err(|e| {
+        StoreError::Internal(format!("failed to serialize project session_settings: {e}"))
     })?;
     Ok(Some(json))
 }
@@ -4216,7 +4247,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
             "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = $1) AS creation_time, \
-             prompt_path, priority, next_status_sequence \
+             prompt_path, priority, next_status_sequence, session_settings_json \
              FROM {TABLE_PROJECTS} \
              WHERE id = $1 \
              ORDER BY version_number DESC \
@@ -4269,7 +4300,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
-             p.prompt_path, p.priority, p.next_status_sequence \
+             p.prompt_path, p.priority, p.next_status_sequence, p.session_settings_json \
              FROM {TABLE_PROJECTS} p \
              WHERE p.is_latest = true AND p.key = $1"
         );
@@ -4326,7 +4357,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time, \
-             p.prompt_path, p.priority, p.next_status_sequence \
+             p.prompt_path, p.priority, p.next_status_sequence, p.session_settings_json \
              FROM {TABLE_PROJECTS} p \
              WHERE p.is_latest = true"
         );
@@ -11599,6 +11630,68 @@ mod tests {
                 status.session_settings,
             );
         }
+    }
+
+    /// Project-level `session_settings` must round-trip through
+    /// `PostgresStoreV2` — exercises the new `metis.projects.session_settings_json`
+    /// column on INSERT (via `add_project`), every SELECT projection
+    /// (`get_project`/`list_projects`), and `row_to_project`. Without
+    /// the column being included in every `ProjectRow` projection, the
+    /// JSON would either be dropped on read or `ProjectRow` would fail to
+    /// decode (no `#[sqlx(default)]`). The SQLite side has a parallel
+    /// guard via `add_projects_session_settings_store_roundtrip` in
+    /// `migration_roundtrip_sqlite.rs`.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore]
+    async fn project_session_settings_round_trips_through_postgres_store(pool: PgStorePool) {
+        use crate::domain::projects::default_project_id;
+        use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
+        use hydra_common::api::v1::projects::ProjectKey;
+        use hydra_common::api::v1::users::Username as ApiUsername;
+
+        let store = PostgresStoreV2::new(pool);
+
+        let mut project = Project::new(
+            ProjectKey::try_new("psprnd").unwrap(),
+            "Project Session Settings Roundtrip".to_string(),
+            Vec::new(),
+            ApiUsername::from("alice"),
+            false,
+            0.0,
+        );
+        let mut session_settings = ApiSessionSettings::default();
+        session_settings.cpu_limit = Some("250m".to_string());
+        session_settings.memory_limit = Some("256Mi".to_string());
+        session_settings.image = Some("hydra-worker:project".to_string());
+        project.session_settings = session_settings.clone();
+        let (id, _) = store.add_project(project, &ActorRef::test()).await.unwrap();
+
+        let fetched = store.get_project(&id, false).await.unwrap();
+        assert_eq!(
+            fetched.item.session_settings, session_settings,
+            "project session_settings must round-trip through get_project"
+        );
+
+        let listed = store.list_projects(false).await.unwrap();
+        let listed_psprnd = listed
+            .iter()
+            .find(|(pid, _)| pid == &id)
+            .map(|(_, versioned)| &versioned.item.session_settings)
+            .expect("psprnd project must appear in list_projects");
+        assert_eq!(
+            listed_psprnd, &session_settings,
+            "project session_settings must round-trip through list_projects"
+        );
+
+        let default = store
+            .get_project(&default_project_id(), false)
+            .await
+            .unwrap();
+        assert!(
+            ApiSessionSettings::is_default(&default.item.session_settings),
+            "default project must round-trip as default session_settings, got {:?}",
+            default.item.session_settings,
+        );
     }
 
     #[sqlx::test(migrations = "./migrations")]

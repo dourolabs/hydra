@@ -274,6 +274,10 @@ struct ProjectRow {
     // `list_projects` sanity.
     #[allow(dead_code)]
     next_status_sequence: i64,
+    // No `#[sqlx(default)]`: every SELECT on `projects` must project
+    // `session_settings_json`. NULL deserializes to
+    // `SessionSettings::default()` in `row_to_project`.
+    session_settings_json: Option<String>,
 }
 
 /// One row from the `statuses` table. Used internally to round-trip
@@ -1101,6 +1105,14 @@ impl SqliteStore {
             row.priority,
         );
         project.prompt_path = row.prompt_path.clone();
+        project.session_settings = match row.session_settings_json.as_deref() {
+            Some(json) => serde_json::from_str(json).map_err(|e| {
+                StoreError::Internal(format!(
+                    "failed to deserialize project session_settings: {e}"
+                ))
+            })?,
+            None => Default::default(),
+        };
         Ok(project)
     }
 
@@ -1212,9 +1224,10 @@ impl SqliteStore {
     where
         E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
     {
+        let session_settings_json = project_session_settings_to_json(&project.session_settings)?;
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
+            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, session_settings_json, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)"
         ))
         .bind(id.as_ref())
         .bind(version_number)
@@ -1226,6 +1239,7 @@ impl SqliteStore {
         .bind(project.prompt_path.as_deref())
         .bind(project.priority)
         .bind(next_status_sequence)
+        .bind(session_settings_json.as_deref())
         .execute(executor)
         .await
         .map_err(|err| {
@@ -1248,7 +1262,7 @@ impl SqliteStore {
     ) -> Result<ProjectRow, StoreError> {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
             "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at, \
-             NULL AS creation_time, prompt_path, priority, next_status_sequence \
+             NULL AS creation_time, prompt_path, priority, next_status_sequence, session_settings_json \
              FROM {TABLE_PROJECTS} \
              WHERE id = ?1 AND is_latest = 1 \
              LIMIT 1"
@@ -1289,8 +1303,8 @@ impl SqliteStore {
 
         let actor_json = actor_to_json_string(actor);
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, is_latest) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
+            "INSERT INTO {TABLE_PROJECTS} (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, session_settings_json, is_latest) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)"
         ))
         .bind(id.as_ref())
         .bind(next_version_i64)
@@ -1302,6 +1316,7 @@ impl SqliteStore {
         .bind(row.prompt_path.as_deref())
         .bind(row.priority)
         .bind(next_status_sequence)
+        .bind(row.session_settings_json.as_deref())
         .execute(&mut **tx)
         .await
         .map_err(map_sqlx_error)?;
@@ -2828,6 +2843,18 @@ fn status_session_settings_to_json(
     }
     let json = serde_json::to_string(settings).map_err(|e| {
         StoreError::Internal(format!("failed to serialize status session_settings: {e}"))
+    })?;
+    Ok(Some(json))
+}
+
+fn project_session_settings_to_json(
+    settings: &ApiSessionSettings,
+) -> Result<Option<String>, StoreError> {
+    if ApiSessionSettings::is_default(settings) {
+        return Ok(None);
+    }
+    let json = serde_json::to_string(settings).map_err(|e| {
+        StoreError::Internal(format!("failed to serialize project session_settings: {e}"))
     })?;
     Ok(Some(json))
 }
@@ -4487,7 +4514,7 @@ impl ReadOnlyStore for SqliteStore {
         let row = sqlx::query_as::<_, ProjectRow>(&format!(
             "SELECT id, version_number, key, name, creator, archived, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = ?1) AS creation_time,
-             prompt_path, priority, next_status_sequence
+             prompt_path, priority, next_status_sequence, session_settings_json
              FROM {TABLE_PROJECTS}
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -4541,7 +4568,7 @@ impl ReadOnlyStore for SqliteStore {
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time,
-             p.prompt_path, p.priority, p.next_status_sequence
+             p.prompt_path, p.priority, p.next_status_sequence, p.session_settings_json
              FROM {TABLE_PROJECTS} p
              WHERE p.is_latest = 1 AND p.key = ?1"
         );
@@ -4599,7 +4626,7 @@ impl ReadOnlyStore for SqliteStore {
         let mut sql = format!(
             "SELECT p.id, p.version_number, p.key, p.name, p.creator, p.archived, p.actor, p.created_at, p.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PROJECTS} WHERE id = p.id) AS creation_time,
-             p.prompt_path, p.priority, p.next_status_sequence
+             p.prompt_path, p.priority, p.next_status_sequence, p.session_settings_json
              FROM {TABLE_PROJECTS} p
              WHERE p.is_latest = 1"
         );
