@@ -1960,10 +1960,14 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
 
     // Multi-action trigger: assert the post-migration `actions` array
     // preserves the source-array order. The PG sibling pins this with
-    // `WITH ORDINALITY ... ORDER BY ord`; the SQLite migration leans on
-    // an explicit `ORDER BY key` over `json_each(actions)`. A
-    // single-action fixture can't catch an ordering regression, so
-    // seed three CreateIssue actions with distinguishable titles.
+    // `WITH ORDINALITY ... ORDER BY ord`; on SQLite the original
+    // 20260722000000 migration relies on the de-facto json_each row
+    // order and the follow-up 20260723000000 migration pins it
+    // contractually with an explicit `ORDER BY key` + `json(...)`
+    // wrap. A single-action fixture can't catch an ordering
+    // regression, so seed three CreateIssue actions with
+    // distinguishable titles and re-run both migrations in sequence
+    // (the production order) on the freshly-seeded row.
     let multi_trigger_id = "t-migmult";
     let multi_actions = serde_json::json!([
         {
@@ -2015,6 +2019,12 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("re-run 20260722000000 sqlite rewrite on multi-action seeded row")?;
+    sqlx::raw_sql(include_str!(
+        "../sqlite-migrations/20260723000000_tighten_trigger_action_order.sql"
+    ))
+    .execute(pool)
+    .await
+    .context("re-run 20260723000000 sqlite action-order tightening on multi-action seeded row")?;
 
     let multi_tid =
         TriggerId::from_str(multi_trigger_id).context("parse multi smoke trigger id")?;
