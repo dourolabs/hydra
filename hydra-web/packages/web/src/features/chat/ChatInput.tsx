@@ -1,39 +1,35 @@
-import {
-  useCallback,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
-import { Button, Kbd } from "@hydra/ui";
+import { useCallback, useLayoutEffect, useRef, type KeyboardEvent } from "react";
+import { Button, Icons } from "@hydra/ui";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConversationDraft } from "./useConversationDraft";
 import styles from "./ChatInput.module.css";
 
-const MIN_HEIGHT_PX = 56;
+const MIN_HEIGHT_PX = 36;
 const MAX_HEIGHT_PX = 480;
 
 interface ChatInputProps {
   conversationId: string;
   onSend: (content: string) => void;
   disabled?: boolean;
-  onEndChat?: () => void;
-  endChatDisabled?: boolean;
 }
 
-export function ChatInput({
-  conversationId,
-  onSend,
-  disabled,
-  onEndChat,
-  endChatDisabled,
-}: ChatInputProps) {
+export function ChatInput({ conversationId, onSend, disabled }: ChatInputProps) {
   const { value, setValue, clear } = useConversationDraft(conversationId);
 
   const isDisabled = disabled;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [height, setHeight] = useState<number | null>(null);
   const isMobile = useIsMobile();
+
+  // Auto-grow: re-measure scrollHeight whenever the value changes and clamp
+  // the textarea height to [MIN, MAX]. Resetting to MIN_HEIGHT first lets
+  // scrollHeight shrink back down when the user deletes lines.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = `${MIN_HEIGHT_PX}px`;
+    const next = Math.max(MIN_HEIGHT_PX, Math.min(MAX_HEIGHT_PX, el.scrollHeight));
+    el.style.height = `${next}px`;
+  }, [value]);
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
@@ -55,47 +51,12 @@ export function ChatInput({
     [handleSend, isMobile],
   );
 
-  const handleResizePointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    const textareaEl = textareaRef.current;
-    if (!textareaEl) return;
-    if (e.button !== 0) return;
-    e.preventDefault();
-
-    const startY = e.clientY;
-    const startHeight = textareaEl.offsetHeight;
-
-    const handleMove = (ev: PointerEvent) => {
-      // Dragging up (negative delta) grows the textarea; the composer is
-      // anchored to the bottom of the chat pane so the top edge visually
-      // moves up while the action bar stays put.
-      const delta = ev.clientY - startY;
-      const next = Math.max(MIN_HEIGHT_PX, Math.min(MAX_HEIGHT_PX, startHeight - delta));
-      setHeight(next);
-    };
-
-    const handleUp = () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-      window.removeEventListener("pointercancel", handleUp);
-    };
-
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-    window.addEventListener("pointercancel", handleUp);
-  }, []);
+  const sendDisabled = isDisabled || !value.trim();
 
   return (
     <div className={styles.composer}>
       <div className={styles.inner}>
         <div className={styles.textareaWrapper}>
-          <div
-            className={styles.resizeHandle}
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="Resize chat input"
-            onPointerDown={handleResizePointerDown}
-            data-testid="chat-input-resize-handle"
-          />
           <textarea
             ref={textareaRef}
             className={styles.textarea}
@@ -104,30 +65,17 @@ export function ChatInput({
             onKeyDown={handleKeyDown}
             placeholder="Type a message…"
             disabled={isDisabled}
-            rows={3}
-            style={height != null ? { height: `${height}px` } : undefined}
+            rows={1}
           />
-        </div>
-        <div className={styles.actions}>
-          {!isMobile && (
-            <span className={styles.hint}>
-              <Kbd>↵</Kbd> to send · <Kbd>⇧</Kbd>
-              <Kbd>↵</Kbd> for newline
-            </span>
-          )}
-          <span className={styles.actionsSpacer} />
-          {onEndChat && (
-            <Button variant="secondary" size="sm" onClick={onEndChat} disabled={endChatDisabled}>
-              End chat
-            </Button>
-          )}
           <Button
+            className={styles.sendButton}
             variant="primary"
-            size="sm"
             onClick={handleSend}
-            disabled={isDisabled || !value.trim()}
+            disabled={sendDisabled}
+            aria-label="Send"
+            title={isMobile ? undefined : "↵ to send · ⇧↵ for newline"}
           >
-            Send
+            <Icons.IconSend size={16} />
           </Button>
         </div>
       </div>

@@ -12,9 +12,18 @@
   width: 100%;
   margin: 0 auto;
   display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.headLeft {
+  display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  flex: 1;
 }
 
 .title {
@@ -51,11 +60,39 @@
   padding: 0 8px;
 }
 
+.headRight {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 @media (max-width: 768px) {
-  /* On mobile the breadcrumb covers the title and the page chrome is already
-     tight — drop the entire chat-header (H1 + meta) so the message list has
-     the full vertical space. */
+  /* On mobile the breadcrumb in SiteHeader already names the conversation,
+     so the H1 + meta column is redundant. When there's no action button to
+     render (closed conversation), the whole header collapses out of the
+     layout. When End chat is present, we render a thin row with just the
+     button on the right and visually hide the title/meta — keeping them in
+     the DOM for screen readers and tests. */
   .header {
     display: none;
+  }
+  .header[data-has-action="true"] {
+    display: flex;
+    padding: 8px 16px;
+  }
+  .header[data-has-action="true"] .inner {
+    justify-content: flex-end;
+    align-items: center;
+  }
+  .header[data-has-action="true"] .headLeft {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 }

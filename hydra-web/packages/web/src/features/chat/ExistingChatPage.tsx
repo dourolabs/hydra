@@ -203,7 +203,11 @@ export function ExistingChatPage({ conversationId }: { conversationId: string })
         data-mobile-active={chatPaneActive ? "true" : "false"}
         data-testid="chat-pane"
       >
-        <ChatHeader conversation={conversation} />
+        <ChatHeader
+          conversation={conversation}
+          onEndChat={canClose ? handleEndChat : undefined}
+          endChatDisabled={closeMutation.isPending}
+        />
         <ChatMessageList
           events={events}
           agentName={conversation.agent_name}
@@ -215,8 +219,6 @@ export function ExistingChatPage({ conversationId }: { conversationId: string })
           conversationId={conversationId}
           onSend={handleSend}
           disabled={sendMutation.isPending}
-          onEndChat={canClose ? handleEndChat : undefined}
-          endChatDisabled={closeMutation.isPending}
         />
       </div>
       <ChatRightPanel

@@ -273,3 +273,9 @@ export const IconNoWrap = (p: IconProps) => (
     <path d="M2 12h12" />
   </IconBase>
 );
+
+export const IconSend = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M2.5 8L13.5 2.5L10 13.5L7.5 9L2.5 8z" fill="currentColor" stroke="currentColor" />
+  </IconBase>
+);
