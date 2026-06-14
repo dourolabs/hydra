@@ -1,3 +1,4 @@
+use crate::domain::comments::Comment;
 use crate::domain::conversations::Conversation;
 use crate::domain::{
     actors::ActorRef,
@@ -79,6 +80,10 @@ pub enum MutationPayload {
         session_id: SessionId,
         actor: ActorRef,
     },
+    Comment {
+        comment: Comment,
+        actor: ActorRef,
+    },
 }
 
 impl MutationPayload {
@@ -91,7 +96,8 @@ impl MutationPayload {
             | MutationPayload::Label { actor, .. }
             | MutationPayload::Conversation { actor, .. }
             | MutationPayload::SessionEvent { actor, .. }
-            | MutationPayload::SessionState { actor, .. } => actor,
+            | MutationPayload::SessionState { actor, .. }
+            | MutationPayload::Comment { actor, .. } => actor,
         }
     }
 }
@@ -118,6 +124,7 @@ pub enum EventType {
     ConversationUpdated,
     SessionEventCreated,
     SessionStateUpdated,
+    CommentCreated,
 }
 
 /// Events emitted when server-side entities are mutated.
@@ -255,6 +262,13 @@ pub enum ServerEvent {
         timestamp: DateTime<Utc>,
         payload: Arc<MutationPayload>,
     },
+    CommentCreated {
+        seq: u64,
+        issue_id: IssueId,
+        sequence: u64,
+        timestamp: DateTime<Utc>,
+        payload: Arc<MutationPayload>,
+    },
 }
 
 /// A typed entity ID extracted from a [`ServerEvent`].
@@ -306,6 +320,8 @@ impl ServerEvent {
             | ServerEvent::SessionStateUpdated { session_id, .. } => {
                 ("sessions", EntityId::Session(session_id))
             }
+
+            ServerEvent::CommentCreated { issue_id, .. } => ("comments", EntityId::Issue(issue_id)),
         }
     }
 
@@ -329,7 +345,8 @@ impl ServerEvent {
             | ServerEvent::ConversationCreated { seq, .. }
             | ServerEvent::ConversationUpdated { seq, .. }
             | ServerEvent::SessionEventCreated { seq, .. }
-            | ServerEvent::SessionStateUpdated { seq, .. } => *seq,
+            | ServerEvent::SessionStateUpdated { seq, .. }
+            | ServerEvent::CommentCreated { seq, .. } => *seq,
         }
     }
 
@@ -353,7 +370,8 @@ impl ServerEvent {
             | ServerEvent::ConversationCreated { payload, .. }
             | ServerEvent::ConversationUpdated { payload, .. }
             | ServerEvent::SessionEventCreated { payload, .. }
-            | ServerEvent::SessionStateUpdated { payload, .. } => payload,
+            | ServerEvent::SessionStateUpdated { payload, .. }
+            | ServerEvent::CommentCreated { payload, .. } => payload,
         }
     }
 
@@ -390,6 +408,7 @@ impl ServerEvent {
             ServerEvent::ConversationUpdated { .. } => EventType::ConversationUpdated,
             ServerEvent::SessionEventCreated { .. } => EventType::SessionEventCreated,
             ServerEvent::SessionStateUpdated { .. } => EventType::SessionStateUpdated,
+            ServerEvent::CommentCreated { .. } => EventType::CommentCreated,
         }
     }
 }
@@ -693,6 +712,19 @@ impl EventBus {
             seq: self.next_seq(),
             session_id,
             timestamp: Utc::now(),
+            payload,
+        });
+    }
+
+    pub fn emit_comment_created(&self, issue_id: IssueId, comment: Comment, actor: ActorRef) {
+        let sequence = comment.sequence;
+        let timestamp = comment.created_at;
+        let payload = Arc::new(MutationPayload::Comment { comment, actor });
+        self.send(ServerEvent::CommentCreated {
+            seq: self.next_seq(),
+            issue_id,
+            sequence,
+            timestamp,
             payload,
         });
     }
@@ -1328,7 +1360,10 @@ impl StoreWithEvents {
         body: String,
         actor: &ActorRef,
     ) -> Result<crate::domain::comments::Comment, StoreError> {
-        self.inner.add_comment(issue_id, body, actor).await
+        let comment = self.inner.add_comment(issue_id, body, actor).await?;
+        self.event_bus
+            .emit_comment_created(issue_id.clone(), comment.clone(), actor.clone());
+        Ok(comment)
     }
 
     // ---- Label association mutations ----
@@ -3205,6 +3240,67 @@ mod tests {
             }
             other => panic!("expected SessionStateUpdated, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn add_comment_emits_comment_created() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+
+        let (issue_id, _) = store
+            .add_issue_with_actor(dummy_issue(), ActorRef::test())
+            .await
+            .unwrap();
+        // Subscribe AFTER issue creation so we only see the comment event.
+        let mut rx = bus.subscribe();
+
+        let comment = store
+            .add_comment(&issue_id, "hello world".to_string(), &ActorRef::test())
+            .await
+            .unwrap();
+        assert_eq!(comment.sequence, 1);
+
+        let event = rx.recv().await.expect("should receive CommentCreated");
+        match &event {
+            ServerEvent::CommentCreated {
+                issue_id: eid,
+                sequence,
+                payload,
+                ..
+            } => {
+                assert_eq!(*eid, issue_id);
+                assert_eq!(*sequence, 1);
+                match payload.as_ref() {
+                    MutationPayload::Comment {
+                        comment: c, actor, ..
+                    } => {
+                        assert_eq!(c.body, "hello world");
+                        assert_eq!(c.issue_id, issue_id);
+                        assert_eq!(c.sequence, 1);
+                        assert_eq!(*actor, ActorRef::test());
+                    }
+                    other => panic!("expected Comment payload, got {other:?}"),
+                }
+            }
+            other => panic!("expected CommentCreated, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_comment_failure_does_not_emit() {
+        let bus = Arc::new(EventBus::new());
+        let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let store = StoreWithEvents::new(inner, bus.clone());
+        let mut rx = bus.subscribe();
+
+        // No issue exists for this id — add_comment should fail and no event emit.
+        let bogus = IssueId::new();
+        let result = store
+            .add_comment(&bogus, "wont land".to_string(), &ActorRef::test())
+            .await;
+        assert!(result.is_err());
+        assert!(rx.try_recv().is_err(), "no event should be broadcast");
     }
 
     #[tokio::test]

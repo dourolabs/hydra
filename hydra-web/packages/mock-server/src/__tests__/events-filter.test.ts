@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { SessionEvent } from "@hydra/api";
+import type { ActorRef, SessionEvent } from "@hydra/api";
 import { startMockServer, type MockServerHandle, store } from "../index.js";
 import { appendSessionEvent } from "../routes/sessions.js";
+import { appendIssueComment } from "../routes/issues.js";
 import { eventCategory } from "../routes/events.js";
 
 let server: MockServerHandle;
@@ -119,6 +120,7 @@ describe("eventCategory", () => {
     expect(eventCategory("document_updated")).toBe("documents");
     expect(eventCategory("label_created")).toBe("labels");
     expect(eventCategory("conversation_created")).toBe("conversations");
+    expect(eventCategory("comment_created")).toBe("comments");
   });
 
   it("returns null for non-entity event types", () => {
@@ -195,6 +197,81 @@ describe("/v1/events typesFilter", () => {
       "types=patches",
       () => appendSessionEvent(store, sessionId, makeSessionEvent()),
       (evts) => evts.some((e) => e.event === "session_event_created"),
+      300,
+    );
+    expect(matched).toBe(false);
+  });
+
+  it("types=issues delivers comment_created (ride-along)", async () => {
+    const issuesResp = await fetch(`${baseUrl}/v1/issues?limit=1`, {
+      headers: { Authorization: "Bearer dev-token-12345" },
+    });
+    const { issues } = (await issuesResp.json()) as {
+      issues: Array<{ issue_id: string }>;
+    };
+    const issueId = issues[0].issue_id;
+    const actor: ActorRef = {
+      Authenticated: { actor_id: { User: { name: "alice" } } },
+    };
+
+    const { matched } = await openStreamAndCollect(
+      "types=issues",
+      () => {
+        appendIssueComment(store, issueId, "ride-along comment", actor);
+      },
+      (evts) =>
+        evts.some((e) => {
+          if (e.event !== "comment_created") return false;
+          try {
+            return JSON.parse(e.data).entity_id === issueId;
+          } catch {
+            return false;
+          }
+        }),
+    );
+    expect(matched).toBe(true);
+  });
+
+  it("types=comments also delivers comment_created", async () => {
+    const issuesResp = await fetch(`${baseUrl}/v1/issues?limit=1`, {
+      headers: { Authorization: "Bearer dev-token-12345" },
+    });
+    const { issues } = (await issuesResp.json()) as {
+      issues: Array<{ issue_id: string }>;
+    };
+    const issueId = issues[0].issue_id;
+    const actor: ActorRef = {
+      Authenticated: { actor_id: { User: { name: "alice" } } },
+    };
+
+    const { matched } = await openStreamAndCollect(
+      "types=comments",
+      () => {
+        appendIssueComment(store, issueId, "direct-types comment", actor);
+      },
+      (evts) => evts.some((e) => e.event === "comment_created"),
+    );
+    expect(matched).toBe(true);
+  });
+
+  it("types=sessions does NOT match comment_created", async () => {
+    const issuesResp = await fetch(`${baseUrl}/v1/issues?limit=1`, {
+      headers: { Authorization: "Bearer dev-token-12345" },
+    });
+    const { issues } = (await issuesResp.json()) as {
+      issues: Array<{ issue_id: string }>;
+    };
+    const issueId = issues[0].issue_id;
+    const actor: ActorRef = {
+      Authenticated: { actor_id: { User: { name: "alice" } } },
+    };
+
+    const { matched } = await openStreamAndCollect(
+      "types=sessions",
+      () => {
+        appendIssueComment(store, issueId, "should-not-arrive", actor);
+      },
+      (evts) => evts.some((e) => e.event === "comment_created"),
       300,
     );
     expect(matched).toBe(false);

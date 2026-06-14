@@ -59,6 +59,46 @@ export function seedIssueComment(
   commentsByIssue.set(issueId, list);
 }
 
+/**
+ * Append a Comment to the per-issue log and emit a `comment_created` SSE
+ * event on the global `/v1/events` stream. Mirrors `appendSessionEvent`
+ * for session events and matches the wire shape produced by
+ * `hydra-server/src/app/event_bus.rs::add_comment` — `entity_type =
+ * "comment"`, `entity_id = issueId`, `entity = comment`, and `version`
+ * = the new comment's 1-based per-issue sequence.
+ */
+export function appendIssueComment(
+  store: Store,
+  issueId: string,
+  body: string,
+  actor: ActorRef,
+): Comment {
+  const list = commentsByIssue.get(issueId) ?? [];
+  const nextSeq = list.length > 0 ? Number(list[list.length - 1].sequence) + 1 : 1;
+  const comment: Comment = {
+    issue_id: issueId,
+    sequence: BigInt(nextSeq),
+    body,
+    actor,
+    created_at: new Date().toISOString(),
+  };
+  list.push(comment);
+  commentsByIssue.set(issueId, list);
+  store.emitSideEvent(
+    "comment_created",
+    "comment",
+    issueId,
+    nextSeq,
+    comment.created_at,
+    comment,
+  );
+  return comment;
+}
+
+export function getIssueCommentsFor(issueId: string): Comment[] {
+  return commentsByIssue.get(issueId) ?? [];
+}
+
 function toVersionRecord(
   issueId: string,
   version: number,
@@ -463,9 +503,6 @@ export function createIssueRoutes(store: Store): Hono {
     if (!text) {
       return c.json({ error: "comment body must not be empty or whitespace-only" }, 400);
     }
-    const list = commentsByIssue.get(id) ?? [];
-    const nextSeq =
-      list.length > 0 ? Number(list[list.length - 1].sequence) + 1 : 1;
     // Mock actor: the auth middleware injects an actor on the request context,
     // but the mock-server's store doesn't surface it; use a generic User actor
     // matching the seeded fixture conventions so the UI renders something.
@@ -474,15 +511,7 @@ export function createIssueRoutes(store: Store): Hono {
         actor_id: { User: { name: "alice" } },
       },
     };
-    const comment: Comment = {
-      issue_id: id,
-      sequence: BigInt(nextSeq),
-      body: text,
-      actor,
-      created_at: new Date().toISOString(),
-    };
-    list.push(comment);
-    commentsByIssue.set(id, list);
+    const comment = appendIssueComment(store, id, text, actor);
     const resp: AddCommentResponse = { comment };
     return c.json(resp, 201);
   });
