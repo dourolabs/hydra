@@ -230,6 +230,8 @@ struct RawAppConfig {
     #[serde(default)]
     pub build_cache: BuildCacheSection,
     #[serde(default)]
+    pub events: EventsSection,
+    #[serde(default)]
     pub policies: Option<PolicyConfig>,
 }
 
@@ -245,6 +247,7 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     pub background: BackgroundSection,
     pub build_cache: BuildCacheSection,
+    pub events: EventsSection,
     /// Optional policy engine configuration. When absent, all built-in
     /// policies are enabled with default parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -266,6 +269,7 @@ impl<'de> Deserialize<'de> for AppConfig {
             auth: raw.auth,
             background: raw.background,
             build_cache: raw.build_cache,
+            events: raw.events,
             policies: raw.policies,
         })
     }
@@ -672,6 +676,33 @@ impl GithubAppSection {
         );
         Ok(())
     }
+}
+
+/// SSE / event-bus configuration.
+#[derive(Debug, Deserialize, Clone, Serialize)]
+pub struct EventsSection {
+    /// Maximum number of recent `ServerEvent`s retained for SSE reconnect
+    /// replay. When a client reconnects with `Last-Event-ID: N` and
+    /// `N >= oldest_buffered_seq`, the server replays events `N+1..current`
+    /// without forcing a broad cache invalidation. When the client is
+    /// further behind, the server falls back to a `resync` event.
+    ///
+    /// Memory cost: each `ServerEvent` carries an `Arc<MutationPayload>`,
+    /// typically 1-10KB; default 2000 ≈ 2-20MB resident.
+    #[serde(default = "default_replay_buffer_capacity")]
+    pub replay_buffer_capacity: usize,
+}
+
+impl Default for EventsSection {
+    fn default() -> Self {
+        Self {
+            replay_buffer_capacity: default_replay_buffer_capacity(),
+        }
+    }
+}
+
+fn default_replay_buffer_capacity() -> usize {
+    crate::app::event_bus::DEFAULT_REPLAY_BUFFER_CAPACITY
 }
 
 #[derive(Debug, Deserialize, Clone, Default, Serialize)]
@@ -1430,6 +1461,62 @@ github_app:
             config.hydra.anthropic_api_key.as_deref(),
             Some("test-anthropic-api-key")
         );
+    }
+
+    #[test]
+    fn events_section_defaults_to_capacity_when_omitted() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: local
+github_token: "ghp_test_token"
+
+job:
+  default_image: "hydra-worker:latest"
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(
+            config.events.replay_buffer_capacity,
+            crate::app::event_bus::DEFAULT_REPLAY_BUFFER_CAPACITY
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn events_section_honors_override() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("config.yaml");
+        fs::write(
+            &path,
+            format!(
+                r#"
+hydra:
+  HYDRA_SECRET_ENCRYPTION_KEY: "{TEST_SECRET_KEY}"
+
+auth_mode: local
+github_token: "ghp_test_token"
+
+job:
+  default_image: "hydra-worker:latest"
+
+events:
+  replay_buffer_capacity: 512
+"#
+            ),
+        )?;
+
+        let config = AppConfig::load(&path)?;
+        assert_eq!(config.events.replay_buffer_capacity, 512);
+        Ok(())
     }
 
     #[test]

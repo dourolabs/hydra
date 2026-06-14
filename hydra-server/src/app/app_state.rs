@@ -105,7 +105,7 @@ impl AppState {
         job_engine: Arc<dyn JobEngine>,
         secret_manager: Arc<SecretManager>,
     ) -> Self {
-        let event_bus = Arc::new(EventBus::new());
+        let event_bus = Arc::new(EventBus::new(config.events.replay_buffer_capacity));
         let policy_engine = Self::build_policy_engine(config.policies.as_ref());
         Self {
             config,

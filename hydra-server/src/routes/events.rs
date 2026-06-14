@@ -37,10 +37,15 @@ pub async fn get_events(
     Query(query): Query<EventsQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<Response, ApiError> {
-    let last_event_id = headers
+    // Browser EventSource only attaches `Last-Event-ID` on its built-in
+    // auto-retry path; manual force-close + reconstruct (used by visibility
+    // recovery flows) has to carry the cursor via query param. Header wins
+    // when both are present so we stay aligned with the standard.
+    let header_last_event_id = headers
         .get(LAST_EVENT_ID_HEADER)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
+    let last_event_id = header_last_event_id.or(query.last_event_id);
 
     let filter = EventFilter::from_query(&query).map_err(ApiError::bad_request)?;
 
@@ -51,10 +56,11 @@ pub async fn get_events(
         "SSE events stream requested"
     );
 
-    // Subscribe to the event bus before taking the snapshot so we don't miss
-    // any events emitted between snapshot and stream start.
-    let mut receiver = state.subscribe();
-    let current_seq = state.event_bus().current_seq();
+    // Atomic snapshot: subscribe + take current_seq + clone replay buffer
+    // under the same lock so no event slips between snapshot and broadcast.
+    let snapshot = state.event_bus().subscribe_with_snapshot();
+    let mut receiver = snapshot.receiver;
+    let current_seq = snapshot.current_seq;
 
     let (tx, rx) = mpsc::unbounded::<Result<Event, Infallible>>();
 
@@ -87,10 +93,33 @@ pub async fn get_events(
                 }
             }
             Some(last_seq) => {
-                // Reconnection: check if we can replay from the requested position.
-                // The broadcast channel doesn't support replay, so if the client
-                // reconnects, we send a resync event telling it to re-fetch state.
-                if last_seq < current_seq {
+                if last_seq >= current_seq {
+                    // Client is already at or ahead of us — nothing to
+                    // replay. Continue straight to the live broadcast.
+                } else if snapshot
+                    .oldest_seq
+                    .is_some_and(|oldest| last_seq + 1 >= oldest)
+                {
+                    // Replay possible: every event with seq > last_seq is
+                    // either in the buffer or will arrive on the live
+                    // broadcast (no gap). Stream the buffered tail first.
+                    for event in &snapshot.buffered {
+                        if event.seq() <= last_seq {
+                            continue;
+                        }
+                        if !filter.matches(event) {
+                            continue;
+                        }
+                        let sse_event = build_sse_event(event, &state).await;
+                        if tx.unbounded_send(Ok(sse_event)).is_err() {
+                            return;
+                        }
+                    }
+                } else {
+                    // Client is too far behind (or buffer is empty / does
+                    // not reach back to last_seq + 1). Fall back to the
+                    // existing resync signal so the client invalidates and
+                    // refetches.
                     let resync = ResyncEventData {
                         reason: "reconnected".to_string(),
                         current_seq,

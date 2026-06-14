@@ -2,8 +2,8 @@ use crate::{
     app::{AppState, Repository, ServiceState, default_policy_config},
     config::{
         AppConfig, AuthConfig, AutoArchiveSchedulerConfig, BackgroundSection, BuildCacheSection,
-        GithubAppSection, HydraSection, JobEngineConfig, JobSection, SchedulerSection,
-        StorageConfig, WorkerSchedulerConfig,
+        EventsSection, GithubAppSection, HydraSection, JobEngineConfig, JobSection,
+        SchedulerSection, StorageConfig, WorkerSchedulerConfig,
     },
     domain::{
         actors::{Actor, ActorRef},
@@ -93,6 +93,7 @@ pub fn test_app_config() -> AppConfig {
             ..BackgroundSection::default()
         },
         build_cache: BuildCacheSection::default(),
+        events: EventsSection::default(),
         policies: Some(default_policy_config()),
     }
 }

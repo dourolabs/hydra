@@ -147,6 +147,16 @@ github_app:
     REPLACE_WITH_PRIVATE_KEY
     -----END RSA PRIVATE KEY-----
 
+events:
+  # Maximum number of recent ServerEvents retained for SSE reconnect replay.
+  # On reconnect with `Last-Event-ID: N` (header) or `?last_event_id=N`, the
+  # server streams events N+1..current_seq from this buffer instead of forcing
+  # the client to broad-invalidate caches. Defaults to 2000. Falls back to a
+  # `resync` event when the client is too far behind to be served from the
+  # buffer. Memory cost: each event carries an Arc<MutationPayload>, typically
+  # 1-10KB; 2000 ≈ 2-20MB resident.
+  # replay_buffer_capacity: 2000
+
 background:
   github_poller:
     # Polling interval (in seconds) used when syncing GitHub PRs for patches.

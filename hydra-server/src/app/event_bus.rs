@@ -29,8 +29,9 @@ use hydra_common::{
     issues::IssueId,
     repositories::{Repository, SearchRepositoriesQuery},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::broadcast;
 
@@ -413,24 +414,58 @@ impl ServerEvent {
     }
 }
 
+/// Broadcast channel capacity (per-subscriber slow-consumer ring). Distinct
+/// from the SSE replay buffer below.
 const DEFAULT_BUFFER_SIZE: usize = 1024;
+
+/// Default capacity of the SSE reconnect replay buffer. Override via
+/// `events.replay_buffer_capacity` in the server config.
+pub const DEFAULT_REPLAY_BUFFER_CAPACITY: usize = 2000;
+
+/// Atomic snapshot returned by [`EventBus::subscribe_with_snapshot`].
+pub struct EventBusSnapshot {
+    /// Live broadcast receiver. Events with `seq >= current_seq` arrive here.
+    pub receiver: broadcast::Receiver<ServerEvent>,
+    /// The next sequence number that will be assigned to a future event, at
+    /// the moment the snapshot was taken. Equivalently: one past the highest
+    /// already-emitted seq.
+    pub current_seq: u64,
+    /// All events currently retained in the replay buffer, in seq-ascending
+    /// order. Every event has `seq < current_seq`.
+    pub buffered: Vec<ServerEvent>,
+    /// Seq of the oldest event in the buffer, or `None` if the buffer is
+    /// empty. A client with `last_event_id >= oldest_seq` can be served from
+    /// the buffer without a resync.
+    pub oldest_seq: Option<u64>,
+}
 
 /// Broadcast-based event bus for notifying subscribers of entity mutations.
 pub struct EventBus {
     sender: broadcast::Sender<ServerEvent>,
     next_seq: AtomicU64,
+    /// Recent-events ring buffer for SSE reconnect replay. The same mutex
+    /// also guards seq allocation + broadcast send so that
+    /// `subscribe_with_snapshot` can produce an atomic snapshot — no event
+    /// can land between the snapshot's `current_seq` read and the
+    /// subscriber's first broadcast receive.
+    replay: Mutex<VecDeque<ServerEvent>>,
+    replay_capacity: usize,
 }
 
 impl EventBus {
-    pub fn new() -> Self {
+    pub fn new(replay_capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(DEFAULT_BUFFER_SIZE);
         Self {
             sender,
             next_seq: AtomicU64::new(1),
+            replay: Mutex::new(VecDeque::with_capacity(replay_capacity)),
+            replay_capacity,
         }
     }
 
-    /// Returns a new receiver that will get all future events.
+    /// Returns a new receiver that will get all future events. Does not
+    /// snapshot the replay buffer — callers that need reconnect replay
+    /// should use [`Self::subscribe_with_snapshot`] instead.
     pub fn subscribe(&self) -> broadcast::Receiver<ServerEvent> {
         self.sender.subscribe()
     }
@@ -440,16 +475,59 @@ impl EventBus {
         self.next_seq.load(Ordering::Relaxed)
     }
 
+    /// Subscribe to the bus AND snapshot the current replay buffer atomically.
+    ///
+    /// Invariant: the returned `current_seq` is the next-to-be-assigned seq
+    /// at snapshot time. Every event in `buffered` has `seq < current_seq`,
+    /// and every event received on `receiver` will have `seq >= current_seq`.
+    /// No event can "slip through the gap": the same mutex guards seq
+    /// allocation + broadcast send, so by the time we hold the lock here all
+    /// previously-allocated seqs have been broadcast and are either in the
+    /// buffer or were evicted past capacity.
+    pub fn subscribe_with_snapshot(&self) -> EventBusSnapshot {
+        let guard = self.replay.lock().expect("replay buffer mutex poisoned");
+        // Subscribe BEFORE reading current_seq + cloning buffer so that any
+        // emit() waiting on the lock will, once we drop the guard, broadcast
+        // to the new receiver with seq >= our snapshot's current_seq.
+        let receiver = self.sender.subscribe();
+        let current_seq = self.next_seq.load(Ordering::Relaxed);
+        let buffered: Vec<ServerEvent> = guard.iter().cloned().collect();
+        let oldest_seq = guard.front().map(|e| e.seq());
+        drop(guard);
+        EventBusSnapshot {
+            receiver,
+            current_seq,
+            buffered,
+            oldest_seq,
+        }
+    }
+
     /// Allocates the next monotonic sequence number.
+    ///
+    /// Callers MUST hold the replay-buffer mutex across alloc + broadcast +
+    /// buffer push so that snapshot atomicity holds. See [`Self::send`].
     fn next_seq(&self) -> u64 {
         self.next_seq.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Sends an event on the bus. If there are no active receivers the event is
-    /// silently dropped (this is normal during startup or when no SSE clients
-    /// are connected).
+    /// Sends an event on the bus. If there are no active receivers the
+    /// broadcast send silently fails (this is normal during startup or when
+    /// no SSE clients are connected); the event is still recorded in the
+    /// replay buffer.
+    ///
+    /// Locks the replay buffer across the broadcast send so that
+    /// [`Self::subscribe_with_snapshot`] sees a consistent view (every
+    /// already-emitted seq is either in the buffer or was evicted, never
+    /// lost in transit).
     fn send(&self, event: ServerEvent) {
-        let _ = self.sender.send(event);
+        let mut guard = self.replay.lock().expect("replay buffer mutex poisoned");
+        let _ = self.sender.send(event.clone());
+        if self.replay_capacity > 0 {
+            guard.push_back(event);
+            while guard.len() > self.replay_capacity {
+                guard.pop_front();
+            }
+        }
     }
 
     pub fn emit_issue_created(
@@ -732,7 +810,7 @@ impl EventBus {
 
 impl Default for EventBus {
     fn default() -> Self {
-        Self::new()
+        Self::new(DEFAULT_REPLAY_BUFFER_CAPACITY)
     }
 }
 
@@ -2031,7 +2109,7 @@ mod tests {
 
     #[test]
     fn seq_numbers_are_monotonically_increasing() {
-        let bus = EventBus::new();
+        let bus = EventBus::default();
         let s1 = bus.next_seq();
         let s2 = bus.next_seq();
         let s3 = bus.next_seq();
@@ -2062,7 +2140,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_receives_emitted_events() {
-        let bus = EventBus::new();
+        let bus = EventBus::default();
         let mut rx = bus.subscribe();
 
         let issue_id = IssueId::new();
@@ -2092,7 +2170,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_arrive_in_order() {
-        let bus = EventBus::new();
+        let bus = EventBus::default();
         let mut rx = bus.subscribe();
 
         let issue = dummy_issue();
@@ -2122,7 +2200,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2166,7 +2244,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2218,7 +2296,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2268,7 +2346,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2312,7 +2390,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2367,7 +2445,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2448,7 +2526,7 @@ mod tests {
 
     #[tokio::test]
     async fn job_update_event_carries_old_and_new_payload() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2491,7 +2569,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2543,7 +2621,7 @@ mod tests {
         use crate::domain::issues::{Issue, IssueType};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -2592,7 +2670,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_label_association_emits_issue_updated() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2634,7 +2712,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_label_association_twice_emits_only_one_event() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2679,7 +2757,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_nonexistent_label_association_does_not_emit_event() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2715,7 +2793,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_label_association_emits_issue_updated() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2766,7 +2844,7 @@ mod tests {
         use crate::domain::patches::{Patch, PatchStatus};
         use crate::domain::users::Username;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2823,7 +2901,7 @@ mod tests {
     async fn add_label_association_emits_document_updated() {
         use crate::domain::documents::Document;
 
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2870,7 +2948,7 @@ mod tests {
 
     #[tokio::test]
     async fn label_association_on_unknown_entity_does_not_emit_event() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2896,7 +2974,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_relationship_with_actor_emits_issue_updated_for_both_sides() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -2956,7 +3034,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_relationship_duplicate_does_not_emit_event() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -3011,7 +3089,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_relationship_with_actor_emits_issue_updated_for_both_sides() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -3085,7 +3163,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_nonexistent_relationship_does_not_emit_event() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner.clone(), bus.clone());
         let mut rx = bus.subscribe();
@@ -3161,7 +3239,7 @@ mod tests {
 
     #[tokio::test]
     async fn append_session_event_emits_session_event_created() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
 
@@ -3209,7 +3287,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_session_state_emits_session_state_updated() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
 
@@ -3305,7 +3383,7 @@ mod tests {
 
     #[tokio::test]
     async fn append_session_event_failure_does_not_emit() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
@@ -3323,5 +3401,137 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(rx.try_recv().is_err(), "no event should be broadcast");
+    }
+
+    fn emit_dummy_issue(bus: &EventBus) -> u64 {
+        let payload = Arc::new(MutationPayload::Issue {
+            old: None,
+            new: dummy_issue(),
+            actor: ActorRef::test(),
+        });
+        let seq_before = bus.current_seq();
+        bus.emit_issue_created(IssueId::new(), 1, payload);
+        seq_before
+    }
+
+    #[test]
+    fn replay_buffer_evicts_past_capacity() {
+        let capacity = 5;
+        let bus = EventBus::new(capacity);
+        for _ in 0..(capacity + 5) {
+            emit_dummy_issue(&bus);
+        }
+        let snapshot = bus.subscribe_with_snapshot();
+        assert_eq!(snapshot.buffered.len(), capacity);
+        // current_seq is "next to be assigned" — capacity + 5 events emitted
+        // starting from seq 1 means next_seq is capacity + 5 + 1.
+        assert_eq!(snapshot.current_seq, (capacity as u64) + 5 + 1);
+        // Oldest retained seq is (capacity + 5 + 1) - capacity = 6.
+        assert_eq!(snapshot.oldest_seq, Some(6));
+        // Newest retained seq is capacity + 5 = 10.
+        let seqs: Vec<u64> = snapshot.buffered.iter().map(|e| e.seq()).collect();
+        assert_eq!(seqs, vec![6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn subscribe_with_snapshot_returns_in_order() {
+        let bus = EventBus::new(100);
+        for _ in 0..7 {
+            emit_dummy_issue(&bus);
+        }
+        let snapshot = bus.subscribe_with_snapshot();
+        let seqs: Vec<u64> = snapshot.buffered.iter().map(|e| e.seq()).collect();
+        assert_eq!(seqs, vec![1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(snapshot.oldest_seq, Some(1));
+        assert_eq!(snapshot.current_seq, 8);
+    }
+
+    #[test]
+    fn subscribe_with_snapshot_empty_buffer() {
+        let bus = EventBus::new(10);
+        let snapshot = bus.subscribe_with_snapshot();
+        assert!(snapshot.buffered.is_empty());
+        assert_eq!(snapshot.oldest_seq, None);
+        assert_eq!(snapshot.current_seq, 1);
+    }
+
+    #[test]
+    fn replay_buffer_capacity_zero_disables_replay() {
+        let bus = EventBus::new(0);
+        for _ in 0..3 {
+            emit_dummy_issue(&bus);
+        }
+        let snapshot = bus.subscribe_with_snapshot();
+        assert!(snapshot.buffered.is_empty());
+        assert_eq!(snapshot.oldest_seq, None);
+    }
+
+    #[tokio::test]
+    async fn subscribe_with_snapshot_no_gap_with_concurrent_emit() {
+        // Stress test: spawn a writer hammering emit while we take a
+        // snapshot. The invariant — buffer's last seq + 1 == first
+        // broadcast seq — must hold for every snapshot we take.
+        let bus = Arc::new(EventBus::new(1024));
+
+        let writer_bus = Arc::clone(&bus);
+        let writer = std::thread::spawn(move || {
+            for _ in 0..2000 {
+                let payload = Arc::new(MutationPayload::Issue {
+                    old: None,
+                    new: dummy_issue(),
+                    actor: ActorRef::test(),
+                });
+                writer_bus.emit_issue_created(IssueId::new(), 1, payload);
+            }
+        });
+
+        for _ in 0..20 {
+            let snapshot = bus.subscribe_with_snapshot();
+            // Either the buffer is empty (very early) or its last seq must
+            // be < current_seq, and current_seq is exactly one past the
+            // last buffered seq when no eviction has happened yet — once
+            // eviction kicks in there can be a larger gap (current_seq -
+            // last_buffered_seq == 1 still holds because emits are
+            // sequential under the lock).
+            if let Some(last_buffered_seq) = snapshot.buffered.last().map(|e| e.seq()) {
+                assert_eq!(
+                    snapshot.current_seq,
+                    last_buffered_seq + 1,
+                    "current_seq must be exactly one past the last buffered seq under the lock"
+                );
+            }
+            std::thread::yield_now();
+        }
+
+        writer.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn subscribe_with_snapshot_atomic_with_broadcast() {
+        // Verify the contract that drives reconnect replay: every seq in
+        // [oldest_buffered_seq, current_seq) is present in `buffered`, and
+        // every event received on `receiver` has seq >= current_seq.
+        let bus = Arc::new(EventBus::new(100));
+        // Prime the buffer.
+        for _ in 0..5 {
+            emit_dummy_issue(&bus);
+        }
+        let mut snapshot = bus.subscribe_with_snapshot();
+        let snap_current = snapshot.current_seq;
+        // Emit more events after snapshot.
+        for _ in 0..3 {
+            emit_dummy_issue(&bus);
+        }
+
+        // Snapshot saw exactly the first 5.
+        let buffered_seqs: Vec<u64> = snapshot.buffered.iter().map(|e| e.seq()).collect();
+        assert_eq!(buffered_seqs, vec![1, 2, 3, 4, 5]);
+        assert_eq!(snap_current, 6);
+
+        // Broadcast receiver sees exactly the next 3 (seqs 6, 7, 8).
+        for expected_seq in 6..=8 {
+            let event = snapshot.receiver.recv().await.expect("event");
+            assert_eq!(event.seq(), expected_seq);
+        }
     }
 }
