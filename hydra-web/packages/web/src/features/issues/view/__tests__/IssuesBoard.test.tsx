@@ -1245,7 +1245,6 @@ describe("IssuesBoard issue-card drag-and-drop", () => {
       creator: "alice",
       status,
       project_id: projectId,
-      progress: "",
       dependencies: [],
       patches: [],
     };
@@ -1268,7 +1267,6 @@ describe("IssuesBoard issue-card drag-and-drop", () => {
       title: "Card title",
       description: "Full description, possibly long",
       creator: "alice",
-      progress: "Some progress",
       status: makeStatus({ key: statusKey, label: statusKey }),
       project_id: projectId,
       dependencies: [],
@@ -1637,7 +1635,6 @@ describe("IssuesBoard chat button", () => {
       creator: "alice",
       status,
       project_id: projectId,
-      progress: "",
       dependencies: [],
       patches: [],
     };

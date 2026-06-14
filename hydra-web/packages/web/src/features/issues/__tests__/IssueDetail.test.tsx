@@ -122,7 +122,6 @@ function makeRecord(overrides: {
       description: "",
       creator: "alice",
       status: "open",
-      progress: "",
       assignee: overrides.assignee ?? null,
       dependencies: [],
       patches: [],

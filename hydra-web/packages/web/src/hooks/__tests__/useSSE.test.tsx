@@ -99,7 +99,6 @@ function makeIssueRecord(issueId: string) {
       description: "desc",
       creator: "alice",
       status: "open",
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],
@@ -856,7 +855,6 @@ interface SeededIssue {
     creator: string;
     status: { key: string };
     project_id?: string;
-    progress: string;
     dependencies: never[];
     patches: never[];
     labels: never[];
@@ -879,7 +877,6 @@ function seedIssue(
       description: "desc",
       creator: "alice",
       status: { key: status },
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],

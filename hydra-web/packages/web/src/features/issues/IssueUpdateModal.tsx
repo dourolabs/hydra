@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Modal, Button, Textarea, Select } from "@hydra/ui";
+import { Modal, Button, Select } from "@hydra/ui";
 import type { SelectOption } from "@hydra/ui";
 import type { Issue, IssueVersionRecord, StatusKey } from "@hydra/api";
 import { apiClient } from "../../api/client";
@@ -20,7 +20,6 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
   const queryClient = useQueryClient();
 
   const [status, setStatus] = useState<StatusKey>(issue.status.key);
-  const [progress, setProgress] = useState(issue.progress);
 
   // Pull status options from the issue's project. The hook caches per
   // project for the session via React Query.
@@ -39,25 +38,22 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
   useEffect(() => {
     if (open) {
       setStatus(issue.status.key);
-      setProgress(issue.progress);
     }
-  }, [open, issue.status, issue.progress]);
+  }, [open, issue.status]);
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<
-    { status: StatusKey; progress: string },
+    { status: StatusKey },
     unknown,
     { previous?: IssueVersionRecord }
   >({
     mutationFn: (params) =>
       // The wire `IssueInput` carries the bare `StatusKey`; the spread
-      // of the response-shaped `issue` is followed by `status` /
-      // `progress` overrides so the resulting object matches the
-      // request type.
+      // of the response-shaped `issue` is followed by `status` override
+      // so the resulting object matches the request type.
       apiClient.updateIssue(issueId, {
         issue: {
           ...issue,
           status: params.status,
-          progress: params.progress,
         },
         session_id: null,
       }),
@@ -84,7 +80,6 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
           issue: {
             ...previous.issue,
             status: optimisticStatus,
-            progress: params.progress,
           },
         });
       }
@@ -98,8 +93,8 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
   });
 
   const handleSubmit = useCallback(() => {
-    mutation.mutate({ status, progress });
-  }, [status, progress, mutation]);
+    mutation.mutate({ status });
+  }, [status, mutation]);
 
   return (
     <Modal
@@ -115,15 +110,6 @@ export function IssueUpdateModal({ open, onClose, issueId, issue }: IssueUpdateM
           value={status}
           onChange={(e) => setStatus(e.target.value)}
         />
-        <div className={styles.progressWrapper}>
-          <Textarea
-            label="Progress"
-            placeholder="Describe current progress..."
-            value={progress}
-            onChange={(e) => setProgress(e.target.value)}
-            className={styles.progressTextarea}
-          />
-        </div>
         <div className={styles.footer}>
           <span className={styles.hint}>
             {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to submit

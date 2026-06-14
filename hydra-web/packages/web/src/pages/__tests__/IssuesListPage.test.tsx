@@ -271,7 +271,6 @@ function makeIssue(
       title: `Issue ${id}`,
       description: "",
       creator: "alice",
-      progress: "",
       status: makeStatus(),
       assignee: null,
       session_settings: null,

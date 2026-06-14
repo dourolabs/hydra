@@ -426,9 +426,9 @@ export function IssuesBoard({
   });
 
   // Cross-column / cross-project issue-card drag. The mutation fetches the
-  // full Issue (so the truncated `IssueSummary` description / progress
-  // doesn't clobber the server-side body) and persists `status` +
-  // `project_id` via the existing update-issue endpoint.
+  // full Issue (so the truncated `IssueSummary` description doesn't clobber
+  // the server-side body) and persists `status` + `project_id` via the
+  // existing update-issue endpoint.
   const moveIssue = useMutation({
     mutationFn: async ({
       issueId,

@@ -110,7 +110,6 @@ function makeIssue(assignee: Principal | null): Issue {
     title: "Sample",
     description: "",
     creator: "alice",
-    progress: "",
     status: { key: "open", label: "Open" },
     project_id: "j-defaul",
     assignee,

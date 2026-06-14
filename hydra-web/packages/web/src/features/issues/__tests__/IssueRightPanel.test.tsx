@@ -49,7 +49,6 @@ function makeRecord(): IssueVersionRecord {
       description: "",
       creator: "alice",
       status: "open",
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],

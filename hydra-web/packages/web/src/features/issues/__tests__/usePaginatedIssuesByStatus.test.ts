@@ -60,7 +60,6 @@ function issue(
       title: id,
       description: "",
       creator: "alice",
-      progress: "",
       status: makeStatus(status),
       assignee: null,
       session_settings: null,

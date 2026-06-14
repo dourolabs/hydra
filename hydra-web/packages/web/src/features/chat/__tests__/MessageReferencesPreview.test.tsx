@@ -249,7 +249,6 @@ describe("MessageReferencesPreview — loading and fallback states", () => {
         description: "First line of body.\nSecond line.",
         creator: "alice",
         status: "open",
-        progress: "",
         dependencies: [],
         patches: [],
       },

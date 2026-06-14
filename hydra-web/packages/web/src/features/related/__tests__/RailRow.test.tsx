@@ -75,7 +75,6 @@ function makeRecord(opts?: {
       status: opts?.resolvedStatus ?? makeStatus(),
       project_id: opts?.projectId ?? "j-defaul",
       assignee: opts?.assignee ?? null,
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],

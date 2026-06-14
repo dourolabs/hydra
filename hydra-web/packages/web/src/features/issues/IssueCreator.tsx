@@ -72,7 +72,6 @@ export function IssueCreator({ assignees }: IssueCreatorProps) {
           title: params.title,
           description: params.description,
           creator: params.creator,
-          progress: "",
           status: "open",
           project_id: DEFAULT_PROJECT_ID,
           dependencies: [],

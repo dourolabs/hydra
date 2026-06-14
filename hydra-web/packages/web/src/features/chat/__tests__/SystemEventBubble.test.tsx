@@ -60,7 +60,6 @@ function makeIssueRecord(opts?: {
       },
       project_id: "j-defaul",
       assignee: null,
-      progress: "",
       dependencies: [],
       patches: [],
     },

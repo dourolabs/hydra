@@ -50,7 +50,6 @@ function makeIssue(
       status: makeStatus(statusKey),
       project_id: projectId,
       assignee: null,
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],
