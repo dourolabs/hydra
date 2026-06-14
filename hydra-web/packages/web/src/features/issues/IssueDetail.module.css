@@ -121,7 +121,7 @@
   font-size: var(--t-md);
 }
 
-/* ── Section blocks (Progress, Feedback, etc.) ── */
+/* ── Section blocks (Comments, Form, etc.) ── */
 .section {
   display: flex;
   flex-direction: column;

@@ -18,14 +18,6 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
     ).toBeVisible();
   });
 
-  test("shows progress notes when present @issues:view-detail", async ({
-    authenticatedPage: page,
-  }) => {
-    await page.goto("/issues/i-seed00002");
-    // i-seed00002 has progress: "Provider selected (Keycloak)..."
-    await expect(page.getByText(/Provider selected/)).toBeVisible();
-  });
-
   test("shows breadcrumbs with link back to issues @issues:view-detail", async ({
     authenticatedPage: page,
   }) => {

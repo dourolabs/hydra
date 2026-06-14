@@ -23,13 +23,9 @@ test.describe("Mobile Issue Detail head actions @mobile:issue-detail-actions", (
     // The inline desktop action row collapses to a `⋯` button.
     await expect(page.getByTestId("issue-overflow-trigger")).toBeVisible();
     await expect(page.getByTestId("issue-detail-archive")).toBeHidden();
-    await expect(
-      page.getByRole("button", { name: "Give feedback" }),
-    ).toBeHidden();
 
-    // Tapping the trigger reveals Give feedback + Archive menu items.
+    // Tapping the trigger reveals the Archive menu item.
     await page.getByTestId("issue-overflow-trigger").click();
-    await expect(page.getByTestId("issue-overflow-feedback")).toBeVisible();
     await expect(page.getByTestId("issue-overflow-archive")).toBeVisible();
   });
 
@@ -61,9 +57,6 @@ test.describe("Desktop Issue Detail head actions are unchanged @mobile:issue-det
 
     // Desktop keeps the inline row exactly as before.
     await expect(page.getByTestId("issue-detail-archive")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Give feedback" }),
-    ).toBeVisible();
 
     // The overflow trigger renders but is hidden by the mobile media query.
     await expect(page.getByTestId("issue-overflow-trigger")).toBeHidden();

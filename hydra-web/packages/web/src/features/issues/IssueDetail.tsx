@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Badge, Button, TypeChip } from "@hydra/ui";
-import { Markdown } from "../../components/Markdown";
+import { Badge, TypeChip } from "@hydra/ui";
 import type { IssueVersionRecord } from "@hydra/api";
 import { StatusChip } from "../projects/StatusChip";
 import { useConversations } from "../chat/useConversations";
@@ -13,7 +12,6 @@ import { IssueProjectPicker } from "./IssueProjectPicker";
 import { IssueStatusPicker } from "./IssueStatusPicker";
 import { IssueRightPanel, type IssueRightPanelTabKey } from "./IssueRightPanel";
 import { IssueUpdateModal } from "./IssueUpdateModal";
-import { FeedbackModal } from "./FeedbackModal";
 import { ArchiveIssueButton } from "./ArchiveIssueButton";
 import { useArchiveIssue } from "./useArchiveIssue";
 import { FormPanel } from "./FormPanel";
@@ -62,7 +60,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
   const [mobileTab, setMobileTab] = useState<MobileTabKey>("overview");
   const [rightPanelTab, setRightPanelTab] = useState<IssueRightPanelTabKey>("related");
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   // Local-only coordination state for the project/status pickers. When
   // the user picks a different project from the project picker we DO NOT
   // auto-commit — instead we stash the pending id here and force the
@@ -127,12 +124,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
         testId: "issue-overflow-conversation",
       });
     }
-    items.push({
-      key: "feedback",
-      label: "Give feedback",
-      onSelect: () => setFeedbackModalOpen(true),
-      testId: "issue-overflow-feedback",
-    });
     if (issue.deleted !== true) {
       items.push({
         key: "archive",
@@ -184,13 +175,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
                       : "Open Conversation"}
                   </Link>
                 )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setFeedbackModalOpen(true)}
-                >
-                  Give feedback
-                </Button>
                 {issue.deleted !== true && (
                   <ArchiveIssueButton
                     issueId={issueId}
@@ -246,24 +230,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
             <EditableDescription issueId={issueId} issue={issue} />
           </div>
 
-          {issue.progress && (
-            <div className={styles.section}>
-              <span className={styles.sectionLabel}>Progress</span>
-              <div className={styles.sectionBody}>
-                <Markdown content={issue.progress} />
-              </div>
-            </div>
-          )}
-
-          {issue.feedback && (
-            <div className={styles.section}>
-              <span className={styles.sectionLabel}>Feedback</span>
-              <div className={styles.sectionBody}>
-                <Markdown content={issue.feedback} />
-              </div>
-            </div>
-          )}
-
           <div className={styles.section}>
             <CommentsPanel issueId={issueId} />
           </div>
@@ -293,12 +259,6 @@ export function IssueDetail({ record }: IssueDetailProps) {
         onClose={() => setUpdateModalOpen(false)}
         issueId={issueId}
         issue={issue}
-      />
-
-      <FeedbackModal
-        open={feedbackModalOpen}
-        onClose={() => setFeedbackModalOpen(false)}
-        issueId={issueId}
       />
     </div>
   );
