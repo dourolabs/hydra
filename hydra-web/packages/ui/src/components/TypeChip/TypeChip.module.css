@@ -17,30 +17,30 @@
 }
 
 .typeChip[data-type="task"] {
-  color: var(--s-open);
-  border-color: color-mix(in srgb, var(--s-open) 30%, transparent);
+  color: var(--type-task);
+  border-color: color-mix(in srgb, var(--type-task) 30%, transparent);
 }
 
 .typeChip[data-type="bug"] {
-  color: var(--s-failed);
-  border-color: color-mix(in srgb, var(--s-failed) 30%, transparent);
+  color: var(--type-bug);
+  border-color: color-mix(in srgb, var(--type-bug) 30%, transparent);
 }
 
 .typeChip[data-type="feature"] {
-  color: var(--acc);
-  border-color: color-mix(in srgb, var(--acc) 30%, transparent);
+  color: var(--type-feature);
+  border-color: color-mix(in srgb, var(--type-feature) 30%, transparent);
 }
 
 .typeChip[data-type="chore"] {
-  color: var(--fg-2);
+  color: var(--type-chore);
 }
 
 .typeChip[data-type="merge-request"] {
-  color: var(--c-violet);
-  border-color: color-mix(in srgb, var(--c-violet) 30%, transparent);
+  color: var(--type-merge-request);
+  border-color: color-mix(in srgb, var(--type-merge-request) 30%, transparent);
 }
 
 .typeChip[data-type="review-request"] {
-  color: var(--s-progress);
-  border-color: color-mix(in srgb, var(--s-progress) 30%, transparent);
+  color: var(--type-review-request);
+  border-color: color-mix(in srgb, var(--type-review-request) 30%, transparent);
 }
