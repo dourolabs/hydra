@@ -590,13 +590,25 @@ function StatusForm({
     }, [principal]);
 
   const clearAssignee = onEnter?.clear_assignee ?? false;
+  const assignToCreator = onEnter?.assign_to_creator ?? false;
   const teardownWork = onEnter?.teardown_work ?? false;
+
+  // `assign_to`, `clear_assignee`, and `assign_to_creator` are pairwise
+  // mutually exclusive on the wire; the modal surfaces them as a single
+  // three-way radio above the principal-picker row.
+  type AssignmentMode = "pick" | "clear" | "creator";
+  const assignmentMode: AssignmentMode = assignToCreator
+    ? "creator"
+    : clearAssignee
+      ? "clear"
+      : "pick";
 
   const patchOnEnter = (updates: Partial<StatusOnEnter>) => {
     const next: StatusOnEnter = {
       assign_to: onEnter?.assign_to ?? null,
       attach_form: onEnter?.attach_form ?? null,
       clear_assignee: clearAssignee,
+      assign_to_creator: assignToCreator,
       teardown_work: teardownWork,
       ...updates,
     };
@@ -604,6 +616,7 @@ function StatusForm({
       !next.assign_to &&
       !next.attach_form &&
       !next.clear_assignee &&
+      !next.assign_to_creator &&
       !next.teardown_work
     ) {
       patch({ on_enter: null });
@@ -612,21 +625,47 @@ function StatusForm({
     patch({ on_enter: next });
   };
 
-  // Picking an assignee enforces the `assign_to` ⊕ `clear_assignee` invariant
-  // (the backend's `StatusOnEnter::validate` rejects both set at once) by
-  // auto-unchecking `clear_assignee`.
+  // Picking an assignee enforces the mutual-exclusion invariant — the
+  // backend's `StatusOnEnter::validate` rejects any two of the trio set at
+  // once — by auto-unchecking the other two.
   const setAssign = (next: Principal | null) => {
-    patchOnEnter({ assign_to: next, clear_assignee: next ? false : clearAssignee });
+    patchOnEnter({
+      assign_to: next,
+      clear_assignee: next ? false : clearAssignee,
+      assign_to_creator: next ? false : assignToCreator,
+    });
   };
 
   const setAttachForm = (raw: string) => {
     patchOnEnter({ attach_form: raw ? (raw as DocumentPath) : null });
   };
 
-  // Symmetric to `setAssign` — checking clears the assignee so the two can
-  // never round-trip as both-set.
+  // Symmetric to `setAssign` — checking clears the principal and the
+  // assign-to-creator flag so the trio can never round-trip as multi-set.
   const setClearAssignee = (next: boolean) => {
-    patchOnEnter({ clear_assignee: next, assign_to: next ? null : principal });
+    patchOnEnter({
+      clear_assignee: next,
+      assign_to: next ? null : principal,
+      assign_to_creator: next ? false : assignToCreator,
+    });
+  };
+
+  const setAssignToCreator = (next: boolean) => {
+    patchOnEnter({
+      assign_to_creator: next,
+      assign_to: next ? null : principal,
+      clear_assignee: next ? false : clearAssignee,
+    });
+  };
+
+  const setAssignmentMode = (mode: AssignmentMode) => {
+    if (mode === "clear") {
+      setClearAssignee(true);
+    } else if (mode === "creator") {
+      setAssignToCreator(true);
+    } else {
+      patchOnEnter({ clear_assignee: false, assign_to_creator: false });
+    }
   };
 
   const setTeardownWork = (next: boolean) => {
@@ -935,13 +974,66 @@ function StatusForm({
             data-testid="status-settings-on-enter-content"
           >
             <div data-testid="status-settings-assignee">
+          <fieldset
+            className={styles.assigneeMode}
+            data-testid="status-settings-assignment-mode"
+          >
+            <legend className={styles.label}>Assignee on enter</legend>
+            <label>
+              <input
+                type="radio"
+                name="status-settings-assignment-mode"
+                checked={assignmentMode === "pick"}
+                onChange={() => setAssignmentMode("pick")}
+                data-testid="status-settings-assignment-mode-pick"
+              />
+              Pick
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="status-settings-assignment-mode"
+                checked={assignmentMode === "clear"}
+                onChange={() => setAssignmentMode("clear")}
+                data-testid="status-settings-clear-assignee"
+              />
+              Clear assignee
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="status-settings-assignment-mode"
+                checked={assignmentMode === "creator"}
+                onChange={() => setAssignmentMode("creator")}
+                data-testid="status-settings-assign-to-creator"
+              />
+              Assign to creator
+            </label>
+          </fieldset>
+          <div
+            className={
+              assignmentMode === "pick"
+                ? undefined
+                : styles.assigneePickerDisabled
+            }
+          >
           <Picker
             label="Assign to"
-            open={assigneePickerOpen}
-            onToggle={() => setAssigneePickerOpen((v) => !v)}
+            open={assignmentMode === "pick" && assigneePickerOpen}
+            onToggle={() => {
+              if (assignmentMode === "pick") {
+                setAssigneePickerOpen((v) => !v);
+              }
+            }}
             wide
             value={
-              assigneeView ? (
+              assignmentMode === "creator" ? (
+                <span className={styles.pillContent}>
+                  <span>Issue creator</span>
+                </span>
+              ) : assignmentMode === "clear" ? (
+                <span className={styles.pillEmpty}>Unassigned</span>
+              ) : assigneeView ? (
                 <span className={styles.pillContent}>
                   <Avatar
                     name={assigneeView.name}
@@ -1012,6 +1104,7 @@ function StatusForm({
               </>
             )}
           </Picker>
+          </div>
         </div>
         <Input
           label="Attach form"
@@ -1023,15 +1116,6 @@ function StatusForm({
           <label>
             <input
               type="checkbox"
-              checked={clearAssignee}
-              onChange={(e) => setClearAssignee(e.target.checked)}
-              data-testid="status-settings-clear-assignee"
-            />
-            Clear assignee
-          </label>
-          <label>
-            <input
-              type="checkbox"
               checked={teardownWork}
               onChange={(e) => setTeardownWork(e.target.checked)}
               data-testid="status-settings-teardown-work"
@@ -1040,8 +1124,8 @@ function StatusForm({
           </label>
         </div>
         <span className={styles.helpText}>
-          "Clear assignee" and "Assign to" are mutually exclusive — picking one
-          clears the other.
+          "Pick", "Clear assignee", and "Assign to creator" are mutually
+          exclusive — the picker is only interactive in Pick mode.
         </span>
           </div>
         )}
