@@ -106,6 +106,10 @@ the catalog stays in sync.
 
 - `@repos:edit-merge-policy` — User can view, edit, clear, and round-trip a repository's `merge_policy` via the Repository edit modal's JSON textarea, with inline error on invalid JSON
 
+## Agents
+
+- `@agents:session-settings` — The Configure modal on `/agents` exposes a "Default session settings" collapsible (cpu_limit, memory_limit, image, model, max_retries, idle_timeout). Filling cpu_limit + memory_limit fires a PUT `/v1/agents/<name>` with a nested `session_settings` payload; reopening the modal rehydrates the inputs from the persisted agent. Clearing every subfield round-trips as `session_settings: undefined` on the wire.
+
 ## Triggers
 
 - `@triggers:create-form` — The create-trigger modal's Status picker is disabled until a Project is picked; picking a project enables the Status picker and lists that project's statuses; changing the project clears the previously-selected status and re-derives the list; Add Trigger stays disabled until both fields are set; submitting POSTs a `create_issue` action whose `project_id` + `status` reflect the user's picks.

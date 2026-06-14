@@ -46,6 +46,7 @@ export function createAgentRoutes(store: Store): Hono {
       max_simultaneous_headless: body.max_simultaneous_headless,
       is_default_conversation_agent: body.is_default_conversation_agent,
       secrets: body.secrets,
+      session_settings: body.session_settings ?? undefined,
     };
     store.create<AgentRecord>(COLLECTION, body.name, agent, null);
     const resp: AgentResponse = { agent };
@@ -67,6 +68,7 @@ export function createAgentRoutes(store: Store): Hono {
       max_simultaneous_headless: body.max_simultaneous_headless,
       is_default_conversation_agent: body.is_default_conversation_agent,
       secrets: body.secrets,
+      session_settings: body.session_settings ?? undefined,
     };
     store.update<AgentRecord>(COLLECTION, name, agent, null);
     const resp: AgentResponse = { agent };

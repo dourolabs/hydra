@@ -684,6 +684,44 @@ describe("Agents", () => {
     // 404 after delete
     await expect(client.getAgent("test-agent")).rejects.toThrow(ApiError);
   });
+
+  it("session_settings round-trips through POST /v1/agents and PUT /v1/agents/:name", async () => {
+    // Create with non-default session_settings; the response round-trips
+    // through GET so the FE's prefill path is exercised.
+    const created = await client.createAgent({
+      ...agentPayload,
+      session_settings: {
+        cpu_limit: "200m",
+        memory_limit: "512Mi",
+        image: "ghcr.io/org/img:tag",
+        model: "claude-opus-4-7",
+        max_retries: 4,
+      },
+    });
+    expect(created.agent.session_settings).toMatchObject({
+      cpu_limit: "200m",
+      memory_limit: "512Mi",
+      image: "ghcr.io/org/img:tag",
+      model: "claude-opus-4-7",
+      max_retries: 4,
+    });
+
+    const fetched = await client.getAgent("test-agent");
+    expect(fetched.agent.session_settings).toMatchObject({
+      cpu_limit: "200m",
+      memory_limit: "512Mi",
+      image: "ghcr.io/org/img:tag",
+      model: "claude-opus-4-7",
+      max_retries: 4,
+    });
+
+    // PUT clears the field by omitting it.
+    await client.updateAgent("test-agent", agentPayload);
+    const cleared = await client.getAgent("test-agent");
+    expect(cleared.agent.session_settings ?? null).toBeNull();
+
+    await client.deleteAgent("test-agent");
+  });
 });
 
 // ---------------------------------------------------------------------------
