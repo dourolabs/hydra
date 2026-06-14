@@ -13,6 +13,7 @@ use std::{fmt, str::FromStr};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum PatchStatus {
     Open,
@@ -675,6 +676,7 @@ impl SearchPatchesQuery {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum GithubCiState {
     Pending,
@@ -1025,7 +1027,7 @@ mod tests {
             "title": "old patch",
             "description": "desc",
             "diff": "",
-            "status": "Open",
+            "status": "open",
             "is_automatic_backup": false,
             "creator": "test-creator",
             "reviews": [],
@@ -1205,7 +1207,7 @@ mod tests {
                 patch.view_l1(),
                 json!({
                     "title": "fix bug",
-                    "status": "Open",
+                    "status": "open",
                 })
             );
         }
@@ -1217,7 +1219,7 @@ mod tests {
                 patch.view_l2(),
                 json!({
                     "title": "fix bug",
-                    "status": "Open",
+                    "status": "open",
                     "branch": "feature/fix",
                     "repo": "org/repo",
                     "reviews": [

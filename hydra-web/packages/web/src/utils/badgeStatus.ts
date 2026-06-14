@@ -1,24 +1,15 @@
 import type { BadgeStatus } from "@hydra/ui";
 
-/** Normalize a PascalCase patch status (e.g. "ChangesRequested") to a BadgeStatus ("changes-requested"). */
+/** Validate a patch status wire value and return the matching BadgeStatus. */
 export function normalizePatchStatus(status: string): BadgeStatus {
-  const map: Record<string, BadgeStatus> = {
-    Open: "open",
-    Merged: "merged",
-    Closed: "closed",
-    ChangesRequested: "changes-requested",
-  };
-  return map[status] ?? "unknown";
+  const valid = new Set(["open", "merged", "closed", "changes-requested"]);
+  return valid.has(status) ? (status as BadgeStatus) : "unknown";
 }
 
-/** Normalize a PascalCase CI state (e.g. "Success") to a BadgeStatus ("success"). */
+/** Validate a CI state wire value and return the matching BadgeStatus. */
 export function normalizeCiState(state: string): BadgeStatus {
-  const map: Record<string, BadgeStatus> = {
-    Success: "success",
-    Failed: "failed",
-    Pending: "pending",
-  };
-  return map[state] ?? "unknown";
+  const valid = new Set(["success", "failed", "pending"]);
+  return valid.has(state) ? (state as BadgeStatus) : "unknown";
 }
 
 /** Normalize a lowercase session status to a BadgeStatus. Session statuses already match 1:1. */

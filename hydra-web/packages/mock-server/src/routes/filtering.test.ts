@@ -55,7 +55,7 @@ function makePatch(overrides: Partial<Patch> = {}): Patch {
     title: "Default patch title",
     description: "Default patch description",
     diff: "--- a/file\n+++ b/file\n",
-    status: "Open",
+    status: "open",
     is_automatic_backup: false,
     creator: "testuser",
     reviews: [],
@@ -519,18 +519,18 @@ describe("Patch list filtering", () => {
   });
 
   it("filters by single status", async () => {
-    store.create("patches", "p-1", makePatch({ status: "Open" }), "patch");
-    store.create("patches", "p-2", makePatch({ status: "Closed" }), "patch");
-    store.create("patches", "p-3", makePatch({ status: "Merged" }), "patch");
-    const data = await listPatches({ status: "Open" });
+    store.create("patches", "p-1", makePatch({ status: "open" }), "patch");
+    store.create("patches", "p-2", makePatch({ status: "closed" }), "patch");
+    store.create("patches", "p-3", makePatch({ status: "merged" }), "patch");
+    const data = await listPatches({ status: "open" });
     expect(data.patches).toHaveLength(1);
   });
 
   it("filters by multiple statuses (comma-separated)", async () => {
-    store.create("patches", "p-1", makePatch({ status: "Open" }), "patch");
-    store.create("patches", "p-2", makePatch({ status: "Closed" }), "patch");
-    store.create("patches", "p-3", makePatch({ status: "Merged" }), "patch");
-    const data = await listPatches({ status: "Open,Closed" });
+    store.create("patches", "p-1", makePatch({ status: "open" }), "patch");
+    store.create("patches", "p-2", makePatch({ status: "closed" }), "patch");
+    store.create("patches", "p-3", makePatch({ status: "merged" }), "patch");
+    const data = await listPatches({ status: "open,closed" });
     expect(data.patches).toHaveLength(2);
   });
 
@@ -543,15 +543,15 @@ describe("Patch list filtering", () => {
   });
 
   it("combines filters with AND logic", async () => {
-    store.create("patches", "p-1", makePatch({ title: "Fix auth bug", status: "Open" }), "patch");
+    store.create("patches", "p-1", makePatch({ title: "Fix auth bug", status: "open" }), "patch");
     store.create(
       "patches",
       "p-2",
-      makePatch({ title: "Fix auth issue", status: "Closed" }),
+      makePatch({ title: "Fix auth issue", status: "closed" }),
       "patch",
     );
-    store.create("patches", "p-3", makePatch({ title: "Add feature", status: "Open" }), "patch");
-    const data = await listPatches({ q: "auth", status: "Open" });
+    store.create("patches", "p-3", makePatch({ title: "Add feature", status: "open" }), "patch");
+    const data = await listPatches({ q: "auth", status: "open" });
     expect(data.patches).toHaveLength(1);
   });
 
@@ -564,10 +564,10 @@ describe("Patch list filtering", () => {
   });
 
   it("returns total_count for the filtered set, not the page", async () => {
-    store.create("patches", "p-1", makePatch({ status: "Open" }), "patch");
-    store.create("patches", "p-2", makePatch({ status: "Open" }), "patch");
-    store.create("patches", "p-3", makePatch({ status: "Closed" }), "patch");
-    const data = await listPatches({ count: "true", status: "Open", limit: "0" });
+    store.create("patches", "p-1", makePatch({ status: "open" }), "patch");
+    store.create("patches", "p-2", makePatch({ status: "open" }), "patch");
+    store.create("patches", "p-3", makePatch({ status: "closed" }), "patch");
+    const data = await listPatches({ count: "true", status: "open", limit: "0" });
     expect(data.patches).toHaveLength(0);
     expect(data.total_count).toBe(2);
   });

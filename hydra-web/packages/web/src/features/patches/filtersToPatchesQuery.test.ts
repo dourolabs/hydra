@@ -16,11 +16,11 @@ describe("filtersToPatchesQuery", () => {
   it("maps the status filter to the server status[] param (multi-select)", () => {
     expect(
       filtersToPatchesQuery({
-        filters: [mkFilter("status", ["Open", "Merged"])],
+        filters: [mkFilter("status", ["open", "merged"])],
         q: "",
         extraIds: null,
       }),
-    ).toEqual({ status: ["Open", "Merged"] });
+    ).toEqual({ status: ["open", "merged"] });
   });
 
   it("maps the repository filter to repo_name (single-select)", () => {
@@ -93,7 +93,7 @@ describe("filtersToPatchesQuery", () => {
   it("drops not_in filters (no server param can express negation today)", () => {
     expect(
       filtersToPatchesQuery({
-        filters: [mkFilter("status", ["Open"], "not_in")],
+        filters: [mkFilter("status", ["open"], "not_in")],
         q: "",
         extraIds: null,
       }),
@@ -114,7 +114,7 @@ describe("filtersToPatchesQuery", () => {
     expect(
       filtersToPatchesQuery({
         filters: [
-          mkFilter("status", ["Open"]),
+          mkFilter("status", ["open"]),
           mkFilter("repository", ["acme/web-app"]),
           mkFilter("author", ["users/alice"]),
         ],
@@ -122,7 +122,7 @@ describe("filtersToPatchesQuery", () => {
         extraIds: ["p-1", "p-2"],
       }),
     ).toEqual({
-      status: ["Open"],
+      status: ["open"],
       repo_name: "acme/web-app",
       creator: "alice",
       q: "oauth",

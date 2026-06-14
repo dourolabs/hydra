@@ -161,7 +161,7 @@ function makePatch(patchId: string, title = "Test Patch"): PatchSummaryRecord {
     creation_time: "2026-01-01T00:00:00Z",
     patch: {
       title,
-      status: "Open",
+      status: "open",
       is_automatic_backup: false,
       creator: "alice",
       review_summary: { count: 0, approved: false },

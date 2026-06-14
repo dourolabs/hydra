@@ -2988,7 +2988,7 @@
       "title": "Add OAuth2 provider integration",
       "description": "Integrates Keycloak as the OAuth2 / OIDC provider. Implements authorization code flow with PKCE, token validation middleware, and user info endpoint.\n\nKey changes:\n- New `auth/oauth2.ts` module with provider configuration\n- Updated `middleware/auth.ts` to validate JWT tokens\n- Added `routes/auth/callback.ts` for OAuth2 callback handling\n- New environment variables: `OAUTH2_ISSUER_URL`, `OAUTH2_CLIENT_ID`",
       "diff": "diff --git a/src/auth/oauth2.ts b/src/auth/oauth2.ts\nnew file mode 100644\nindex 0000000..abc1234\n--- /dev/null\n+++ b/src/auth/oauth2.ts\n@@ -0,0 +1,45 @@\n+import { Issuer } from 'openid-client';\n+\n+export async function createOAuth2Client() {\n+  const issuer = await Issuer.discover(process.env.OAUTH2_ISSUER_URL!);\n+  return new issuer.Client({\n+    client_id: process.env.OAUTH2_CLIENT_ID!,\n+    response_types: ['code'],\n+    token_endpoint_auth_method: 'none',\n+  });\n+}\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [
@@ -3008,7 +3008,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/142",
         "ci": {
-          "state": "Pending"
+          "state": "pending"
         }
       },
       "branch_name": "feature/oauth2-provider",
@@ -3021,7 +3021,7 @@
             "title": "Add OAuth2 provider integration",
             "description": "Integrates Keycloak as the OAuth2 / OIDC provider. Initial draft.",
             "diff": "diff --git a/src/auth/oauth2.ts b/src/auth/oauth2.ts\nnew file mode 100644\nindex 0000000..abc1234\n--- /dev/null\n+++ b/src/auth/oauth2.ts\n@@ -0,0 +1,20 @@\n+// initial skeleton\n",
-            "status": "Open",
+            "status": "open",
             "is_automatic_backup": false,
             "creator": "swe",
             "reviews": [],
@@ -3035,7 +3035,7 @@
               "head_ref": "feature/oauth2-provider",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/142",
-              "ci": { "state": "Pending" }
+              "ci": { "state": "pending" }
             }
           }
         },
@@ -3051,7 +3051,7 @@
       "title": "Implement OAuth2 scopes and permission mapping",
       "description": "Maps existing RBAC permissions to OAuth2 scopes. Adds scope validation middleware and updates all protected endpoints.",
       "diff": "diff --git a/src/middleware/scopes.ts b/src/middleware/scopes.ts\nnew file mode 100644\nindex 0000000..def5678\n--- /dev/null\n+++ b/src/middleware/scopes.ts\n@@ -0,0 +1,20 @@\n+export function requireScopes(...scopes: string[]) {\n+  return (req, res, next) => {\n+    const tokenScopes = req.user?.scopes ?? [];\n+    const hasAll = scopes.every(s => tokenScopes.includes(s));\n+    if (!hasAll) return res.status(403).json({ error: 'Insufficient scope' });\n+    next();\n+  };\n+}\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [
@@ -3071,7 +3071,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/138",
         "ci": {
-          "state": "Success"
+          "state": "success"
         }
       },
       "branch_name": "feature/oauth2-scopes",
@@ -3084,7 +3084,7 @@
             "title": "Implement OAuth2 scopes and permission mapping",
             "description": "Maps existing RBAC permissions to OAuth2 scopes. Adds scope validation middleware and updates all protected endpoints.",
             "diff": "diff --git a/src/middleware/scopes.ts b/src/middleware/scopes.ts\nnew file mode 100644\nindex 0000000..def5678\n--- /dev/null\n+++ b/src/middleware/scopes.ts\n@@ -0,0 +1,20 @@\n+export function requireScopes(...scopes: string[]) {\n+  return (req, res, next) => {\n+    const tokenScopes = req.user?.scopes ?? [];\n+    const hasAll = scopes.every(s => tokenScopes.includes(s));\n+    if (!hasAll) return res.status(403).json({ error: 'Insufficient scope' });\n+    next();\n+  };\n+}\n",
-            "status": "Open",
+            "status": "open",
             "is_automatic_backup": false,
             "creator": "swe",
             "reviews": [],
@@ -3098,7 +3098,7 @@
               "head_ref": "feature/oauth2-scopes",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/138",
-              "ci": { "state": "Pending" }
+              "ci": { "state": "pending" }
             }
           }
         },
@@ -3121,7 +3121,7 @@
               "head_ref": "feature/oauth2-scopes",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/138",
-              "ci": { "state": "Success" }
+              "ci": { "state": "success" }
             }
           }
         }
@@ -3131,7 +3131,7 @@
       "title": "Add rate limiter middleware",
       "description": "Implements a sliding window rate limiter using Redis. Configurable per-endpoint limits with different tiers for authenticated and anonymous users.",
       "diff": "diff --git a/src/middleware/rate-limit.ts b/src/middleware/rate-limit.ts\nnew file mode 100644\nindex 0000000..789abcd\n--- /dev/null\n+++ b/src/middleware/rate-limit.ts\n@@ -0,0 +1,30 @@\n+import Redis from 'ioredis';\n+\n+export function rateLimiter(redis: Redis, opts: RateLimitOptions) {\n+  return async (req, res, next) => {\n+    const key = `ratelimit:${req.ip}:${req.path}`;\n+    const count = await redis.incr(key);\n+    if (count === 1) await redis.expire(key, opts.windowSec);\n+    if (count > opts.maxRequests) {\n+      return res.status(429).json({ error: 'Too many requests' });\n+    }\n+    next();\n+  };\n+}\n",
-      "status": "ChangesRequested",
+      "status": "changes-requested",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [
@@ -3151,7 +3151,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/145",
         "ci": {
-          "state": "Failed",
+          "state": "failed",
           "failure": {
             "name": "integration-tests",
             "summary": "Rate limiter integration tests timed out waiting for Redis connection",
@@ -3169,7 +3169,7 @@
             "title": "Add rate limiter middleware",
             "description": "Implements a sliding window rate limiter using Redis. Configurable per-endpoint limits with different tiers for authenticated and anonymous users.",
             "diff": "diff --git a/src/middleware/rate-limit.ts b/src/middleware/rate-limit.ts\nnew file mode 100644\nindex 0000000..789abcd\n--- /dev/null\n+++ b/src/middleware/rate-limit.ts\n@@ -0,0 +1,30 @@\n+import Redis from 'ioredis';\n+\n+export function rateLimiter(redis: Redis, opts: RateLimitOptions) {\n+  return async (req, res, next) => {\n+    const key = `ratelimit:${req.ip}:${req.path}`;\n+    const count = await redis.incr(key);\n+    if (count === 1) await redis.expire(key, opts.windowSec);\n+    if (count > opts.maxRequests) {\n+      return res.status(429).json({ error: 'Too many requests' });\n+    }\n+    next();\n+  };\n+}\n",
-            "status": "Open",
+            "status": "open",
             "is_automatic_backup": false,
             "creator": "swe",
             "reviews": [],
@@ -3183,7 +3183,7 @@
               "head_ref": "feature/rate-limiter",
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/145",
-              "ci": { "state": "Pending" }
+              "ci": { "state": "pending" }
             }
           }
         },
@@ -3198,7 +3198,7 @@
               "base_ref": "main",
               "url": "https://github.com/acme/web-app/pull/145",
               "ci": {
-                "state": "Failed",
+                "state": "failed",
                 "failure": {
                   "name": "integration-tests",
                   "summary": "Rate limiter integration tests timed out waiting for Redis connection",
@@ -3214,7 +3214,7 @@
       "title": "Deploy Apollo Federation gateway with Users and Issues subgraphs",
       "description": "Sets up the GraphQL federation gateway and implements the first two subgraphs.\n\nKey changes:\n- Apollo Federation v2 gateway configuration\n- Users subgraph: profile queries, team membership, auth integration\n- Issues subgraph: CRUD operations, dependency graph resolution\n- Dataloader integration for N+1 prevention",
       "diff": "diff --git a/src/gateway/config.ts b/src/gateway/config.ts\nnew file mode 100644\nindex 0000000..111aaa\n--- /dev/null\n+++ b/src/gateway/config.ts\n@@ -0,0 +1,15 @@\n+import { ApolloGateway } from '@apollo/gateway';\n+\n+export const gateway = new ApolloGateway({\n+  supergraphSdl: new IntrospectAndCompose({\n+    subgraphs: [\n+      { name: 'users', url: process.env.USERS_SUBGRAPH_URL },\n+      { name: 'issues', url: process.env.ISSUES_SUBGRAPH_URL },\n+    ],\n+  }),\n+});\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [
@@ -3234,7 +3234,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/api-gateway/pull/89",
         "ci": {
-          "state": "Success"
+          "state": "success"
         }
       },
       "branch_name": "feature/graphql-gateway",
@@ -3244,7 +3244,7 @@
       "title": "Integrate Yjs CRDT with PostgreSQL persistence",
       "description": "Adds conflict-free concurrent editing using Yjs with a PostgreSQL persistence adapter.",
       "diff": "diff --git a/src/crdt/YjsProvider.ts b/src/crdt/YjsProvider.ts\nnew file mode 100644\nindex 0000000..def5678\n--- /dev/null\n+++ b/src/crdt/YjsProvider.ts\n@@ -0,0 +1,20 @@\n+import * as Y from 'yjs';\n+import { WebsocketProvider } from 'y-websocket';\n+\n+export class YjsDocumentProvider {\n+  private doc: Y.Doc;\n+  private provider: WebsocketProvider;\n+\n+  constructor(roomName: string, wsUrl: string) {\n+    this.doc = new Y.Doc();\n+    this.provider = new WebsocketProvider(wsUrl, roomName, this.doc);\n+  }\n+}\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [
@@ -3264,7 +3264,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/150",
         "ci": {
-          "state": "Success"
+          "state": "success"
         }
       },
       "branch_name": "feature/crdt-sync",
@@ -3274,7 +3274,7 @@
       "title": "Fix SSE broadcaster memory leak on client disconnect",
       "description": "Fixes unbounded memory growth in the SSE event broadcaster caused by accumulated listeners from disconnected clients.\n\nRoot cause: cleanup callback not registered on request AbortSignal.",
       "diff": "diff --git a/src/sse/broadcaster.ts b/src/sse/broadcaster.ts\nindex aaa0000..bbb1111 100644\n--- a/src/sse/broadcaster.ts\n+++ b/src/sse/broadcaster.ts\n@@ -15,6 +15,10 @@\n   subscribe(req: Request, listener: EventListener): void {\n     this.listeners.add(listener);\n+    req.signal.addEventListener('abort', () => {\n+      this.listeners.delete(listener);\n+      this.connectionCount--;\n+    });\n     this.connectionCount++;\n   }\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3287,7 +3287,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/153",
         "ci": {
-          "state": "Success"
+          "state": "success"
         }
       },
       "branch_name": "fix/sse-memory-leak",
@@ -3297,7 +3297,7 @@
       "title": "Add GIN index on issues.description for full-text search",
       "description": "Adds a GIN index on the issues.description column using `to_tsvector('english', description)` to accelerate the full-text search endpoint.\n\nMigration is non-blocking (`CREATE INDEX CONCURRENTLY`); rollback path included.",
       "diff": "diff --git a/migrations/0042_issues_description_gin.sql b/migrations/0042_issues_description_gin.sql\nnew file mode 100644\nindex 0000000..ccc2222\n--- /dev/null\n+++ b/migrations/0042_issues_description_gin.sql\n@@ -0,0 +1,6 @@\n+-- 0042_issues_description_gin\n+CREATE INDEX CONCURRENTLY IF NOT EXISTS issues_description_gin\n+  ON issues USING GIN (to_tsvector('english', description));\n+\n+-- rollback:\n+-- DROP INDEX CONCURRENTLY IF EXISTS issues_description_gin;\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3310,7 +3310,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/157",
         "ci": {
-          "state": "Pending"
+          "state": "pending"
         }
       },
       "branch_name": "perf/search-index",
@@ -3320,7 +3320,7 @@
       "title": "WebSocket ConnectionManager with JWT auth and heartbeat",
       "description": "Implements the core `ConnectionManager` class: handles connect/disconnect, JWT auth on handshake, ping/pong heartbeat, and message routing.\n\nReconnection with exponential backoff is intentionally left for a follow-up patch.",
       "diff": "diff --git a/src/ws/ConnectionManager.ts b/src/ws/ConnectionManager.ts\nnew file mode 100644\nindex 0000000..ddd3333\n--- /dev/null\n+++ b/src/ws/ConnectionManager.ts\n@@ -0,0 +1,40 @@\n+import type { WebSocket } from 'ws';\n+import { verifyJwt } from '../auth/jwt';\n+\n+export class ConnectionManager {\n+  private connections = new Map<string, WebSocket>();\n+\n+  async accept(ws: WebSocket, token: string) {\n+    const user = await verifyJwt(token);\n+    this.connections.set(user.id, ws);\n+    ws.on('close', () => this.connections.delete(user.id));\n+    this.startHeartbeat(ws);\n+  }\n+\n+  private startHeartbeat(ws: WebSocket) {\n+    const id = setInterval(() => ws.ping(), 15_000);\n+    ws.on('close', () => clearInterval(id));\n+  }\n+}\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [
@@ -3340,7 +3340,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/159",
         "ci": {
-          "state": "Success"
+          "state": "success"
         }
       },
       "branch_name": "feature/ws-connection-manager",
@@ -3350,7 +3350,7 @@
       "title": "Distributed lock for session cleanup worker (Redis SETNX)",
       "description": "Replaces the racy `SELECT … FOR UPDATE SKIP LOCKED` approach with a per-session Redis SETNX lock keyed by session_id. Locks auto-expire after 30s so a crashed worker can't strand a session.",
       "diff": "diff --git a/src/workers/session-cleanup.ts b/src/workers/session-cleanup.ts\nindex eee0000..fff1111 100644\n--- a/src/workers/session-cleanup.ts\n+++ b/src/workers/session-cleanup.ts\n@@ -10,8 +10,15 @@\n   async run() {\n     const expired = await this.findExpiredSessions();\n     for (const session of expired) {\n+      const locked = await this.redis.set(\n+        `cleanup:${session.id}`,\n+        this.workerId,\n+        'NX',\n+        'EX',\n+        30,\n+      );\n+      if (!locked) continue;\n       await this.cleanup(session);\n     }\n   }\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3363,7 +3363,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/161",
         "ci": {
-          "state": "Pending"
+          "state": "pending"
         }
       },
       "branch_name": "fix/session-cleanup-race",
@@ -3373,7 +3373,7 @@
       "title": "Per-client refresh queue mutex for OAuth2 token refresh",
       "description": "Wraps the OAuth2 token refresh flow with a per-client mutex so concurrent callers share a single in-flight refresh. Resolves the thundering-herd issue against the IdP.\n\nKnown issue: under burst load (>500 simultaneous callers) the queue can deadlock when an in-flight refresh rejects. Tracking in i-seed00020.",
       "diff": "diff --git a/src/auth/refresh-queue.ts b/src/auth/refresh-queue.ts\nnew file mode 100644\nindex 0000000..aaa4444\n--- /dev/null\n+++ b/src/auth/refresh-queue.ts\n@@ -0,0 +1,32 @@\n+type RefreshFn = () => Promise<string>;\n+\n+const inflight = new Map<string, Promise<string>>();\n+\n+export async function refreshWithQueue(clientId: string, refresh: RefreshFn): Promise<string> {\n+  const existing = inflight.get(clientId);\n+  if (existing) return existing;\n+\n+  const promise = (async () => {\n+    try {\n+      return await refresh();\n+    } finally {\n+      inflight.delete(clientId);\n+    }\n+  })();\n+\n+  inflight.set(clientId, promise);\n+  return promise;\n+}\n",
-      "status": "ChangesRequested",
+      "status": "changes-requested",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [
@@ -3393,7 +3393,7 @@
         "base_ref": "main",
         "url": "https://github.com/acme/web-app/pull/164",
         "ci": {
-          "state": "Failed",
+          "state": "failed",
           "failure": {
             "name": "burst-load-test",
             "summary": "burst-load test reproduces deadlock at 1k concurrent callers (timeout 30s)",
@@ -3408,7 +3408,7 @@
       "title": "Add migration for issue.priority column",
       "description": "Add migration for issue.priority column\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 0\n+new line 0\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3423,7 +3423,7 @@
       "title": "Tidy unused exports in @hydra/api",
       "description": "Tidy unused exports in @hydra/api\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 1\n+new line 1\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3453,7 +3453,7 @@
       "title": "Move sticky board header into IssuesBoard scope",
       "description": "Move sticky board header into IssuesBoard scope\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 3\n+new line 3\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3468,7 +3468,7 @@
       "title": "Drop dead branch in normalizeSessionStatus()",
       "description": "Drop dead branch in normalizeSessionStatus()\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 4\n+new line 4\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3498,7 +3498,7 @@
       "title": "Make BFF proxy 5xx retries respect Retry-After",
       "description": "Make BFF proxy 5xx retries respect Retry-After\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 6\n+new line 6\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3513,7 +3513,7 @@
       "title": "Add Playwright trace for failed integration runs",
       "description": "Add Playwright trace for failed integration runs\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 7\n+new line 7\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3543,7 +3543,7 @@
       "title": "Persist sidebar collapse to localStorage",
       "description": "Persist sidebar collapse to localStorage\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 9\n+new line 9\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3558,7 +3558,7 @@
       "title": "Use intersection observer for chat autoload",
       "description": "Use intersection observer for chat autoload\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 10\n+new line 10\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3588,7 +3588,7 @@
       "title": "Bring back PatchDetail review summary subtitle",
       "description": "Bring back PatchDetail review summary subtitle\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 12\n+new line 12\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3603,7 +3603,7 @@
       "title": "Refactor ConnectionManager into thin wrapper",
       "description": "Refactor ConnectionManager into thin wrapper\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 13\n+new line 13\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3633,7 +3633,7 @@
       "title": "Backfill creation_time on legacy patches",
       "description": "Backfill creation_time on legacy patches\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 15\n+new line 15\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3648,7 +3648,7 @@
       "title": "Show diff stats on patches/get response",
       "description": "Show diff stats on patches/get response\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 16\n+new line 16\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3678,7 +3678,7 @@
       "title": "Wire @hydra/ui Spinner into LoadMore button",
       "description": "Wire @hydra/ui Spinner into LoadMore button\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 18\n+new line 18\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3693,7 +3693,7 @@
       "title": "Inline IssueLabels into IssueDetail head",
       "description": "Inline IssueLabels into IssueDetail head\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 19\n+new line 19\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3723,7 +3723,7 @@
       "title": "Forgive trailing whitespace in patch title",
       "description": "Forgive trailing whitespace in patch title\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 21\n+new line 21\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3738,7 +3738,7 @@
       "title": "Add structured logs for SSE handshake",
       "description": "Add structured logs for SSE handshake\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 22\n+new line 22\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3768,7 +3768,7 @@
       "title": "Improve toast placement on mobile",
       "description": "Improve toast placement on mobile\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 24\n+new line 24\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3783,7 +3783,7 @@
       "title": "Hide retry button on hard-failed sessions",
       "description": "Hide retry button on hard-failed sessions\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 25\n+new line 25\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3813,7 +3813,7 @@
       "title": "Run lint:check in pre-push hook",
       "description": "Run lint:check in pre-push hook\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 27\n+new line 27\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3828,7 +3828,7 @@
       "title": "Expand BadgeStatus vocab to cover 'queued'",
       "description": "Expand BadgeStatus vocab to cover 'queued'\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 28\n+new line 28\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3858,7 +3858,7 @@
       "title": "Add migration for issue.priority column (#31)",
       "description": "Add migration for issue.priority column (#31)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 30\n+new line 30\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3873,7 +3873,7 @@
       "title": "Tidy unused exports in @hydra/api (#32)",
       "description": "Tidy unused exports in @hydra/api (#32)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 31\n+new line 31\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3903,7 +3903,7 @@
       "title": "Move sticky board header into IssuesBoard scope (#34)",
       "description": "Move sticky board header into IssuesBoard scope (#34)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 33\n+new line 33\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3918,7 +3918,7 @@
       "title": "Drop dead branch in normalizeSessionStatus() (#35)",
       "description": "Drop dead branch in normalizeSessionStatus() (#35)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 34\n+new line 34\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3948,7 +3948,7 @@
       "title": "Make BFF proxy 5xx retries respect Retry-After (#37)",
       "description": "Make BFF proxy 5xx retries respect Retry-After (#37)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 36\n+new line 36\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -3963,7 +3963,7 @@
       "title": "Add Playwright trace for failed integration runs (#38)",
       "description": "Add Playwright trace for failed integration runs (#38)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 37\n+new line 37\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -3993,7 +3993,7 @@
       "title": "Persist sidebar collapse to localStorage (#40)",
       "description": "Persist sidebar collapse to localStorage (#40)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 39\n+new line 39\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -4008,7 +4008,7 @@
       "title": "Use intersection observer for chat autoload (#41)",
       "description": "Use intersection observer for chat autoload (#41)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 40\n+new line 40\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -4038,7 +4038,7 @@
       "title": "Bring back PatchDetail review summary subtitle (#43)",
       "description": "Bring back PatchDetail review summary subtitle (#43)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 42\n+new line 42\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -4053,7 +4053,7 @@
       "title": "Refactor ConnectionManager into thin wrapper (#44)",
       "description": "Refactor ConnectionManager into thin wrapper (#44)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 43\n+new line 43\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -4083,7 +4083,7 @@
       "title": "Backfill creation_time on legacy patches (#46)",
       "description": "Backfill creation_time on legacy patches (#46)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 45\n+new line 45\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -4098,7 +4098,7 @@
       "title": "Show diff stats on patches/get response (#47)",
       "description": "Show diff stats on patches/get response (#47)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 46\n+new line 46\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -4128,7 +4128,7 @@
       "title": "Wire @hydra/ui Spinner into LoadMore button (#49)",
       "description": "Wire @hydra/ui Spinner into LoadMore button (#49)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 48\n+new line 48\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -4143,7 +4143,7 @@
       "title": "Inline IssueLabels into IssueDetail head (#50)",
       "description": "Inline IssueLabels into IssueDetail head (#50)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 49\n+new line 49\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -4173,7 +4173,7 @@
       "title": "Forgive trailing whitespace in patch title (#52)",
       "description": "Forgive trailing whitespace in patch title (#52)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 51\n+new line 51\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -4188,7 +4188,7 @@
       "title": "Add structured logs for SSE handshake (#53)",
       "description": "Add structured logs for SSE handshake (#53)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 52\n+new line 52\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -4218,7 +4218,7 @@
       "title": "Improve toast placement on mobile (#55)",
       "description": "Improve toast placement on mobile (#55)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 54\n+new line 54\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -4233,7 +4233,7 @@
       "title": "Hide retry button on hard-failed sessions (#56)",
       "description": "Hide retry button on hard-failed sessions (#56)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 55\n+new line 55\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],
@@ -4263,7 +4263,7 @@
       "title": "Run lint:check in pre-push hook (#58)",
       "description": "Run lint:check in pre-push hook (#58)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 57\n+new line 57\n",
-      "status": "Open",
+      "status": "open",
       "is_automatic_backup": false,
       "creator": "swe",
       "reviews": [],
@@ -4278,7 +4278,7 @@
       "title": "Expand BadgeStatus vocab to cover 'queued' (#59)",
       "description": "Expand BadgeStatus vocab to cover 'queued' (#59)\n\nMinor change. Synthetic seed entry to exercise patches list pagination beyond the 50-item page size.",
       "diff": "diff --git a/notes.md b/notes.md\nindex 0000001..0000002 100644\n--- a/notes.md\n+++ b/notes.md\n@@ -1 +1 @@\n-old line 58\n+new line 58\n",
-      "status": "Merged",
+      "status": "merged",
       "is_automatic_backup": false,
       "creator": "alice",
       "reviews": [],

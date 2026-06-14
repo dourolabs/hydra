@@ -30,7 +30,7 @@ export function PatchDetail({ record, referringIssueId }: PatchDetailProps) {
   const { patch } = record;
 
   const status =
-    patch.status === "Open" && patch.reviews.some((r) => r.is_approved)
+    patch.status === "open" && patch.reviews.some((r) => r.is_approved)
       ? "approved"
       : normalizePatchStatus(patch.status);
 

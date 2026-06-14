@@ -13,25 +13,25 @@ import {
 } from "../filters/options/relationOptions";
 
 const PATCH_STATUS_TONES: Record<PatchStatus, BadgeStatus> = {
-  Open: "open",
-  ChangesRequested: "changes-requested",
-  Merged: "merged",
-  Closed: "closed",
-  Unknown: "unknown",
+  open: "open",
+  "changes-requested": "changes-requested",
+  merged: "merged",
+  closed: "closed",
+  unknown: "unknown",
 };
 
 const PATCH_STATUS_DISPLAY_ORDER: PatchStatus[] = [
-  "Open",
-  "ChangesRequested",
-  "Merged",
-  "Closed",
+  "open",
+  "changes-requested",
+  "merged",
+  "closed",
 ];
 
 const PATCH_STATUS_LABELS: Partial<Record<PatchStatus, string>> = {
-  Open: "Open",
-  ChangesRequested: "Changes requested",
-  Merged: "Merged",
-  Closed: "Closed",
+  open: "Open",
+  "changes-requested": "Changes requested",
+  merged: "Merged",
+  closed: "Closed",
 };
 
 function buildStatusOptions(): FilterOption[] {

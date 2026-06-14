@@ -117,7 +117,7 @@ export function PatchesView({
                 {patches.map((rec) => {
                   const p = rec.patch;
                   const status =
-                    p.status === "Open" && p.review_summary.approved
+                    p.status === "open" && p.review_summary.approved
                       ? "approved"
                       : normalizePatchStatus(p.status);
                   return (

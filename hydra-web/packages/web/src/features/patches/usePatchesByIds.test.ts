@@ -34,7 +34,7 @@ function makePatch(id: string): PatchVersionRecord {
       title: `Patch ${id}`,
       description: "",
       diff: "",
-      status: "Open",
+      status: "open",
       is_automatic_backup: false,
       creator: "alice",
       reviews: [],

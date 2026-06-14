@@ -175,7 +175,7 @@ function rec(id: string, title = `Patch ${id}`): PatchSummaryRecord {
     patch: {
       title,
       creator: "alice",
-      status: "Open",
+      status: "open",
       review_summary: { count: 0, approved: false },
     },
   } as unknown as PatchSummaryRecord;

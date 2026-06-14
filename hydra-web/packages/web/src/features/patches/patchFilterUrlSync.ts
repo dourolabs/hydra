@@ -4,7 +4,7 @@ import type { Filter } from "../filters";
  * URL-serialisation contract for the Patches page FilterBar.
  *
  * Each Patches-page filter is keyed by its definition id in the URL as a
- * single query param (`?status=Open,Merged`, `?relatedIssue=i-aa,i-bb`).
+ * single query param (`?status=open,merged`, `?relatedIssue=i-aa,i-bb`).
  * Single-select filters take a bare value; multi-select filters take a
  * comma-separated list. The `op` is always `in` for PR-2 — none of the entries
  * below back a server param that can express `not_in`.

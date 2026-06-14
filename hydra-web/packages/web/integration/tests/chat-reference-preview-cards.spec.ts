@@ -127,7 +127,7 @@ function patchRecord(id: string, title: string) {
       title,
       description: `${title} description first line.`,
       diff: "",
-      status: "Open",
+      status: "open",
       is_automatic_backup: false,
       creator: "dev-user",
       reviews: [],
