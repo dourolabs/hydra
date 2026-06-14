@@ -109,6 +109,17 @@
   --c-done: var(--s-closed); /* green — terminal success */
   --c-error: var(--s-failed); /* red — terminal failure */
 
+  /* ----- Code-syntax highlighting -----
+     Token-named tones for the highlight.js color slots used in
+     MarkdownViewer's code blocks. Decorative carve-out tones
+     (not part of the perceptual color system) tuned for dark
+     backgrounds; kept as hex to preserve visual parity. */
+  --code-keyword: #cc7832; /* orange */
+  --code-string: #6a8759; /* green */
+  --code-comment: #808080; /* grey */
+  --code-number: #6897bb; /* blue */
+  --code-class: #9876aa; /* purple */
+
   /* ----- Legacy color aliases (map old names → new tokens) ----- */
   --color-bg-primary: var(--bg-0);
   --color-bg-secondary: var(--bg-1);
