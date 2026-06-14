@@ -233,7 +233,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/issues/:issue_id",
             get(routes::issues::get_issue)
                 .put(routes::issues::update_issue)
-                .delete(routes::issues::delete_issue),
+                .delete(routes::issues::archive_issue),
         )
         .route(
             "/v1/issues/:issue_id/versions",
@@ -260,7 +260,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/patches/:patch_id",
             get(routes::patches::get_patch)
                 .put(routes::patches::update_patch)
-                .delete(routes::patches::delete_patch),
+                .delete(routes::patches::archive_patch),
         )
         .route(
             "/v1/patches/:patch_id/versions",
@@ -334,7 +334,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/documents/:document_id",
             get(routes::documents::get_document)
                 .put(routes::documents::update_document)
-                .delete(routes::documents::delete_document),
+                .delete(routes::documents::archive_document),
         )
         .route(
             "/v1/documents/:document_id/versions",
@@ -358,7 +358,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/labels/:label_id",
             get(routes::labels::get_label)
                 .put(routes::labels::update_label)
-                .delete(routes::labels::delete_label),
+                .delete(routes::labels::archive_label),
         )
         .route(
             "/v1/labels/:label_id/objects/:object_id",
@@ -406,7 +406,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
         .route(
             "/v1/repositories/:organization/:repo",
             put(routes::repositories::update_repository)
-                .delete(routes::repositories::delete_repository),
+                .delete(routes::repositories::archive_repository),
         )
         .route(
             "/v1/merge-queues/:organization/:repo/:branch/patches",
@@ -425,7 +425,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/agents/:agent_name",
             get(routes::agents::get_agent)
                 .put(routes::agents::update_agent)
-                .delete(routes::agents::delete_agent),
+                .delete(routes::agents::archive_agent),
         )
         .route(
             "/v1/sessions/:session_id",
@@ -492,7 +492,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/conversations/:conversation_id",
             get(routes::conversations::get_conversation)
                 .patch(routes::conversations::update_conversation)
-                .delete(routes::conversations::delete_conversation),
+                .delete(routes::conversations::archive_conversation),
         )
         .route(
             "/v1/conversations/:conversation_id/versions",
@@ -518,7 +518,7 @@ pub fn build_router(state: &AppState) -> Router<AppState> {
             "/v1/triggers/:trigger_id",
             get(routes::triggers::get_trigger)
                 .put(routes::triggers::update_trigger)
-                .delete(routes::triggers::delete_trigger),
+                .delete(routes::triggers::archive_trigger),
         )
         .route(
             "/v1/triggers/:trigger_id/versions",

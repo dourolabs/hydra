@@ -139,7 +139,7 @@ pub struct SearchLabelsQuery {
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
     /// Maximum number of results to return. When omitted, all results are returned.
     #[serde(default)]
     pub limit: Option<u32>,

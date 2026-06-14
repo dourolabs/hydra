@@ -225,7 +225,7 @@ async function mockChatRoutes(page: Page) {
   });
   // Issue / patch / document GETs. Match any id under each collection so the
   // mocks also cover fall-through assertions (e.g. unused fenced/label ids).
-  // `useIssue` appends `?include_deleted=true` to the URL, so the issue
+  // `useIssue` appends `?include_archived=true` to the URL, so the issue
   // matcher tolerates either bare `/<id>` or a trailing query string.
   await page.route(/\/api\/v1\/issues\/[^/?]+(?:\?|$)/, (route) => {
     const id = new URL(route.request().url()).pathname.split("/").pop() ?? "";

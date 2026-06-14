@@ -43,7 +43,7 @@ function toSummaryRecord(
   const summary: DocumentSummary = {
     title: document.title,
     path: document.path,
-    deleted: document.deleted,
+    archived: document.archived,
   };
   return {
     document_id: documentId,
@@ -163,7 +163,7 @@ export function createDocumentRoutes(store: Store): Hono {
   // GET /v1/documents/:id
   app.get("/v1/documents/:id", (c) => {
     const id = c.req.param("id");
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const entry = store.get<Document>(COLLECTION, id, includeDeleted);
     if (!entry) {
       return c.json({ error: `document '${id}' not found` }, 404);
@@ -190,7 +190,7 @@ export function createDocumentRoutes(store: Store): Hono {
 
   // GET /v1/documents
   app.get("/v1/documents", (c) => {
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const ids = c.req.query("ids");
     const pathPrefix = c.req.query("path_prefix");
     const pathIsExact = c.req.query("path_is_exact") === "true";

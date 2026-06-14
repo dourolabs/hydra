@@ -108,15 +108,15 @@ pub struct User {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github_user_id: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
 }
 
 impl User {
-    pub fn new(username: Username, github_user_id: Option<u64>, deleted: bool) -> Self {
+    pub fn new(username: Username, github_user_id: Option<u64>, archived: bool) -> Self {
         Self {
             username,
             github_user_id,
-            deleted,
+            archived,
         }
     }
 }
@@ -171,12 +171,15 @@ pub struct SearchUsersQuery {
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
 }
 
 impl SearchUsersQuery {
-    pub fn new(q: Option<String>, include_deleted: Option<bool>) -> Self {
-        Self { q, include_deleted }
+    pub fn new(q: Option<String>, include_archived: Option<bool>) -> Self {
+        Self {
+            q,
+            include_archived,
+        }
     }
 }
 

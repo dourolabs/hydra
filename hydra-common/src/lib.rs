@@ -117,7 +117,7 @@ mod ts_export {
         crate::agents::AgentRecord::export_all(&cfg).expect("AgentRecord");
         crate::agents::UpsertAgentRequest::export_all(&cfg).expect("UpsertAgentRequest");
         crate::agents::AgentResponse::export_all(&cfg).expect("AgentResponse");
-        crate::agents::DeleteAgentResponse::export_all(&cfg).expect("DeleteAgentResponse");
+        crate::agents::ArchiveAgentResponse::export_all(&cfg).expect("ArchiveAgentResponse");
         crate::agents::ListAgentsResponse::export_all(&cfg).expect("ListAgentsResponse");
 
         // API v1: analytics

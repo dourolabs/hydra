@@ -179,7 +179,7 @@ function makeDocument(docId: string, title = "Design Doc"): DocumentSummaryRecor
     document: {
       title,
       path: `docs/${docId}.md`,
-      deleted: false,
+      archived: false,
     },
   };
 }

@@ -214,7 +214,7 @@ pub struct Session {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<TaskError>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,7 +249,7 @@ impl Session {
         status: Status,
         last_message: Option<String>,
         error: Option<TaskError>,
-        deleted: bool,
+        archived: bool,
         creation_time: Option<DateTime<Utc>>,
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
@@ -269,7 +269,7 @@ impl Session {
             status,
             last_message,
             error,
-            deleted,
+            archived,
             creation_time,
             start_time,
             end_time,
@@ -707,7 +707,7 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<TaskError>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_time: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -754,7 +754,7 @@ impl From<&Session> for SessionSummary {
             creator: session.creator.clone(),
             status: session.status,
             error,
-            deleted: session.deleted,
+            archived: session.archived,
             creation_time: session.creation_time,
             start_time: session.start_time,
             end_time: session.end_time,
@@ -871,7 +871,7 @@ pub struct SearchSessionsQuery {
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub spawned_from_ids: Vec<IssueId>,
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
     /// Filter sessions by creator username.
     #[serde(default)]
     pub creator: Option<String>,
@@ -919,14 +919,14 @@ impl SearchSessionsQuery {
     pub fn new(
         q: Option<String>,
         spawned_from: Option<IssueId>,
-        include_deleted: Option<bool>,
+        include_archived: Option<bool>,
         status: Vec<Status>,
     ) -> Self {
         Self {
             q,
             spawned_from,
             spawned_from_ids: Vec::new(),
-            include_deleted,
+            include_archived,
             creator: None,
             conversation_id: None,
             status,
@@ -1136,7 +1136,7 @@ mod tests {
             q: Some("test query".to_string()),
             spawned_from: Some(issue_id.clone()),
             spawned_from_ids: vec![],
-            include_deleted: None,
+            include_archived: None,
             creator: None,
             conversation_id: None,
             status: vec![],
@@ -1356,7 +1356,7 @@ mod tests {
         assert_eq!(summary.creator, Username::from("alice"));
         assert_eq!(summary.status, Status::Running);
         assert!(summary.error.is_none());
-        assert!(!summary.deleted);
+        assert!(!summary.archived);
         assert!(summary.creation_time.is_some());
         assert!(summary.start_time.is_some());
         assert!(summary.end_time.is_none());

@@ -666,11 +666,37 @@ mod sqlite {
         Ok(row.is_some())
     }
 
+    /// Returns "archived" when the post-rename column is live on
+    /// `table`, "deleted" otherwise. Used by load helpers to stay
+    /// agnostic to whether this migration is running before or after
+    /// `20260717000000_rename_deleted_to_archived`.
+    async fn soft_delete_column(pool: &SqlitePool, table: &str) -> Result<&'static str> {
+        let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+            .fetch_all(pool)
+            .await
+            .with_context(|| format!("PRAGMA table_info({table})"))?;
+        for row in rows {
+            let name: String = row.try_get("name")?;
+            if name == "archived" {
+                return Ok("archived");
+            }
+        }
+        Ok("deleted")
+    }
+
     async fn load_issue_to_actor_id(pool: &SqlitePool) -> Result<HashMap<String, Value>> {
-        let rows = sqlx::query(
+        // The soft-delete column on `tasks_v2` is called `deleted` before
+        // SQL migration `20260717000000_rename_deleted_to_archived` and
+        // `archived` after. This Rust migration sits at v20260603000000
+        // (interleaved before the rename on a fresh DB), but server
+        // startup and the integration test re-invoke it after the rename
+        // has run — so the column reference must adapt to whichever name
+        // is live on the schema at query time.
+        let col = soft_delete_column(pool, "tasks_v2").await?;
+        let rows = sqlx::query(&format!(
             "SELECT spawned_from, actor FROM tasks_v2 \
-             WHERE spawned_from IS NOT NULL AND is_latest = 1 AND deleted = 0",
-        )
+             WHERE spawned_from IS NOT NULL AND is_latest = 1 AND {col} = 0"
+        ))
         .fetch_all(pool)
         .await
         .context("load tasks_v2 for issue-spawned-from lookup")?;
@@ -915,11 +941,33 @@ mod postgres {
         Ok(row.map(|(b,)| b).unwrap_or(false))
     }
 
-    async fn load_issue_to_actor_id(pool: &PgPool) -> Result<HashMap<String, Value>> {
-        let rows = sqlx::query(
-            "SELECT spawned_from, actor FROM metis.tasks_v2 \
-             WHERE spawned_from IS NOT NULL AND is_latest = TRUE AND deleted = FALSE",
+    /// Returns "archived" when the post-rename column is live on
+    /// `metis.<table>`, "deleted" otherwise. Sister to
+    /// `sqlite::soft_delete_column`.
+    async fn soft_delete_column(pool: &PgPool, table: &str) -> Result<&'static str> {
+        let row: Option<(bool,)> = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'metis' AND table_name = $1 AND column_name = 'archived')",
         )
+        .bind(table)
+        .fetch_optional(pool)
+        .await
+        .with_context(|| format!("check information_schema.columns for metis.{table}.archived"))?;
+        if row.map(|(b,)| b).unwrap_or(false) {
+            Ok("archived")
+        } else {
+            Ok("deleted")
+        }
+    }
+
+    async fn load_issue_to_actor_id(pool: &PgPool) -> Result<HashMap<String, Value>> {
+        // See `sqlite::load_issue_to_actor_id` for why we resolve the
+        // column name at query time rather than hard-coding it.
+        let col = soft_delete_column(pool, "tasks_v2").await?;
+        let rows = sqlx::query(&format!(
+            "SELECT spawned_from, actor FROM metis.tasks_v2 \
+             WHERE spawned_from IS NOT NULL AND is_latest = TRUE AND {col} = FALSE"
+        ))
         .fetch_all(pool)
         .await
         .context("load tasks_v2 for issue-spawned-from lookup")?;

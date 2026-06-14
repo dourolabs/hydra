@@ -112,7 +112,7 @@ export function createConversationRoutes(store: Store): Hono {
 
   // GET /v1/conversations
   app.get("/v1/conversations", (c) => {
-    const includeDeleted = c.req.query("include_deleted") === "true";
+    const includeDeleted = c.req.query("include_archived") === "true";
     const q = c.req.query("q");
     const status = c.req.query("status") as ConversationStatus | undefined;
     const creator = c.req.query("creator");

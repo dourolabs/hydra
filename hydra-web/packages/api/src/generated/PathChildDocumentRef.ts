@@ -3,7 +3,7 @@ import type { DocumentId } from "./DocumentId";
 
 /**
  * Inline document reference attached to a `PathChildEntry` when the entry's
- * `full_path` matches a live (non-deleted) document.
+ * `full_path` matches a live (non-archived) document.
  */
 export type PathChildDocumentRef = {
   document_id: DocumentId;

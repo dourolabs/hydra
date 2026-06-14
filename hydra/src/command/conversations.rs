@@ -29,9 +29,9 @@ pub enum ConversationsCommand {
         #[arg(long = "query", short = 'q', value_name = "QUERY")]
         query: Option<String>,
 
-        /// Include soft-deleted conversations.
+        /// Include soft-archived conversations.
         #[arg(long)]
-        include_deleted: bool,
+        include_archived: bool,
 
         /// Maximum number of conversations to return.
         #[arg(short = 'n', long, value_name = "COUNT", default_value_t = 20)]
@@ -63,8 +63,8 @@ pub enum ConversationsCommand {
         #[arg(long, value_name = "TITLE")]
         title: String,
     },
-    /// Soft-delete a conversation.
-    Delete {
+    /// Soft-archive a conversation.
+    Archive {
         /// Conversation identifier (defaults to HYDRA_CONVERSATION_ID).
         #[arg(value_name = "CONVERSATION_ID", env = ENV_HYDRA_CONVERSATION_ID)]
         id: ConversationId,
@@ -98,14 +98,14 @@ pub async fn run(
             status,
             creator,
             query,
-            include_deleted,
+            include_archived,
             limit,
         } => {
             let search_query = SearchConversationsQuery {
                 q: query,
                 status: status.map(Into::into),
                 creator,
-                include_deleted: if include_deleted { Some(true) } else { None },
+                include_archived: if include_archived { Some(true) } else { None },
                 spawned_from: None,
                 spawned_from_ids: Vec::new(),
                 limit: Some(limit),
@@ -186,9 +186,9 @@ pub async fn run(
             )?;
             write_stdout(&buffer)?;
         }
-        ConversationsCommand::Delete { id } => {
+        ConversationsCommand::Archive { id } => {
             let conversation = client
-                .delete_conversation(&id)
+                .archive_conversation(&id)
                 .await
                 .with_context(|| format!("failed to delete conversation '{id}'"))?;
 

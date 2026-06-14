@@ -16,7 +16,7 @@ impl Render for DeletedPatchOutcome<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
         serde_json::to_writer(
             &mut *writer,
-            &json!({ "patch_id": self.0, "action": "deleted" }),
+            &json!({ "patch_id": self.0, "action": "archived" }),
         )?;
         writer.write_all(b"\n")?;
         writer.flush()?;
@@ -24,7 +24,7 @@ impl Render for DeletedPatchOutcome<'_> {
     }
 
     fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
-        writeln!(writer, "Deleted patch '{}'", self.0)?;
+        writeln!(writer, "Archived patch '{}'", self.0)?;
         writer.flush()?;
         Ok(())
     }
@@ -269,7 +269,7 @@ mod tests {
         )
         .expect("render");
         let output = String::from_utf8(output).expect("utf8");
-        assert_eq!(output, format!("Deleted patch '{id}'\n"));
+        assert_eq!(output, format!("Archived patch '{id}'\n"));
     }
 
     #[test]
@@ -285,7 +285,7 @@ mod tests {
         let output = String::from_utf8(output).expect("utf8");
         assert_eq!(output.lines().count(), 1);
         let parsed: serde_json::Value = serde_json::from_str(output.trim_end()).expect("json");
-        assert_eq!(parsed, json!({ "patch_id": id, "action": "deleted" }));
+        assert_eq!(parsed, json!({ "patch_id": id, "action": "archived" }));
     }
 
     #[test]

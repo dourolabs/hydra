@@ -21,9 +21,9 @@ pub enum AgentsCommand {
     Create(CreateAgentArgs),
     /// Update an existing agent.
     Update(UpdateAgentArgs),
-    /// Delete an agent.
-    Delete {
-        /// Agent name to delete.
+    /// Archive an agent.
+    Archive {
+        /// Agent name to archive.
         #[arg(value_name = "NAME")]
         name: String,
     },
@@ -157,9 +157,13 @@ pub async fn run(
             let agent = update_agent(client, args).await?;
             render(AgentRecords(&[agent]), context.output_format, &mut buffer)?;
         }
-        AgentsCommand::Delete { name } => {
-            let deleted = delete_agent(client, &name).await?;
-            render(AgentRecords(&[deleted]), context.output_format, &mut buffer)?;
+        AgentsCommand::Archive { name } => {
+            let archived = archive_agent(client, &name).await?;
+            render(
+                AgentRecords(&[archived]),
+                context.output_format,
+                &mut buffer,
+            )?;
         }
     }
     write_stdout(&buffer)?;
@@ -319,10 +323,10 @@ async fn update_agent(
     Ok(response.agent)
 }
 
-async fn delete_agent(client: &dyn HydraClientInterface, name: &str) -> Result<AgentRecord> {
+async fn archive_agent(client: &dyn HydraClientInterface, name: &str) -> Result<AgentRecord> {
     let name = normalize_non_empty(name, "agent name")?;
     let response = client
-        .delete_agent(&name)
+        .archive_agent(&name)
         .await
         .context("failed to delete agent")?;
     Ok(response.agent)
@@ -346,7 +350,7 @@ mod tests {
     };
     use httpmock::prelude::*;
     use hydra_common::agents::{
-        AgentRecord, AgentResponse, DeleteAgentResponse, ListAgentsResponse,
+        AgentRecord, AgentResponse, ArchiveAgentResponse, ListAgentsResponse,
     };
     use reqwest::Client as HttpClient;
     use serde_json::json;
@@ -801,15 +805,15 @@ mod tests {
         let server = MockServer::start();
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-        let deleted =
+        let archived =
             AgentRecord::new("writer", "", "", None, None, 3, i32::MAX, false, Vec::new());
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)
-                .json_body_obj(&DeleteAgentResponse::new(deleted.clone()));
+                .json_body_obj(&ArchiveAgentResponse::new(archived.clone()));
         });
 
-        let response = delete_agent(&client, "  writer ").await?;
+        let response = archive_agent(&client, "  writer ").await?;
         mock.assert();
         assert_eq!(response.name, "writer");
 

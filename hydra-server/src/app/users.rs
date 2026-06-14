@@ -94,7 +94,7 @@ impl AppState {
         let user = User {
             username: username.clone(),
             github_user_id: Some(github_user.id.into_inner()),
-            deleted: false,
+            archived: false,
         };
 
         let (actor, auth_token) = Actor::new_for_user(username.clone());

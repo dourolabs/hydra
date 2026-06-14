@@ -125,7 +125,7 @@ describe("Issues", () => {
     // Delete
     const deleted = await client.deleteIssue(issueId);
     expect(deleted.issue_id).toBe(issueId);
-    expect(deleted.issue.deleted).toBe(true);
+    expect(deleted.issue.archived).toBe(true);
 
     // Get after delete → 404
     try {
@@ -138,7 +138,7 @@ describe("Issues", () => {
 
     // Can still fetch with includeDeleted
     const deletedFetch = await client.getIssue(issueId, true);
-    expect(deletedFetch.issue.deleted).toBe(true);
+    expect(deletedFetch.issue.archived).toBe(true);
   });
 
   it("versions: create → update → list versions", async () => {
@@ -481,7 +481,7 @@ describe("Patches", () => {
 
     // Delete
     const deleted = await client.deletePatch(patchId);
-    expect(deleted.patch.deleted).toBe(true);
+    expect(deleted.patch.archived).toBe(true);
 
     // 404 after delete
     await expect(client.getPatch(patchId)).rejects.toThrow(ApiError);
@@ -561,7 +561,7 @@ describe("Documents", () => {
 
     // Delete
     const deleted = await client.deleteDocument(docId);
-    expect(deleted.document.deleted).toBe(true);
+    expect(deleted.document.archived).toBe(true);
 
     // 404
     await expect(client.getDocument(docId)).rejects.toThrow(ApiError);
@@ -1501,7 +1501,7 @@ describe("Triggers", () => {
     expect(refetched.trigger.enabled).toBe(false);
 
     const deleted = await client.deleteTrigger(triggerId);
-    expect(deleted.trigger.deleted).toBe(true);
+    expect(deleted.trigger.archived).toBe(true);
 
     await expect(client.getTrigger(triggerId)).rejects.toThrow(ApiError);
   });

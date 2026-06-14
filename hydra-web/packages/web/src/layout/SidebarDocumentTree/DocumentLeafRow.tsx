@@ -17,7 +17,7 @@ export function DocumentLeafRow({ entry, depth, pathToDoc, pathToDocLoading }: N
     doc = pathToDoc.get(entry.full_path);
     isLoading = pathToDocLoading ?? false;
   } else {
-    doc = fallback.data?.documents.find((d) => !d.document.deleted);
+    doc = fallback.data?.documents.find((d) => !d.document.archived);
     isLoading = fallback.isLoading;
   }
 

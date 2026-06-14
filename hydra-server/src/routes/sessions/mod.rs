@@ -82,12 +82,12 @@ pub async fn list_sessions(
         spawned_from = ?query.spawned_from,
         spawned_from_ids_count = query.spawned_from_ids.len(),
         conversation_id = ?query.conversation_id,
-        include_deleted = ?query.include_deleted,
+        include_archived = ?query.include_archived,
         "list_sessions invoked"
     );
     let namespace = state.config.hydra.namespace.clone();
 
-    // All filtering (q, spawned_from, include_deleted) is done at the Store level.
+    // All filtering (q, spawned_from, include_archived) is done at the Store level.
     // Text search (q) matches task ID, prompt, and status (NOT notes).
     let tasks = state
         .list_sessions_with_query(&query)

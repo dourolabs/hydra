@@ -412,7 +412,7 @@ mod tests {
             commit_range: None,
             base_branch: None,
             reviews,
-            deleted: false,
+            archived: false,
         }
     }
 

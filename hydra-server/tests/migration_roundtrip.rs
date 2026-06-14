@@ -439,6 +439,40 @@ async fn migration_roundtrip() -> Result<()> {
             "seed_progress_as_comments: idempotent rerun does not duplicate seeded comments",
         )?;
 
+    rename_deleted_to_archived_post_migration_state(&pool)
+        .await
+        .context(
+            "rename_deleted_to_archived: ten entity tables carry `archived` and not `deleted` post-rename",
+        )?;
+
+    Ok(())
+}
+
+/// 20260717000000_rename_deleted_to_archived. Post-state: the ten
+/// entity tables carry `archived` instead of `deleted`. Idempotency is
+/// enforced by sqlx's per-migration checkpoint — `ALTER TABLE ... RENAME
+/// COLUMN` is not naturally idempotent on Postgres either, so an
+/// idempotency rerun would only be checking the framework.
+async fn rename_deleted_to_archived_post_migration_state(pool: &PgPool) -> Result<()> {
+    for table in [
+        "repositories_v2",
+        "users_v2",
+        "issues_v2",
+        "patches_v2",
+        "tasks_v2",
+        "documents_v2",
+        "agents",
+        "labels",
+        "conversations_v2",
+        "triggers",
+    ] {
+        if !column_exists(pool, table, "archived").await? {
+            bail!("expected metis.{table}.archived to exist post-rename");
+        }
+        if column_exists(pool, table, "deleted").await? {
+            bail!("expected metis.{table}.deleted to be renamed away post-rename");
+        }
+    }
     Ok(())
 }
 
@@ -857,12 +891,14 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &PgPool) -> Result<()>
     if column_exists(pool, "agents", "is_assignment_agent").await? {
         bail!("expected `metis.agents.is_assignment_agent` column to be dropped post-rollforward");
     }
+    // The later `rename_deleted_to_archived` migration flips `deleted`
+    // over to `archived` by the time this post-state assertion runs.
     for required in [
         "name",
         "prompt_path",
         "max_tries",
         "max_simultaneous",
-        "deleted",
+        "archived",
         "created_at",
         "updated_at",
         "secrets",
@@ -1003,7 +1039,7 @@ async fn rename_kill_sessions_to_teardown_work_is_idempotent(pool: &PgPool) -> R
 
 async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
     let rows = sqlx::query(
-        "SELECT name, max_tries, max_simultaneous, deleted, \
+        "SELECT name, max_tries, max_simultaneous, archived, \
                 secrets::text AS secrets, mcp_config_path, is_default_conversation_agent \
          FROM metis.agents \
          WHERE name IN ('pm-baseline', 'chat-baseline', 'deleted-baseline') \
@@ -1023,7 +1059,7 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
     assert_eq!(chat.try_get::<String, _>("name")?, "chat-baseline");
     assert_eq!(chat.try_get::<i32, _>("max_tries")?, 5);
     assert_eq!(chat.try_get::<i32, _>("max_simultaneous")?, 10);
-    assert!(!chat.try_get::<bool, _>("deleted")?);
+    assert!(!chat.try_get::<bool, _>("archived")?);
     assert_eq!(
         chat.try_get::<String, _>("secrets")?,
         "[\"OPENAI_API_KEY\"]"
@@ -1034,14 +1070,14 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
     );
     assert!(chat.try_get::<bool, _>("is_default_conversation_agent")?);
 
-    let deleted = &rows[1];
-    assert_eq!(deleted.try_get::<String, _>("name")?, "deleted-baseline");
-    assert!(deleted.try_get::<bool, _>("deleted")?);
+    let archived = &rows[1];
+    assert_eq!(archived.try_get::<String, _>("name")?, "deleted-baseline");
+    assert!(archived.try_get::<bool, _>("archived")?);
 
     let pm = &rows[2];
     assert_eq!(pm.try_get::<String, _>("name")?, "pm-baseline");
     assert_eq!(pm.try_get::<i32, _>("max_tries")?, 3);
-    assert!(!pm.try_get::<bool, _>("deleted")?);
+    assert!(!pm.try_get::<bool, _>("archived")?);
     assert!(!pm.try_get::<bool, _>("is_default_conversation_agent")?);
 
     Ok(())
@@ -2709,7 +2745,6 @@ async fn smoke_create_issue(store: &PostgresStoreV2) -> Result<()> {
         "smoke: create issue with agent assignee".to_string(),
         "post-migration write-path round-trip for Principal::Agent assignees".to_string(),
         Username::from("jayantk"),
-        String::new(),
         status("open"),
         hydra_server::domain::projects::default_project_id(),
         Some(Principal::Agent {
@@ -2718,7 +2753,6 @@ async fn smoke_create_issue(store: &PostgresStoreV2) -> Result<()> {
         None,
         Vec::new(),
         Vec::new(),
-        None,
         None,
         None,
     );

@@ -144,8 +144,8 @@ export function SessionSettings({ task }: SessionSettingsProps) {
     entries.push({ label: "Ended", value: formatTimestamp(task.end_time) });
   }
 
-  if (task.deleted) {
-    entries.push({ label: "Deleted", value: "Yes" });
+  if (task.archived) {
+    entries.push({ label: "Archived", value: "Yes" });
   }
 
   if (entries.length === 0) {

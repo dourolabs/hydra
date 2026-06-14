@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 
 /// Server-side domain label type.
 ///
-/// Labels are non-versioned: they are created, updated in-place, and soft-deleted.
+/// Labels are non-versioned: they are created, updated in-place, and soft-archived.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
     pub name: String,
     pub color: Rgb,
-    pub deleted: bool,
+    pub archived: bool,
     pub recurse: bool,
     pub hidden: bool,
     pub created_at: DateTime<Utc>,
@@ -22,7 +22,7 @@ impl Label {
         Self {
             name,
             color,
-            deleted: false,
+            archived: false,
             recurse,
             hidden,
             created_at: now,

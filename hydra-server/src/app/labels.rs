@@ -148,12 +148,12 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn delete_label(
+    pub async fn archive_label(
         &self,
         label_id: &LabelId,
         actor: ActorRef,
     ) -> Result<(), StoreError> {
-        self.store.delete_label(label_id, actor).await
+        self.store.archive_label(label_id, actor).await
     }
 
     pub async fn get_label(&self, label_id: &LabelId) -> Result<Label, StoreError> {
@@ -455,7 +455,7 @@ mod tests {
             .unwrap();
 
         state
-            .delete_label(&label_id, ActorRef::test())
+            .archive_label(&label_id, ActorRef::test())
             .await
             .unwrap();
 
@@ -463,19 +463,19 @@ mod tests {
         let err = state.get_label(&label_id).await.unwrap_err();
         assert!(matches!(err, StoreError::LabelNotFound(_)));
 
-        // list_labels excludes deleted by default
+        // list_labels excludes archived by default
         let results = state
             .list_labels(&SearchLabelsQuery::default())
             .await
             .unwrap();
         assert!(results.is_empty());
 
-        // list_labels with include_deleted returns soft-deleted labels
+        // list_labels with include_archived returns soft-archived labels
         let mut query = SearchLabelsQuery::default();
-        query.include_deleted = Some(true);
+        query.include_archived = Some(true);
         let results = state.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].1.deleted);
+        assert!(results[0].1.archived);
     }
 
     #[tokio::test]
@@ -586,7 +586,7 @@ mod tests {
             .await
             .unwrap();
         state
-            .delete_label(&label_id, ActorRef::test())
+            .archive_label(&label_id, ActorRef::test())
             .await
             .unwrap();
 

@@ -81,9 +81,9 @@ export function filtersToIssuesQuery({
         break;
       case "includeArchived":
         // Presence-only flag — the chip's mere presence on the bar means
-        // "include archived issues". Maps to `?include_deleted=true` on the
+        // "include archived issues". Maps to `?include_archived=true` on the
         // issues list endpoint.
-        out.include_deleted = true;
+        out.include_archived = true;
         break;
       // Relation filters are resolved upstream into `extraIds`; no direct
       // mapping here.

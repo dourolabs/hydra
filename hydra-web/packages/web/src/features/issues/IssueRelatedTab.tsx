@@ -108,7 +108,7 @@ export function IssueRelatedTab({ issueId }: IssueRelatedTabProps) {
     isLoading: conversationsLoading,
     error: conversationsError,
   } = useConversations(
-    { spawned_from: issueId, include_deleted: false },
+    { spawned_from: issueId, include_archived: false },
     { enabled: !!issueId },
   );
 

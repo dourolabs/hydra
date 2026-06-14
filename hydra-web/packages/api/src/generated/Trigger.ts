@@ -17,5 +17,5 @@ export type Trigger = {
   actions: Array<TriggerAction>;
   creator: Username;
   last_fired_at?: string | null;
-  deleted?: boolean;
+  archived?: boolean;
 };

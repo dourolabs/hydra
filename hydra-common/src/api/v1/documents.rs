@@ -16,7 +16,7 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
 }
 
 impl Document {
@@ -24,14 +24,14 @@ impl Document {
         title: String,
         body_markdown: String,
         path: Option<String>,
-        deleted: bool,
+        archived: bool,
     ) -> Result<Self, crate::DocumentPathError> {
         let path = path.map(|p| p.parse()).transpose()?;
         Ok(Self {
             title,
             body_markdown,
             path,
-            deleted,
+            archived,
         })
     }
 }
@@ -122,7 +122,7 @@ pub struct SearchDocumentsQuery {
     #[serde(default)]
     pub path_is_exact: Option<bool>,
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
     /// Maximum number of results to return. When omitted, all results are returned.
     #[serde(default)]
     pub limit: Option<u32>,
@@ -142,14 +142,14 @@ impl SearchDocumentsQuery {
         q: Option<String>,
         path_prefix: Option<String>,
         path_is_exact: Option<bool>,
-        include_deleted: Option<bool>,
+        include_archived: Option<bool>,
     ) -> Self {
         Self {
             ids: Vec::new(),
             q,
             path_prefix,
             path_is_exact,
-            include_deleted,
+            include_archived,
             limit: None,
             cursor: None,
             count: None,
@@ -168,7 +168,7 @@ impl SearchDocumentsQuery {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct GetDocumentQuery {
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,7 +216,7 @@ pub struct DocumentSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<LabelSummary>,
 }
@@ -226,7 +226,7 @@ impl From<&Document> for DocumentSummary {
         DocumentSummary {
             title: doc.title.clone(),
             path: doc.path.clone(),
-            deleted: doc.deleted,
+            archived: doc.archived,
             labels: Vec::new(),
         }
     }
@@ -340,7 +340,7 @@ pub struct ListDocumentPathsQuery {
 }
 
 /// Inline document reference attached to a `PathChildEntry` when the entry's
-/// `full_path` matches a live (non-deleted) document.
+/// `full_path` matches a live (non-archived) document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -427,7 +427,7 @@ mod tests {
             q: Some("api".to_string()),
             path_prefix: Some("docs/".to_string()),
             path_is_exact: None,
-            include_deleted: None,
+            include_archived: None,
             limit: None,
             cursor: None,
             count: None,
@@ -544,7 +544,7 @@ mod tests {
         let summary = DocumentSummary::from(&doc);
         assert_eq!(summary.title, "Title");
         assert_eq!(summary.path.as_deref(), Some("/docs/path.md"));
-        assert!(!summary.deleted);
+        assert!(!summary.archived);
     }
 
     #[test]

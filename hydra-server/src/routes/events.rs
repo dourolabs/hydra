@@ -985,7 +985,7 @@ mod tests {
         let issue_id = IssueId::new();
         let old_issue = dummy_issue();
         let mut deleted_issue = old_issue.clone();
-        deleted_issue.deleted = true;
+        deleted_issue.archived = true;
 
         let payload = Arc::new(MutationPayload::Issue {
             old: Some(old_issue),
@@ -1006,7 +1006,7 @@ mod tests {
             .entity
             .expect("entity should be present for delete events");
         let issue_obj = entity.get("issue").expect("should contain issue field");
-        assert!(issue_obj.get("deleted").unwrap().as_bool().unwrap());
+        assert!(issue_obj.get("archived").unwrap().as_bool().unwrap());
     }
 
     #[tokio::test]
@@ -1248,7 +1248,7 @@ mod tests {
             title: "Test doc".to_string(),
             body_markdown: "content".to_string(),
             path: None,
-            deleted: false,
+            archived: false,
         };
         let (doc_id, _) = store
             .add_document(doc.clone(), &ActorRef::test())

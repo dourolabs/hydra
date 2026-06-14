@@ -9,7 +9,7 @@ export type SearchDocumentsQuery = {
   q: string | null;
   path_prefix: string | null;
   path_is_exact: boolean | null;
-  include_deleted: boolean | null;
+  include_archived: boolean | null;
   /**
    * Maximum number of results to return. When omitted, all results are returned.
    */

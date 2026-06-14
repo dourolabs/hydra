@@ -302,7 +302,7 @@ function IssueDataRow({
   const issue = rec.issue;
   const id = rec.issue_id;
   const pill = computeFlowPillState(neighborhoodMap.get(id));
-  const archived = issue.deleted === true;
+  const archived = issue.archived === true;
   const rowClasses = [styles.dataRow];
   if (archived) rowClasses.push(styles.archived);
 

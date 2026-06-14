@@ -10,6 +10,6 @@ import type { LabelSummary } from "./LabelSummary";
 export type DocumentSummary = {
   title: string;
   path?: DocumentPath | null;
-  deleted?: boolean;
+  archived?: boolean;
   labels?: Array<LabelSummary>;
 };

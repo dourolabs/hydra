@@ -25,7 +25,7 @@ export type Patch = {
    */
   service_repo_name: RepoName;
   github?: GithubPr | null;
-  deleted?: boolean;
+  archived?: boolean;
   /**
    * The head branch name for this patch, independent of any GitHub PR.
    */

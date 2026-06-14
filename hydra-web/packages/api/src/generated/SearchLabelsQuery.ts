@@ -5,7 +5,7 @@
  */
 export type SearchLabelsQuery = {
   q: string | null;
-  include_deleted: boolean | null;
+  include_archived: boolean | null;
   /**
    * Maximum number of results to return. When omitted, all results are returned.
    */

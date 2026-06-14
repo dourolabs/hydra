@@ -314,7 +314,7 @@ impl TestHarness {
     /// Run one iteration of the running-jobs monitor.
     ///
     /// Reconciles task status with the job engine, reaps orphaned jobs,
-    /// and cleans up tasks whose parent issues have been deleted.
+    /// and cleans up tasks whose parent issues have been archived.
     pub async fn step_monitor_jobs(&self) -> Result<()> {
         let worker = MonitorRunningSessionsWorker::new(self.state.clone());
         let outcome = worker.run_iteration().await;
@@ -466,7 +466,7 @@ impl TestHarnessBuilder {
                 title: format!("{name} prompt"),
                 body_markdown: prompt.clone(),
                 path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-                deleted: false,
+                archived: false,
             };
             store
                 .add_document(doc, &ActorRef::test())

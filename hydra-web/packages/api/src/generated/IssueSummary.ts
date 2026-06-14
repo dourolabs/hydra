@@ -30,6 +30,6 @@ export type IssueSummary = {
   progress: string;
   dependencies: Array<IssueDependency>;
   patches: Array<PatchId>;
-  deleted?: boolean;
+  archived?: boolean;
   labels?: Array<LabelSummary>;
 };

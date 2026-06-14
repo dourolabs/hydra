@@ -199,7 +199,7 @@ pub struct Issue {
     #[serde(default)]
     pub patches: Vec<PatchId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -219,7 +219,7 @@ impl Issue {
         session_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
-        deleted: bool,
+        archived: bool,
         form: Option<Form>,
         form_response: Option<FormResponse>,
     ) -> Self {
@@ -234,7 +234,7 @@ impl Issue {
             session_settings: session_settings.unwrap_or_default(),
             dependencies,
             patches,
-            deleted,
+            archived,
             form,
             form_response,
         }
@@ -272,7 +272,7 @@ pub struct IssueInput {
     #[serde(default)]
     pub patches: Vec<PatchId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -292,7 +292,7 @@ impl IssueInput {
         session_settings: Option<SessionSettings>,
         dependencies: Vec<IssueDependency>,
         patches: Vec<PatchId>,
-        deleted: bool,
+        archived: bool,
         form: Option<Form>,
         form_response: Option<FormResponse>,
     ) -> Self {
@@ -307,7 +307,7 @@ impl IssueInput {
             session_settings: session_settings.unwrap_or_default(),
             dependencies,
             patches,
-            deleted,
+            archived,
             form,
             form_response,
         }
@@ -327,7 +327,7 @@ impl From<Issue> for IssueInput {
             session_settings: value.session_settings,
             dependencies: value.dependencies,
             patches: value.patches,
-            deleted: value.deleted,
+            archived: value.archived,
             form: value.form,
             form_response: value.form_response,
         }
@@ -608,7 +608,7 @@ pub struct SearchIssuesQuery {
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default)]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
     /// Filter issues by label IDs (comma-separated in query string).
     #[serde(
         default,
@@ -650,7 +650,7 @@ impl SearchIssuesQuery {
         status: Vec<StatusKey>,
         assignee: Option<Principal>,
         q: Option<String>,
-        include_deleted: Option<bool>,
+        include_archived: Option<bool>,
     ) -> Self {
         Self {
             ids: Vec::new(),
@@ -660,7 +660,7 @@ impl SearchIssuesQuery {
             assignee,
             creator: None,
             q,
-            include_deleted,
+            include_archived,
             label_ids: Vec::new(),
             limit: None,
             cursor: None,
@@ -699,7 +699,7 @@ pub struct IssueSummary {
     #[serde(default)]
     pub patches: Vec<PatchId>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<LabelSummary>,
 }
@@ -722,7 +722,7 @@ impl From<&Issue> for IssueSummary {
             assignee: issue.assignee.clone(),
             dependencies: issue.dependencies.clone(),
             patches: issue.patches.clone(),
-            deleted: issue.deleted,
+            archived: issue.archived,
             labels: Vec::new(),
         }
     }
@@ -1000,7 +1000,7 @@ mod tests {
             }),
             creator: None,
             q: Some("test query".to_string()),
-            include_deleted: None,
+            include_archived: None,
             label_ids: vec![],
             limit: None,
             cursor: None,
@@ -1233,7 +1233,7 @@ mod tests {
             session_settings: Default::default(),
             dependencies: Vec::new(),
             patches: Vec::new(),
-            deleted: false,
+            archived: false,
             form: None,
             form_response: None,
         };
@@ -1265,7 +1265,7 @@ mod tests {
             session_settings: Default::default(),
             dependencies: Vec::new(),
             patches: Vec::new(),
-            deleted: false,
+            archived: false,
             form: None,
             form_response: None,
         };
@@ -1348,7 +1348,7 @@ mod tests {
                 issue_id("i-parent"),
             )],
             patches: vec!["p-abcd".parse().unwrap()],
-            deleted: false,
+            archived: false,
             form: None,
             form_response: None,
         }
@@ -1400,7 +1400,7 @@ mod tests {
         );
         assert_eq!(summary.dependencies.len(), 1);
         assert_eq!(summary.patches.len(), 1);
-        assert!(!summary.deleted);
+        assert!(!summary.archived);
     }
 
     #[test]
@@ -1447,7 +1447,7 @@ mod tests {
                     issue_id("i-parent"),
                 )],
                 patches: vec!["p-abcd".parse().unwrap()],
-                deleted: false,
+                archived: false,
                 form: None,
                 form_response: None,
             }

@@ -1278,7 +1278,7 @@ mod tests {
             .await
             .expect("add to_delete");
         store
-            .delete_issue(&delete_id, &actor)
+            .archive_issue(&delete_id, &actor)
             .await
             .expect("delete");
 
@@ -1434,7 +1434,7 @@ mod tests {
     #[test]
     fn cycle_time_ignores_issue_whose_status_key_is_missing_from_project() {
         // If a status key on an issue version isn't declared in the
-        // current project (e.g. the user deleted the status mid-history
+        // current project (e.g. the user archived the status mid-history
         // and the rewrite did not migrate this row), the analytics walk
         // skips that version's terminal-check. The issue effectively
         // never reaches a terminal status from the analytics' POV.

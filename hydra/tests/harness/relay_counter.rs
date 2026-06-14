@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use hydra::client::sse::SseEventStream;
 use hydra::client::{HydraClientInterface, LogStream, RelayWebSocket};
 use hydra_common::{
-    agents::{AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest},
+    agents::{AgentResponse, ArchiveAgentResponse, ListAgentsResponse, UpsertAgentRequest},
     api::v1::comments::{
         AddCommentRequest, AddCommentResponse, ListCommentsQuery, ListCommentsResponse,
     },
@@ -192,9 +192,9 @@ impl HydraClientInterface for RelayCallCountingClient {
     async fn get_issue(
         &self,
         issue_id: &IssueId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<IssueVersionRecord> {
-        self.inner.get_issue(issue_id, include_deleted).await
+        self.inner.get_issue(issue_id, include_archived).await
     }
 
     async fn get_issue_version(
@@ -267,17 +267,19 @@ impl HydraClientInterface for RelayCallCountingClient {
     async fn get_document(
         &self,
         document_id: &DocumentId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord> {
-        self.inner.get_document(document_id, include_deleted).await
+        self.inner.get_document(document_id, include_archived).await
     }
 
     async fn get_document_by_path(
         &self,
         path: &str,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<DocumentVersionRecord> {
-        self.inner.get_document_by_path(path, include_deleted).await
+        self.inner
+            .get_document_by_path(path, include_archived)
+            .await
     }
 
     async fn list_documents(&self, query: &SearchDocumentsQuery) -> Result<ListDocumentsResponse> {
@@ -325,8 +327,8 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.update_repository(repo_name, request).await
     }
 
-    async fn delete_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
-        self.inner.delete_repository(repo_name).await
+    async fn archive_repository(&self, repo_name: &RepoName) -> Result<RepositoryRecord> {
+        self.inner.archive_repository(repo_name).await
     }
 
     async fn list_projects(&self) -> Result<ListProjectsResponse> {
@@ -465,12 +467,12 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.update_agent(name, request).await
     }
 
-    async fn delete_agent(&self, name: &str) -> Result<DeleteAgentResponse> {
-        self.inner.delete_agent(name).await
+    async fn archive_agent(&self, name: &str) -> Result<ArchiveAgentResponse> {
+        self.inner.archive_agent(name).await
     }
 
-    async fn delete_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
-        self.inner.delete_issue(issue_id).await
+    async fn archive_issue(&self, issue_id: &IssueId) -> Result<IssueVersionRecord> {
+        self.inner.archive_issue(issue_id).await
     }
 
     async fn submit_form(
@@ -497,12 +499,12 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.list_issue_comments(issue_id, query).await
     }
 
-    async fn delete_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
-        self.inner.delete_patch(patch_id).await
+    async fn archive_patch(&self, patch_id: &PatchId) -> Result<PatchVersionRecord> {
+        self.inner.archive_patch(patch_id).await
     }
 
-    async fn delete_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
-        self.inner.delete_document(document_id).await
+    async fn archive_document(&self, document_id: &DocumentId) -> Result<DocumentVersionRecord> {
+        self.inner.archive_document(document_id).await
     }
 
     async fn create_trigger(
@@ -523,9 +525,9 @@ impl HydraClientInterface for RelayCallCountingClient {
     async fn get_trigger(
         &self,
         trigger_id: &TriggerId,
-        include_deleted: bool,
+        include_archived: bool,
     ) -> Result<TriggerVersionRecord> {
-        self.inner.get_trigger(trigger_id, include_deleted).await
+        self.inner.get_trigger(trigger_id, include_archived).await
     }
 
     async fn get_trigger_version(
@@ -547,8 +549,8 @@ impl HydraClientInterface for RelayCallCountingClient {
         self.inner.list_trigger_versions(trigger_id).await
     }
 
-    async fn delete_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
-        self.inner.delete_trigger(trigger_id).await
+    async fn archive_trigger(&self, trigger_id: &TriggerId) -> Result<TriggerVersionRecord> {
+        self.inner.archive_trigger(trigger_id).await
     }
 
     async fn subscribe_events(
@@ -653,11 +655,11 @@ impl HydraClientInterface for RelayCallCountingClient {
             .await
     }
 
-    async fn delete_conversation(
+    async fn archive_conversation(
         &self,
         conversation_id: &ConversationId,
     ) -> Result<ApiConversation> {
-        self.inner.delete_conversation(conversation_id).await
+        self.inner.archive_conversation(conversation_id).await
     }
 
     async fn current_actor_id(&self) -> Result<ActorId> {

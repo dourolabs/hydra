@@ -168,7 +168,7 @@ struct RepositoryRow {
     remote_url: String,
     default_branch: Option<String>,
     default_image: Option<String>,
-    deleted: bool,
+    archived: bool,
     merge_policy: Option<String>,
     actor: Option<String>,
     created_at: String,
@@ -182,7 +182,7 @@ struct UserRow {
     version_number: i64,
     username: String,
     github_user_id: Option<i64>,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -237,7 +237,7 @@ struct TriggerRow {
     schedule: String,
     actions: String,
     last_fired_at: Option<String>,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -327,7 +327,7 @@ struct ConversationRow {
     spawned_from: Option<String>,
     status: String,
     creator: String,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -388,7 +388,7 @@ struct IssueRow {
     assignee_principal: Option<String>,
     #[sqlx(rename = "job_settings")]
     session_settings: String,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -418,7 +418,7 @@ struct PatchRow {
     reviews: String,
     service_repo_name: String,
     github: Option<String>,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -434,7 +434,7 @@ struct DocumentRow {
     title: String,
     body_markdown: String,
     path: Option<String>,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -457,7 +457,7 @@ struct TaskRow {
     error: Option<String>,
     secrets: Option<String>,
     creator: String,
-    deleted: bool,
+    archived: bool,
     actor: Option<String>,
     created_at: String,
     #[allow(dead_code)]
@@ -501,7 +501,7 @@ struct AgentRow {
     #[sqlx(default)]
     is_default_conversation_agent: bool,
     secrets: String,
-    deleted: bool,
+    archived: bool,
     created_at: String,
     updated_at: String,
 }
@@ -511,7 +511,7 @@ struct LabelRow {
     id: String,
     name: String,
     color: String,
-    deleted: bool,
+    archived: bool,
     recurse: bool,
     hidden: bool,
     created_at: String,
@@ -540,7 +540,7 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         max_simultaneous: row.max_simultaneous,
         is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
-        deleted: row.deleted,
+        archived: row.archived,
         created_at,
         updated_at,
     })
@@ -579,7 +579,7 @@ impl LabelRow {
         Ok(Label {
             name: self.name.clone(),
             color,
-            deleted: self.deleted,
+            archived: self.archived,
             recurse: self.recurse,
             hidden: self.hidden,
             created_at,
@@ -644,18 +644,18 @@ impl SqliteStore {
         Ok(atomic.load(Ordering::Relaxed).max(0) as u64)
     }
 
-    // Like `cached_count_latest`, but seeds the cell with `WHERE deleted = 0`
+    // Like `cached_count_latest`, but seeds the cell with `WHERE archived = 0`
     // so the cache tracks the live row count. `add_label` increments it and
-    // `delete_label` decrements it to keep it consistent with the soft-delete
-    // semantics; soft-deleted rows do not inflate `next_label_id`'s suffix.
-    async fn cached_count_undeleted(
+    // `archive_label` decrements it to keep it consistent with the soft-delete
+    // semantics; soft-archived rows do not inflate `next_label_id`'s suffix.
+    async fn cached_count_unarchived(
         &self,
         cell: &OnceCell<AtomicI64>,
         table: &str,
     ) -> Result<u64, StoreError> {
         let atomic = cell
             .get_or_try_init(|| async {
-                let sql = format!("SELECT COUNT(*) FROM {table} WHERE deleted = 0");
+                let sql = format!("SELECT COUNT(*) FROM {table} WHERE archived = 0");
                 let count = sqlx::query_scalar::<_, i64>(&sql)
                     .fetch_one(&self.pool)
                     .await
@@ -700,7 +700,7 @@ impl SqliteStore {
 
     async fn next_label_id(&self) -> Result<LabelId, StoreError> {
         let count = self
-            .cached_count_undeleted(&self.row_counts.labels, TABLE_LABELS)
+            .cached_count_unarchived(&self.row_counts.labels, TABLE_LABELS)
             .await?;
         let len = random_len_for_count(count);
         Ok(LabelId::generate(len).expect("length within bounds"))
@@ -821,7 +821,7 @@ impl SqliteStore {
 
         // Insert the new version with is_latest = 1
         sqlx::query(
-            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, is_latest)
+            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, is_latest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
         )
         .bind(id)
@@ -829,7 +829,7 @@ impl SqliteStore {
         .bind(&repo.remote_url)
         .bind(repo.default_branch.as_deref())
         .bind(repo.default_image.as_deref())
-        .bind(repo.deleted)
+        .bind(repo.archived)
         .bind(&merge_policy_json)
         .bind(actor)
         .execute(&mut *tx)
@@ -857,7 +857,7 @@ impl SqliteStore {
             row.default_branch.clone(),
             row.default_image.clone(),
         );
-        repo.deleted = row.deleted;
+        repo.archived = row.archived;
         repo.merge_policy = merge_policy;
         Ok(repo)
     }
@@ -887,14 +887,14 @@ impl SqliteStore {
 
         // Insert the new version with is_latest = 1
         sqlx::query(
-            "INSERT INTO users_v2 (id, version_number, username, github_user_id, deleted, actor, is_latest)
+            "INSERT INTO users_v2 (id, version_number, username, github_user_id, archived, actor, is_latest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
         )
         .bind(id)
         .bind(version_number)
         .bind(user.username.as_str())
         .bind(user.github_user_id.map(|id| id as i64))
-        .bind(user.deleted)
+        .bind(user.archived)
         .bind(actor)
         .execute(&mut *tx)
         .await
@@ -909,7 +909,7 @@ impl SqliteStore {
         User::new(
             Username::from(row.username.clone()),
             row.github_user_id.map(|id| id as u64),
-            row.deleted,
+            row.archived,
         )
     }
 
@@ -960,7 +960,7 @@ impl SqliteStore {
             creator: Username::from(row.creator.clone()),
             session_settings,
             spawned_from,
-            deleted: row.deleted,
+            archived: row.archived,
         })
     }
 
@@ -996,7 +996,7 @@ impl SqliteStore {
             })?;
 
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, is_latest)
+            "INSERT INTO {TABLE_CONVERSATIONS} (id, version_number, title, agent_name, session_settings, spawned_from, status, creator, archived, actor, is_latest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)"
         ))
         .bind(id.as_ref())
@@ -1007,7 +1007,7 @@ impl SqliteStore {
         .bind(conversation.spawned_from.as_ref().map(|i| i.as_ref().to_string()))
         .bind(Self::conversation_status_str(&conversation.status))
         .bind(conversation.creator.as_str())
-        .bind(conversation.deleted)
+        .bind(conversation.archived)
         .bind(actor)
         .execute(executor)
         .await
@@ -1038,7 +1038,7 @@ impl SqliteStore {
             actions,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
             last_fired_at,
-            row.deleted,
+            row.archived,
         ))
     }
 
@@ -1064,7 +1064,7 @@ impl SqliteStore {
         let last_fired_at = trigger.last_fired_at.map(|dt| dt.to_rfc3339());
 
         sqlx::query(&format!(
-            "INSERT INTO {TABLE_TRIGGERS} (id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, is_latest)
+            "INSERT INTO {TABLE_TRIGGERS} (id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor, is_latest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)"
         ))
         .bind(id.as_ref())
@@ -1074,7 +1074,7 @@ impl SqliteStore {
         .bind(&schedule_json)
         .bind(&actions_json)
         .bind(last_fired_at.as_deref())
-        .bind(trigger.deleted)
+        .bind(trigger.archived)
         .bind(actor)
         .execute(executor)
         .await
@@ -1310,7 +1310,7 @@ impl SqliteStore {
 
     /// Cascade-archive every non-archived issue in this project (or
     /// in `(project_id, status_sequence_filter)` when `Some`) by
-    /// flipping `issue.deleted = TRUE` on the row's next version.
+    /// flipping `issue.archived = TRUE` on the row's next version.
     /// Returns the ids of every issue actually flipped.
     ///
     /// Carries every other column forward by `INSERT ... SELECT`
@@ -1329,7 +1329,7 @@ impl SqliteStore {
             Some(seq) => sqlx::query_scalar(
                 "SELECT id FROM issues_v2 \
                  WHERE project_id = ?1 AND status_sequence = ?2 \
-                       AND is_latest = 1 AND deleted = 0",
+                       AND is_latest = 1 AND archived = 0",
             )
             .bind(project_id)
             .bind(seq)
@@ -1338,7 +1338,7 @@ impl SqliteStore {
             .map_err(map_sqlx_error)?,
             None => sqlx::query_scalar(
                 "SELECT id FROM issues_v2 \
-                 WHERE project_id = ?1 AND is_latest = 1 AND deleted = 0",
+                 WHERE project_id = ?1 AND is_latest = 1 AND archived = 0",
             )
             .bind(project_id)
             .fetch_all(&mut **tx)
@@ -1371,7 +1371,7 @@ impl SqliteStore {
             sqlx::query(
                 "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, \
                   creator, status_sequence, assignee, assignee_principal, \
-                  job_settings, deleted, actor, form, form_response, \
+                  job_settings, archived, actor, form, form_response, \
                   project_id, is_latest) \
                  SELECT id, ?2, issue_type, title, description, creator, \
                         status_sequence, assignee, assignee_principal, job_settings, \
@@ -1546,7 +1546,7 @@ impl SqliteStore {
         )
         .await?;
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, status_sequence, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, project_id, is_latest)
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, status_sequence, assignee, assignee_principal, job_settings, archived, actor, form, form_response, project_id, is_latest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1)"
         )
         .bind(id.as_ref())
@@ -1559,7 +1559,7 @@ impl SqliteStore {
         .bind(assignee_path.as_deref())
         .bind(assignee_principal_json.as_deref())
         .bind(&session_settings_json)
-        .bind(issue.deleted)
+        .bind(issue.archived)
         .bind(actor)
         .bind(&form_json)
         .bind(&form_response_json)
@@ -1693,7 +1693,7 @@ impl SqliteStore {
         // Insert the new version with is_latest = 1
         sqlx::query(
             &format!(
-                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, is_latest)
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, archived, actor, is_latest)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1)"
             )
         )
@@ -1711,7 +1711,7 @@ impl SqliteStore {
         .bind(&reviews_json)
         .bind(patch.service_repo_name.as_str())
         .bind(&github_json)
-        .bind(patch.deleted)
+        .bind(patch.archived)
         .bind(actor)
         .execute(&mut *tx)
         .await
@@ -1758,7 +1758,7 @@ impl SqliteStore {
             reviews,
             service_repo_name,
             github,
-            deleted: row.deleted,
+            archived: row.archived,
             branch_name: row.branch_name.clone(),
             commit_range,
             base_branch: row.base_branch.clone(),
@@ -1793,7 +1793,7 @@ impl SqliteStore {
         // Insert the new version with is_latest = 1
         sqlx::query(
             &format!(
-                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, deleted, actor, is_latest)
+                "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, archived, actor, is_latest)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)"
             )
         )
@@ -1802,7 +1802,7 @@ impl SqliteStore {
         .bind(&document.title)
         .bind(&document.body_markdown)
         .bind(document.path.as_ref().map(|p| p.as_str()))
-        .bind(document.deleted)
+        .bind(document.archived)
         .bind(actor)
         .execute(&mut *tx)
         .await
@@ -1827,7 +1827,7 @@ impl SqliteStore {
             title: row.title.clone(),
             body_markdown: row.body_markdown.clone(),
             path,
-            deleted: row.deleted,
+            archived: row.archived,
         })
     }
 
@@ -1918,7 +1918,7 @@ impl SqliteStore {
         if let Some(ts) = created_at {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, created_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets, is_latest)
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, archived, actor, secrets, created_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets, is_latest)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, 1)"
                 )
             )
@@ -1933,7 +1933,7 @@ impl SqliteStore {
             .bind(status_str)
             .bind(session.last_message.as_deref())
             .bind(&error_json)
-            .bind(session.deleted)
+            .bind(session.archived)
             .bind(actor)
             .bind(&secrets_json)
             .bind(ts)
@@ -1953,7 +1953,7 @@ impl SqliteStore {
         } else {
             sqlx::query(
                 &format!(
-                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets, is_latest)
+                    "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, archived, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets, is_latest)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, 1)"
                 )
             )
@@ -1968,7 +1968,7 @@ impl SqliteStore {
             .bind(status_str)
             .bind(session.last_message.as_deref())
             .bind(&error_json)
-            .bind(session.deleted)
+            .bind(session.archived)
             .bind(actor)
             .bind(&secrets_json)
             .bind(creation_time_str.as_deref())
@@ -2104,7 +2104,7 @@ impl SqliteStore {
             status,
             last_message: row.last_message.clone(),
             error,
-            deleted: row.deleted,
+            archived: row.archived,
             creation_time,
             start_time,
             end_time,
@@ -2190,7 +2190,7 @@ impl SqliteStore {
             session_settings,
             dependencies: vec![],
             patches: vec![],
-            deleted: row.deleted,
+            archived: row.archived,
             form,
             form_response,
         })
@@ -2381,8 +2381,8 @@ fn build_conversations_predicates_sqlite(
         }
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = 0".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = 0".to_string());
     }
 
     (predicates, bindings)
@@ -2484,8 +2484,8 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
         ));
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("i.deleted = 0".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("i.archived = 0".to_string());
     }
 
     if !query.label_ids.is_empty() {
@@ -2527,8 +2527,8 @@ fn build_patches_predicates_sqlite(query: &SearchPatchesQuery) -> (Vec<String>, 
         }
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = 0".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = 0".to_string());
     }
 
     if !query.status.is_empty() {
@@ -2681,8 +2681,8 @@ fn build_documents_predicates_sqlite(query: &SearchDocumentsQuery) -> (Vec<Strin
         }
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = 0".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = 0".to_string());
     }
 
     (predicates, bindings)
@@ -2764,8 +2764,8 @@ fn build_tasks_predicates_sqlite(query: &SearchSessionsQuery) -> (Vec<String>, V
         }
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("t.deleted = 0".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("t.archived = 0".to_string());
     }
 
     (predicates, bindings)
@@ -2776,8 +2776,8 @@ fn build_labels_predicates_sqlite(query: &SearchLabelsQuery) -> (Vec<String>, Ve
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = 0".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = 0".to_string());
     }
 
     if let Some(ref q) = query.q {
@@ -2873,7 +2873,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let row = sqlx::query_as::<_, RepositoryRow>(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, created_at, updated_at
              FROM repositories_v2
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -2885,7 +2885,7 @@ impl ReadOnlyStore for SqliteStore {
         .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::RepositoryNotFound(name.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -2909,13 +2909,13 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let normalized_needle = query
             .remote_url
             .as_deref()
             .map(Repository::normalize_remote_url);
         let rows = sqlx::query_as::<_, RepositoryRow>(
-            "SELECT r.id, r.version_number, r.remote_url, r.default_branch, r.default_image, r.deleted, r.merge_policy, r.actor, r.created_at, r.updated_at
+            "SELECT r.id, r.version_number, r.remote_url, r.default_branch, r.default_image, r.archived, r.merge_policy, r.actor, r.created_at, r.updated_at
              FROM repositories_v2 r
              WHERE r.is_latest = 1
              ORDER BY r.id"
@@ -2926,7 +2926,7 @@ impl ReadOnlyStore for SqliteStore {
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
-            if !include_deleted && row.deleted {
+            if !include_deleted && row.archived {
                 continue;
             }
             if let Some(needle) = normalized_needle.as_deref()
@@ -2968,7 +2968,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
@@ -2990,7 +2990,7 @@ impl ReadOnlyStore for SqliteStore {
         })?;
         let mut issue = self.row_to_issue(&row)?;
 
-        if !include_deleted && issue.deleted {
+        if !include_deleted && issue.archived {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
@@ -3015,7 +3015,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id, NULL AS creation_time
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id, NULL AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
              WHERE i.id = ?1
@@ -3142,9 +3142,9 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<u64, StoreError> {
         let sql = format!(
             "SELECT COUNT(*) FROM {TABLE_TASKS_V2} t \
-             INNER JOIN {TABLE_ISSUES_V2} i ON i.id = t.spawned_from AND i.is_latest = 1 AND i.deleted = 0 \
+             INNER JOIN {TABLE_ISSUES_V2} i ON i.id = t.spawned_from AND i.is_latest = 1 AND i.archived = 0 \
              INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
-             WHERE t.is_latest = 1 AND t.deleted = 0 \
+             WHERE t.is_latest = 1 AND t.archived = 0 \
                AND t.status IN ('created', 'pending', 'running') \
                AND i.project_id = ?1 AND s.key = ?2"
         );
@@ -3172,7 +3172,7 @@ impl ReadOnlyStore for SqliteStore {
         let sql = format!(
             "SELECT i.id FROM {TABLE_ISSUES_V2} i \
              INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
-             WHERE i.is_latest = 1 AND i.deleted = 0 \
+             WHERE i.is_latest = 1 AND i.archived = 0 \
                AND i.project_id = ?1 AND s.key = ?2 AND i.created_at < ?3 \
              LIMIT ?4"
         );
@@ -3306,7 +3306,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let row = sqlx::query_as::<_, PatchRow>(&format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, archived, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = ?1
@@ -3326,7 +3326,7 @@ impl ReadOnlyStore for SqliteStore {
             ))
         })?;
         let patch = self.row_to_patch(&row)?;
-        if !include_deleted && patch.deleted {
+        if !include_deleted && patch.archived {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
         let timestamp = parse_sqlite_timestamp(&row.created_at)?;
@@ -3347,7 +3347,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         let rows = sqlx::query_as::<_, PatchRow>(&format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, creator, base_branch, branch_name, commit_range, reviews, service_repo_name, github, archived, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -3393,7 +3393,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let subquery = format!(
-            "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.creator, p.base_branch, p.branch_name, p.commit_range, p.reviews, p.service_repo_name, p.github, p.deleted, p.actor, p.created_at, p.updated_at,
+            "SELECT p.id, p.version_number, p.title, p.description, p.diff, p.status, p.is_automatic_backup, p.creator, p.base_branch, p.branch_name, p.commit_range, p.reviews, p.service_repo_name, p.github, p.archived, p.actor, p.created_at, p.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = p.id) AS creation_time
              FROM {TABLE_PATCHES_V2} p
              WHERE p.is_latest = 1"
@@ -3503,7 +3503,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         let row = sqlx::query_as::<_, DocumentRow>(&format!(
-            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, body_markdown, path, archived, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = ?1 AND is_latest = 1"
@@ -3514,7 +3514,7 @@ impl ReadOnlyStore for SqliteStore {
         .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::DocumentNotFound(id.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -3545,7 +3545,7 @@ impl ReadOnlyStore for SqliteStore {
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
         let rows = sqlx::query_as::<_, DocumentRow>(&format!(
-            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, title, body_markdown, path, archived, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = ?1
              ORDER BY version_number"
@@ -3591,7 +3591,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let subquery = format!(
-            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.deleted, d.actor, d.created_at, d.updated_at,
+            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.archived, d.actor, d.created_at, d.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = d.id) AS creation_time
              FROM {TABLE_DOCUMENTS_V2} d
              WHERE d.is_latest = 1"
@@ -3655,7 +3655,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn count_documents(&self, query: &SearchDocumentsQuery) -> Result<u64, StoreError> {
         let subquery = format!(
-            "SELECT id, title, body_markdown, path, deleted
+            "SELECT id, title, body_markdown, path, archived
              FROM {TABLE_DOCUMENTS_V2}
              WHERE is_latest = 1"
         );
@@ -3680,13 +3680,13 @@ impl ReadOnlyStore for SqliteStore {
         Ok(count as u64)
     }
 
-    async fn find_non_deleted_document_by_exact_path(
+    async fn find_non_archived_document_by_exact_path(
         &self,
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
         let row = sqlx::query_as::<_, (String,)>(&format!(
             "SELECT id FROM {TABLE_DOCUMENTS_V2}
-                 WHERE path = ?1 AND is_latest = 1 AND COALESCE(deleted, 0) = 0
+                 WHERE path = ?1 AND is_latest = 1 AND COALESCE(archived, 0) = 0
                  LIMIT 1"
         ))
         .bind(path)
@@ -3735,7 +3735,7 @@ impl ReadOnlyStore for SqliteStore {
         let sql = format!(
             "SELECT path, id, title FROM {TABLE_DOCUMENTS_V2} \
              WHERE is_latest = 1 \
-               AND COALESCE(deleted, 0) = 0 \
+               AND COALESCE(archived, 0) = 0 \
                AND path IN ({})",
             placeholders.join(", ")
         );
@@ -3787,7 +3787,7 @@ impl ReadOnlyStore for SqliteStore {
                 END THEN 1 ELSE 0 END) AS is_doc
              FROM {TABLE_DOCUMENTS_V2}
              WHERE is_latest = 1
-               AND COALESCE(deleted, 0) = 0
+               AND COALESCE(archived, 0) = 0
                AND path IS NOT NULL
                AND path LIKE ?2
                AND LENGTH(path) > ?1
@@ -3819,7 +3819,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Versioned<Session>, StoreError> {
         let row = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at,
+                "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, archived, actor, created_at, updated_at,
                  creation_time, start_time, end_time, conversation_id, usage,
                  mount_spec, agent_config, mode, resumed_from, proxy_targets
                  FROM {TABLE_TASKS_V2}
@@ -3834,7 +3834,7 @@ impl ReadOnlyStore for SqliteStore {
         .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::SessionNotFound(id.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::SessionNotFound(id.clone()));
         }
         self.row_to_versioned_session(&row)
@@ -3846,7 +3846,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let rows = sqlx::query_as::<_, TaskRow>(
             &format!(
-                "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, conversation_id, usage,
+                "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, archived, actor, created_at, updated_at, creation_time, start_time, end_time, conversation_id, usage,
                  mount_spec, agent_config, mode, resumed_from, proxy_targets
                  FROM {TABLE_TASKS_V2}
                  WHERE id = ?1
@@ -3880,7 +3880,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.deleted, t.actor, t.created_at, t.updated_at, \
+            "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.secrets, t.creator, t.archived, t.actor, t.created_at, t.updated_at, \
              t.creation_time, t.start_time, t.end_time, t.conversation_id, t.usage, \
              t.mount_spec, t.agent_config, t.mode, t.resumed_from, t.proxy_targets \
              FROM {TABLE_TASKS_V2} t"
@@ -3963,7 +3963,7 @@ impl ReadOnlyStore for SqliteStore {
         // SQLite doesn't support ANY($1), so we build a query with placeholders
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, deleted, actor, created_at, updated_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets \
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, secrets, creator, archived, actor, created_at, updated_at, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets \
              FROM {TABLE_TASKS_V2} \
              WHERE id IN ({}) \
              ORDER BY id, version_number",
@@ -4002,7 +4002,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<User>, StoreError> {
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, archived, actor, created_at, updated_at
              FROM users_v2
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -4014,7 +4014,7 @@ impl ReadOnlyStore for SqliteStore {
         .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::UserNotFound(username.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -4038,10 +4038,10 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
 
         let rows = sqlx::query_as::<_, UserRow>(
-            "SELECT u.id, u.version_number, u.username, u.github_user_id, u.deleted, u.actor, u.created_at, u.updated_at
+            "SELECT u.id, u.version_number, u.username, u.github_user_id, u.archived, u.actor, u.created_at, u.updated_at
              FROM users_v2 u
              WHERE u.is_latest = 1
              ORDER BY u.id"
@@ -4058,7 +4058,7 @@ impl ReadOnlyStore for SqliteStore {
 
         let mut users = Vec::with_capacity(rows.len());
         for row in rows {
-            if !include_deleted && row.deleted {
+            if !include_deleted && row.archived {
                 continue;
             }
 
@@ -4097,7 +4097,7 @@ impl ReadOnlyStore for SqliteStore {
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = ?1"
         );
@@ -4108,7 +4108,7 @@ impl ReadOnlyStore for SqliteStore {
             .map_err(map_sqlx_error)?
             .ok_or_else(|| StoreError::AgentNotFound(name.to_string()))?;
         let agent = row_to_agent(row)?;
-        if agent.deleted {
+        if agent.archived {
             return Err(StoreError::AgentNotFound(name.to_string()));
         }
         Ok(agent)
@@ -4117,9 +4117,9 @@ impl ReadOnlyStore for SqliteStore {
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, archived, \
                     created_at, updated_at \
-             FROM {TABLE_AGENTS} WHERE deleted = 0 ORDER BY name"
+             FROM {TABLE_AGENTS} WHERE archived = 0 ORDER BY name"
         );
         let rows = sqlx::query_as::<_, AgentRow>(&sql)
             .fetch_all(&self.pool)
@@ -4130,7 +4130,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
         let sql = format!(
-            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
+            "SELECT id, name, color, archived, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS} WHERE id = ?1"
         );
         let row = sqlx::query_as::<_, LabelRow>(&sql)
@@ -4140,7 +4140,7 @@ impl ReadOnlyStore for SqliteStore {
             .map_err(map_sqlx_error)?
             .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
         let label = row.to_label()?;
-        if label.deleted {
+        if label.archived {
             return Err(StoreError::LabelNotFound(id.clone()));
         }
         Ok(label)
@@ -4153,7 +4153,7 @@ impl ReadOnlyStore for SqliteStore {
         let (mut predicates, mut bindings) = build_labels_predicates_sqlite(query);
 
         let mut sql = format!(
-            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
+            "SELECT id, name, color, archived, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS}"
         );
 
@@ -4218,8 +4218,8 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
         let sql = format!(
-            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
-             FROM {TABLE_LABELS} WHERE LOWER(name) = LOWER(?1) AND deleted = 0"
+            "SELECT id, name, color, archived, recurse, hidden, created_at, updated_at \
+             FROM {TABLE_LABELS} WHERE LOWER(name) = LOWER(?1) AND archived = 0"
         );
         let row = sqlx::query_as::<_, LabelRow>(&sql)
             .bind(name)
@@ -4246,7 +4246,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT l.id, l.name, l.color, l.recurse, l.hidden \
              FROM {TABLE_LABELS} l \
              INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
-             WHERE la.object_id = ?1 AND l.deleted = 0 \
+             WHERE la.object_id = ?1 AND l.archived = 0 \
              ORDER BY l.name"
         );
         let rows = sqlx::query_as::<_, (String, String, String, bool, bool)>(&sql)
@@ -4282,7 +4282,7 @@ impl ReadOnlyStore for SqliteStore {
             "SELECT la.object_id, l.id, l.name, l.color, l.recurse, l.hidden \
              FROM {TABLE_LABELS} l \
              INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
-             WHERE la.object_id IN ({}) AND l.deleted = 0 \
+             WHERE la.object_id IN ({}) AND l.archived = 0 \
              ORDER BY l.name",
             placeholders.join(", ")
         );
@@ -4336,7 +4336,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Trigger>, StoreError> {
         let row = sqlx::query_as::<_, TriggerRow>(&format!(
-            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = ?1) AS creation_time
              FROM {TABLE_TRIGGERS}
              WHERE id = ?1
@@ -4351,7 +4351,7 @@ impl ReadOnlyStore for SqliteStore {
         let row = row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
         let trigger = Self::row_to_trigger(&row)?;
 
-        if trigger.deleted && !include_deleted {
+        if trigger.archived && !include_deleted {
             return Err(StoreError::TriggerNotFound(id.clone()));
         }
 
@@ -4383,7 +4383,7 @@ impl ReadOnlyStore for SqliteStore {
         id: &TriggerId,
     ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
         let rows = sqlx::query_as::<_, TriggerRow>(&format!(
-            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at, NULL AS creation_time
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor, created_at, updated_at, NULL AS creation_time
              FROM {TABLE_TRIGGERS}
              WHERE id = ?1
              ORDER BY version_number"
@@ -4429,13 +4429,13 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.deleted, t.actor, t.created_at, t.updated_at,
+            "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.archived, t.actor, t.created_at, t.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = t.id) AS creation_time
              FROM {TABLE_TRIGGERS} t
              WHERE t.is_latest = 1"
         );
         if !include_deleted {
-            sql.push_str(" AND t.deleted = 0");
+            sql.push_str(" AND t.archived = 0");
         }
         sql.push_str(" ORDER BY t.created_at DESC, t.id DESC");
 
@@ -4911,7 +4911,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let row = sqlx::query_as::<_, ConversationRow>(&format!(
-            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, archived, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
              FROM {TABLE_CONVERSATIONS}
              WHERE id = ?1
@@ -4926,7 +4926,7 @@ impl ReadOnlyStore for SqliteStore {
         let row = row.ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
         let conversation = Self::row_to_conversation(&row)?;
 
-        if conversation.deleted && !include_deleted {
+        if conversation.archived && !include_deleted {
             return Err(StoreError::ConversationNotFound(id.clone()));
         }
 
@@ -4958,7 +4958,7 @@ impl ReadOnlyStore for SqliteStore {
         query: &SearchConversationsQuery,
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
-            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, c.spawned_from, c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at,
+            "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, c.spawned_from, c.status, c.creator, c.archived, c.actor, c.created_at, c.updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = c.id) AS creation_time
              FROM {TABLE_CONVERSATIONS} c
              WHERE c.is_latest = 1"
@@ -5025,7 +5025,7 @@ impl ReadOnlyStore for SqliteStore {
         id: &ConversationId,
     ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
         let rows = sqlx::query_as::<_, ConversationRow>(&format!(
-            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at,
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, archived, actor, created_at, updated_at,
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS} WHERE id = ?1) AS creation_time
              FROM {TABLE_CONVERSATIONS}
              WHERE id = ?1
@@ -5084,7 +5084,7 @@ impl ReadOnlyStore for SqliteStore {
              FROM {TABLE_SESSION_EVENTS} e \
              JOIN {TABLE_TASKS_V2} t ON t.id = e.session_id \
                  AND t.is_latest = 1 \
-                 AND t.deleted = 0 \
+                 AND t.archived = 0 \
              WHERE t.conversation_id IN ({placeholders}) \
                AND e.event_type IN ('user_message', 'assistant_message') \
              GROUP BY t.conversation_id",
@@ -5113,7 +5113,7 @@ impl ReadOnlyStore for SqliteStore {
                 FROM {TABLE_SESSION_EVENTS} e \
                 JOIN {TABLE_TASKS_V2} t ON t.id = e.session_id \
                     AND t.is_latest = 1 \
-                    AND t.deleted = 0 \
+                    AND t.archived = 0 \
                 WHERE t.conversation_id IN ({placeholders}) \
                   AND e.event_type IN ('user_message', 'assistant_message') \
              ) \
@@ -5175,7 +5175,7 @@ impl ReadOnlyStore for SqliteStore {
         &self,
         id: &SessionId,
     ) -> Result<Vec<Versioned<SessionEvent>>, StoreError> {
-        // Verify session exists (including soft-deleted, mirroring memory store).
+        // Verify session exists (including soft-archived, mirroring memory store).
         let _ = self.get_session(id, true).await?;
 
         let rows = sqlx::query_as::<_, SessionEventRow>(&format!(
@@ -5217,7 +5217,7 @@ impl ReadOnlyStore for SqliteStore {
         let rows = sqlx::query_as::<_, (String,)>(&format!(
             "SELECT id FROM {TABLE_TASKS_V2}
              WHERE is_latest = 1
-               AND deleted = 0
+               AND archived = 0
                AND conversation_id = ?1
              ORDER BY creation_time ASC, id ASC"
         ))
@@ -5291,7 +5291,7 @@ impl ReadOnlyStore for SqliteStore {
     }
 
     async fn get_session_state(&self, id: &SessionId) -> Result<Option<Vec<u8>>, StoreError> {
-        // Verify session exists (including soft-deleted, mirroring memory store).
+        // Verify session exists (including soft-archived, mirroring memory store).
         let _ = self.get_session(id, true).await?;
 
         let row = sqlx::query_scalar::<_, Vec<u8>>(&format!(
@@ -5319,7 +5319,7 @@ impl Store for SqliteStore {
         let existing = self.get_repository(&name, true).await;
 
         match existing {
-            Ok(repo) if repo.item.deleted => self.update_repository(name, config, actor).await,
+            Ok(repo) if repo.item.archived => self.update_repository(name, config, actor).await,
             Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
             Err(StoreError::RepositoryNotFound(_)) => {
                 let actor_json = actor_to_json_string(actor);
@@ -5356,10 +5356,14 @@ impl Store for SqliteStore {
             .await
     }
 
-    async fn delete_repository(&self, name: &RepoName, actor: &ActorRef) -> Result<(), StoreError> {
+    async fn archive_repository(
+        &self,
+        name: &RepoName,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
         let current = self.get_repository(name, true).await?;
         let mut repo = current.item;
-        repo.deleted = true;
+        repo.archived = true;
         self.update_repository(name.clone(), repo, actor).await
     }
 
@@ -5425,14 +5429,14 @@ impl Store for SqliteStore {
         Ok(next_version)
     }
 
-    async fn delete_issue(
+    async fn archive_issue(
         &self,
         id: &IssueId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
-        issue.deleted = true;
+        issue.archived = true;
         self.update_issue(id, issue, actor).await
     }
 
@@ -5468,14 +5472,14 @@ impl Store for SqliteStore {
         Ok(next_version)
     }
 
-    async fn delete_patch(
+    async fn archive_patch(
         &self,
         id: &PatchId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
-        patch.deleted = true;
+        patch.archived = true;
         self.update_patch(id, patch, actor).await
     }
 
@@ -5512,14 +5516,14 @@ impl Store for SqliteStore {
         Ok(next_version)
     }
 
-    async fn delete_document(
+    async fn archive_document(
         &self,
         id: &DocumentId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
-        document.deleted = true;
+        document.archived = true;
         self.update_document(id, document, actor).await
     }
 
@@ -5568,21 +5572,21 @@ impl Store for SqliteStore {
         self.get_session(hydra_id, true).await
     }
 
-    async fn delete_session(
+    async fn archive_session(
         &self,
         id: &SessionId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_session(id, true).await?;
         let mut task = current.item;
-        task.deleted = true;
+        task.archived = true;
         let versioned = self.update_session(id, task, actor).await?;
         Ok(versioned.version)
     }
 
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         let existing = sqlx::query_as::<_, UserRow>(
-            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, archived, actor, created_at, updated_at
              FROM users_v2
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -5595,7 +5599,7 @@ impl Store for SqliteStore {
 
         match existing {
             Some(row) => {
-                if row.deleted {
+                if row.archived {
                     self.update_user(user, actor).await?;
                     Ok(())
                 } else {
@@ -5656,17 +5660,17 @@ impl Store for SqliteStore {
         self.get_user(&username, true).await
     }
 
-    async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
+    async fn archive_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
         let current = self.get_user(username, true).await?;
         let mut user = current.item;
-        user.deleted = true;
+        user.archived = true;
         self.update_user(user, actor).await?;
         Ok(())
     }
 
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
         let existing_deleted = sqlx::query_scalar::<_, bool>(&format!(
-            "SELECT deleted FROM {TABLE_AGENTS} WHERE name = ?1"
+            "SELECT archived FROM {TABLE_AGENTS} WHERE name = ?1"
         ))
         .bind(&agent.name)
         .fetch_optional(&self.pool)
@@ -5686,7 +5690,7 @@ impl Store for SqliteStore {
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
                          is_default_conversation_agent = ?5, secrets = ?6, \
-                         deleted = 0, created_at = ?7, updated_at = ?8 \
+                         archived = 0, created_at = ?7, updated_at = ?8 \
                      WHERE name = ?9"
                 );
                 sqlx::query(&sql)
@@ -5712,7 +5716,7 @@ impl Store for SqliteStore {
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                      is_default_conversation_agent, secrets, deleted, created_at, updated_at) \
+                      is_default_conversation_agent, secrets, archived, created_at, updated_at) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
                 );
                 sqlx::query(&sql)
@@ -5723,7 +5727,7 @@ impl Store for SqliteStore {
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
-                    .bind(agent.deleted)
+                    .bind(agent.archived)
                     .bind(agent.created_at.to_rfc3339())
                     .bind(agent.updated_at.to_rfc3339())
                     .execute(&self.pool)
@@ -5763,10 +5767,11 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
+    async fn archive_agent(&self, name: &str) -> Result<(), StoreError> {
         let _ = self.get_agent(name).await?;
 
-        let sql = format!("UPDATE {TABLE_AGENTS} SET deleted = 1, updated_at = ?1 WHERE name = ?2");
+        let sql =
+            format!("UPDATE {TABLE_AGENTS} SET archived = 1, updated_at = ?1 WHERE name = ?2");
         sqlx::query(&sql)
             .bind(Utc::now().to_rfc3339())
             .bind(name)
@@ -5785,14 +5790,14 @@ impl Store for SqliteStore {
         let id = self.next_label_id().await?;
 
         let sql = format!(
-            "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at) \
+            "INSERT INTO {TABLE_LABELS} (id, name, color, archived, recurse, hidden, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
         );
         sqlx::query(&sql)
             .bind(id.as_ref())
             .bind(&label.name)
             .bind(label.color.as_ref())
-            .bind(label.deleted)
+            .bind(label.archived)
             .bind(label.recurse)
             .bind(label.hidden)
             .bind(label.created_at.to_rfc3339())
@@ -5831,10 +5836,10 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
+    async fn archive_label(&self, id: &LabelId) -> Result<(), StoreError> {
         let _ = self.get_label(id).await?;
 
-        let sql = format!("UPDATE {TABLE_LABELS} SET deleted = 1, updated_at = ?1 WHERE id = ?2");
+        let sql = format!("UPDATE {TABLE_LABELS} SET archived = 1, updated_at = ?1 WHERE id = ?2");
         sqlx::query(&sql)
             .bind(Utc::now().to_rfc3339())
             .bind(id.as_ref())
@@ -6095,7 +6100,7 @@ impl Store for SqliteStore {
         event: SessionEvent,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
-        // Verify session exists (including soft-deleted, mirroring memory store).
+        // Verify session exists (including soft-archived, mirroring memory store).
         let _ = self.get_session(id, true).await?;
 
         let event_data = serde_json::to_string(&event)
@@ -6154,7 +6159,7 @@ impl Store for SqliteStore {
         data: Vec<u8>,
         _actor: &ActorRef,
     ) -> Result<(), StoreError> {
-        // Verify session exists (including soft-deleted, mirroring memory store).
+        // Verify session exists (including soft-archived, mirroring memory store).
         let _ = self.get_session(id, true).await?;
 
         sqlx::query(&format!(
@@ -6210,7 +6215,7 @@ impl Store for SqliteStore {
         // Read the current latest row inside the transaction so a concurrent
         // record_trigger_fire's last_fired_at is carried forward.
         let latest_row = sqlx::query_as::<_, TriggerRow>(&format!(
-            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor, created_at, updated_at
              FROM {TABLE_TRIGGERS}
              WHERE id = ?1 AND is_latest = 1
              LIMIT 1"
@@ -6254,14 +6259,14 @@ impl Store for SqliteStore {
         Ok(next_version)
     }
 
-    async fn delete_trigger(
+    async fn archive_trigger(
         &self,
         id: &TriggerId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_trigger(id, true).await?;
         let mut trigger = current.item;
-        trigger.deleted = true;
+        trigger.archived = true;
         self.update_trigger(id, trigger, actor).await
     }
 
@@ -6780,7 +6785,7 @@ fn build_flat_issues_sql_sqlite(
         _ => String::new(),
     };
     let mut sql = format!(
-        "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id,
+        "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id,
          (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
          FROM {TABLE_ISSUES_V2} i
          INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}"
@@ -6875,7 +6880,7 @@ fn build_bucketed_issues_sql_sqlite(
     // identical to the unbucketed path and lets sqlx::FromRow ignore the
     // synthetic `rn` column it doesn't know about.
     let mut sql = format!(
-        "SELECT * FROM (SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id, \
+        "SELECT * FROM (SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id, \
          (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time{extra_select}, \
          ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY {inner_order}) AS rn \
          FROM {TABLE_ISSUES_V2} i \
@@ -7163,7 +7168,7 @@ mod tests {
             .unwrap();
 
         store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap();
 
@@ -7171,7 +7176,7 @@ mod tests {
         assert!(matches!(err, StoreError::RepositoryNotFound(_)));
 
         let fetched = store.get_repository(&name, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
         assert_eq!(fetched.version, 2);
 
         let list = store
@@ -7183,7 +7188,7 @@ mod tests {
         let query = SearchRepositoriesQuery::new(Some(true), None);
         let list = store.list_repositories(&query).await.unwrap();
         assert_eq!(list.len(), 1);
-        assert!(list[0].1.item.deleted);
+        assert!(list[0].1.item.archived);
     }
 
     #[tokio::test]
@@ -7197,20 +7202,20 @@ mod tests {
             .await
             .unwrap();
         store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap();
 
         let mut new_config = config.clone();
         new_config.default_branch = Some("develop".to_string());
-        new_config.deleted = false;
+        new_config.archived = false;
         store
             .add_repository(name.clone(), new_config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_repository(&name, false).await.unwrap();
-        assert!(!fetched.item.deleted);
+        assert!(!fetched.item.archived);
         assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
         assert_eq!(fetched.version, 3);
 
@@ -7219,7 +7224,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(list.len(), 1);
-        assert!(!list[0].1.item.deleted);
+        assert!(!list[0].1.item.archived);
     }
 
     #[tokio::test]
@@ -7233,20 +7238,20 @@ mod tests {
             .await
             .unwrap();
         store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap();
 
         let mut new_config = config.clone();
         new_config.default_branch = Some("develop".to_string());
-        new_config.deleted = true;
+        new_config.archived = true;
         store
             .add_repository(name.clone(), new_config.clone(), &ActorRef::test())
             .await
             .unwrap();
 
         let fetched = store.get_repository(&name, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
         assert_eq!(fetched.item.default_branch, Some("develop".to_string()));
         assert_eq!(fetched.version, 3);
 
@@ -7263,7 +7268,7 @@ mod tests {
         let name = RepoName::from_str("dourolabs/nonexistent").unwrap();
 
         let err = store
-            .delete_repository(&name, &ActorRef::test())
+            .archive_repository(&name, &ActorRef::test())
             .await
             .unwrap_err();
         assert!(matches!(
@@ -7436,7 +7441,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(101),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7466,7 +7471,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(101),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7478,7 +7483,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(202),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7500,7 +7505,7 @@ mod tests {
         let user = User {
             username: username.clone(),
             github_user_id: Some(101),
-            deleted: false,
+            archived: false,
         };
         store.add_user(user, &ActorRef::test()).await.unwrap();
 
@@ -7508,7 +7513,7 @@ mod tests {
         assert_eq!(fetched.item.username, username);
 
         store
-            .delete_user(&username, &ActorRef::test())
+            .archive_user(&username, &ActorRef::test())
             .await
             .unwrap();
 
@@ -7517,7 +7522,7 @@ mod tests {
 
         let fetched = store.get_user(&username, true).await.unwrap();
         assert_eq!(fetched.item.username, username);
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
     }
 
     #[tokio::test]
@@ -7530,7 +7535,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(101),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7542,7 +7547,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(202),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7556,7 +7561,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_user_undeletes_soft_deleted_user() {
+    async fn add_user_unarchives_soft_archived_user() {
         let store = create_test_store().await;
         let username = Username::from("alice");
 
@@ -7565,7 +7570,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(101),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7573,7 +7578,7 @@ mod tests {
             .unwrap();
 
         store
-            .delete_user(&username, &ActorRef::test())
+            .archive_user(&username, &ActorRef::test())
             .await
             .unwrap();
 
@@ -7582,7 +7587,7 @@ mod tests {
                 User {
                     username: username.clone(),
                     github_user_id: Some(303),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7590,7 +7595,7 @@ mod tests {
             .unwrap();
 
         let fetched = store.get_user(&username, false).await.unwrap();
-        assert!(!fetched.item.deleted);
+        assert!(!fetched.item.archived);
         assert_eq!(fetched.item.github_user_id, Some(303));
         assert_eq!(fetched.version, 3);
     }
@@ -7606,7 +7611,7 @@ mod tests {
                 User {
                     username: alice.clone(),
                     github_user_id: Some(101),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -7618,14 +7623,14 @@ mod tests {
                 User {
                     username: bob.clone(),
                     github_user_id: Some(202),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
             .await
             .unwrap();
 
-        store.delete_user(&alice, &ActorRef::test()).await.unwrap();
+        store.archive_user(&alice, &ActorRef::test()).await.unwrap();
 
         let users = store
             .list_users(&SearchUsersQuery::default())
@@ -7879,7 +7884,7 @@ mod tests {
             .unwrap();
 
         store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -7887,7 +7892,7 @@ mod tests {
         assert!(matches!(err, StoreError::IssueNotFound(_)));
 
         let fetched = store.get_issue(&issue_id, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
         assert_eq!(fetched.version, 2);
 
         let list = store
@@ -7896,11 +7901,11 @@ mod tests {
             .unwrap();
         assert!(list.is_empty());
 
-        let mut query_deleted = SearchIssuesQuery::default();
-        query_deleted.include_deleted = Some(true);
-        let list = store.list_issues(&query_deleted).await.unwrap();
+        let mut query_archived = SearchIssuesQuery::default();
+        query_archived.include_archived = Some(true);
+        let list = store.list_issues(&query_archived).await.unwrap();
         assert_eq!(list.len(), 1);
-        assert!(list[0].1.item.deleted);
+        assert!(list[0].1.item.archived);
     }
 
     #[tokio::test]
@@ -8630,16 +8635,16 @@ mod tests {
         ids.sort();
         assert_eq!(ids, vec![oldest.clone()]);
 
-        // Soft-deleted rows must be filtered out.
+        // Soft-archived rows must be filtered out.
         store
-            .delete_issue(&oldest, &ActorRef::test())
+            .archive_issue(&oldest, &ActorRef::test())
             .await
             .unwrap();
         let ids = store
             .list_stale_issues_for_status(&project_id, &key, threshold, now, 10)
             .await
             .unwrap();
-        assert!(ids.is_empty(), "deleted rows must not surface");
+        assert!(ids.is_empty(), "archived rows must not surface");
 
         // limit = 0 short-circuits.
         let ids = store
@@ -8752,7 +8757,7 @@ mod tests {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
             path: path.map(|p| p.parse().unwrap()),
-            deleted: false,
+            archived: false,
         }
     }
 
@@ -8840,10 +8845,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
-        assert!(!patches[0].1.item.deleted);
+        assert!(!patches[0].1.item.archived);
 
         store
-            .delete_patch(&patch_id, &ActorRef::test())
+            .archive_patch(&patch_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -8858,10 +8863,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(patches.len(), 1);
-        assert!(patches[0].1.item.deleted);
+        assert!(patches[0].1.item.archived);
 
         let patch = store.get_patch(&patch_id, true).await.unwrap();
-        assert!(patch.item.deleted);
+        assert!(patch.item.archived);
 
         let err = store.get_patch(&patch_id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::PatchNotFound(_)));
@@ -9288,11 +9293,11 @@ mod tests {
 
         // Delete one document
         store
-            .delete_document(&doc_id, &ActorRef::test())
+            .archive_document(&doc_id, &ActorRef::test())
             .await
             .unwrap();
 
-        // Only the non-deleted document's segment should appear
+        // Only the non-archived document's segment should appear
         let children = store.list_document_path_children("/agents/").await.unwrap();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].0, "pm");
@@ -9428,7 +9433,7 @@ mod tests {
         assert_eq!(documents.len(), 1);
 
         store
-            .delete_document(&doc_id, &ActorRef::test())
+            .archive_document(&doc_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -9443,10 +9448,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(documents.len(), 1);
-        assert!(documents[0].1.item.deleted);
+        assert!(documents[0].1.item.archived);
 
         let doc = store.get_document(&doc_id, true).await.unwrap();
-        assert!(doc.item.deleted);
+        assert!(doc.item.archived);
 
         let err = store.get_document(&doc_id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::DocumentNotFound(_)));
@@ -9838,7 +9843,7 @@ mod tests {
             .unwrap();
 
         store
-            .delete_session(&task_id, &ActorRef::test())
+            .archive_session(&task_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -9853,7 +9858,7 @@ mod tests {
         let query = SearchSessionsQuery::new(None, None, Some(true), vec![]);
         let tasks = store.list_sessions(&query).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        assert!(tasks[0].1.item.deleted);
+        assert!(tasks[0].1.item.archived);
 
         // get_task with include_deleted=false should fail
         let err = store.get_session(&task_id, false).await.unwrap_err();
@@ -9861,7 +9866,7 @@ mod tests {
 
         // get_task with include_deleted=true should succeed
         let fetched = store.get_session(&task_id, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
     }
 
     #[tokio::test]
@@ -10084,7 +10089,7 @@ mod tests {
         let store = create_test_store().await;
         store.add_agent(sample_agent("alpha")).await.unwrap();
         store.add_agent(sample_agent("beta")).await.unwrap();
-        store.delete_agent("alpha").await.unwrap();
+        store.archive_agent("alpha").await.unwrap();
 
         let agents = store.list_agents().await.unwrap();
         assert_eq!(agents.len(), 1);
@@ -10131,7 +10136,7 @@ mod tests {
     async fn delete_agent_soft_deletes() {
         let store = create_test_store().await;
         store.add_agent(sample_agent("swe")).await.unwrap();
-        store.delete_agent("swe").await.unwrap();
+        store.archive_agent("swe").await.unwrap();
 
         let err = store.get_agent("swe").await.unwrap_err();
         assert!(matches!(err, StoreError::AgentNotFound(_)));
@@ -10140,7 +10145,7 @@ mod tests {
     #[tokio::test]
     async fn delete_nonexistent_agent_returns_error() {
         let store = create_test_store().await;
-        let err = store.delete_agent("missing").await.unwrap_err();
+        let err = store.archive_agent("missing").await.unwrap_err();
         assert!(matches!(err, StoreError::AgentNotFound(_)));
     }
 
@@ -10169,7 +10174,7 @@ mod tests {
         let store = create_test_store().await;
         let agent = sample_agent("swe");
         store.add_agent(agent).await.unwrap();
-        store.delete_agent("swe").await.unwrap();
+        store.archive_agent("swe").await.unwrap();
 
         let mut agent2 = sample_agent("swe");
         agent2.prompt_path = "new/path".to_string();
@@ -10177,7 +10182,7 @@ mod tests {
 
         let fetched = store.get_agent("swe").await.unwrap();
         assert_eq!(fetched.prompt_path, "new/path");
-        assert!(!fetched.deleted);
+        assert!(!fetched.archived);
     }
 
     #[tokio::test]
@@ -10203,7 +10208,7 @@ mod tests {
         let mut chat = sample_agent("chat");
         chat.is_default_conversation_agent = true;
         store.add_agent(chat).await.unwrap();
-        store.delete_agent("chat").await.unwrap();
+        store.archive_agent("chat").await.unwrap();
 
         let mut chat2 = sample_agent("chat2");
         chat2.is_default_conversation_agent = true;
@@ -10293,7 +10298,7 @@ mod tests {
         let fetched = store.get_label(&label_id).await.unwrap();
         assert_eq!(fetched.name, "bug");
         assert_eq!(fetched.color.as_ref(), "#e74c3c");
-        assert!(!fetched.deleted);
+        assert!(!fetched.archived);
 
         let results = store
             .list_labels(&SearchLabelsQuery::default())
@@ -10339,7 +10344,7 @@ mod tests {
             .await
             .unwrap();
 
-        store.delete_label(&label_id).await.unwrap();
+        store.archive_label(&label_id).await.unwrap();
 
         let err = store.get_label(&label_id).await.unwrap_err();
         assert!(matches!(err, StoreError::LabelNotFound(_)));
@@ -10351,10 +10356,10 @@ mod tests {
         assert!(results.is_empty());
 
         let mut query = SearchLabelsQuery::default();
-        query.include_deleted = Some(true);
+        query.include_archived = Some(true);
         let results = store.list_labels(&query).await.unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].1.deleted);
+        assert!(results[0].1.archived);
     }
 
     #[tokio::test]
@@ -11739,7 +11744,7 @@ mod tests {
             .unwrap();
 
         let found = store
-            .find_non_deleted_document_by_exact_path("/docs/unique.md")
+            .find_non_archived_document_by_exact_path("/docs/unique.md")
             .await
             .unwrap();
         assert_eq!(found, Some(doc_id));
@@ -11749,16 +11754,16 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_none_for_deleted() {
         let store = create_test_store().await;
         let (doc_id, _) = store
-            .add_document(sample_document(Some("docs/deleted.md")), &ActorRef::test())
+            .add_document(sample_document(Some("docs/archived.md")), &ActorRef::test())
             .await
             .unwrap();
         store
-            .delete_document(&doc_id, &ActorRef::test())
+            .archive_document(&doc_id, &ActorRef::test())
             .await
             .unwrap();
 
         let found = store
-            .find_non_deleted_document_by_exact_path("/docs/deleted.md")
+            .find_non_archived_document_by_exact_path("/docs/archived.md")
             .await
             .unwrap();
         assert_eq!(found, None);
@@ -11768,7 +11773,7 @@ mod tests {
     async fn find_non_deleted_document_by_exact_path_returns_none_for_missing() {
         let store = create_test_store().await;
         let found = store
-            .find_non_deleted_document_by_exact_path("/docs/nonexistent.md")
+            .find_non_archived_document_by_exact_path("/docs/nonexistent.md")
             .await
             .unwrap();
         assert_eq!(found, None);
@@ -11836,7 +11841,7 @@ mod tests {
             .unwrap();
 
         store
-            .delete_document(&doc_id, &ActorRef::test())
+            .archive_document(&doc_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -11937,7 +11942,7 @@ mod tests {
             .unwrap();
 
         store
-            .delete_issue(&issue_id, &ActorRef::test())
+            .archive_issue(&issue_id, &ActorRef::test())
             .await
             .unwrap();
 
@@ -12010,7 +12015,7 @@ mod tests {
             creator: Username::from("testuser".to_string()),
             session_settings: Default::default(),
             spawned_from: None,
-            deleted: false,
+            archived: false,
         }
     }
 
@@ -12272,11 +12277,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(!results[0].1.item.deleted);
+        assert!(!results[0].1.item.archived);
 
         // Soft-delete the conversation
         let mut deleted_conv = sample_conversation();
-        deleted_conv.deleted = true;
+        deleted_conv.archived = true;
         store
             .update_conversation(&id, deleted_conv, &ActorRef::test())
             .await
@@ -12289,16 +12294,16 @@ mod tests {
             .unwrap();
         assert!(results.is_empty());
 
-        // Deleted conversation should appear with include_deleted=true
+        // Deleted conversation should appear with include_archived=true
         let results = store
             .list_conversations(&SearchConversationsQuery {
-                include_deleted: Some(true),
+                include_archived: Some(true),
                 ..Default::default()
             })
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].1.item.deleted);
+        assert!(results[0].1.item.archived);
     }
 
     #[tokio::test]
@@ -12309,13 +12314,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Conversation is accessible when not deleted
+        // Conversation is accessible when not archived
         let fetched = store.get_conversation(&id, false).await.unwrap();
         assert_eq!(fetched.item.title.as_deref(), Some("Test conversation"));
 
         // Soft-delete the conversation
         let mut deleted_conv = sample_conversation();
-        deleted_conv.deleted = true;
+        deleted_conv.archived = true;
         store
             .update_conversation(&id, deleted_conv, &ActorRef::test())
             .await
@@ -12325,9 +12330,9 @@ mod tests {
         let err = store.get_conversation(&id, false).await.unwrap_err();
         assert!(matches!(err, StoreError::ConversationNotFound(_)));
 
-        // get_conversation with include_deleted=true should return the deleted conversation
+        // get_conversation with include_deleted=true should return the archived conversation
         let fetched = store.get_conversation(&id, true).await.unwrap();
-        assert!(fetched.item.deleted);
+        assert!(fetched.item.archived);
     }
 
     #[tokio::test]
@@ -12378,7 +12383,10 @@ mod tests {
             )
             .await
             .unwrap();
-        store.delete_document(&id, &ActorRef::test()).await.unwrap();
+        store
+            .archive_document(&id, &ActorRef::test())
+            .await
+            .unwrap();
 
         let results = store
             .get_documents_by_paths(&["/docs/transient.md".to_string()])
@@ -12402,7 +12410,7 @@ mod tests {
         for i in start..(start + count) {
             let id = format!("s-dummyaa{i:08}");
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, deleted, creator, mount_spec, agent_config, mode, is_latest)
+                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, archived, creator, mount_spec, agent_config, mode, is_latest)
                  VALUES (?1, 1, '{{}}', 'complete', 0, '', '{{\"working_dir\":\"repo\",\"mounts\":[]}}', '{{}}', '{{\"type\":\"headless\",\"prompt\":\"\"}}', 1)"
             ))
             .bind(&id)
@@ -12421,7 +12429,7 @@ mod tests {
         for i in start..(start + count) {
             let id = format!("p-dumyaa{i:08}");
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, service_repo_name, deleted, is_latest)
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, service_repo_name, archived, is_latest)
                  VALUES (?1, 1, '', '', '', 'Open', 0, '', 'dourolabs/sample', 0, 1)"
             ))
             .bind(&id)
@@ -12432,8 +12440,8 @@ mod tests {
         store.bump_row_count_for_test(TABLE_PATCHES_V2, count as i64);
     }
 
-    async fn insert_dummy_undeleted_labels(store: &SqliteStore, count: usize) -> Vec<LabelId> {
-        // Insert minimal label rows with deleted = 0 to inflate the count
+    async fn insert_dummy_unarchived_labels(store: &SqliteStore, count: usize) -> Vec<LabelId> {
+        // Insert minimal label rows with archived = 0 to inflate the count
         // cheaply without exercising the full add_label pipeline. Generates
         // wide random suffixes so collisions across this many rows are
         // vanishingly unlikely. Bumps the in-memory row-count cache to match,
@@ -12443,7 +12451,7 @@ mod tests {
         for i in 0..count {
             let id = LabelId::generate(10).unwrap();
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at)
+                "INSERT INTO {TABLE_LABELS} (id, name, color, archived, recurse, hidden, created_at, updated_at)
                  VALUES (?1, ?2, '#000000', 0, 0, 0, ?3, ?3)"
             ))
             .bind(id.as_ref())
@@ -12463,7 +12471,7 @@ mod tests {
         let store = create_test_store().await;
 
         // Seed 677 live labels so the cache crosses the 6 → 7-char threshold.
-        let dummies = insert_dummy_undeleted_labels(&store, 677).await;
+        let dummies = insert_dummy_unarchived_labels(&store, 677).await;
         let pre = store
             .add_label(sample_label("live-pre", "#ffffff"))
             .await
@@ -12474,12 +12482,12 @@ mod tests {
             "677 live labels should bump suffix length to 7"
         );
 
-        // Soft-delete every label; each delete_label call must decrement the
+        // Soft-delete every label; each archive_label call must decrement the
         // cache so subsequent next_label_id sees a live count of zero.
         for id in &dummies {
-            store.delete_label(id).await.unwrap();
+            store.archive_label(id).await.unwrap();
         }
-        store.delete_label(&pre).await.unwrap();
+        store.archive_label(&pre).await.unwrap();
 
         let post = store
             .add_label(sample_label("live-post", "#ffffff"))
@@ -12488,7 +12496,7 @@ mod tests {
         assert_eq!(
             post.as_ref().len() - LabelId::prefix().len(),
             6,
-            "soft-deleted labels must not inflate the suffix length"
+            "soft-archived labels must not inflate the suffix length"
         );
     }
 
@@ -13281,7 +13289,10 @@ mod tests {
             )
             .await
             .unwrap();
-        store.delete_session(&sid, &ActorRef::test()).await.unwrap();
+        store
+            .archive_session(&sid, &ActorRef::test())
+            .await
+            .unwrap();
 
         let ids = store
             .list_session_ids_by_conversation_id(&conv_id)
@@ -13499,7 +13510,7 @@ mod tests {
                 prompt_path TEXT NOT NULL, \
                 max_tries INTEGER NOT NULL DEFAULT 3, \
                 max_simultaneous INTEGER NOT NULL DEFAULT 2147483647, \
-                deleted INTEGER NOT NULL DEFAULT 0, \
+                archived INTEGER NOT NULL DEFAULT 0, \
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')))",
         )
@@ -13518,7 +13529,7 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'open', \
                 assignee TEXT, \
                 job_settings TEXT NOT NULL DEFAULT '{}', \
-                deleted INTEGER NOT NULL DEFAULT 0, \
+                archived INTEGER NOT NULL DEFAULT 0, \
                 actor TEXT, \
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
@@ -13702,14 +13713,14 @@ mod tests {
     #[tokio::test]
     async fn assignee_principal_backfill_classifies_deleted_agent_as_agent() {
         // Once a name has been registered as an agent (even if later
-        // soft-deleted), legacy strings for that name still refer to
+        // soft-archived), legacy strings for that name still refer to
         // the agent -- the agent row remains in the table with
-        // `deleted = 1`, and the migration's predicate doesn't filter
-        // on `deleted`.
+        // `archived = 1`, and the migration's predicate doesn't filter
+        // on `archived`.
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
         setup_pre_assignee_principal_schema(&pool).await;
 
-        sqlx::query("INSERT INTO agents (name, prompt_path, deleted) VALUES (?1, ?2, 1)")
+        sqlx::query("INSERT INTO agents (name, prompt_path, archived) VALUES (?1, ?2, 1)")
             .bind("retired")
             .bind("/dev/null")
             .execute(&pool)
@@ -13749,7 +13760,7 @@ mod tests {
                 prompt_path TEXT NOT NULL, \
                 max_tries INTEGER NOT NULL DEFAULT 3, \
                 max_simultaneous INTEGER NOT NULL DEFAULT 2147483647, \
-                deleted INTEGER NOT NULL DEFAULT 0, \
+                archived INTEGER NOT NULL DEFAULT 0, \
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')))",
         )
@@ -13772,7 +13783,7 @@ mod tests {
                 reviews TEXT NOT NULL DEFAULT '[]', \
                 service_repo_name TEXT NOT NULL, \
                 github TEXT, \
-                deleted INTEGER NOT NULL DEFAULT 0, \
+                archived INTEGER NOT NULL DEFAULT 0, \
                 actor TEXT, \
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
                 updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')), \
@@ -14032,14 +14043,14 @@ mod tests {
     #[tokio::test]
     async fn review_author_backfill_classifies_deleted_agent_as_agent() {
         // Once a name has been registered as an agent (even if later
-        // soft-deleted), legacy review-author strings for that name
+        // soft-archived), legacy review-author strings for that name
         // still refer to the agent -- the agent row remains in the
-        // table with `deleted = 1`, and the migration's predicate
-        // doesn't filter on `deleted`.
+        // table with `archived = 1`, and the migration's predicate
+        // doesn't filter on `archived`.
         let pool = SqliteStore::init_pool("sqlite::memory:").await.unwrap();
         setup_pre_review_author_principal_schema(&pool).await;
 
-        sqlx::query("INSERT INTO agents (name, prompt_path, deleted) VALUES (?1, ?2, 1)")
+        sqlx::query("INSERT INTO agents (name, prompt_path, archived) VALUES (?1, ?2, 1)")
             .bind("retired")
             .bind("/dev/null")
             .execute(&pool)
@@ -14218,7 +14229,7 @@ mod tests {
         assert_eq!(fetched.version, 2);
         assert!(!fetched.item.enabled);
 
-        let v3 = store.delete_trigger(&id, &ActorRef::test()).await.unwrap();
+        let v3 = store.archive_trigger(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 3);
         assert!(store.list_triggers(false).await.unwrap().is_empty());
         assert_eq!(store.list_triggers(true).await.unwrap().len(), 1);
@@ -14227,7 +14238,7 @@ mod tests {
             Err(StoreError::TriggerNotFound(_))
         ));
         let tombstoned = store.get_trigger(&id, true).await.unwrap();
-        assert!(tombstoned.item.deleted);
+        assert!(tombstoned.item.archived);
     }
 
     #[tokio::test]
@@ -15257,7 +15268,7 @@ mod tests {
             .unwrap();
         assert_eq!(cascaded, vec![issue_id.clone()]);
         let fetched = store.get_issue(&issue_id, true).await.unwrap();
-        assert!(fetched.item.deleted, "cascade must flip issue.deleted");
+        assert!(fetched.item.archived, "cascade must flip issue.archived");
     }
 
     /// Cascade-archive is bounded by `(project_id, status_sequence)`:
@@ -15319,7 +15330,7 @@ mod tests {
             .unwrap();
         assert_eq!(cascaded, vec![b_id.clone()]);
         let a = store.get_issue(&a_id, false).await.unwrap();
-        assert!(!a.item.deleted, "issue at status 'a' must not be cascaded");
+        assert!(!a.item.archived, "issue at status 'a' must not be cascaded");
     }
 
     /// `archive_project` cascades to every non-archived issue in
@@ -15365,7 +15376,7 @@ mod tests {
         assert_eq!(cascaded.len(), 2);
         for id in &ids {
             let fetched = store.get_issue(id, true).await.unwrap();
-            assert!(fetched.item.deleted);
+            assert!(fetched.item.archived);
         }
         let p = store.get_project(&project_id, true).await.unwrap();
         assert!(p.item.archived);
@@ -15424,7 +15435,7 @@ mod tests {
         assert!(!p.item.archived, "project must be active after unarchive");
         let i = store.get_issue(&issue_id, true).await.unwrap();
         assert!(
-            i.item.deleted,
+            i.item.archived,
             "cascade-archived issue must stay archived after unarchive_project"
         );
     }
@@ -15589,7 +15600,7 @@ mod tests {
     /// `count_active_sessions_in_status` counts only non-terminal
     /// sessions whose `spawned_from` issue is currently in the given
     /// status. Headless + interactive (conversation-backed) sessions
-    /// both count; terminal sessions, deleted sessions, and sessions
+    /// both count; terminal sessions, archived sessions, and sessions
     /// for issues in other statuses do not.
     #[tokio::test]
     async fn count_active_sessions_in_status_includes_both_modes_sqlite() {

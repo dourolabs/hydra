@@ -137,7 +137,7 @@ impl AppState {
             creator: creator.clone(),
             session_settings,
             spawned_from,
-            deleted: false,
+            archived: false,
         };
 
         let (conversation_id, _version) = self
@@ -556,7 +556,7 @@ impl AppState {
         Ok(versioned)
     }
 
-    pub async fn delete_conversation(
+    pub async fn archive_conversation(
         &self,
         conversation_id: &ConversationId,
         actor_ref: ActorRef,
@@ -568,7 +568,7 @@ impl AppState {
             .map_err(|source| CloseConversationError::Store { source })?;
 
         let mut updated = versioned.item;
-        updated.deleted = true;
+        updated.archived = true;
 
         self.store
             .update_conversation_with_actor(conversation_id, updated, actor_ref)
@@ -734,7 +734,7 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: prompt_body.to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -768,7 +768,7 @@ mod tests {
             title: format!("{name} prompt"),
             body_markdown: prompt_body.to_string(),
             path: Some(prompt_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -780,7 +780,7 @@ mod tests {
             title: format!("{name} mcp config"),
             body_markdown: mcp_body.to_string(),
             path: Some(mcp_path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         state
             .store
@@ -1826,7 +1826,7 @@ mod tests {
                     creator: Username::from("creator"),
                     session_settings: SessionSettings::default(),
                     spawned_from: Some(issue_id.clone()),
-                    deleted: false,
+                    archived: false,
                 },
                 ActorRef::test(),
             )
@@ -1903,7 +1903,7 @@ mod tests {
                     creator: Username::from("creator"),
                     session_settings: SessionSettings::default(),
                     spawned_from: None,
-                    deleted: false,
+                    archived: false,
                 },
                 ActorRef::test(),
             )
@@ -1943,7 +1943,7 @@ mod tests {
                     creator: Username::from("creator"),
                     session_settings: SessionSettings::default(),
                     spawned_from: Some(issue_id.clone()),
-                    deleted: false,
+                    archived: false,
                 },
                 ActorRef::test(),
             )
@@ -1993,7 +1993,7 @@ mod tests {
                     creator: Username::from("creator"),
                     session_settings: SessionSettings::default(),
                     spawned_from: Some(issue_id.clone()),
-                    deleted: false,
+                    archived: false,
                 },
                 ActorRef::test(),
             )

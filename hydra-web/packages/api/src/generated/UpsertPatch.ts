@@ -24,7 +24,7 @@ export type UpsertPatch = {
   reviews: Array<UpsertReviewRequest>;
   service_repo_name: RepoName;
   github?: GithubPr | null;
-  deleted?: boolean;
+  archived?: boolean;
   branch_name?: string | null;
   commit_range?: CommitRange | null;
   base_branch?: string | null;

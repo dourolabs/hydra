@@ -21,6 +21,6 @@ export type PatchSummary = {
   github?: GithubPr | null;
   branch_name?: string | null;
   base_branch?: string | null;
-  deleted?: boolean;
+  archived?: boolean;
   labels?: Array<LabelSummary>;
 };

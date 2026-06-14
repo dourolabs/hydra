@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use hydra_common::agents::{
-    AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest,
+    AgentResponse, ArchiveAgentResponse, ListAgentsResponse, UpsertAgentRequest,
 };
 use std::sync::Arc;
 
@@ -41,7 +41,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
             title: format!("{name} prompt"),
             body_markdown: format!("prompt for {name}"),
             path: Some(format!("/agents/{name}/prompt.md").parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         store.add_document(doc, &ActorRef::test()).await.unwrap();
     }
@@ -174,7 +174,7 @@ async fn delete_agent_removes_queue() -> anyhow::Result<()> {
         .await?;
 
     assert!(response.status().is_success());
-    let body: DeleteAgentResponse = response.json().await?;
+    let body: ArchiveAgentResponse = response.json().await?;
     assert_eq!(body.agent.name, "alpha");
 
     let agents = state.state.list_agents().await.unwrap();

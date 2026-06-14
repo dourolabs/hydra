@@ -137,7 +137,7 @@ async fn list_users_excludes_deleted_by_default() -> anyhow::Result<()> {
         .await?;
     handles
         .store
-        .delete_user(&Username::from("removed"), &ActorRef::test())
+        .archive_user(&Username::from("removed"), &ActorRef::test())
         .await?;
 
     let server = spawn_test_server_with_state(handles.state, handles.store).await?;

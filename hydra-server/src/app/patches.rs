@@ -119,7 +119,7 @@ impl AppState {
         store.count_patches(query).await
     }
 
-    pub async fn delete_patch(
+    pub async fn archive_patch(
         &self,
         patch_id: &PatchId,
         actor: ActorRef,
@@ -249,7 +249,7 @@ impl AppState {
             reviews: incoming_reviews,
             service_repo_name,
             github,
-            deleted,
+            archived,
             branch_name,
             commit_range,
             base_branch,
@@ -310,7 +310,7 @@ impl AppState {
             reviews: stamped_reviews,
             service_repo_name,
             github: github.map(Into::into),
-            deleted,
+            archived,
             branch_name,
             commit_range: commit_range.map(Into::into),
             base_branch,

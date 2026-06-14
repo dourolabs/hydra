@@ -98,7 +98,7 @@ impl Automation for CloseConversationsOnInteractiveExitAutomation {
         // Find linked conversations and close any that are not already Closed.
         let query = SearchConversationsQuery {
             spawned_from: Some(issue_id.clone()),
-            include_deleted: Some(false),
+            include_archived: Some(false),
             ..Default::default()
         };
         let conversations = match ctx.store.list_conversations(&query).await {

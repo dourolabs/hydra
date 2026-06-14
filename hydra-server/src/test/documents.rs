@@ -519,17 +519,17 @@ async fn delete_document_basic_operation() -> anyhow::Result<()> {
         .await?;
 
     // Delete the document
-    let deleted: DocumentVersionRecord = client
+    let archived: DocumentVersionRecord = client
         .delete(format!("{base}/v1/documents/{}", created.document_id))
         .send()
         .await?
         .json()
         .await?;
 
-    // Verify the response has deleted=true
-    assert!(deleted.document.deleted);
+    // Verify the response has archived=true
+    assert!(archived.document.archived);
 
-    // Verify listing excludes the deleted document
+    // Verify listing excludes the archived document
     let list: ListDocumentsResponse = client
         .get(format!("{base}/v1/documents"))
         .send()
@@ -576,7 +576,7 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // List without include_deleted - verify not present
+    // List without include_archived - verify not present
     let list_without: ListDocumentsResponse = client
         .get(format!("{base}/v1/documents"))
         .send()
@@ -591,7 +591,7 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
             .any(|d| d.document_id == created.document_id)
     );
 
-    // List with include_deleted=true - verify present with deleted=true
+    // List with include_archived=true - verify present with archived=true
     let list_with: ListDocumentsResponse = client
         .get(format!("{base}/v1/documents"))
         .query(&SearchDocumentsQuery::new(None, None, None, Some(true)))
@@ -606,7 +606,7 @@ async fn delete_document_include_deleted_in_listing() -> anyhow::Result<()> {
         .find(|d| d.document_id == created.document_id);
 
     assert!(deleted_doc.is_some());
-    assert!(deleted_doc.unwrap().document.deleted);
+    assert!(deleted_doc.unwrap().document.archived);
 
     Ok(())
 }
@@ -619,7 +619,7 @@ async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
 
     // Create and delete a document
     let document = Document::new(
-        "Get deleted doc".to_string(),
+        "Get archived doc".to_string(),
         "document body".to_string(),
         None,
         false,
@@ -640,7 +640,7 @@ async fn delete_document_get_deleted_by_id() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // GET by ID should return 404 for deleted documents
+    // GET by ID should return 404 for archived documents
     let response = client
         .get(format!("{base}/v1/documents/{}", created.document_id))
         .send()

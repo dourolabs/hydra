@@ -20,7 +20,7 @@ export function FolderRow({ entry, depth }: NodeProps) {
   const pathToDoc = useMemo(() => {
     const map = new Map<string, DocumentSummaryRecord>();
     for (const record of docsData?.documents ?? []) {
-      if (record.document.deleted) continue;
+      if (record.document.archived) continue;
       const path = record.document.path;
       if (path == null) continue;
       if (!map.has(path)) map.set(path, record);

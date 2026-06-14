@@ -18,7 +18,7 @@ async function archiveIssue(id: string): Promise<void> {
 }
 
 test.describe("Issues page 'Include archived' filter @issues:filter-include-archived", () => {
-  test("toggling the chip shows soft-deleted rows and adds include_deleted to the request @issues:filter-include-archived", async ({
+  test("toggling the chip shows soft-deleted rows and adds include_archived to the request @issues:filter-include-archived", async ({
     authenticatedPage: page,
   }) => {
     await archiveIssue(TARGET_ISSUE);
@@ -43,10 +43,10 @@ test.describe("Issues page 'Include archived' filter @issues:filter-include-arch
       page.getByTestId(`issues-list-row-${TARGET_ISSUE}`),
     ).toHaveCount(0);
 
-    // No request so far should have set `include_deleted=true`.
+    // No request so far should have set `include_archived=true`.
     expect(
       listIssuesUrls.every(
-        (u) => u.searchParams.get("include_deleted") !== "true",
+        (u) => u.searchParams.get("include_archived") !== "true",
       ),
     ).toBe(true);
 
@@ -62,11 +62,11 @@ test.describe("Issues page 'Include archived' filter @issues:filter-include-arch
     // URL persists the presence flag as `?includeArchived=1`.
     await expect(page).toHaveURL(/[?&]includeArchived=1\b/);
 
-    // A subsequent listIssues call must carry `include_deleted=true`.
+    // A subsequent listIssues call must carry `include_archived=true`.
     await expect
       .poll(() =>
         listIssuesUrls.some(
-          (u) => u.searchParams.get("include_deleted") === "true",
+          (u) => u.searchParams.get("include_archived") === "true",
         ),
       )
       .toBe(true);
@@ -80,7 +80,7 @@ test.describe("Issues page 'Include archived' filter @issues:filter-include-arch
     ).toBeVisible();
 
     // Dismiss the chip. URL drops the flag and no further listIssues call
-    // carries `include_deleted`. The dismissed-state page may render from
+    // carries `include_archived`. The dismissed-state page may render from
     // react-query's cache (the unfiltered key was warmed on first paint),
     // so we assert the absence of stale flags rather than waiting for a
     // specific fresh fetch — the user-visible "archived row hides" check
@@ -95,7 +95,7 @@ test.describe("Issues page 'Include archived' filter @issues:filter-include-arch
       .poll(() =>
         listIssuesUrls
           .slice(baselineIssuesCount)
-          .every((u) => u.searchParams.get("include_deleted") !== "true"),
+          .every((u) => u.searchParams.get("include_archived") !== "true"),
       )
       .toBe(true);
 
@@ -128,7 +128,7 @@ test.describe("Issues page 'Include archived' filter @issues:filter-include-arch
     await expect
       .poll(() =>
         listIssuesUrls.some(
-          (u) => u.searchParams.get("include_deleted") === "true",
+          (u) => u.searchParams.get("include_archived") === "true",
         ),
       )
       .toBe(true);

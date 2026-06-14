@@ -444,7 +444,7 @@ async fn list_issues_supports_filters() -> anyhow::Result<()> {
             Some(input.session_settings),
             input.dependencies,
             input.patches,
-            input.deleted,
+            input.archived,
             input.form,
             input.form_response,
         );
@@ -533,7 +533,7 @@ async fn delete_issue_basic_operation() -> anyhow::Result<()> {
         .await?;
 
     // Delete the issue
-    let deleted: IssueVersionRecord = client
+    let archived: IssueVersionRecord = client
         .delete(format!(
             "{}/v1/issues/{}",
             server.base_url(),
@@ -544,10 +544,10 @@ async fn delete_issue_basic_operation() -> anyhow::Result<()> {
         .json()
         .await?;
 
-    // Verify the response has deleted=true
-    assert!(deleted.issue.deleted);
+    // Verify the response has archived=true
+    assert!(archived.issue.archived);
 
-    // Verify listing excludes the deleted issue
+    // Verify listing excludes the archived issue
     let list: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
         .send()
@@ -571,7 +571,7 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             issue(
                 IssueType::Task,
-                "deleted issue",
+                "archived issue",
                 default_user(),
                 status("open"),
                 None,
@@ -596,7 +596,7 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // List without include_deleted - verify not present
+    // List without include_archived - verify not present
     let list_without: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
         .send()
@@ -611,7 +611,7 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
             .any(|i| i.issue_id == created.issue_id)
     );
 
-    // List with include_deleted=true - verify present with deleted=true
+    // List with include_archived=true - verify present with archived=true
     let list_with: ListIssuesResponse = client
         .get(format!("{}/v1/issues", server.base_url()))
         .query(&SearchIssuesQuery::new(
@@ -632,7 +632,7 @@ async fn delete_issue_include_deleted_in_listing() -> anyhow::Result<()> {
         .find(|i| i.issue_id == created.issue_id);
 
     assert!(deleted_issue.is_some());
-    assert!(deleted_issue.unwrap().issue.deleted);
+    assert!(deleted_issue.unwrap().issue.archived);
 
     Ok(())
 }
@@ -648,7 +648,7 @@ async fn delete_issue_get_deleted_by_id() -> anyhow::Result<()> {
         .json(&UpsertIssueRequest::new(
             issue(
                 IssueType::Task,
-                "get deleted issue",
+                "get archived issue",
                 default_user(),
                 status("open"),
                 None,
@@ -673,7 +673,7 @@ async fn delete_issue_get_deleted_by_id() -> anyhow::Result<()> {
         .await?
         .error_for_status()?;
 
-    // GET by ID should return 404 for deleted issues
+    // GET by ID should return 404 for archived issues
     let response = client
         .get(format!(
             "{}/v1/issues/{}",
@@ -1730,7 +1730,7 @@ async fn list_and_get_issues_tolerate_soft_deleted_parent_project() -> anyhow::R
     );
 
     let list_resp = client
-        .get(format!("{base}/v1/issues?include_deleted=true"))
+        .get(format!("{base}/v1/issues?include_archived=true"))
         .send()
         .await?;
     assert_eq!(
@@ -1743,20 +1743,20 @@ async fn list_and_get_issues_tolerate_soft_deleted_parent_project() -> anyhow::R
         .issues
         .iter()
         .find(|r| r.issue_id == created.issue_id)
-        .expect("cascade-archived issue surfaces with include_deleted=true");
+        .expect("cascade-archived issue surfaces with include_archived=true");
     assert_eq!(
         orphan.issue.status.key.as_str(),
         "open",
         "status key must be preserved on the cascade-archived summary"
     );
     assert!(
-        orphan.issue.deleted,
-        "cascade-archive must flip issue.deleted = true"
+        orphan.issue.archived,
+        "cascade-archive must flip issue.archived = true"
     );
 
     let get_resp = client
         .get(format!(
-            "{base}/v1/issues/{}?include_deleted=true",
+            "{base}/v1/issues/{}?include_archived=true",
             created.issue_id
         ))
         .send()

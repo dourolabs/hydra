@@ -5,7 +5,7 @@ use crate::policy::{PolicyViolation, Restriction};
 
 /// Enforces singleton uniqueness on agent role flags:
 ///
-/// - At most one non-deleted agent may have `is_default_conversation_agent = true`.
+/// - At most one non-archived agent may have `is_default_conversation_agent = true`.
 ///
 /// This is workflow-level cross-row collision check (the same shape as
 /// `branch-name collisions` in `docs/architecture/domain-store-routes.md`) and
@@ -50,7 +50,7 @@ impl Restriction for AgentRoleUniquenessRestriction {
 
         if new.is_default_conversation_agent
             && agents.iter().any(|a| {
-                a.is_default_conversation_agent && !a.deleted && Some(a.name.as_str()) != self_name
+                a.is_default_conversation_agent && !a.archived && Some(a.name.as_str()) != self_name
             })
         {
             return Err(PolicyViolation {

@@ -6,10 +6,10 @@ import type { Username } from "./Username";
 /**
  * Body for `POST /v1/triggers` and `PUT /v1/triggers/:id`.
  *
- * `last_fired_at` and `deleted` are stripped — they are owned by the
+ * `last_fired_at` and `archived` are stripped — they are owned by the
  * server (`last_fired_at` is written in-place by `record_trigger_fire`
- * and carried forward by `update_trigger`; `deleted` is flipped by
- * `delete_trigger`).
+ * and carried forward by `update_trigger`; `archived` is flipped by
+ * `archive_trigger`).
  */
 export type UpsertTriggerRequest = {
   enabled: boolean;

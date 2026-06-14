@@ -8,7 +8,7 @@ export function useUncategorizedDocuments(enabled: boolean) {
     queryFn: () => apiClient.listDocuments({ limit: 200 }),
     select: (data) => ({
       ...data,
-      documents: data.documents.filter((d) => !d.document.path && !d.document.deleted),
+      documents: data.documents.filter((d) => !d.document.path && !d.document.archived),
     }),
     enabled,
   });

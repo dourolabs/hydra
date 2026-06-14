@@ -13,7 +13,7 @@ use axum::{
 use hydra_common::api::v1::{
     ApiError,
     agents::{
-        AgentRecord, AgentResponse, DeleteAgentResponse, ListAgentsResponse, UpsertAgentRequest,
+        AgentRecord, AgentResponse, ArchiveAgentResponse, ListAgentsResponse, UpsertAgentRequest,
     },
     documents::SearchDocumentsQuery,
 };
@@ -153,19 +153,19 @@ pub async fn update_agent(
     ))))
 }
 
-pub async fn delete_agent(
+pub async fn archive_agent(
     State(state): State<AppState>,
     Path(agent_name): Path<String>,
-) -> Result<Json<DeleteAgentResponse>, ApiError> {
-    info!(agent = %agent_name, "delete_agent invoked");
-    let deleted = state
-        .delete_agent(&agent_name)
+) -> Result<Json<ArchiveAgentResponse>, ApiError> {
+    info!(agent = %agent_name, "archive_agent invoked");
+    let archived = state
+        .archive_agent(&agent_name)
         .await
         .map_err(map_agent_error)?;
 
-    info!(agent = %agent_name, "delete_agent completed");
-    Ok(Json(DeleteAgentResponse::new(agent_to_record(
-        deleted,
+    info!(agent = %agent_name, "archive_agent completed");
+    Ok(Json(ArchiveAgentResponse::new(agent_to_record(
+        archived,
         String::new(),
         None,
     ))))
@@ -280,7 +280,7 @@ async fn write_document_content(
             path.parse()
                 .map_err(|e| ApiError::bad_request(format!("invalid path '{path}': {e}")))?,
         ),
-        deleted: false,
+        archived: false,
     };
 
     let document_id = existing.into_iter().next().map(|(id, _)| id);

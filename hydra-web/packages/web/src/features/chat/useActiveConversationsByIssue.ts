@@ -26,7 +26,7 @@ export function useActiveConversationsByIssue(
     queryFn: () =>
       apiClient.listConversations({
         spawned_from_ids,
-        include_deleted: false,
+        include_archived: false,
       }),
     enabled: issueIds.length > 0,
     staleTime: 30_000,

@@ -18,7 +18,7 @@ impl Render for DeletedDocumentOutcome<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
         serde_json::to_writer(
             &mut *writer,
-            &json!({ "document_id": self.0, "action": "deleted" }),
+            &json!({ "document_id": self.0, "action": "archived" }),
         )?;
         writer.write_all(b"\n")?;
         writer.flush()?;
@@ -26,7 +26,7 @@ impl Render for DeletedDocumentOutcome<'_> {
     }
 
     fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
-        writeln!(writer, "Deleted document '{}'", self.0)?;
+        writeln!(writer, "Archived document '{}'", self.0)?;
         writer.flush()?;
         Ok(())
     }
@@ -88,7 +88,7 @@ pub enum SyncEvent<'a> {
         path: &'a str,
         document_id: &'a DocumentId,
     },
-    Deleted {
+    Archived {
         path: &'a str,
         document_id: &'a DocumentId,
     },
@@ -111,7 +111,7 @@ pub enum SyncSummary {
         total: u64,
         updated: u64,
         created: u64,
-        deleted: u64,
+        archived: u64,
         unchanged: u64,
         skipped: u64,
         conflicts: u64,
@@ -183,8 +183,8 @@ impl Render for SyncEvent<'_> {
             SyncEvent::WouldDelete { path, document_id } => {
                 writeln!(writer, "Would delete: {path} ({document_id})")?;
             }
-            SyncEvent::Deleted { path, document_id } => {
-                writeln!(writer, "Deleted: {path} ({document_id})")?;
+            SyncEvent::Archived { path, document_id } => {
+                writeln!(writer, "Archived: {path} ({document_id})")?;
             }
         }
         writer.flush()?;
@@ -219,7 +219,7 @@ impl Render for SyncSummary {
                 total,
                 updated,
                 created,
-                deleted,
+                archived,
                 unchanged,
                 skipped,
                 conflicts,
@@ -228,7 +228,7 @@ impl Render for SyncSummary {
                 let prefix = if *dry_run { "Dry run: " } else { "" };
                 writeln!(
                     writer,
-                    "{prefix}Pushed {total} document(s) from '{directory}' ({updated} updated, {created} created, {deleted} deleted, {unchanged} unchanged, {skipped} skipped, {conflicts} conflicts)"
+                    "{prefix}Pushed {total} document(s) from '{directory}' ({updated} updated, {created} created, {archived} archived, {unchanged} unchanged, {skipped} skipped, {conflicts} conflicts)"
                 )?;
             }
         }
@@ -517,13 +517,13 @@ mod tests {
         assert_eq!(pretty, format!("Would delete: docs/old.md ({doc_id})\n"));
 
         let pretty = render_to_string(
-            SyncEvent::Deleted {
+            SyncEvent::Archived {
                 path: "docs/old.md",
                 document_id: &doc_id,
             },
             ResolvedOutputFormat::Pretty,
         );
-        assert_eq!(pretty, format!("Deleted: docs/old.md ({doc_id})\n"));
+        assert_eq!(pretty, format!("Archived: docs/old.md ({doc_id})\n"));
     }
 
     #[test]
@@ -582,7 +582,7 @@ mod tests {
                 total: 4,
                 updated: 2,
                 created: 1,
-                deleted: 1,
+                archived: 1,
                 unchanged: 0,
                 skipped: 0,
                 conflicts: 0,
@@ -592,7 +592,7 @@ mod tests {
         );
         assert_eq!(
             pretty,
-            "Pushed 4 document(s) from '/tmp/docs' (2 updated, 1 created, 1 deleted, 0 unchanged, 0 skipped, 0 conflicts)\n"
+            "Pushed 4 document(s) from '/tmp/docs' (2 updated, 1 created, 1 archived, 0 unchanged, 0 skipped, 0 conflicts)\n"
         );
 
         let pretty = render_to_string(
@@ -601,7 +601,7 @@ mod tests {
                 total: 0,
                 updated: 0,
                 created: 0,
-                deleted: 0,
+                archived: 0,
                 unchanged: 1,
                 skipped: 0,
                 conflicts: 0,
@@ -635,7 +635,7 @@ mod tests {
                 total: 1,
                 updated: 1,
                 created: 0,
-                deleted: 0,
+                archived: 0,
                 unchanged: 0,
                 skipped: 0,
                 conflicts: 0,
@@ -652,7 +652,7 @@ mod tests {
     fn deleted_document_pretty_matches_legacy_wording() {
         let id = DocumentId::new();
         let pretty = render_to_string(DeletedDocumentOutcome(&id), ResolvedOutputFormat::Pretty);
-        assert_eq!(pretty, format!("Deleted document '{id}'\n"));
+        assert_eq!(pretty, format!("Archived document '{id}'\n"));
     }
 
     #[test]
@@ -661,6 +661,6 @@ mod tests {
         let line = render_to_string(DeletedDocumentOutcome(&id), ResolvedOutputFormat::Jsonl);
         assert_eq!(line.lines().count(), 1);
         let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).expect("json");
-        assert_eq!(parsed, json!({ "document_id": id, "action": "deleted" }));
+        assert_eq!(parsed, json!({ "document_id": id, "action": "archived" }));
     }
 }

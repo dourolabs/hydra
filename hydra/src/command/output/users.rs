@@ -93,7 +93,7 @@ impl Render for DeleteSecretOutcome<'_> {
     fn render_jsonl<W: Write>(&self, writer: &mut W) -> Result<()> {
         serde_json::to_writer(
             &mut *writer,
-            &json!({ "name": self.0, "action": "deleted" }),
+            &json!({ "name": self.0, "action": "archived" }),
         )?;
         writer.write_all(b"\n")?;
         writer.flush()?;
@@ -101,7 +101,7 @@ impl Render for DeleteSecretOutcome<'_> {
     }
 
     fn render_pretty<W: Write>(&self, writer: &mut W) -> Result<()> {
-        writeln!(writer, "Secret '{}' deleted.", self.0)?;
+        writeln!(writer, "Secret '{}' archived.", self.0)?;
         writer.flush()?;
         Ok(())
     }

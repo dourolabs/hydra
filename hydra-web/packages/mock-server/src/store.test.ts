@@ -51,7 +51,7 @@ describe("Store", () => {
       store.delete("items", "id-1", "issue");
       const entry = store.get("items", "id-1", true);
       expect(entry).not.toBeNull();
-      expect(entry?.deleted).toBe(true);
+      expect(entry?.archived).toBe(true);
     });
   });
 
@@ -77,14 +77,14 @@ describe("Store", () => {
       expect(() => store.update("items", "id-1", { name: "v2" }, "issue")).toThrow(StoreError);
     });
 
-    it("restores a soft-deleted entity when payload sets deleted: false", () => {
+    it("restores a soft-deleted entity when payload sets archived: false", () => {
       const store = new Store();
       store.create("items", "id-1", { name: "test" }, "issue");
       store.delete("items", "id-1", "issue");
-      const entry = store.update("items", "id-1", { name: "test", deleted: false }, "issue");
+      const entry = store.update("items", "id-1", { name: "test", archived: false }, "issue");
       expect(entry.version).toBe(3);
-      expect(entry.deleted).toBeUndefined();
-      expect(store.get("items", "id-1")?.data).toEqual({ name: "test", deleted: false });
+      expect(entry.archived).toBeUndefined();
+      expect(store.get("items", "id-1")?.data).toEqual({ name: "test", archived: false });
     });
 
     it("throws 404 when a non-restore payload omits the deleted flag", () => {
@@ -94,11 +94,11 @@ describe("Store", () => {
       expect(() => store.update("items", "id-1", { name: "renamed" }, "issue")).toThrow(StoreError);
     });
 
-    it("throws 404 when a non-restore payload keeps deleted: true", () => {
+    it("throws 404 when a non-restore payload keeps archived: true", () => {
       const store = new Store();
       store.create("items", "id-1", { name: "test" }, "issue");
       store.delete("items", "id-1", "issue");
-      expect(() => store.update("items", "id-1", { name: "test", deleted: true }, "issue")).toThrow(
+      expect(() => store.update("items", "id-1", { name: "test", archived: true }, "issue")).toThrow(
         StoreError,
       );
     });
@@ -109,7 +109,7 @@ describe("Store", () => {
       const store = new Store();
       store.create("items", "id-1", { name: "test" }, "issue");
       const entry = store.delete("items", "id-1", "issue");
-      expect(entry.deleted).toBe(true);
+      expect(entry.archived).toBe(true);
       expect(entry.version).toBe(2);
     });
 

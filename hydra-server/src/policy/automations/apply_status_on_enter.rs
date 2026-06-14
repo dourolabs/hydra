@@ -212,7 +212,7 @@ impl Automation for ApplyStatusOnEnterAutomation {
 /// surface" without sniffing error strings.
 #[derive(Debug)]
 enum FormLoadError {
-    /// The document does not exist (or has been deleted) at the given path.
+    /// The document does not exist (or has been archived) at the given path.
     /// Treated as operator misconfiguration: the automation continues with
     /// the remaining on_enter actions.
     NotFound(String),
@@ -234,7 +234,7 @@ async fn load_form_from_document(
 
     let store = ctx.app_state.store();
     let doc_id = store
-        .find_non_deleted_document_by_exact_path(path)
+        .find_non_archived_document_by_exact_path(path)
         .await
         .map_err(|e| {
             FormLoadError::Transient(anyhow::anyhow!("store error reading '{path}': {e}"))
@@ -244,7 +244,7 @@ async fn load_form_from_document(
         Ok(versioned) => versioned.item,
         Err(StoreError::DocumentNotFound(_)) => {
             return Err(FormLoadError::NotFound(format!(
-                "document '{path}' was deleted"
+                "document '{path}' was archived"
             )));
         }
         Err(err) => {
@@ -548,7 +548,7 @@ mod tests {
             body_markdown: include_str!("../../../../prompts/forms/review_escalation.yaml")
                 .to_string(),
             path: Some("/forms/review_escalation.yaml".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         handles
             .store
@@ -908,7 +908,7 @@ mod tests {
             title: "Broken form".to_string(),
             body_markdown: "this: is: not: a form".to_string(),
             path: Some("/forms/review.yaml".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         handles
             .store

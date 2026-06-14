@@ -242,7 +242,7 @@ pub struct Repository {
     #[serde(default)]
     pub default_image: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
-    pub deleted: bool,
+    pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge_policy: Option<MergePolicy>,
 }
@@ -257,7 +257,7 @@ impl Repository {
             remote_url,
             default_branch,
             default_image,
-            deleted: false,
+            archived: false,
             merge_policy: None,
         }
     }
@@ -488,7 +488,7 @@ impl UpsertRepositoryResponse {
 #[non_exhaustive]
 pub struct SearchRepositoriesQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub include_deleted: Option<bool>,
+    pub include_archived: Option<bool>,
 
     /// Filter to repositories whose `Repository.remote_url`, after canonical
     /// normalization via [`Repository::normalize_remote_url`], equals the
@@ -499,9 +499,9 @@ pub struct SearchRepositoriesQuery {
 }
 
 impl SearchRepositoriesQuery {
-    pub fn new(include_deleted: Option<bool>, remote_url: Option<String>) -> Self {
+    pub fn new(include_archived: Option<bool>, remote_url: Option<String>) -> Self {
         Self {
-            include_deleted,
+            include_archived,
             remote_url,
         }
     }
@@ -810,7 +810,7 @@ mod tests {
             back.remote_url.as_deref(),
             Some("https://github.com/dourolabs/hydra")
         );
-        assert_eq!(back.include_deleted, None);
+        assert_eq!(back.include_archived, None);
     }
 
     #[test]

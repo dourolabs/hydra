@@ -353,7 +353,7 @@ function BoardIssueCard({
   const issue = record.issue;
   const id = record.issue_id;
   const pill = computeFlowPillState(neighborhood);
-  const archived = issue.deleted === true;
+  const archived = issue.archived === true;
   const isMobile = useIsMobile();
 
   const touchDrag = useTouchDrag<IssueDragPayload>({

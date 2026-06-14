@@ -63,7 +63,7 @@ describe("useActiveConversationsByIssue", () => {
     });
     expect(mockListConversations).toHaveBeenCalledWith({
       spawned_from_ids: "i-aaa,i-bbb",
-      include_deleted: false,
+      include_archived: false,
     });
     expect(result.current.size).toBe(0);
   });

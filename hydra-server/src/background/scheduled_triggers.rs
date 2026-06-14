@@ -58,7 +58,7 @@ impl ScheduledWorker for ScheduledTriggerWorker {
         let mut failed = 0usize;
         for (trigger_id, versioned) in triggers {
             let trigger = versioned.item;
-            if !trigger.enabled || trigger.deleted {
+            if !trigger.enabled || trigger.archived {
                 continue;
             }
             let Some(scheduled_at) = trigger

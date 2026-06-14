@@ -148,7 +148,7 @@ function makeDocumentRecord(documentId: string) {
     document: {
       title: "Doc",
       path: `docs/${documentId}.md`,
-      deleted: false,
+      archived: false,
       labels: [],
     },
   };

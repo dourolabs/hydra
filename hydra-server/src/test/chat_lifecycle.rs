@@ -1876,7 +1876,7 @@ async fn register_agent_with_prompt_body(
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid prompt path: {e:?}"))?,
         ),
-        deleted: false,
+        archived: false,
     };
     store.add_document(doc, &ActorRef::test()).await?;
     Ok(())
@@ -2317,7 +2317,7 @@ async fn create_interactive_session_with_settings(
                 creator: Username::from("creator"),
                 session_settings: crate::domain::issues::SessionSettings::default(),
                 spawned_from: None,
-                deleted: false,
+                archived: false,
             },
             &ActorRef::test(),
         )

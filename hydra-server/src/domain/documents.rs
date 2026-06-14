@@ -10,7 +10,7 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<DocumentPath>,
     #[serde(default)]
-    pub deleted: bool,
+    pub archived: bool,
 }
 
 impl From<api::documents::Document> for Document {
@@ -19,7 +19,7 @@ impl From<api::documents::Document> for Document {
             title: value.title,
             body_markdown: value.body_markdown,
             path: value.path,
-            deleted: value.deleted,
+            archived: value.archived,
         }
     }
 }
@@ -31,7 +31,7 @@ impl From<Document> for api::documents::Document {
             value.title,
             value.body_markdown,
             value.path.map(|p| p.to_string()),
-            value.deleted,
+            value.archived,
         )
         .expect("domain Document always has a valid path")
     }

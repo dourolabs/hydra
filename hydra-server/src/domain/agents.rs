@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Server-side domain agent type.
 ///
-/// Agents are non-versioned: they are created, updated in-place, and soft-deleted.
+/// Agents are non-versioned: they are created, updated in-place, and soft-archived.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Agent {
     pub name: String,
@@ -13,7 +13,7 @@ pub struct Agent {
     pub max_simultaneous: i32,
     pub is_default_conversation_agent: bool,
     pub secrets: Vec<String>,
-    pub deleted: bool,
+    pub archived: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -38,7 +38,7 @@ impl Agent {
             max_simultaneous,
             is_default_conversation_agent,
             secrets,
-            deleted: false,
+            archived: false,
             created_at: now,
             updated_at: now,
         }

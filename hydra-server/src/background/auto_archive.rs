@@ -2,10 +2,10 @@
 //!
 //! Each tick walks every project's statuses and, for any status with
 //! `auto_archive_after_seconds = Some(N)`, calls
-//! [`ReadOnlyStore::list_stale_issues_for_status`] to find non-deleted
+//! [`ReadOnlyStore::list_stale_issues_for_status`] to find non-archived
 //! issues whose latest `updated_at` is older than `now - N seconds`. The
 //! worker soft-deletes (= "archives") each match via
-//! [`Store::delete_issue`]; the soft-delete filter (`deleted = false`)
+//! [`Store::archive_issue`]; the soft-delete filter (`archived = false`)
 //! excludes already-archived rows on re-tick, so the loop is naturally
 //! idempotent across partial failures and restarts.
 //!
@@ -16,7 +16,7 @@
 //!
 //! Archiving an issue never cascades to its children, parents, or
 //! dependents — each issue is evaluated independently against its
-//! own status's threshold and `Store::delete_issue` is called directly,
+//! own status's threshold and `Store::archive_issue` is called directly,
 //! bypassing any cascade-on-status semantics.
 
 use crate::{
@@ -300,9 +300,9 @@ mod tests {
         );
 
         let stale = handles.store.get_issue(&stale_id, true).await.unwrap();
-        assert!(stale.item.deleted, "stale issue should be archived");
+        assert!(stale.item.archived, "stale issue should be archived");
         let fresh = handles.store.get_issue(&fresh_id, true).await.unwrap();
-        assert!(!fresh.item.deleted, "fresh issue must be untouched");
+        assert!(!fresh.item.archived, "fresh issue must be untouched");
     }
 
     #[tokio::test]
@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(outcome, WorkerOutcome::Idle);
 
         let issue = handles.store.get_issue(&id, true).await.unwrap();
-        assert!(!issue.item.deleted);
+        assert!(!issue.item.archived);
     }
 
     #[tokio::test]
@@ -348,7 +348,7 @@ mod tests {
             }
         );
         let archived = handles.store.get_issue(&id, true).await.unwrap();
-        assert!(archived.item.deleted);
+        assert!(archived.item.archived);
         let version_after_archive = archived.version;
 
         let outcome_2 = worker.run_iteration().await;
@@ -409,10 +409,10 @@ mod tests {
         );
 
         let parent = handles.store.get_issue(&parent_id, true).await.unwrap();
-        assert!(parent.item.deleted, "parent should be archived");
+        assert!(parent.item.archived, "parent should be archived");
         let child = handles.store.get_issue(&child_id, true).await.unwrap();
         assert!(
-            !child.item.deleted,
+            !child.item.archived,
             "child must NOT be cascaded — archive bypasses cascade-on-status"
         );
     }
@@ -501,7 +501,7 @@ mod tests {
 
         let versions = handles.store.get_issue_versions(&id).await.unwrap();
         let latest = versions.last().expect("at least one version");
-        assert!(latest.item.deleted);
+        assert!(latest.item.archived);
         match latest.actor.as_ref().expect("actor recorded on archive") {
             ActorRef::System { worker_name, .. } => {
                 assert_eq!(worker_name, WORKER_NAME);

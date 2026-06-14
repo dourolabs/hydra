@@ -9,7 +9,7 @@ export interface VersionedEntity<T = unknown> {
   version: number;
   timestamp: string;
   data: T;
-  deleted?: boolean;
+  archived?: boolean;
 }
 
 export interface StoreEvent {
@@ -70,17 +70,17 @@ export class Store {
       throw new StoreError(404, `${collectionName} '${id}' not found`);
     }
     const latest = versions[versions.length - 1];
-    // Restore is signalled by an update payload whose `deleted` flag is
-    // explicitly `false`; for any other update against a soft-deleted entry
+    // Restore is signalled by an update payload whose `archived` flag is
+    // explicitly `false`; for any other update against a soft-archived entry
     // we keep the 404 so stale clients can't accidentally overwrite the
     // tombstone state.
     const restoring =
-      latest.deleted === true &&
+      latest.archived === true &&
       typeof data === "object" &&
       data !== null &&
-      "deleted" in (data as object) &&
-      (data as { deleted?: unknown }).deleted === false;
-    if (latest.deleted && !restoring) {
+      "archived" in (data as object) &&
+      (data as { archived?: unknown }).archived === false;
+    if (latest.archived && !restoring) {
       throw new StoreError(404, `${collectionName} '${id}' not found`);
     }
     const now = new Date().toISOString();
@@ -101,7 +101,7 @@ export class Store {
     const versions = col.get(id);
     if (!versions || versions.length === 0) return null;
     const latest = versions[versions.length - 1];
-    if (latest.deleted && !includeDeleted) return null;
+    if (latest.archived && !includeDeleted) return null;
     return latest as VersionedEntity<T>;
   }
 
@@ -119,7 +119,7 @@ export class Store {
     for (const [id, versions] of col) {
       if (versions.length === 0) continue;
       const latest = versions[versions.length - 1];
-      if (latest.deleted && !includeDeleted) continue;
+      if (latest.archived && !includeDeleted) continue;
       results.push({ id, entry: latest as VersionedEntity<T> });
     }
     return results;
@@ -143,16 +143,16 @@ export class Store {
       throw new StoreError(404, `${collectionName} '${id}' not found`);
     }
     const latest = versions[versions.length - 1];
-    if (latest.deleted) {
+    if (latest.archived) {
       throw new StoreError(404, `${collectionName} '${id}' not found`);
     }
     const now = new Date().toISOString();
-    const deletedData = { ...latest.data as object, deleted: true } as T;
+    const deletedData = { ...latest.data as object, archived: true } as T;
     const entry: VersionedEntity<T> = {
       version: latest.version + 1,
       timestamp: now,
       data: deletedData,
-      deleted: true,
+      archived: true,
     };
     versions.push(entry);
     if (ssePrefix !== null) {

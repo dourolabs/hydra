@@ -21,21 +21,21 @@ pub enum ReposCommand {
     Create(CreateRepositoryArgs),
     /// Update an existing repository configuration.
     Update(UpdateRepositoryArgs),
-    /// Delete (soft-delete) a repository configuration.
-    Delete(DeleteRepositoryArgs),
+    /// Archive (soft-delete) a repository configuration.
+    Archive(ArchiveRepositoryArgs),
     /// Clone a repository to a local directory.
     Clone(CloneRepositoryArgs),
 }
 
 #[derive(Debug, Clone, Args)]
 pub struct ListRepositoryArgs {
-    /// Include deleted repositories in the list.
-    #[arg(long = "include-deleted")]
-    pub include_deleted: bool,
+    /// Include archived repositories in the list.
+    #[arg(long = "include-archived")]
+    pub include_archived: bool,
 }
 
 #[derive(Debug, Clone, Args)]
-pub struct DeleteRepositoryArgs {
+pub struct ArchiveRepositoryArgs {
     /// Repository name in the form org/repo.
     #[arg(value_name = "NAME")]
     pub name: RepoName,
@@ -162,7 +162,7 @@ pub async fn run(
     let mut buffer = Vec::new();
     match command {
         ReposCommand::List(args) => {
-            let repositories = fetch_repositories(client, args.include_deleted).await?;
+            let repositories = fetch_repositories(client, args.include_archived).await?;
             render(
                 RepositoryRecords(&repositories),
                 context.output_format,
@@ -185,8 +185,8 @@ pub async fn run(
                 &mut buffer,
             )?;
         }
-        ReposCommand::Delete(args) => {
-            let repository = delete_repository(client, args).await?;
+        ReposCommand::Archive(args) => {
+            let repository = archive_repository(client, args).await?;
             render(
                 RepositoryRecords(&[repository]),
                 context.output_format,
@@ -204,9 +204,10 @@ pub async fn run(
 
 async fn fetch_repositories(
     client: &HydraClient,
-    include_deleted: bool,
+    include_archived: bool,
 ) -> Result<Vec<RepositoryRecord>> {
-    let query = SearchRepositoriesQuery::new(if include_deleted { Some(true) } else { None }, None);
+    let query =
+        SearchRepositoriesQuery::new(if include_archived { Some(true) } else { None }, None);
     let response = client
         .list_repositories(&query)
         .await
@@ -214,15 +215,15 @@ async fn fetch_repositories(
     Ok(response.repositories)
 }
 
-async fn delete_repository(
+async fn archive_repository(
     client: &HydraClient,
-    args: DeleteRepositoryArgs,
+    args: ArchiveRepositoryArgs,
 ) -> Result<RepositoryRecord> {
-    let deleted = client
-        .delete_repository(&args.name)
+    let archived = client
+        .archive_repository(&args.name)
         .await
         .context("failed to delete repository")?;
-    Ok(deleted)
+    Ok(archived)
 }
 
 async fn create_repository(

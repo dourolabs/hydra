@@ -331,7 +331,7 @@ export function useIssueFilters(
         apply: () => false,
       },
       // Presence-only flag — selecting it from the menu activates
-      // `include_deleted=true` on the issues list query so soft-deleted
+      // `include_archived=true` on the issues list query so soft-deleted
       // (archived) issues appear alongside live ones. Dismissing the chip
       // returns the page to the default (archived rows hidden).
       includeArchived: {

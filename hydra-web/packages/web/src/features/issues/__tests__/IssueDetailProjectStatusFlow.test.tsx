@@ -201,7 +201,7 @@ function makeRecord(): IssueVersionRecord {
       dependencies: [],
       patches: [],
       labels: [],
-      deleted: false,
+      archived: false,
     },
   } as unknown as IssueVersionRecord;
 }

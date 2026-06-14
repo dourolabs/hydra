@@ -264,7 +264,7 @@ impl PostgresStoreV2 {
     // bumps the suffix by one char, so reltuples staleness is harmless.
     // Versioned tables (is_latest = true) are over-counted by the version
     // cardinality, also bounded to ~1 char of error. Soft-delete tables
-    // (labels) are over-counted by the soft-deleted row count — same family
+    // (labels) are over-counted by the soft-archived row count — same family
     // of small inaccuracies, same bound. reltuples is -1 on never-ANALYZEd
     // tables; GREATEST clamps it to 0 so fresh deployments fall back to the
     // default suffix until autovacuum runs ANALYZE. to_regclass resolves
@@ -397,7 +397,7 @@ impl PostgresStoreV2 {
         )
         .await?;
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, status_sequence, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, project_id)
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, status_sequence, assignee, assignee_principal, job_settings, archived, actor, form, form_response, project_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         );
         sqlx::query(&query)
@@ -411,7 +411,7 @@ impl PostgresStoreV2 {
             .bind(assignee_path.as_deref())
             .bind(&assignee_principal_json)
             .bind(&job_settings_json)
-            .bind(issue.deleted)
+            .bind(issue.archived)
             .bind(actor)
             .bind(&form_json)
             .bind(&form_response_json)
@@ -528,7 +528,7 @@ impl PostgresStoreV2 {
             session_settings,
             dependencies: vec![],
             patches: vec![],
-            deleted: row.deleted,
+            archived: row.archived,
             form,
             form_response,
         })
@@ -690,7 +690,7 @@ impl PostgresStoreV2 {
             .transpose()?;
 
         let query = format!(
-            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor)
+            "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, archived, branch_name, commit_range, creator, base_branch, actor)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
         );
         sqlx::query(&query)
@@ -704,7 +704,7 @@ impl PostgresStoreV2 {
             .bind(&reviews_json)
             .bind(patch.service_repo_name.as_str())
             .bind(&github_json)
-            .bind(patch.deleted)
+            .bind(patch.archived)
             .bind(&patch.branch_name)
             .bind(&commit_range_json)
             .bind(patch.creator.as_str())
@@ -755,7 +755,7 @@ impl PostgresStoreV2 {
             reviews,
             service_repo_name,
             github,
-            deleted: row.deleted,
+            archived: row.archived,
             branch_name: row.branch_name.clone(),
             commit_range,
             base_branch: row.base_branch.clone(),
@@ -836,7 +836,7 @@ impl PostgresStoreV2 {
         };
 
         let query = format!(
-            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets)
+            "INSERT INTO {TABLE_TASKS_V2} (id, version_number, spawned_from, creator, image, env_vars, cpu_limit, memory_limit, status, last_message, error, archived, actor, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)"
         );
         sqlx::query(&query)
@@ -851,7 +851,7 @@ impl PostgresStoreV2 {
             .bind(status_str)
             .bind(session.last_message.as_deref())
             .bind(&error_json)
-            .bind(session.deleted)
+            .bind(session.archived)
             .bind(actor)
             .bind(&secrets_json)
             .bind(session.creation_time)
@@ -970,7 +970,7 @@ impl PostgresStoreV2 {
             status,
             last_message: row.last_message.clone(),
             error,
-            deleted: row.deleted,
+            archived: row.archived,
             creation_time: row.creation_time,
             start_time: row.start_time,
             end_time: row.end_time,
@@ -995,7 +995,7 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, deleted, actor)
+            "INSERT INTO {TABLE_DOCUMENTS_V2} (id, version_number, title, body_markdown, path, archived, actor)
              VALUES ($1, $2, $3, $4, $5, $6, $7)"
         );
         sqlx::query(&query)
@@ -1004,7 +1004,7 @@ impl PostgresStoreV2 {
             .bind(&document.title)
             .bind(&document.body_markdown)
             .bind(document.path.as_ref().map(|p| p.as_str()))
-            .bind(document.deleted)
+            .bind(document.archived)
             .bind(actor)
             .execute(&self.pool)
             .await
@@ -1027,7 +1027,7 @@ impl PostgresStoreV2 {
             title: row.title.clone(),
             body_markdown: row.body_markdown.clone(),
             path,
-            deleted: row.deleted,
+            archived: row.archived,
         })
     }
 
@@ -1054,7 +1054,7 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize merge_policy: {e}")))?;
 
         let query = format!(
-            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor)
+            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&query)
@@ -1063,7 +1063,7 @@ impl PostgresStoreV2 {
             .bind(&repo.remote_url)
             .bind(repo.default_branch.as_deref())
             .bind(repo.default_image.as_deref())
-            .bind(repo.deleted)
+            .bind(repo.archived)
             .bind(&merge_policy_json)
             .bind(actor)
             .execute(&self.pool)
@@ -1089,7 +1089,7 @@ impl PostgresStoreV2 {
             row.default_branch.clone(),
             row.default_image.clone(),
         );
-        repo.deleted = row.deleted;
+        repo.archived = row.archived;
         repo.merge_policy = merge_policy;
         Ok(repo)
     }
@@ -1110,7 +1110,7 @@ impl PostgresStoreV2 {
         })?;
 
         let query = format!(
-            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, deleted, actor)
+            "INSERT INTO {TABLE_USERS_V2} (id, version_number, username, github_user_id, archived, actor)
              VALUES ($1, $2, $3, $4, $5, $6)"
         );
         sqlx::query(&query)
@@ -1118,7 +1118,7 @@ impl PostgresStoreV2 {
             .bind(version_number)
             .bind(user.username.as_str())
             .bind(user.github_user_id.map(|id| id as i64))
-            .bind(user.deleted)
+            .bind(user.archived)
             .bind(actor)
             .execute(&self.pool)
             .await
@@ -1131,7 +1131,7 @@ impl PostgresStoreV2 {
         User::new(
             Username::from(row.username.clone()),
             row.github_user_id.map(|id| id as u64),
-            row.deleted,
+            row.archived,
         )
     }
 
@@ -1140,15 +1140,15 @@ impl PostgresStoreV2 {
         query: &SearchUsersQuery,
     ) -> Result<Vec<(Username, Versioned<User>)>, StoreError> {
         let mut sql = format!(
-            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, archived, actor, created_at, updated_at
              FROM {TABLE_USERS_V2} WHERE is_latest = true"
         );
         let mut predicates = Vec::new();
         let mut bindings: Vec<String> = Vec::new();
 
-        // Filter deleted users by default
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("NOT deleted".to_string());
+        // Filter archived users by default
+        if !query.include_archived.unwrap_or(false) {
+            predicates.push("NOT archived".to_string());
         }
 
         if let Some(term) = query
@@ -1236,7 +1236,7 @@ impl PostgresStoreV2 {
 
         let query = format!(
             "INSERT INTO {TABLE_TRIGGERS} \
-             (id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor) \
+             (id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
         );
         sqlx::query(&query)
@@ -1247,7 +1247,7 @@ impl PostgresStoreV2 {
             .bind(&schedule_json)
             .bind(&actions_json)
             .bind(trigger.last_fired_at)
-            .bind(trigger.deleted)
+            .bind(trigger.archived)
             .bind(actor)
             .execute(executor)
             .await
@@ -1271,7 +1271,7 @@ impl PostgresStoreV2 {
             actions,
             hydra_common::api::v1::users::Username::from(row.creator.clone()),
             row.last_fired_at,
-            row.deleted,
+            row.archived,
         ))
     }
 
@@ -1430,7 +1430,7 @@ impl PostgresStoreV2 {
 
     /// Cascade-archive every non-archived issue in this project (or
     /// in `(project_id, status_sequence_filter)` when `Some`) by
-    /// flipping `issue.deleted = TRUE` on the row's next version.
+    /// flipping `issue.archived = TRUE` on the row's next version.
     /// Returns the ids of every issue actually flipped.
     ///
     /// The `metis.issues_v2` `BEFORE INSERT` trigger flips the prior
@@ -1451,7 +1451,7 @@ impl PostgresStoreV2 {
             Some(seq) => sqlx::query_scalar(
                 "SELECT id FROM metis.issues_v2 \
                  WHERE project_id = $1 AND status_sequence = $2 \
-                       AND is_latest = TRUE AND deleted = FALSE",
+                       AND is_latest = TRUE AND archived = FALSE",
             )
             .bind(project_id)
             .bind(seq)
@@ -1460,7 +1460,7 @@ impl PostgresStoreV2 {
             .map_err(map_sqlx_error)?,
             None => sqlx::query_scalar(
                 "SELECT id FROM metis.issues_v2 \
-                 WHERE project_id = $1 AND is_latest = TRUE AND deleted = FALSE",
+                 WHERE project_id = $1 AND is_latest = TRUE AND archived = FALSE",
             )
             .bind(project_id)
             .fetch_all(&mut **tx)
@@ -1489,7 +1489,7 @@ impl PostgresStoreV2 {
                 "INSERT INTO metis.issues_v2 \
                   (id, version_number, issue_type, title, description, creator, \
                    status_sequence, assignee, assignee_principal, \
-                   job_settings, deleted, actor, form, form_response, \
+                   job_settings, archived, actor, form, form_response, \
                    project_id) \
                  SELECT id, $2, issue_type, title, description, creator, \
                         status_sequence, assignee, assignee_principal, job_settings, \
@@ -1677,7 +1677,7 @@ impl PostgresStoreV2 {
 
         let query = format!(
             "INSERT INTO {TABLE_CONVERSATIONS_V2} \
-             (id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor) \
+             (id, version_number, title, agent_name, session_settings, spawned_from, status, creator, archived, actor) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         );
         sqlx::query(&query)
@@ -1694,7 +1694,7 @@ impl PostgresStoreV2 {
             )
             .bind(status_str)
             .bind(conversation.creator.as_str())
-            .bind(conversation.deleted)
+            .bind(conversation.archived)
             .bind(actor)
             .execute(executor)
             .await
@@ -1750,7 +1750,7 @@ impl PostgresStoreV2 {
             creator: Username::from(row.creator.as_str()),
             session_settings,
             spawned_from,
-            deleted: row.deleted,
+            archived: row.archived,
         })
     }
 }
@@ -1815,7 +1815,7 @@ struct IssueRow {
     #[sqlx(default)]
     assignee_principal: Option<Value>,
     job_settings: Value,
-    deleted: bool,
+    archived: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -1841,7 +1841,7 @@ struct PatchRow {
     reviews: Value,
     service_repo_name: String,
     github: Option<Value>,
-    deleted: bool,
+    archived: bool,
     branch_name: Option<String>,
     commit_range: Option<Value>,
     creator: String,
@@ -1866,7 +1866,7 @@ struct TaskRow {
     status: String,
     last_message: Option<String>,
     error: Option<Value>,
-    deleted: bool,
+    archived: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -1908,7 +1908,7 @@ struct DocumentRow {
     title: String,
     body_markdown: String,
     path: Option<String>,
-    deleted: bool,
+    archived: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -1927,7 +1927,7 @@ struct ConversationRow {
     spawned_from: Option<String>,
     status: String,
     creator: String,
-    deleted: bool,
+    archived: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -1945,7 +1945,7 @@ struct TriggerRow {
     schedule: Value,
     actions: Value,
     last_fired_at: Option<DateTime<Utc>>,
-    deleted: bool,
+    archived: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -2054,7 +2054,7 @@ struct RepositoryRow {
     remote_url: String,
     default_branch: Option<String>,
     default_image: Option<String>,
-    deleted: bool,
+    archived: bool,
     merge_policy: Option<Value>,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
@@ -2068,7 +2068,7 @@ struct UserRow {
     version_number: i64,
     username: String,
     github_user_id: Option<i64>,
-    deleted: bool,
+    archived: bool,
     actor: Option<Value>,
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -2080,7 +2080,7 @@ struct LabelRow {
     id: String,
     name: String,
     color: String,
-    deleted: bool,
+    archived: bool,
     recurse: bool,
     hidden: bool,
     created_at: DateTime<Utc>,
@@ -2097,7 +2097,7 @@ struct AgentRow {
     #[sqlx(default)]
     is_default_conversation_agent: bool,
     secrets: serde_json::Value,
-    deleted: bool,
+    archived: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -2233,8 +2233,8 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         bindings.push(pattern); // assignee
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("i.deleted = false".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("i.archived = false".to_string());
     }
 
     if !query.label_ids.is_empty() {
@@ -2278,8 +2278,8 @@ fn build_patches_predicates_pg(query: &SearchPatchesQuery) -> (Vec<String>, Vec<
         }
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = false".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = false".to_string());
     }
 
     if !query.status.is_empty() {
@@ -2431,8 +2431,8 @@ fn build_documents_predicates_pg(query: &SearchDocumentsQuery) -> (Vec<String>, 
         }
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = false".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = false".to_string());
     }
 
     (predicates, bindings)
@@ -2511,8 +2511,8 @@ fn build_tasks_predicates_pg(query: &SearchSessionsQuery) -> (Vec<String>, Vec<S
         }
     }
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = false".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = false".to_string());
     }
 
     (predicates, bindings)
@@ -2523,8 +2523,8 @@ fn build_labels_predicates_pg(query: &SearchLabelsQuery) -> (Vec<String>, Vec<St
     let mut predicates = Vec::new();
     let mut bindings: Vec<String> = Vec::new();
 
-    if !query.include_deleted.unwrap_or(false) {
-        predicates.push("deleted = false".to_string());
+    if !query.include_archived.unwrap_or(false) {
+        predicates.push("archived = false".to_string());
     }
 
     if let Some(ref q) = query.q {
@@ -2611,7 +2611,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2624,7 +2624,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::RepositoryNotFound(name.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::RepositoryNotFound(name.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -2647,13 +2647,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
         &self,
         query: &SearchRepositoriesQuery,
     ) -> Result<Vec<(RepoName, Versioned<Repository>)>, StoreError> {
-        let include_deleted = query.include_deleted.unwrap_or(false);
+        let include_deleted = query.include_archived.unwrap_or(false);
         let normalized_needle = query
             .remote_url
             .as_deref()
             .map(Repository::normalize_remote_url);
         let sql = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, deleted, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE is_latest = true
              ORDER BY id"
@@ -2665,8 +2665,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
-            // Skip deleted repositories unless include_deleted is true
-            if !include_deleted && row.deleted {
+            // Skip archived repositories unless include_deleted is true
+            if !include_deleted && row.archived {
                 continue;
             }
             if let Some(needle) = normalized_needle.as_deref()
@@ -2711,7 +2711,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, i.created_at, i.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time, \
              i.form, i.form_response, i.project_id
              FROM {TABLE_ISSUES_V2} i
@@ -2735,7 +2735,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         })?;
         let mut issue = self.row_to_issue(&row)?;
 
-        if !include_deleted && issue.deleted {
+        if !include_deleted && issue.archived {
             return Err(StoreError::IssueNotFound(id.clone()));
         }
 
@@ -2753,7 +2753,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, i.created_at, i.updated_at, \
              i.form, i.form_response, i.project_id
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
@@ -2889,9 +2889,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<u64, StoreError> {
         let sql = format!(
             "SELECT COUNT(*) FROM {TABLE_TASKS_V2} t \
-             INNER JOIN {TABLE_ISSUES_V2} i ON i.id = t.spawned_from AND i.is_latest = true AND i.deleted = false \
+             INNER JOIN {TABLE_ISSUES_V2} i ON i.id = t.spawned_from AND i.is_latest = true AND i.archived = false \
              INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
-             WHERE t.is_latest = true AND t.deleted = false \
+             WHERE t.is_latest = true AND t.archived = false \
                AND t.status IN ('created', 'pending', 'running') \
                AND i.project_id = $1 AND s.key = $2"
         );
@@ -2919,7 +2919,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let sql = format!(
             "SELECT i.id FROM {TABLE_ISSUES_V2} i \
              INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence \
-             WHERE i.is_latest = true AND i.deleted = false \
+             WHERE i.is_latest = true AND i.archived = false \
                AND i.project_id = $1 AND s.key = $2 AND i.created_at < $3 \
              LIMIT $4"
         );
@@ -3060,7 +3060,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Patch>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, archived, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_PATCHES_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
@@ -3081,7 +3081,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             ))
         })?;
         let patch = self.row_to_patch(&row)?;
-        if !include_deleted && patch.deleted {
+        if !include_deleted && patch.archived {
             return Err(StoreError::PatchNotFound(id.clone()));
         }
         let versioned = Versioned::with_optional_actor(
@@ -3096,7 +3096,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_patch_versions(&self, id: &PatchId) -> Result<Vec<Versioned<Patch>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, deleted, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at
+            "SELECT id, version_number, title, description, diff, status, is_automatic_backup, reviews, service_repo_name, github, archived, branch_name, commit_range, creator, base_branch, actor, created_at, updated_at
              FROM {TABLE_PATCHES_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -3142,7 +3142,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchPatchesQuery,
     ) -> Result<Vec<(PatchId, Versioned<Patch>)>, StoreError> {
         let mut sql = format!(
-            "SELECT p.id, p.version_number, p.title, p.description, '' AS diff, p.status, p.is_automatic_backup, p.reviews, p.service_repo_name, p.github, p.deleted, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
+            "SELECT p.id, p.version_number, p.title, p.description, '' AS diff, p.status, p.is_automatic_backup, p.reviews, p.service_repo_name, p.github, p.archived, p.branch_name, p.commit_range, p.creator, p.base_branch, p.actor, p.created_at, p.updated_at, \
              (SELECT MIN(p2.created_at) FROM {TABLE_PATCHES_V2} p2 WHERE p2.id = p.id) AS creation_time \
              FROM {TABLE_PATCHES_V2} p"
         );
@@ -3250,7 +3250,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Document>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, body_markdown, path, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_DOCUMENTS_V2} WHERE id = $1) AS creation_time
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
@@ -3264,7 +3264,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::DocumentNotFound(id.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::DocumentNotFound(id.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -3289,7 +3289,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &DocumentId,
     ) -> Result<Vec<Versioned<Document>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, body_markdown, path, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, title, body_markdown, path, archived, actor, created_at, updated_at
              FROM {TABLE_DOCUMENTS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -3335,7 +3335,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchDocumentsQuery,
     ) -> Result<Vec<(DocumentId, Versioned<Document>)>, StoreError> {
         let mut sql = format!(
-            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.deleted, d.actor, d.created_at, d.updated_at, \
+            "SELECT d.id, d.version_number, d.title, d.body_markdown, d.path, d.archived, d.actor, d.created_at, d.updated_at, \
              (SELECT MIN(d2.created_at) FROM {TABLE_DOCUMENTS_V2} d2 WHERE d2.id = d.id) AS creation_time \
              FROM {TABLE_DOCUMENTS_V2} d"
         );
@@ -3412,13 +3412,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
         Ok(count as u64)
     }
 
-    async fn find_non_deleted_document_by_exact_path(
+    async fn find_non_archived_document_by_exact_path(
         &self,
         path: &str,
     ) -> Result<Option<DocumentId>, StoreError> {
         let row = sqlx::query_as::<_, (String,)>(&format!(
             "SELECT d.id FROM {TABLE_DOCUMENTS_V2} d
-                 WHERE d.path = $1 AND d.is_latest = true AND COALESCE(d.deleted, false) = false
+                 WHERE d.path = $1 AND d.is_latest = true AND COALESCE(d.archived, false) = false
                  LIMIT 1"
         ))
         .bind(path)
@@ -3465,7 +3465,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let sql = format!(
             "SELECT d.path, d.id, d.title FROM {TABLE_DOCUMENTS_V2} d \
              WHERE d.is_latest = true \
-               AND COALESCE(d.deleted, false) = false \
+               AND COALESCE(d.archived, false) = false \
                AND d.path IN ({})",
             placeholders.join(", ")
         );
@@ -3517,7 +3517,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
                 END THEN 1 ELSE 0 END)::int AS is_doc
              FROM {TABLE_DOCUMENTS_V2} d
              WHERE d.is_latest = true
-               AND COALESCE(d.deleted, false) = false
+               AND COALESCE(d.archived, false) = false
                AND d.path IS NOT NULL
                AND d.path LIKE $2
                AND LENGTH(d.path) > $1
@@ -3552,7 +3552,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Session>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, archived, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -3565,7 +3565,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::SessionNotFound(id.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::SessionNotFound(id.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -3589,7 +3589,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &SessionId,
     ) -> Result<Vec<Versioned<Session>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, archived, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
              FROM {TABLE_TASKS_V2}
              WHERE id = $1
              ORDER BY version_number"
@@ -3630,7 +3630,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchSessionsQuery,
     ) -> Result<Vec<(SessionId, Versioned<Session>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.deleted, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time, t.conversation_id, t.usage, t.mount_spec, t.agent_config, t.mode, t.resumed_from, t.proxy_targets \
+            "SELECT t.id, t.version_number, t.spawned_from, t.image, t.env_vars, t.cpu_limit, t.memory_limit, t.status, t.last_message, t.error, t.archived, t.actor, t.created_at, t.updated_at, t.creator, t.secrets, t.creation_time, t.start_time, t.end_time, t.conversation_id, t.usage, t.mount_spec, t.agent_config, t.mode, t.resumed_from, t.proxy_targets \
              FROM {TABLE_TASKS_V2} t"
         );
         let (mut predicates, mut bindings) = build_tasks_predicates_pg(query);
@@ -3724,7 +3724,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
         let id_strings: Vec<&str> = ids.iter().map(|id| id.as_ref()).collect();
         let query = format!(
-            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, deleted, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
+            "SELECT id, version_number, spawned_from, image, env_vars, cpu_limit, memory_limit, status, last_message, error, archived, actor, created_at, updated_at, creator, secrets, creation_time, start_time, end_time, conversation_id, usage, mount_spec, agent_config, mode, resumed_from, proxy_targets
              FROM {TABLE_TASKS_V2}
              WHERE id = ANY($1)
              ORDER BY id, version_number"
@@ -3779,7 +3779,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<User>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, archived, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -3792,7 +3792,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::UserNotFound(username.clone()))?;
-        if !include_deleted && row.deleted {
+        if !include_deleted && row.archived {
             return Err(StoreError::UserNotFound(username.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -3823,7 +3823,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = $1"
         );
@@ -3834,7 +3834,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?
             .ok_or_else(|| StoreError::AgentNotFound(name.to_string()))?;
         let agent = row_to_agent(row)?;
-        if agent.deleted {
+        if agent.archived {
             return Err(StoreError::AgentNotFound(name.to_string()));
         }
         Ok(agent)
@@ -3843,9 +3843,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                    is_default_conversation_agent, secrets, deleted, \
+                    is_default_conversation_agent, secrets, archived, \
                     created_at, updated_at \
-             FROM {TABLE_AGENTS} WHERE deleted = false ORDER BY name"
+             FROM {TABLE_AGENTS} WHERE archived = false ORDER BY name"
         );
         let rows = sqlx::query_as::<_, AgentRow>(&sql)
             .fetch_all(&self.pool)
@@ -3858,7 +3858,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_label(&self, id: &LabelId) -> Result<Label, StoreError> {
         let sql = format!(
-            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
+            "SELECT id, name, color, archived, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS} WHERE id = $1"
         );
         let row = sqlx::query_as::<_, LabelRow>(&sql)
@@ -3868,7 +3868,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?
             .ok_or_else(|| StoreError::LabelNotFound(id.clone()))?;
         let label = row.to_label()?;
-        if label.deleted {
+        if label.archived {
             return Err(StoreError::LabelNotFound(id.clone()));
         }
         Ok(label)
@@ -3879,7 +3879,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         query: &SearchLabelsQuery,
     ) -> Result<Vec<(LabelId, Label)>, StoreError> {
         let mut sql = format!(
-            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
+            "SELECT id, name, color, archived, recurse, hidden, created_at, updated_at \
              FROM {TABLE_LABELS}"
         );
         let (mut predicates, mut bindings) = build_labels_predicates_pg(query);
@@ -3944,8 +3944,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_label_by_name(&self, name: &str) -> Result<Option<(LabelId, Label)>, StoreError> {
         let sql = format!(
-            "SELECT id, name, color, deleted, recurse, hidden, created_at, updated_at \
-             FROM {TABLE_LABELS} WHERE name = $1 AND deleted = false"
+            "SELECT id, name, color, archived, recurse, hidden, created_at, updated_at \
+             FROM {TABLE_LABELS} WHERE name = $1 AND archived = false"
         );
         let row = sqlx::query_as::<_, LabelRow>(&sql)
             .bind(name.to_lowercase())
@@ -3972,7 +3972,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT l.id, l.name, l.color, l.recurse, l.hidden \
              FROM {TABLE_LABELS} l \
              INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
-             WHERE la.object_id = $1 AND l.deleted = false \
+             WHERE la.object_id = $1 AND l.archived = false \
              ORDER BY l.name"
         );
         let rows = sqlx::query_as::<_, (String, String, String, bool, bool)>(&sql)
@@ -4007,7 +4007,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT la.object_id, l.id, l.name, l.color, l.recurse, l.hidden \
              FROM {TABLE_LABELS} l \
              INNER JOIN {TABLE_LABEL_ASSOCIATIONS} la ON l.id = la.label_id \
-             WHERE la.object_id = ANY($1) AND l.deleted = false \
+             WHERE la.object_id = ANY($1) AND l.archived = false \
              ORDER BY l.name"
         );
         let rows = sqlx::query_as::<_, (String, String, String, String, bool, bool)>(&sql)
@@ -4060,7 +4060,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Trigger>, StoreError> {
         let row = sqlx::query_as::<_, TriggerRow>(&format!(
-            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = $1) AS creation_time \
              FROM {TABLE_TRIGGERS} \
              WHERE id = $1 \
@@ -4075,7 +4075,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let row = row.ok_or_else(|| StoreError::TriggerNotFound(id.clone()))?;
         let trigger = Self::row_to_trigger(&row)?;
 
-        if trigger.deleted && !include_deleted {
+        if trigger.archived && !include_deleted {
             return Err(StoreError::TriggerNotFound(id.clone()));
         }
 
@@ -4106,7 +4106,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &TriggerId,
     ) -> Result<Vec<Versioned<Trigger>>, StoreError> {
         let rows = sqlx::query_as::<_, TriggerRow>(&format!(
-            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor, created_at, updated_at, \
              NULL::timestamptz AS creation_time \
              FROM {TABLE_TRIGGERS} \
              WHERE id = $1 \
@@ -4158,13 +4158,13 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Vec<(TriggerId, Versioned<Trigger>)>, StoreError> {
         let mut sql = format!(
-            "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.deleted, t.actor, t.created_at, t.updated_at, \
+            "SELECT t.id, t.version_number, t.enabled, t.creator, t.schedule, t.actions, t.last_fired_at, t.archived, t.actor, t.created_at, t.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_TRIGGERS} WHERE id = t.id) AS creation_time \
              FROM {TABLE_TRIGGERS} t \
              WHERE t.is_latest = true"
         );
         if !include_deleted {
-            sql.push_str(" AND t.deleted = false");
+            sql.push_str(" AND t.archived = false");
         }
         sql.push_str(" ORDER BY t.created_at DESC, t.id DESC");
 
@@ -4630,7 +4630,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Conversation>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} \
              WHERE id = $1 \
@@ -4644,7 +4644,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .map_err(map_sqlx_error)?;
 
         let row = row.ok_or_else(|| StoreError::ConversationNotFound(id.clone()))?;
-        if row.deleted && !include_deleted {
+        if row.archived && !include_deleted {
             return Err(StoreError::ConversationNotFound(id.clone()));
         }
         let version = VersionNumber::try_from(row.version_number).map_err(|_| {
@@ -4669,7 +4669,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Vec<(ConversationId, Versioned<Conversation>)>, StoreError> {
         let subquery = format!(
             "SELECT c.id, c.version_number, c.title, c.agent_name, c.session_settings, c.spawned_from, \
-             c.status, c.creator, c.deleted, c.actor, c.created_at, c.updated_at, \
+             c.status, c.creator, c.archived, c.actor, c.created_at, c.updated_at, \
              (SELECT MIN(c2.created_at) FROM {TABLE_CONVERSATIONS_V2} c2 WHERE c2.id = c.id) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} c \
              WHERE c.is_latest = true"
@@ -4679,8 +4679,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let mut predicates = Vec::new();
         let mut bindings = Vec::new();
 
-        if !query.include_deleted.unwrap_or(false) {
-            predicates.push("deleted = false".to_string());
+        if !query.include_archived.unwrap_or(false) {
+            predicates.push("archived = false".to_string());
         }
 
         if let Some(ref status) = query.status {
@@ -4782,7 +4782,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         id: &ConversationId,
     ) -> Result<Vec<Versioned<Conversation>>, StoreError> {
         let query = format!(
-            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, deleted, actor, created_at, updated_at, \
+            "SELECT id, version_number, title, agent_name, session_settings, spawned_from, status, creator, archived, actor, created_at, updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_CONVERSATIONS_V2} WHERE id = $1) AS creation_time \
              FROM {TABLE_CONVERSATIONS_V2} \
              WHERE id = $1 \
@@ -4836,7 +4836,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_SESSION_EVENTS_V2} e \
              JOIN {TABLE_TASKS_V2} t ON t.id = e.session_id \
                  AND t.is_latest = TRUE \
-                 AND t.deleted = FALSE \
+                 AND t.archived = FALSE \
              WHERE t.conversation_id = ANY($1) \
                AND e.event_type IN ('user_message', 'assistant_message') \
              GROUP BY t.conversation_id"
@@ -4856,7 +4856,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
              FROM {TABLE_SESSION_EVENTS_V2} e \
              JOIN {TABLE_TASKS_V2} t ON t.id = e.session_id \
                  AND t.is_latest = TRUE \
-                 AND t.deleted = FALSE \
+                 AND t.archived = FALSE \
              WHERE t.conversation_id = ANY($1) \
                AND e.event_type IN ('user_message', 'assistant_message') \
              ORDER BY t.conversation_id, t.creation_time DESC, t.id DESC, e.id DESC"
@@ -4953,7 +4953,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             "SELECT id FROM {TABLE_TASKS_V2} \
              WHERE conversation_id = $1 \
                AND is_latest = TRUE \
-               AND deleted = FALSE \
+               AND archived = FALSE \
              ORDER BY creation_time ASC, id ASC"
         );
         let rows = sqlx::query_scalar::<_, String>(&query)
@@ -5052,12 +5052,12 @@ impl Store for PostgresStoreV2 {
     ) -> Result<(), StoreError> {
         let name_str = name.as_str();
 
-        // Check if repository exists (including deleted)
+        // Check if repository exists (including archived)
         let existing = self.get_repository(&name, true).await;
 
         match existing {
-            Ok(repo) if repo.item.deleted => {
-                // Re-create over deleted: use caller's config as-is
+            Ok(repo) if repo.item.archived => {
+                // Re-create over archived: use caller's config as-is
                 self.update_repository(name, config, actor).await
             }
             Ok(_) => Err(StoreError::RepositoryAlreadyExists(name)),
@@ -5096,11 +5096,15 @@ impl Store for PostgresStoreV2 {
             .await
     }
 
-    async fn delete_repository(&self, name: &RepoName, actor: &ActorRef) -> Result<(), StoreError> {
-        // Use include_deleted: true since we need to access the repository to mark it as deleted
+    async fn archive_repository(
+        &self,
+        name: &RepoName,
+        actor: &ActorRef,
+    ) -> Result<(), StoreError> {
+        // Use include_deleted: true since we need to access the repository to mark it as archived
         let current = self.get_repository(name, true).await?;
         let mut repo = current.item;
-        repo.deleted = true;
+        repo.archived = true;
         self.update_repository(name.clone(), repo, actor).await
     }
 
@@ -5156,14 +5160,14 @@ impl Store for PostgresStoreV2 {
         Ok(next_version)
     }
 
-    async fn delete_issue(
+    async fn archive_issue(
         &self,
         id: &IssueId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_issue(id, true).await?;
         let mut issue = current.item;
-        issue.deleted = true;
+        issue.archived = true;
         self.update_issue(id, issue, actor).await
     }
 
@@ -5206,14 +5210,14 @@ impl Store for PostgresStoreV2 {
         Ok(next_version)
     }
 
-    async fn delete_patch(
+    async fn archive_patch(
         &self,
         id: &PatchId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_patch(id, true).await?;
         let mut patch = current.item;
-        patch.deleted = true;
+        patch.archived = true;
         self.update_patch(id, patch, actor).await
     }
 
@@ -5257,14 +5261,14 @@ impl Store for PostgresStoreV2 {
         Ok(next_version)
     }
 
-    async fn delete_document(
+    async fn archive_document(
         &self,
         id: &DocumentId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_document(id, true).await?;
         let mut document = current.item;
-        document.deleted = true;
+        document.archived = true;
         self.update_document(id, document, actor).await
     }
 
@@ -5318,14 +5322,14 @@ impl Store for PostgresStoreV2 {
         self.get_session(hydra_id, true).await
     }
 
-    async fn delete_session(
+    async fn archive_session(
         &self,
         id: &SessionId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_session(id, true).await?;
         let mut session = current.item;
-        session.deleted = true;
+        session.archived = true;
         let versioned = self.update_session(id, session, actor).await?;
         Ok(versioned.version)
     }
@@ -5337,7 +5341,7 @@ impl Store for PostgresStoreV2 {
     async fn add_user(&self, user: User, actor: &ActorRef) -> Result<(), StoreError> {
         // Check if user already exists by fetching the latest version
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, archived, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -5351,8 +5355,8 @@ impl Store for PostgresStoreV2 {
 
         match existing {
             Some(row) => {
-                // If user exists but is deleted, allow re-creation with the provided user
-                if row.deleted {
+                // If user exists but is archived, allow re-creation with the provided user
+                if row.archived {
                     self.update_user(user, actor).await?;
                     Ok(())
                 } else {
@@ -5413,7 +5417,7 @@ impl Store for PostgresStoreV2 {
 
         // Fetch and return the updated user
         let query = format!(
-            "SELECT id, version_number, username, github_user_id, deleted, actor, created_at, updated_at
+            "SELECT id, version_number, username, github_user_id, archived, actor, created_at, updated_at
              FROM {TABLE_USERS_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -5444,10 +5448,10 @@ impl Store for PostgresStoreV2 {
         ))
     }
 
-    async fn delete_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
+    async fn archive_user(&self, username: &Username, actor: &ActorRef) -> Result<(), StoreError> {
         let current = self.get_user(username, true).await?;
         let mut user = current.item;
-        user.deleted = true;
+        user.archived = true;
         self.update_user(user, actor).await?;
         Ok(())
     }
@@ -5455,9 +5459,9 @@ impl Store for PostgresStoreV2 {
     // ---- Agent mutations ----
 
     async fn add_agent(&self, agent: Agent) -> Result<(), StoreError> {
-        // Check if an agent with this name already exists (including soft-deleted).
+        // Check if an agent with this name already exists (including soft-archived).
         let existing_deleted = sqlx::query_scalar::<_, bool>(&format!(
-            "SELECT deleted FROM {TABLE_AGENTS} WHERE name = $1"
+            "SELECT archived FROM {TABLE_AGENTS} WHERE name = $1"
         ))
         .bind(&agent.name)
         .fetch_optional(&self.pool)
@@ -5470,7 +5474,7 @@ impl Store for PostgresStoreV2 {
                 return Err(StoreError::AgentAlreadyExists(agent.name));
             }
             Some(true) => {
-                // Soft-deleted agent exists — reactivate.
+                // Soft-archived agent exists — reactivate.
                 let now = Utc::now();
                 let secrets_json = serde_json::to_value(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
@@ -5479,7 +5483,7 @@ impl Store for PostgresStoreV2 {
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, max_simultaneous = $4, \
                          is_default_conversation_agent = $5, secrets = $6, \
-                         deleted = false, created_at = $7, updated_at = $8 \
+                         archived = false, created_at = $7, updated_at = $8 \
                      WHERE name = $9"
                 );
                 sqlx::query(&sql)
@@ -5506,7 +5510,7 @@ impl Store for PostgresStoreV2 {
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
-                      is_default_conversation_agent, secrets, deleted, created_at, updated_at) \
+                      is_default_conversation_agent, secrets, archived, created_at, updated_at) \
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
                 );
                 sqlx::query(&sql)
@@ -5517,7 +5521,7 @@ impl Store for PostgresStoreV2 {
                     .bind(agent.max_simultaneous)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
-                    .bind(agent.deleted)
+                    .bind(agent.archived)
                     .bind(agent.created_at)
                     .bind(agent.updated_at)
                     .execute(&self.pool)
@@ -5530,7 +5534,7 @@ impl Store for PostgresStoreV2 {
     }
 
     async fn update_agent(&self, agent: Agent) -> Result<(), StoreError> {
-        // Check it exists (and is not deleted).
+        // Check it exists (and is not archived).
         let _ = self.get_agent(&agent.name).await?;
 
         let secrets_json = serde_json::to_value(&agent.secrets)
@@ -5558,12 +5562,12 @@ impl Store for PostgresStoreV2 {
         Ok(())
     }
 
-    async fn delete_agent(&self, name: &str) -> Result<(), StoreError> {
-        // Check it exists (and is not deleted).
+    async fn archive_agent(&self, name: &str) -> Result<(), StoreError> {
+        // Check it exists (and is not archived).
         let _ = self.get_agent(name).await?;
 
         let sql =
-            format!("UPDATE {TABLE_AGENTS} SET deleted = true, updated_at = $1 WHERE name = $2");
+            format!("UPDATE {TABLE_AGENTS} SET archived = true, updated_at = $1 WHERE name = $2");
         sqlx::query(&sql)
             .bind(Utc::now())
             .bind(name)
@@ -5585,14 +5589,14 @@ impl Store for PostgresStoreV2 {
         let id = self.next_label_id().await?;
 
         let sql = format!(
-            "INSERT INTO {TABLE_LABELS} (id, name, color, deleted, recurse, hidden, created_at, updated_at) \
+            "INSERT INTO {TABLE_LABELS} (id, name, color, archived, recurse, hidden, created_at, updated_at) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
         sqlx::query(&sql)
             .bind(id.as_ref())
             .bind(&label.name)
             .bind(label.color.as_ref())
-            .bind(label.deleted)
+            .bind(label.archived)
             .bind(label.recurse)
             .bind(label.hidden)
             .bind(label.created_at)
@@ -5632,12 +5636,12 @@ impl Store for PostgresStoreV2 {
         Ok(())
     }
 
-    async fn delete_label(&self, id: &LabelId) -> Result<(), StoreError> {
+    async fn archive_label(&self, id: &LabelId) -> Result<(), StoreError> {
         // Check it exists
         let _ = self.get_label(id).await?;
 
         let sql =
-            format!("UPDATE {TABLE_LABELS} SET deleted = true, updated_at = $1 WHERE id = $2");
+            format!("UPDATE {TABLE_LABELS} SET archived = true, updated_at = $1 WHERE id = $2");
         sqlx::query(&sql)
             .bind(Utc::now())
             .bind(id.as_ref())
@@ -6000,7 +6004,7 @@ impl Store for PostgresStoreV2 {
         // so a concurrent record_trigger_fire's last_fired_at value is carried
         // forward atomically.
         let latest_row = sqlx::query_as::<_, TriggerRow>(&format!(
-            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, deleted, actor, created_at, updated_at \
+            "SELECT id, version_number, enabled, creator, schedule, actions, last_fired_at, archived, actor, created_at, updated_at \
              FROM {TABLE_TRIGGERS} \
              WHERE id = $1 AND is_latest = true \
              FOR UPDATE"
@@ -6032,14 +6036,14 @@ impl Store for PostgresStoreV2 {
         Ok(next_version)
     }
 
-    async fn delete_trigger(
+    async fn archive_trigger(
         &self,
         id: &TriggerId,
         actor: &ActorRef,
     ) -> Result<VersionNumber, StoreError> {
         let current = self.get_trigger(id, true).await?;
         let mut trigger = current.item;
-        trigger.deleted = true;
+        trigger.archived = true;
         self.update_trigger(id, trigger, actor).await
     }
 
@@ -6529,7 +6533,7 @@ impl LabelRow {
         Ok(Label {
             name: self.name.clone(),
             color,
-            deleted: self.deleted,
+            archived: self.archived,
             recurse: self.recurse,
             hidden: self.hidden,
             created_at: self.created_at,
@@ -6549,7 +6553,7 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         max_simultaneous: row.max_simultaneous,
         is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
-        deleted: row.deleted,
+        archived: row.archived,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -6572,7 +6576,7 @@ fn build_flat_issues_sql_pg(
     };
     let mut sql = format!(
         "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-         s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
+         s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, \
          i.created_at, i.updated_at, \
          (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
          i.form, i.form_response, i.project_id \
@@ -6652,7 +6656,7 @@ fn build_bucketed_issues_sql_pg(
 
     let mut sql = format!(
         "SELECT * FROM (SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-         s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
+         s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.archived, i.actor, \
          i.created_at, i.updated_at, \
          (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
          i.form, i.form_response, i.project_id{extra_select}, \
@@ -6868,7 +6872,7 @@ mod tests {
             title: "Doc".to_string(),
             body_markdown: "Body".to_string(),
             path: Some(path.parse().unwrap()),
-            deleted: false,
+            archived: false,
         }
     }
 
@@ -7791,7 +7795,7 @@ mod tests {
         let user = User {
             username: Username::from("alice"),
             github_user_id: Some(101),
-            deleted: false,
+            archived: false,
         };
         store
             .add_user(user.clone(), &ActorRef::test())
@@ -7810,7 +7814,7 @@ mod tests {
                 User {
                     username: Username::from("alice"),
                     github_user_id: Some(202),
-                    deleted: false,
+                    archived: false,
                 },
                 &ActorRef::test(),
             )
@@ -8020,7 +8024,7 @@ mod tests {
         let user = User {
             username: Username::from("roundtrip_user"),
             github_user_id: Some(999),
-            deleted: false,
+            archived: false,
         };
 
         store
@@ -8045,7 +8049,7 @@ mod tests {
             title: "original_title".to_string(),
             body_markdown: "Body content".to_string(),
             path: Some("docs/test.md".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         let (doc_id, _) = store.add_document(doc, &ActorRef::test()).await.unwrap();
 
@@ -8054,7 +8058,7 @@ mod tests {
             title: "changed_title".to_string(),
             body_markdown: "Body content".to_string(),
             path: Some("docs/test.md".parse().unwrap()),
-            deleted: false,
+            archived: false,
         };
         store
             .update_document(&doc_id, updated_doc, &ActorRef::test())
@@ -8091,14 +8095,12 @@ mod tests {
             "Original Title".to_string(),
             "original_unique_description_abc123".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             vec![],
             vec![],
-            None,
             None,
             None,
         );
@@ -8110,14 +8112,12 @@ mod tests {
             "Updated Title".to_string(),
             "changed_unique_description_xyz789".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             vec![],
             vec![],
-            None,
             None,
             None,
         );
@@ -8442,7 +8442,7 @@ mod tests {
         assert_eq!(fetched.max_tries, 3);
         assert_eq!(fetched.max_simultaneous, 5);
         assert!(!fetched.is_default_conversation_agent);
-        assert!(!fetched.deleted);
+        assert!(!fetched.archived);
 
         // UPDATE — change prompt_path, max_tries, max_simultaneous
         let updated = Agent::new(
@@ -8470,7 +8470,7 @@ mod tests {
         assert_eq!(list[0].prompt_path, "/agents/test-agent/prompt_v2.md");
 
         // DELETE
-        store.delete_agent("test-agent").await.unwrap();
+        store.archive_agent("test-agent").await.unwrap();
 
         // GET after delete — should return AgentNotFound
         let get_result = store.get_agent("test-agent").await;
@@ -8543,7 +8543,7 @@ mod tests {
 
         // Add and then soft-delete an agent
         store.add_agent(sample_agent()).await.unwrap();
-        store.delete_agent("test-agent").await.unwrap();
+        store.archive_agent("test-agent").await.unwrap();
 
         // Verify it's gone
         assert!(matches!(
@@ -8563,14 +8563,14 @@ mod tests {
         );
         store.add_agent(reactivated).await.unwrap();
 
-        // Get the agent — verify it has the new field values and deleted = false
+        // Get the agent — verify it has the new field values and archived = false
         let fetched = store.get_agent("test-agent").await.unwrap();
         assert_eq!(fetched.name, "test-agent");
         assert_eq!(fetched.prompt_path, "/agents/test-agent/prompt_new.md");
         assert_eq!(fetched.max_tries, 7);
         assert_eq!(fetched.max_simultaneous, 12);
         assert!(!fetched.is_default_conversation_agent);
-        assert!(!fetched.deleted);
+        assert!(!fetched.archived);
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -9157,14 +9157,12 @@ mod tests {
             "Bug Title".to_string(),
             "a bug".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -9175,14 +9173,12 @@ mod tests {
             "Closed".to_string(),
             "closed task".to_string(),
             Username::from("creator"),
-            String::new(),
             status("closed"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -9235,8 +9231,8 @@ mod tests {
         expected.sort();
         assert_eq!(ids, expected, "only the strictly oldest row qualifies");
 
-        // Soft-deleted rows are filtered.
-        store.delete_issue(&oldest, &actor).await.unwrap();
+        // Soft-archived rows are filtered.
+        store.archive_issue(&oldest, &actor).await.unwrap();
         let ids = store
             .list_stale_issues_for_status(&project_id, &key, 1, now, 10)
             .await
@@ -10048,7 +10044,7 @@ mod tests {
                 idle_timeout: None,
             },
             spawned_from: None,
-            deleted: false,
+            archived: false,
         };
         let (conv_id, version) = store
             .add_conversation(conv.clone(), &ActorRef::test())
@@ -10064,7 +10060,7 @@ mod tests {
         assert_eq!(fetched.item.status, ConversationStatus::Active);
         assert_eq!(fetched.item.creator, conv.creator);
         assert_eq!(fetched.item.session_settings, conv.session_settings);
-        assert!(!fetched.item.deleted);
+        assert!(!fetched.item.archived);
 
         // -- List conversations --
         let list = store
@@ -10082,7 +10078,7 @@ mod tests {
             creator: conv.creator.clone(),
             session_settings: Default::default(),
             spawned_from: None,
-            deleted: false,
+            archived: false,
         };
         let v2 = store
             .update_conversation(&conv_id, updated_conv.clone(), &ActorRef::test())
@@ -10112,14 +10108,14 @@ mod tests {
             creator: updated_conv.creator.clone(),
             session_settings: Default::default(),
             spawned_from: None,
-            deleted: true,
+            archived: true,
         };
         store
             .update_conversation(&conv_id, deleted_conv, &ActorRef::test())
             .await
             .unwrap();
 
-        // get_conversation should return NotFound for deleted conversations (include_deleted=false)
+        // get_conversation should return NotFound for archived conversations (include_deleted=false)
         let result = store.get_conversation(&conv_id, false).await;
         assert!(result.is_err());
 
@@ -10127,7 +10123,7 @@ mod tests {
         let result = store.get_conversation(&conv_id, true).await;
         assert!(result.is_ok());
 
-        // list_conversations should exclude deleted conversations
+        // list_conversations should exclude archived conversations
         let list_after = store
             .list_conversations(&SearchConversationsQuery::default())
             .await
@@ -10203,7 +10199,7 @@ mod tests {
         for i in start..(start + count) {
             let id = format!("s-dummyaa{i:08}");
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, deleted, creator, mount_spec, agent_config, mode, is_latest)
+                "INSERT INTO {TABLE_TASKS_V2} (id, version_number, env_vars, status, archived, creator, mount_spec, agent_config, mode, is_latest)
                  VALUES ($1, 1, '{{}}'::jsonb, 'complete', false, '', '{{\"working_dir\":\"repo\",\"mounts\":[]}}'::jsonb, '{{}}'::jsonb, '{{\"type\":\"headless\",\"prompt\":\"\"}}'::jsonb, true)"
             ))
             .bind(&id)
@@ -10217,7 +10213,7 @@ mod tests {
         for i in start..(start + count) {
             let id = format!("p-dumyaa{i:08}");
             sqlx::query(&format!(
-                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, service_repo_name, deleted, is_latest)
+                "INSERT INTO {TABLE_PATCHES_V2} (id, version_number, title, description, diff, status, is_automatic_backup, creator, service_repo_name, archived, is_latest)
                  VALUES ($1, 1, '', '', '', 'Open', false, '', 'dourolabs/sample', false, true)"
             ))
             .bind(&id)
@@ -10372,7 +10368,7 @@ mod tests {
             creator: Username::from(creator),
             session_settings: Default::default(),
             spawned_from: None,
-            deleted: false,
+            archived: false,
         }
     }
 
@@ -11030,7 +11026,7 @@ mod tests {
             .await
             .unwrap();
 
-        // A deleted session linked to conv_a — must be excluded by `deleted = FALSE`.
+        // A archived session linked to conv_a — must be excluded by `archived = FALSE`.
         let (s_deleted, _) = store
             .add_session(
                 interactive_session(Some(conv_a.clone())),
@@ -11040,7 +11036,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .delete_session(&s_deleted, &ActorRef::test())
+            .archive_session(&s_deleted, &ActorRef::test())
             .await
             .unwrap();
 
@@ -11231,7 +11227,7 @@ mod tests {
             .unwrap();
         assert_eq!(v2, 2);
 
-        let v3 = store.delete_trigger(&id, &ActorRef::test()).await.unwrap();
+        let v3 = store.archive_trigger(&id, &ActorRef::test()).await.unwrap();
         assert_eq!(v3, 3);
         assert!(store.list_triggers(false).await.unwrap().is_empty());
         assert_eq!(store.list_triggers(true).await.unwrap().len(), 1);
@@ -12220,14 +12216,12 @@ mod tests {
             "rename test".to_string(),
             "test".to_string(),
             hydra_common::api::v1::users::Username::from("alice").into(),
-            String::new(),
             StatusKey::try_new("bb").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -12269,14 +12263,12 @@ mod tests {
             "test".to_string(),
             "test".to_string(),
             hydra_common::api::v1::users::Username::from("alice").into(),
-            String::new(),
             StatusKey::try_new("b").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -12292,7 +12284,7 @@ mod tests {
             .unwrap();
         assert_eq!(cascaded, vec![issue_id.clone()]);
         let fetched = store.get_issue(&issue_id, true).await.unwrap();
-        assert!(fetched.item.deleted, "cascade must flip issue.deleted");
+        assert!(fetched.item.archived, "cascade must flip issue.archived");
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -12316,14 +12308,12 @@ mod tests {
                 title.to_string(),
                 "x".to_string(),
                 hydra_common::api::v1::users::Username::from("alice").into(),
-                String::new(),
                 StatusKey::try_new("a").unwrap(),
                 project_id.clone(),
                 None,
                 None,
                 Vec::new(),
                 Vec::new(),
-                None,
                 None,
                 None,
             );
@@ -12337,7 +12327,7 @@ mod tests {
         assert_eq!(cascaded.len(), 2);
         for id in &ids {
             let fetched = store.get_issue(id, true).await.unwrap();
-            assert!(fetched.item.deleted);
+            assert!(fetched.item.archived);
         }
         let p = store.get_project(&project_id, true).await.unwrap();
         assert!(p.item.archived);
@@ -12362,14 +12352,12 @@ mod tests {
             "x".to_string(),
             "x".to_string(),
             hydra_common::api::v1::users::Username::from("alice").into(),
-            String::new(),
             StatusKey::try_new("a").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -12386,7 +12374,7 @@ mod tests {
         assert!(!p.item.archived);
         let i = store.get_issue(&issue_id, true).await.unwrap();
         assert!(
-            i.item.deleted,
+            i.item.archived,
             "cascade-archived issue stays archived after unarchive_project"
         );
     }
