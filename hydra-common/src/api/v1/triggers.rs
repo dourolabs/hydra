@@ -7,6 +7,7 @@ use crate::versioning::VersionNumber;
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronSchedule;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -57,11 +58,13 @@ impl Trigger {
 ///
 /// `Cron` is a 5-field cron expression. `Once { at }` fires a single time
 /// at the given UTC timestamp.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 // `Schedule` is a generic name; rename in TS to avoid collision with
 // future unrelated `Schedule` exports.
 #[cfg_attr(feature = "ts", ts(export, rename = "TriggerSchedule"))]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Schedule {
     Cron {
         expression: String,
@@ -71,63 +74,122 @@ pub enum Schedule {
     Once {
         at: DateTime<Utc>,
     },
+    /// Forward-compat fallback. Deserialization of an unknown tag lands
+    /// here; serialization is skipped so a round-trip drops the row.
+    #[serde(skip)]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ScheduleHelper {
+    Cron {
+        expression: String,
+        #[serde(default)]
+        timezone: Option<String>,
+    },
+    Once {
+        at: DateTime<Utc>,
+    },
+}
+
+impl<'de> Deserialize<'de> for Schedule {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match serde_json::from_value::<ScheduleHelper>(value) {
+            Ok(ScheduleHelper::Cron {
+                expression,
+                timezone,
+            }) => Ok(Schedule::Cron {
+                expression,
+                timezone,
+            }),
+            Ok(ScheduleHelper::Once { at }) => Ok(Schedule::Once { at }),
+            Err(_) => Ok(Schedule::Unknown),
+        }
+    }
 }
 
 /// One action in a trigger's `actions` list.
 ///
 /// v1 ships only `CreateIssue`; future variants slot in without changing
 /// surrounding machinery.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// `title`, `description`, and `assignee` on `CreateIssue` are template
+/// strings rendered through [`render`]. `assignee` is parsed as a
+/// `Principal` after rendering. Both `project_id` and `status` are
+/// required on the wire — no defaults, no inference. A persisted trigger
+/// row missing either field will fail loudly at deserialization rather
+/// than silently substitute a default.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 // Rename in TS to avoid colliding with the form-module `Action` export.
 #[cfg_attr(feature = "ts", ts(export, rename = "TriggerAction"))]
-pub enum Action {
-    CreateIssue(CreateIssueAction),
-}
-
-/// Create an issue when the parent trigger fires.
-///
-/// `title`, `description`, and `assignee` are template strings rendered
-/// through [`render`]. `assignee` is parsed as a `Principal` after
-/// rendering. Both `project_id` and `status` are required on the wire —
-/// no defaults, no inference. A persisted trigger row missing either
-/// field will fail loudly at deserialization rather than silently
-/// substitute a default.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export))]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
-pub struct CreateIssueAction {
-    #[serde(rename = "type")]
-    pub issue_type: IssueType,
-    pub title: String,
-    pub description: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignee: Option<String>,
-    pub project_id: ProjectId,
-    pub status: StatusKey,
-    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
-    pub session_settings: SessionSettings,
-}
-
-impl CreateIssueAction {
-    pub fn new(
+#[allow(clippy::large_enum_variant)]
+pub enum Action {
+    CreateIssue {
         issue_type: IssueType,
         title: String,
         description: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         assignee: Option<String>,
         project_id: ProjectId,
         status: StatusKey,
+        #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
         session_settings: SessionSettings,
-    ) -> Self {
-        Self {
-            issue_type,
-            title,
-            description,
-            assignee,
-            project_id,
-            status,
-            session_settings,
+    },
+    /// Forward-compat fallback. Deserialization of an unknown tag lands
+    /// here; serialization is skipped so a round-trip drops the row.
+    #[serde(skip)]
+    Unknown,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ActionHelper {
+    CreateIssue {
+        issue_type: IssueType,
+        title: String,
+        description: String,
+        #[serde(default)]
+        assignee: Option<String>,
+        project_id: ProjectId,
+        status: StatusKey,
+        #[serde(default)]
+        session_settings: SessionSettings,
+    },
+}
+
+impl<'de> Deserialize<'de> for Action {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match serde_json::from_value::<ActionHelper>(value) {
+            Ok(ActionHelper::CreateIssue {
+                issue_type,
+                title,
+                description,
+                assignee,
+                project_id,
+                status,
+                session_settings,
+            }) => Ok(Action::CreateIssue {
+                issue_type,
+                title,
+                description,
+                assignee,
+                project_id,
+                status,
+                session_settings,
+            }),
+            Err(_) => Ok(Action::Unknown),
         }
     }
 }
@@ -429,6 +491,7 @@ impl ScheduleFiring for Schedule {
                     Some(*at)
                 }
             }
+            Schedule::Unknown => None,
         }
     }
 
@@ -439,6 +502,7 @@ impl ScheduleFiring for Schedule {
                 schedule.after(&now).next()
             }
             Schedule::Once { at } => (*at > now).then_some(*at),
+            Schedule::Unknown => None,
         }
     }
 }
@@ -449,15 +513,15 @@ mod tests {
     use crate::test_utils::status::status;
 
     fn sample_action() -> Action {
-        Action::CreateIssue(CreateIssueAction::new(
-            IssueType::Task,
-            "Daily triage".to_string(),
-            "Run triage for {{ now.date }}".to_string(),
-            Some("users/alice".to_string()),
-            ProjectId::try_from("j-defaul".to_string()).expect("well-formed ProjectId"),
-            status("open"),
-            SessionSettings::default(),
-        ))
+        Action::CreateIssue {
+            issue_type: IssueType::Task,
+            title: "Daily triage".to_string(),
+            description: "Run triage for {{ now.date }}".to_string(),
+            assignee: Some("users/alice".to_string()),
+            project_id: ProjectId::try_from("j-defaul".to_string()).expect("well-formed ProjectId"),
+            status: status("open"),
+            session_settings: SessionSettings::default(),
+        }
     }
 
     #[test]
@@ -469,14 +533,62 @@ mod tests {
         let value = serde_json::to_value(&s).unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"Cron": {"expression": "* * * * *"}}),
+            serde_json::json!({"type": "cron", "expression": "* * * * *"}),
         );
+    }
+
+    #[test]
+    fn schedule_once_wire_tag() {
+        let at = "2026-06-30T15:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let s = Schedule::Once { at };
+        let value = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({"type": "once", "at": "2026-06-30T15:00:00Z"}),
+        );
+    }
+
+    #[test]
+    fn schedule_unknown_tag_deserializes_to_unknown() {
+        let raw = serde_json::json!({"type": "weather", "city": "sf"});
+        let parsed: Schedule = serde_json::from_value(raw).unwrap();
+        assert_eq!(parsed, Schedule::Unknown);
+    }
+
+    #[test]
+    fn schedule_roundtrip() {
+        let s = Schedule::Cron {
+            expression: "0 9 * * MON".to_string(),
+            timezone: Some("America/Los_Angeles".to_string()),
+        };
+        let value = serde_json::to_value(&s).unwrap();
+        let back: Schedule = serde_json::from_value(value).unwrap();
+        assert_eq!(back, s);
     }
 
     #[test]
     fn action_create_issue_wire_tag() {
         let a = sample_action();
         let value = serde_json::to_value(&a).unwrap();
-        assert!(value.get("CreateIssue").is_some());
+        let obj = value.as_object().expect("action serializes to an object");
+        assert_eq!(obj.get("type"), Some(&serde_json::json!("create_issue")));
+        // Wire field is `issue_type` (the old `#[serde(rename = "type")]` is dropped).
+        assert_eq!(obj.get("issue_type"), Some(&serde_json::json!("task")));
+        assert!(obj.get("CreateIssue").is_none());
+    }
+
+    #[test]
+    fn action_unknown_tag_deserializes_to_unknown() {
+        let raw = serde_json::json!({"type": "delete_universe"});
+        let parsed: Action = serde_json::from_value(raw).unwrap();
+        assert_eq!(parsed, Action::Unknown);
+    }
+
+    #[test]
+    fn action_roundtrip() {
+        let a = sample_action();
+        let value = serde_json::to_value(&a).unwrap();
+        let back: Action = serde_json::from_value(value).unwrap();
+        assert_eq!(back, a);
     }
 }

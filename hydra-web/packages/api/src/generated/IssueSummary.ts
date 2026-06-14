@@ -13,7 +13,6 @@ import type { Username } from "./Username";
  *
  * Excludes `session_settings` and the full `description` body.
  * The `description` field is truncated to the first line (max 200 chars).
- * The `progress` field is truncated to the first 200 characters.
  */
 export type IssueSummary = {
   type: IssueType;
@@ -27,7 +26,6 @@ export type IssueSummary = {
   status: StatusDefinition;
   project_id: ProjectId;
   assignee?: Principal | null;
-  progress: string;
   dependencies: Array<IssueDependency>;
   patches: Array<PatchId>;
   archived?: boolean;

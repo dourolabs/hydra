@@ -15,7 +15,6 @@ export type Issue = {
   title: string;
   description: string;
   creator: Username;
-  progress: string;
   /**
    * Server-computed status definition (display props + dependency
    * flags), resolved against the issue's project's status list at
@@ -40,5 +39,4 @@ export type Issue = {
   archived?: boolean;
   form?: Form | null;
   form_response?: FormResponse | null;
-  feedback?: string | null;
 };

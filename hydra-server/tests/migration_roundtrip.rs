@@ -2912,25 +2912,52 @@ async fn smoke_create_relationship(store: &PostgresStoreV2) -> Result<()> {
 
 async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
     use hydra_common::api::v1::projects::{Project as ApiProject, ProjectKey};
-    use hydra_common::triggers::{Schedule, Trigger as ApiTrigger};
+    use hydra_common::triggers::{Action, Schedule, Trigger as ApiTrigger};
 
     // ---- triggers -----------------------------------------------------
+    // Seed one row in the *pre-migration* externally-tagged shape and one
+    // in the *post-migration* internally-tagged shape, then run the
+    // 20260722000000 rewrite migration body. Both rows must end up
+    // round-tripping cleanly through `Store::get_trigger`, and a fresh
+    // `Store::add_trigger` write must emit the new internally-tagged
+    // shape on the wire.
     let trigger_id = parse_trigger_id("t-rtrip")?;
-    let schedule_json = serde_json::json!({
+    let legacy_schedule = serde_json::json!({
         "Cron": {"expression": "0 9 * * MON", "timezone": "UTC"}
     });
-    let actions_json = serde_json::json!([]);
+    let legacy_actions = serde_json::json!([
+        {
+            "CreateIssue": {
+                "type": "task",
+                "title": "Daily triage",
+                "description": "Run triage for {{ now.date }}",
+                "project_id": "j-defaul",
+                "status": "open"
+            }
+        }
+    ]);
     sqlx::query(
         "INSERT INTO metis.triggers \
          (id, version_number, enabled, creator, schedule, actions) \
          VALUES ($1, 1, TRUE, 'jayantk', $2, $3)",
     )
     .bind(trigger_id.as_ref())
-    .bind(&schedule_json)
-    .bind(&actions_json)
+    .bind(&legacy_schedule)
+    .bind(&legacy_actions)
     .execute(pool)
     .await
     .context("seed metis.triggers row for round-trip assertion")?;
+
+    // Re-run the rewrite migration body on the just-seeded row. The
+    // wider migration sequence has already executed; re-invoking the
+    // idempotent body picks up the legacy-shape row inserted above
+    // without touching any rows it has already converted.
+    sqlx::raw_sql(include_str!(
+        "../migrations/20260722000000_rewrite_trigger_jsonb_internal_tag.sql"
+    ))
+    .execute(pool)
+    .await
+    .context("re-run 20260722000000 rewrite on freshly-seeded legacy row")?;
 
     let store = PostgresStoreV2::new(pool.clone());
     let fetched = store
@@ -2966,10 +2993,60 @@ async fn assert_recent_migration_data_shape(pool: &PgPool) -> Result<()> {
         } if expression == "0 9 * * MON" && timezone.as_deref() == Some("UTC") => {}
         other => bail!("trigger {trigger_id}: expected Cron(0 9 * * MON / UTC); got {other:?}"),
     }
-    if !actions.is_empty() {
+    if actions.len() != 1 {
         bail!(
-            "trigger {trigger_id}: expected empty actions; got {} entries",
+            "trigger {trigger_id}: expected one migrated action; got {} entries",
             actions.len()
+        );
+    }
+    match &actions[0] {
+        Action::CreateIssue {
+            issue_type,
+            title,
+            description,
+            project_id,
+            ..
+        } if title == "Daily triage"
+            && description == "Run triage for {{ now.date }}"
+            && project_id.as_ref() == "j-defaul" =>
+        {
+            use hydra_common::issues::IssueType;
+            if !matches!(issue_type, IssueType::Task) {
+                bail!(
+                    "trigger {trigger_id}: action 0 expected issue_type=Task; got {issue_type:?}"
+                );
+            }
+        }
+        other => bail!("trigger {trigger_id}: unexpected action shape: {other:?}"),
+    }
+
+    // Verify the raw JSONB on disk now carries the new internally-tagged
+    // shape (the migration actually rewrote the bytes, not just the
+    // Rust-side deserialization).
+    let (raw_schedule, raw_actions): (serde_json::Value, serde_json::Value) =
+        sqlx::query_as("SELECT schedule, actions FROM metis.triggers WHERE id = $1")
+            .bind(trigger_id.as_ref())
+            .fetch_one(pool)
+            .await
+            .context("read back rewritten trigger JSONB")?;
+    if raw_schedule.get("type").and_then(|v| v.as_str()) != Some("cron") {
+        bail!("trigger {trigger_id}: migrated schedule JSONB missing type=cron: {raw_schedule}");
+    }
+    if raw_schedule.get("expression").and_then(|v| v.as_str()) != Some("0 9 * * MON") {
+        bail!("trigger {trigger_id}: migrated schedule lost expression: {raw_schedule}");
+    }
+    let first_action = raw_actions
+        .as_array()
+        .and_then(|a| a.first())
+        .with_context(|| format!("expected actions[0] in {raw_actions}"))?;
+    if first_action.get("type").and_then(|v| v.as_str()) != Some("create_issue") {
+        bail!(
+            "trigger {trigger_id}: migrated action JSONB missing type=create_issue: {first_action}"
+        );
+    }
+    if first_action.get("issue_type").and_then(|v| v.as_str()) != Some("task") {
+        bail!(
+            "trigger {trigger_id}: migrated action JSONB missing issue_type=task: {first_action}"
         );
     }
 

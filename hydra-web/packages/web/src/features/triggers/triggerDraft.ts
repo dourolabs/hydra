@@ -1,5 +1,4 @@
 import type {
-  CreateIssueAction,
   IssueType,
   TriggerAction,
   TriggerSchedule,
@@ -51,17 +50,19 @@ export function emptyTriggerDraft(): TriggerDraft {
 
 function draftFromTriggerActions(actions: TriggerAction[]): ActionDraft[] {
   if (actions.length === 0) return [emptyAction()];
-  return actions.map((a) => {
-    const ci = a.CreateIssue;
-    return {
-      type: ci.type,
-      title: ci.title,
-      description: ci.description,
-      assignee: ci.assignee ?? "",
-      projectId: ci.project_id,
-      status: ci.status,
-      repoName: ci.session_settings?.repo_name ?? "",
-    };
+  return actions.flatMap((a) => {
+    if (a.type !== "create_issue") return [];
+    return [
+      {
+        type: a.issue_type,
+        title: a.title,
+        description: a.description,
+        assignee: a.assignee ?? "",
+        projectId: a.project_id,
+        status: a.status,
+        repoName: a.session_settings?.repo_name ?? "",
+      },
+    ];
   });
 }
 
@@ -71,11 +72,11 @@ function draftFromSchedule(s: TriggerSchedule): {
   cronTimezone: string;
   onceAt: string;
 } {
-  if ("Cron" in s) {
+  if (s.type === "cron") {
     return {
       kind: "cron",
-      cronExpression: s.Cron.expression,
-      cronTimezone: s.Cron.timezone ?? "",
+      cronExpression: s.expression,
+      cronTimezone: s.timezone ?? "",
       onceAt: "",
     };
   }
@@ -83,7 +84,7 @@ function draftFromSchedule(s: TriggerSchedule): {
     kind: "once",
     cronExpression: "",
     cronTimezone: "",
-    onceAt: s.Once.at,
+    onceAt: s.at,
   };
 }
 
@@ -107,16 +108,14 @@ function buildSchedule(draft: TriggerDraft): TriggerSchedule | null {
   if (draft.scheduleKind === "cron") {
     const expr = draft.cronExpression.trim();
     if (!expr) return null;
-    const cron: { expression: string; timezone?: string | null } = {
-      expression: expr,
-    };
     const tz = draft.cronTimezone.trim();
-    if (tz) cron.timezone = tz;
-    return { Cron: cron };
+    return tz
+      ? { type: "cron", expression: expr, timezone: tz }
+      : { type: "cron", expression: expr };
   }
   const at = draft.onceAt.trim();
   if (!at) return null;
-  return { Once: { at } };
+  return { type: "once", at };
 }
 
 export function buildUpsertRequest(
@@ -129,18 +128,19 @@ export function buildUpsertRequest(
   for (const a of draft.actions) {
     if (!a.title.trim() || !a.description.trim()) return null;
     if (!a.projectId || !a.status) return null;
-    const ci: CreateIssueAction = {
-      type: a.type,
+    const action: TriggerAction = {
+      type: "create_issue",
+      issue_type: a.type,
       title: a.title,
       description: a.description,
       project_id: a.projectId,
       status: a.status,
     };
-    if (a.assignee.trim()) ci.assignee = a.assignee.trim();
+    if (a.assignee.trim()) action.assignee = a.assignee.trim();
     if (a.repoName.trim()) {
-      ci.session_settings = { repo_name: a.repoName.trim() };
+      action.session_settings = { repo_name: a.repoName.trim() };
     }
-    actions.push({ CreateIssue: ci });
+    actions.push(action);
   }
   if (actions.length === 0) return null;
   return {

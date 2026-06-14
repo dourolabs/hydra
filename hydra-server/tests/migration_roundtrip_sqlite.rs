@@ -1886,12 +1886,29 @@ async fn column_is_nullable(pool: &SqlitePool, table: &str, column: &str) -> Res
 // ---------------------------------------------------------------------------
 
 async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
+    use hydra_common::triggers::{Action, Schedule};
+
     let trigger_id = "t-migsmoke";
+    // Seed with the *pre-migration* externally-tagged shape, then re-run
+    // the 20260722000000 rewrite migration body. Both `schedule` and
+    // `actions` must round-trip cleanly through `SqliteStore::get_trigger`
+    // into the new internally-tagged Rust shape.
     let trigger_schedule = serde_json::json!({
         "Cron": {"expression": "0 9 * * MON", "timezone": "UTC"}
     })
     .to_string();
-    let trigger_actions = serde_json::json!([]).to_string();
+    let trigger_actions = serde_json::json!([
+        {
+            "CreateIssue": {
+                "type": "task",
+                "title": "Daily triage",
+                "description": "Run triage for {{ now.date }}",
+                "project_id": "j-defaul",
+                "status": "open"
+            }
+        }
+    ])
+    .to_string();
     sqlx::query(
         "INSERT INTO triggers \
            (id, version_number, enabled, creator, schedule, actions, \
@@ -1905,6 +1922,14 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("insert smoke trigger row")?;
+
+    // Re-run the rewrite migration body on the freshly-seeded row.
+    sqlx::raw_sql(include_str!(
+        "../sqlite-migrations/20260722000000_rewrite_trigger_jsonb_internal_tag.sql"
+    ))
+    .execute(pool)
+    .await
+    .context("re-run 20260722000000 sqlite rewrite on freshly-seeded legacy row")?;
 
     let store = SqliteStore::new(pool.clone());
     let tid = TriggerId::from_str(trigger_id).context("parse smoke trigger id")?;
@@ -1920,6 +1945,17 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
             "smoke trigger: expected creator='alice'; got {:?}",
             fetched_trigger.item.creator
         );
+    }
+    match &fetched_trigger.item.schedule {
+        Schedule::Cron {
+            expression,
+            timezone,
+        } if expression == "0 9 * * MON" && timezone.as_deref() == Some("UTC") => {}
+        other => bail!("smoke trigger: expected Cron(0 9 * * MON / UTC); got {other:?}"),
+    }
+    match fetched_trigger.item.actions.first() {
+        Some(Action::CreateIssue { title, .. }) if title == "Daily triage" => {}
+        other => bail!("smoke trigger: unexpected migrated action: {other:?}"),
     }
 
     let project_id = "j-migsmoke";

@@ -23,8 +23,8 @@ Tools:
   one-shot triggers. **Use this for any "schedule X" / "fire X at time T" / "every N minutes do
   X" request.** Don't reach for `RemoteTrigger` or `CronCreate` — those aren't Hydra primitives
   and they fail against hydra-single-player. `hydra triggers create` takes a YAML file with
-  `schedule` (`!Once { at }` or `!Cron { expression }`) and an `actions` list (e.g.
-  `!CreateIssue { ... }`); see `hydra triggers create --help` for the exact spec.
+  `schedule` (`type: once, at: …` or `type: cron, expression: …`) and an `actions` list (e.g.
+  `type: create_issue, …`); see `hydra triggers create --help` for the exact spec.
 
 Run `hydra <command> --help` for syntax. Don't memorize flags.
 
