@@ -61,8 +61,15 @@ export function createEventRoutes(store: Store): Hono {
     const patchIdsFilter = c.req.query("patch_ids")?.split(",").filter(Boolean);
     const documentIdsFilter = c.req.query("document_ids")?.split(",").filter(Boolean);
 
+    // Browser EventSource only attaches `Last-Event-ID` on its built-in
+    // auto-retry path; the manual force-close + reconstruct path used by the
+    // frontend's visibility-recovery flow carries the cursor via query param
+    // instead. Header wins when both are present so we stay aligned with the
+    // real server (`hydra-server/src/routes/events.rs`).
     const lastEventIdHeader = c.req.header("Last-Event-ID");
-    const lastEventId = lastEventIdHeader ? Number(lastEventIdHeader) : 0;
+    const lastEventIdQuery = c.req.query("last_event_id");
+    const lastEventIdRaw = lastEventIdHeader ?? lastEventIdQuery;
+    const lastEventId = lastEventIdRaw ? Number(lastEventIdRaw) : 0;
 
     function matchesFilter(event: StoreEvent): boolean {
       const category = eventCategory(event.eventType);

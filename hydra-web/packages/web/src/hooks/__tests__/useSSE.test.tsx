@@ -1078,3 +1078,123 @@ describe("useSSE paginated-cache patching", () => {
     consoleErrorSpy.mockRestore();
   });
 });
+
+// --- last_event_id query-param replay handshake --------------------------
+// The server-side ring buffer (events.replay_buffer_capacity, default 2000)
+// replays N+1..current when the client supplies `last_event_id=N` on
+// reconnect, so the prior visibility-change broad-invalidate hedge is gone.
+// These tests pin the URL contract and the absence of the hedge invalidate.
+
+describe("useSSE last_event_id reconnect handshake", () => {
+  let queryClient: QueryClient;
+  let invalidateSpy: InvalidateSpy;
+
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    invalidateSpy = vi.spyOn(queryClient, "invalidateQueries") as unknown as InvalidateSpy;
+  });
+
+  it("first connect URL has no last_event_id (no prior events received)", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+
+    expect(MockEventSource.instances.length).toBe(1);
+    const url = MockEventSource.instances[0].url;
+    expect(url).not.toContain("last_event_id");
+  });
+
+  it("reconnect URL carries last_event_id from the most recent event", () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const first = MockEventSource.instances[0];
+
+    // Receive an entity event so lastEventIdRef gets set to the global seq.
+    act(() => {
+      first.dispatch(
+        "issue_updated",
+        {
+          entity_type: "issue",
+          entity_id: "i-1",
+          version: 1,
+          timestamp: "2026-01-01T00:00:00Z",
+          entity: makeIssueRecord("i-1"),
+        },
+        "42",
+      );
+    });
+
+    // Force reconnect (visibility-change → visible) and confirm the new URL
+    // carries the previously-captured global seq as `last_event_id`.
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(MockEventSource.instances.length).toBe(2);
+    const url = MockEventSource.instances[1].url;
+    expect(url).toContain("last_event_id=42");
+  });
+
+  it("forceReconnect on visibility-change no longer broad-invalidates (replay covers it)", async () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const first = MockEventSource.instances[0];
+
+    // Receive a prior event so the reconnect path takes the lastEventIdRef
+    // branch — this is the scenario where the old code would have hedged.
+    act(() => {
+      first.dispatch(
+        "issue_updated",
+        {
+          entity_type: "issue",
+          entity_id: "i-1",
+          version: 1,
+          timestamp: "2026-01-01T00:00:00Z",
+          entity: makeIssueRecord("i-1"),
+        },
+        "5",
+      );
+    });
+
+    invalidateSpy.mockClear();
+
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    // Open the new EventSource so onopen fires (this is where the prior
+    // on-open hedge used to call debouncedInvalidate too).
+    act(() => {
+      MockEventSource.instances[1].fireOpen();
+    });
+
+    // Drain the debounced-invalidate timer if it had been scheduled.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Neither path should have broad-invalidated page/tree caches.
+    expect(wasInvalidated(invalidateSpy, ["issues"])).toBe(false);
+    expect(wasInvalidated(invalidateSpy, ["sessions"])).toBe(false);
+    expect(wasInvalidated(invalidateSpy, ["paginatedIssues"])).toBe(false);
+    expect(wasInvalidated(invalidateSpy, ["paginatedSessions"])).toBe(false);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(false);
+  });
+
+  it("resync listener still broad-invalidates (server fallback when client is past the buffer)", async () => {
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    invalidateSpy.mockClear();
+
+    act(() => {
+      es.dispatch("resync", { reason: "reconnected", current_seq: 100 }, "100");
+    });
+
+    // debouncedInvalidate uses setTimeout(100). Advance with real timers.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // The whole point of keeping the resync listener: when the server can't
+    // replay (client too far behind), the page/tree caches must still refresh.
+    expect(wasInvalidated(invalidateSpy, ["issues"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["paginatedIssues"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["sessions"])).toBe(true);
+    expect(wasInvalidated(invalidateSpy, ["chatRelated"])).toBe(true);
+  });
+});
