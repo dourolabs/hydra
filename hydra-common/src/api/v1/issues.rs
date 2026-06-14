@@ -173,8 +173,6 @@ pub struct Issue {
     pub title: String,
     pub description: String,
     pub creator: Username,
-    #[serde(default)]
-    pub progress: String,
     /// Server-computed status definition (display props + dependency
     /// flags), resolved against the issue's project's status list at
     /// response time. The bare key lives at `status.key`. Never stored:
@@ -206,8 +204,6 @@ pub struct Issue {
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form_response: Option<FormResponse>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub feedback: Option<String>,
 }
 
 impl Issue {
@@ -217,7 +213,6 @@ impl Issue {
         title: String,
         description: String,
         creator: Username,
-        progress: String,
         status: StatusDefinition,
         project_id: ProjectId,
         assignee: Option<Principal>,
@@ -227,14 +222,12 @@ impl Issue {
         deleted: bool,
         form: Option<Form>,
         form_response: Option<FormResponse>,
-        feedback: Option<String>,
     ) -> Self {
         Self {
             issue_type,
             title,
             description,
             creator,
-            progress,
             status,
             project_id,
             assignee,
@@ -244,7 +237,6 @@ impl Issue {
             deleted,
             form,
             form_response,
-            feedback,
         }
     }
 }
@@ -264,8 +256,6 @@ pub struct IssueInput {
     pub title: String,
     pub description: String,
     pub creator: Username,
-    #[serde(default)]
-    pub progress: String,
     #[serde(default = "default_status_key")]
     pub status: StatusKey,
     pub project_id: ProjectId,
@@ -287,8 +277,6 @@ pub struct IssueInput {
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form_response: Option<FormResponse>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub feedback: Option<String>,
 }
 
 impl IssueInput {
@@ -298,7 +286,6 @@ impl IssueInput {
         title: String,
         description: String,
         creator: Username,
-        progress: String,
         status: StatusKey,
         project_id: ProjectId,
         assignee: Option<Principal>,
@@ -308,14 +295,12 @@ impl IssueInput {
         deleted: bool,
         form: Option<Form>,
         form_response: Option<FormResponse>,
-        feedback: Option<String>,
     ) -> Self {
         Self {
             issue_type,
             title,
             description,
             creator,
-            progress,
             status,
             project_id,
             assignee,
@@ -325,7 +310,6 @@ impl IssueInput {
             deleted,
             form,
             form_response,
-            feedback,
         }
     }
 }
@@ -337,7 +321,6 @@ impl From<Issue> for IssueInput {
             title: value.title,
             description: value.description,
             creator: value.creator,
-            progress: value.progress,
             status: value.status.key,
             project_id: value.project_id,
             assignee: value.assignee,
@@ -347,7 +330,6 @@ impl From<Issue> for IssueInput {
             deleted: value.deleted,
             form: value.form,
             form_response: value.form_response,
-            feedback: value.feedback,
         }
     }
 }
@@ -363,18 +345,10 @@ impl crate::graph::GraphView for Issue {
     }
 
     fn view_l2(&self) -> Value {
-        let progress = if self.progress.chars().count() > 200 {
-            let mut truncated: String = self.progress.chars().take(200).collect();
-            truncated.push_str("...");
-            truncated
-        } else {
-            self.progress.clone()
-        };
         serde_json::json!({
             "title": self.title,
             "status": self.status.key.as_str(),
             "assignee": self.assignee,
-            "progress": progress,
             "dependencies": self.dependencies,
         })
     }
@@ -702,7 +676,6 @@ impl SearchIssuesQuery {
 ///
 /// Excludes `session_settings` and the full `description` body.
 /// The `description` field is truncated to the first line (max 200 chars).
-/// The `progress` field is truncated to the first 200 characters.
 // No `Eq` derive: `status: StatusDefinition` carries `position: f64`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -722,8 +695,6 @@ pub struct IssueSummary {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub assignee: Option<Principal>,
     #[serde(default)]
-    pub progress: String,
-    #[serde(default)]
     pub dependencies: Vec<IssueDependency>,
     #[serde(default)]
     pub patches: Vec<PatchId>,
@@ -741,11 +712,6 @@ impl From<&Issue> for IssueSummary {
         } else {
             first_line.to_string()
         };
-        let progress = if issue.progress.len() > 200 {
-            issue.progress.chars().take(200).collect()
-        } else {
-            issue.progress.clone()
-        };
         IssueSummary {
             issue_type: issue.issue_type,
             title: issue.title.clone(),
@@ -754,7 +720,6 @@ impl From<&Issue> for IssueSummary {
             status: issue.status.clone(),
             project_id: issue.project_id.clone(),
             assignee: issue.assignee.clone(),
-            progress,
             dependencies: issue.dependencies.clone(),
             patches: issue.patches.clone(),
             deleted: issue.deleted,
@@ -1262,7 +1227,6 @@ mod tests {
             title: String::new(),
             description: "test".to_string(),
             creator: Username::from("alice"),
-            progress: String::new(),
             status: status_def("open"),
             project_id: default_test_project_id(),
             assignee: None,
@@ -1272,7 +1236,6 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
-            feedback: None,
         };
 
         let actor = ActorRef::Authenticated {
@@ -1296,7 +1259,6 @@ mod tests {
             title: String::new(),
             description: "test".to_string(),
             creator: Username::from("alice"),
-            progress: String::new(),
             status: status_def("open"),
             project_id: default_test_project_id(),
             assignee: None,
@@ -1306,7 +1268,6 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
-            feedback: None,
         };
 
         let ts = chrono::Utc::now();
@@ -1373,7 +1334,6 @@ mod tests {
             title: String::new(),
             description: description.to_string(),
             creator: Username::from("alice"),
-            progress: "some progress text".to_string(),
             status: status_def("in-progress"),
             project_id: default_test_project_id(),
             assignee: Some(Principal::User {
@@ -1391,7 +1351,6 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
-            feedback: None,
         }
     }
 
@@ -1419,15 +1378,6 @@ mod tests {
     }
 
     #[test]
-    fn issue_summary_truncates_long_progress() {
-        let mut issue = make_test_issue("desc");
-        issue.progress = "p".repeat(300);
-        let summary = IssueSummary::from(&issue);
-        assert_eq!(summary.progress.len(), 200);
-        assert!(summary.progress.chars().all(|c| c == 'p'));
-    }
-
-    #[test]
     fn issue_summary_excludes_session_settings() {
         let issue = make_test_issue("test issue");
         let summary = IssueSummary::from(&issue);
@@ -1441,7 +1391,6 @@ mod tests {
         let summary = IssueSummary::from(&issue);
         assert_eq!(summary.issue_type, IssueType::Task);
         assert_eq!(summary.creator, Username::from("alice"));
-        assert_eq!(summary.progress, "some progress text");
         assert_eq!(summary.status, status_def("in-progress"));
         assert_eq!(
             summary.assignee,
@@ -1484,7 +1433,6 @@ mod tests {
                 title: "Track flakiness".to_string(),
                 description: "Investigate flaky CI".to_string(),
                 creator: Username::from("alice"),
-                progress: "started".to_string(),
                 status: super::status_def("in-progress"),
                 project_id: super::default_test_project_id(),
                 assignee: Some(Principal::User {
@@ -1502,7 +1450,6 @@ mod tests {
                 deleted: false,
                 form: None,
                 form_response: None,
-                feedback: Some("look closer".to_string()),
             }
         }
 
@@ -1532,71 +1479,11 @@ mod tests {
                     "title": "Track flakiness",
                     "status": "in-progress",
                     "assignee": {"User": {"name": "bob"}},
-                    "progress": "started",
                     "dependencies": [{
                         "type": "child-of",
                         "issue_id": "i-parent",
                     }],
                 })
-            );
-        }
-
-        #[test]
-        fn view_l2_truncates_progress_over_200_chars() {
-            let mut issue = sample_issue();
-            issue.progress = "a".repeat(250);
-            let l2 = issue.view_l2();
-            let progress = l2.get("progress").and_then(|v| v.as_str()).unwrap();
-            assert_eq!(progress.chars().count(), 203);
-            assert!(progress.ends_with("..."));
-            assert_eq!(&progress[..200], &"a".repeat(200));
-        }
-
-        #[test]
-        fn view_l2_does_not_truncate_progress_at_or_under_200_chars() {
-            let mut issue = sample_issue();
-            issue.progress = "a".repeat(200);
-            let l2 = issue.view_l2();
-            assert_eq!(
-                l2.get("progress").and_then(|v| v.as_str()).unwrap(),
-                &"a".repeat(200)
-            );
-
-            issue.progress = "short".to_string();
-            let l2 = issue.view_l2();
-            assert_eq!(
-                l2.get("progress").and_then(|v| v.as_str()).unwrap(),
-                "short"
-            );
-        }
-
-        #[test]
-        fn view_l2_truncation_is_char_based_for_multibyte() {
-            let mut issue = sample_issue();
-            // Each emoji is 1 char / 4 bytes — 250 emojis is well over 200 bytes.
-            issue.progress = "\u{1F600}".repeat(250);
-            let l2 = issue.view_l2();
-            let progress = l2.get("progress").and_then(|v| v.as_str()).unwrap();
-            assert_eq!(progress.chars().count(), 203);
-            assert!(progress.ends_with("..."));
-        }
-
-        #[test]
-        fn view_l1_does_not_emit_progress() {
-            let mut issue = sample_issue();
-            issue.progress = "a".repeat(500);
-            let l1 = issue.view_l1();
-            assert!(l1.get("progress").is_none());
-        }
-
-        #[test]
-        fn view_l3_preserves_full_progress() {
-            let mut issue = sample_issue();
-            issue.progress = "a".repeat(500);
-            let l3 = issue.view_l3();
-            assert_eq!(
-                l3.get("progress").and_then(|v| v.as_str()).unwrap().len(),
-                500
             );
         }
 

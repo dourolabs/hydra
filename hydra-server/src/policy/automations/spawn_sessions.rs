@@ -192,30 +192,11 @@ impl Automation for SpawnSessionsAutomation {
                     }
                     Ok(SpawnResult::RetriesExhausted {
                         issue_id: exhausted_issue_id,
-                        max_tries,
                     }) => {
-                        // Query all sessions for this issue to include in the failure message.
-                        let session_ids: Vec<hydra_common::SessionId> = ctx
-                            .app_state
-                            .get_sessions_for_issue(&exhausted_issue_id)
-                            .await
-                            .unwrap_or_default();
-                        let session_id_list = session_ids
-                            .iter()
-                            .map(|id| id.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        let progress = format!(
-                            "Automatic failure: the system exhausted all {max_tries} session spawn \
-                             attempts for this issue. Session IDs: {session_id_list}"
-                        );
-
-                        // Update the issue to Failed with a descriptive progress message.
                         let mut failed_issue = issue.clone();
                         failed_issue.status =
                             hydra_common::api::v1::projects::StatusKey::try_new("failed")
                                 .expect("\"failed\" is a well-formed StatusKey");
-                        failed_issue.progress = progress.clone();
                         if let Err(err) = ctx
                             .app_state
                             .upsert_issue(
@@ -287,7 +268,6 @@ mod tests {
             "Test Title".to_string(),
             "Run agent".to_string(),
             Username::from("worker"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::Agent {
@@ -303,7 +283,6 @@ mod tests {
             Vec::new(),
             None,
             None,
-            None,
         )
     }
 
@@ -313,7 +292,6 @@ mod tests {
             "Test Title".to_string(),
             "Run agent".to_string(),
             Username::from("worker"),
-            String::new(),
             status,
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::Agent {
@@ -327,7 +305,6 @@ mod tests {
             }),
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         )
@@ -645,19 +622,7 @@ mod tests {
             status("failed"),
             "issue should be marked as failed when retries exhausted"
         );
-
-        // Verify progress message contains session ID
-        assert!(
-            updated_issue.item.progress.contains("Automatic failure"),
-            "progress should contain failure explanation"
-        );
-        assert!(
-            updated_issue
-                .item
-                .progress
-                .contains(&session_id.to_string()),
-            "progress should contain the session ID"
-        );
+        let _ = session_id;
 
         Ok(())
     }
@@ -747,14 +712,12 @@ mod tests {
             "Test".to_string(),
             "desc".to_string(),
             Username::from("worker"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );

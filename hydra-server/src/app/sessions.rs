@@ -1523,7 +1523,6 @@ mod tests {
                         title: String::new(),
                         description: "with limits".to_string(),
                         creator: Username::from("creator"),
-                        progress: String::new(),
                         status: status("open"),
                         project_id: crate::domain::projects::default_project_id(),
                         assignee: None,
@@ -1533,7 +1532,6 @@ mod tests {
                         deleted: false,
                         form: None,
                         form_response: None,
-                        feedback: None,
                     },
                     ActorRef::test(),
                 )

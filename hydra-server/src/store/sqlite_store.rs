@@ -371,7 +371,6 @@ struct IssueRow {
     title: String,
     description: String,
     creator: String,
-    progress: String,
     /// Status key recovered from the JOIN to `statuses` on
     /// `(project_id, status_sequence)`. The underlying schema column is
     /// `status_sequence: INTEGER NOT NULL`; every issue read JOINs
@@ -400,8 +399,6 @@ struct IssueRow {
     form: Option<String>,
     #[sqlx(default)]
     form_response: Option<String>,
-    #[sqlx(default)]
-    feedback: Option<String>,
     project_id: String,
 }
 
@@ -1373,12 +1370,12 @@ impl SqliteStore {
 
             sqlx::query(
                 "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, \
-                  creator, progress, status_sequence, assignee, assignee_principal, \
-                  job_settings, deleted, actor, form, form_response, feedback, \
+                  creator, status_sequence, assignee, assignee_principal, \
+                  job_settings, deleted, actor, form, form_response, \
                   project_id, is_latest) \
-                 SELECT id, ?2, issue_type, title, description, creator, progress, \
+                 SELECT id, ?2, issue_type, title, description, creator, \
                         status_sequence, assignee, assignee_principal, job_settings, \
-                        1, ?3, form, form_response, feedback, project_id, 1 \
+                        1, ?3, form, form_response, project_id, 1 \
                  FROM issues_v2 WHERE id = ?1 AND version_number = ?4",
             )
             .bind(&id_str)
@@ -1549,8 +1546,8 @@ impl SqliteStore {
         )
         .await?;
         sqlx::query(
-            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, progress, status_sequence, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, project_id, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1)"
+            "INSERT INTO issues_v2 (id, version_number, issue_type, title, description, creator, status_sequence, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, project_id, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1)"
         )
         .bind(id.as_ref())
         .bind(version_number)
@@ -1558,7 +1555,6 @@ impl SqliteStore {
         .bind(&issue.title)
         .bind(&issue.description)
         .bind(issue.creator.as_str())
-        .bind(&issue.progress)
         .bind(status_sequence)
         .bind(assignee_path.as_deref())
         .bind(assignee_principal_json.as_deref())
@@ -1567,7 +1563,6 @@ impl SqliteStore {
         .bind(actor)
         .bind(&form_json)
         .bind(&form_response_json)
-        .bind(issue.feedback.as_deref())
         .bind(issue.project_id.as_ref())
         .execute(&mut **tx)
         .await
@@ -2189,7 +2184,6 @@ impl SqliteStore {
             title: row.title.clone(),
             description: row.description.clone(),
             creator: Username::from(row.creator.clone()),
-            progress: row.progress.clone(),
             status,
             project_id,
             assignee,
@@ -2199,7 +2193,6 @@ impl SqliteStore {
             deleted: row.deleted,
             form,
             form_response,
-            feedback: row.feedback.clone(),
         })
     }
 
@@ -2475,13 +2468,12 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
         bindings.push(pattern.clone()); // id
         bindings.push(pattern.clone()); // title
         bindings.push(pattern.clone()); // description
-        bindings.push(pattern.clone()); // progress
         bindings.push(term.clone()); // type (exact)
         bindings.push(term.clone()); // status (exact)
         bindings.push(pattern.clone()); // creator
         bindings.push(pattern); // assignee
         predicates.push(format!(
-            "(LOWER(i.id) LIKE ?{s0} OR LOWER(i.title) LIKE ?{s1} OR LOWER(i.description) LIKE ?{s2} OR LOWER(i.progress) LIKE ?{s3} OR i.issue_type = ?{s4} OR s.key = ?{s5} OR LOWER(i.creator) LIKE ?{s6} OR LOWER(COALESCE(i.assignee,'')) LIKE ?{s7})",
+            "(LOWER(i.id) LIKE ?{s0} OR LOWER(i.title) LIKE ?{s1} OR LOWER(i.description) LIKE ?{s2} OR i.issue_type = ?{s3} OR s.key = ?{s4} OR LOWER(i.creator) LIKE ?{s5} OR LOWER(COALESCE(i.assignee,'')) LIKE ?{s6})",
             s0 = start,
             s1 = start + 1,
             s2 = start + 2,
@@ -2489,7 +2481,6 @@ fn build_issues_predicates_sqlite(query: &SearchIssuesQuery) -> (Vec<String>, Ve
             s4 = start + 4,
             s5 = start + 5,
             s6 = start + 6,
-            s7 = start + 7,
         ));
     }
 
@@ -2977,7 +2968,7 @@ impl ReadOnlyStore for SqliteStore {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let row = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback, i.project_id,
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id,
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = ?1) AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
@@ -3024,7 +3015,7 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let rows = sqlx::query_as::<_, IssueRow>(&format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback, i.project_id, NULL AS creation_time
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id, NULL AS creation_time
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
              WHERE i.id = ?1
@@ -6789,7 +6780,7 @@ fn build_flat_issues_sql_sqlite(
         _ => String::new(),
     };
     let mut sql = format!(
-        "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback, i.project_id,
+        "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id,
          (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time
          FROM {TABLE_ISSUES_V2} i
          INNER JOIN statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}"
@@ -6884,7 +6875,7 @@ fn build_bucketed_issues_sql_sqlite(
     // identical to the unbucketed path and lets sqlx::FromRow ignore the
     // synthetic `rn` column it doesn't know about.
     let mut sql = format!(
-        "SELECT * FROM (SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.feedback, i.project_id, \
+        "SELECT * FROM (SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, i.form, i.form_response, i.project_id, \
          (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = i.id) AS creation_time{extra_select}, \
          ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY {inner_order}) AS rn \
          FROM {TABLE_ISSUES_V2} i \
@@ -7656,14 +7647,12 @@ mod tests {
             "Test Title".to_string(),
             "issue details".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             dependencies,
             Vec::new(),
-            None,
             None,
             None,
         )
@@ -7675,7 +7664,6 @@ mod tests {
             "Test Title".to_string(),
             "full description".to_string(),
             Username::from("issue-creator"),
-            "50%".to_string(),
             status("open"),
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::User {
@@ -7697,7 +7685,6 @@ mod tests {
             patches,
             None,
             None,
-            Some("some feedback text".to_string()),
         )
     }
 
@@ -7727,7 +7714,7 @@ mod tests {
         let fetched = store.get_issue(&issue_id, false).await.unwrap();
         assert_eq!(
             fetched.item, issue,
-            "Issue must round-trip all fields (assignee, job_settings, dependencies, feedback)"
+            "Issue must round-trip all fields (assignee, job_settings, dependencies)"
         );
     }
 
@@ -11244,14 +11231,12 @@ mod tests {
             "Bug Title".to_string(),
             "a bug".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -11262,14 +11247,12 @@ mod tests {
             "Closed".to_string(),
             "closed task".to_string(),
             Username::from("creator"),
-            String::new(),
             status("closed"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -11570,7 +11553,7 @@ mod tests {
 
         // Update the issue with no document changes; the unmanaged row must survive.
         let mut updated = sample_issue(vec![]);
-        updated.progress = "halfway".to_string();
+        updated.title = "updated title".to_string();
         store
             .update_issue(&issue_id, updated, &actor)
             .await
@@ -11925,7 +11908,7 @@ mod tests {
             .unwrap();
 
         let mut updated = sample_issue(vec![]);
-        updated.progress = "50%".to_string();
+        updated.title = "v2 title".to_string();
         store
             .update_issue(&issue_id, updated.clone(), &ActorRef::test())
             .await
@@ -11935,7 +11918,7 @@ mod tests {
         assert_eq!(flags, vec![(1, 0), (2, 1)]);
 
         // A third update should only keep the newest as latest
-        updated.progress = "100%".to_string();
+        updated.title = "v3 title".to_string();
         store
             .update_issue(&issue_id, updated, &ActorRef::test())
             .await
@@ -15199,14 +15182,12 @@ mod tests {
             "rename test".to_string(),
             "test".to_string(),
             Username::from("alice"),
-            String::new(),
             StatusKey::try_new("bb").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -15255,14 +15236,12 @@ mod tests {
             "test".to_string(),
             "test".to_string(),
             Username::from("alice"),
-            String::new(),
             StatusKey::try_new("b").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -15304,14 +15283,12 @@ mod tests {
             "a-issue".to_string(),
             "x".to_string(),
             Username::from("alice"),
-            String::new(),
             StatusKey::try_new("a").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -15321,14 +15298,12 @@ mod tests {
             "b-issue".to_string(),
             "x".to_string(),
             Username::from("alice"),
-            String::new(),
             StatusKey::try_new("b").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -15370,14 +15345,12 @@ mod tests {
                 title.to_string(),
                 "x".to_string(),
                 Username::from("alice"),
-                String::new(),
                 StatusKey::try_new("a").unwrap(),
                 project_id.clone(),
                 None,
                 None,
                 Vec::new(),
                 Vec::new(),
-                None,
                 None,
                 None,
             );
@@ -15427,14 +15400,12 @@ mod tests {
             "x".to_string(),
             "x".to_string(),
             Username::from("alice"),
-            String::new(),
             StatusKey::try_new("a").unwrap(),
             project_id.clone(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );

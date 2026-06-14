@@ -144,7 +144,6 @@ impl UserHandle {
             "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
-            String::new(),
             status("open"),
             ProjectId::default_project(),
             None,
@@ -152,7 +151,6 @@ impl UserHandle {
             Vec::new(),
             Vec::new(),
             false,
-            None,
             None,
             None,
         );
@@ -172,7 +170,6 @@ impl UserHandle {
             "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
-            String::new(),
             status("open"),
             ProjectId::default_project(),
             None,
@@ -183,7 +180,6 @@ impl UserHandle {
             )],
             Vec::new(),
             false,
-            None,
             None,
             None,
         );
@@ -347,7 +343,6 @@ impl UserHandle {
             "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
-            String::new(),
             status,
             ProjectId::default_project(),
             assignee.map(|s| {
@@ -364,7 +359,6 @@ impl UserHandle {
             Vec::new(),
             Vec::new(),
             false,
-            None,
             None,
             None,
         );
@@ -398,7 +392,6 @@ impl UserHandle {
             "Test Title".to_string(),
             description.to_string(),
             Username::from(self.name.as_str()),
-            String::new(),
             status,
             ProjectId::default_project(),
             assignee.map(|s| {
@@ -415,7 +408,6 @@ impl UserHandle {
             dependencies,
             patches,
             false,
-            None,
             None,
             None,
         );

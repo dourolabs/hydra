@@ -162,7 +162,6 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
         "Status-flow parent".to_string(),
         "drive a project-status flow end-to-end".to_string(),
         Username::from("default"),
-        String::new(),
         StatusKey::try_new("backlog").unwrap(),
         project_resp.project_id,
         None,
@@ -170,7 +169,6 @@ async fn setup(harness: &harness::TestHarness) -> Result<IssueId> {
         Vec::new(),
         Vec::new(),
         false,
-        None,
         None,
         None,
     );

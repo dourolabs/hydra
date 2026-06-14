@@ -49,7 +49,7 @@ pub(crate) enum SpawnResult {
     /// The issue was skipped (not eligible for spawning).
     Skipped,
     /// The spawn attempt retry cap has been exhausted for this issue.
-    RetriesExhausted { issue_id: IssueId, max_tries: i32 },
+    RetriesExhausted { issue_id: IssueId },
 }
 
 #[cfg(test)]
@@ -93,7 +93,6 @@ pub struct SpawnAttempt {
     status: StatusKey,
     attempts: i32,
     children_snapshot: HashMap<IssueId, VersionNumber>,
-    feedback: Option<String>,
 }
 
 pub struct AgentQueue {
@@ -216,7 +215,6 @@ impl AgentQueue {
         issue_id: &IssueId,
         status: StatusKey,
         children_snapshot: HashMap<IssueId, VersionNumber>,
-        feedback: Option<String>,
         max_tries: i32,
     ) -> bool {
         let mut attempts = self.spawn_attempts.write().await;
@@ -224,19 +222,16 @@ impl AgentQueue {
             status: status.clone(),
             attempts: 0,
             children_snapshot: HashMap::new(),
-            feedback: None,
         });
 
         let status_changed = entry.status != status;
         let children_changed = entry.children_snapshot != children_snapshot;
-        let feedback_changed = entry.feedback != feedback;
 
-        if status_changed || children_changed || feedback_changed {
+        if status_changed || children_changed {
             *entry = SpawnAttempt {
                 status,
                 attempts: 0,
                 children_snapshot,
-                feedback,
             };
         }
 
@@ -267,8 +262,6 @@ impl AgentQueue {
         issue: &Issue,
         task_state: &AgentTaskState,
     ) -> anyhow::Result<SpawnResult> {
-        let has_feedback = issue.feedback.is_some();
-
         // Assignment check: compare against the typed
         // `Principal::Agent { name }` — bare-string matching is gone.
         // Issues assigned to a `Principal::User { name == agent.name }`
@@ -329,17 +322,15 @@ impl AgentQueue {
             false
         };
 
-        // Feedback bypasses readiness and parent-running checks; capacity,
-        // active-session, active-conversation, and per-status cap checks
-        // are always enforced. The conversation gate is the sibling of
-        // `has_active_session`: it blocks any spawn (headless or
-        // interactive) when a live conversation already exists for this
-        // issue.
+        // The conversation gate is the sibling of `has_active_session`: it
+        // blocks any spawn (headless or interactive) when a live
+        // conversation already exists for this issue.
         if at_capacity
             || status_at_capacity
             || has_active_session
             || has_active_conv
-            || (!has_feedback && (!is_ready || parent_running))
+            || !is_ready
+            || parent_running
         {
             return Ok(SpawnResult::Skipped);
         }
@@ -361,18 +352,11 @@ impl AgentQueue {
             snapshot
         };
         if !self
-            .register_spawn_attempt(
-                issue_id,
-                issue.status.clone(),
-                children_snapshot,
-                issue.feedback.clone(),
-                max_tries,
-            )
+            .register_spawn_attempt(issue_id, issue.status.clone(), children_snapshot, max_tries)
             .await
         {
             return Ok(SpawnResult::RetriesExhausted {
                 issue_id: issue_id.clone(),
-                max_tries,
             });
         }
 
@@ -736,14 +720,12 @@ mod tests {
             "Test Title".to_string(),
             description.to_string(),
             default_user(),
-            String::new(),
             status,
             crate::domain::projects::default_project_id(),
             assignee.map(test_agent_principal),
             Some(session_settings(repo_name)),
             dependencies,
             Vec::new(),
-            None,
             None,
             None,
         )
@@ -772,7 +754,6 @@ mod tests {
             title: String::new(),
             description: description.to_string(),
             creator: default_user(),
-            progress: String::new(),
             status,
             project_id: crate::domain::projects::default_project_id(),
             assignee: assignee.map(test_agent_principal),
@@ -782,7 +763,6 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
-            feedback: None,
         }
     }
 
@@ -978,7 +958,6 @@ mod tests {
                     title: String::new(),
                     description: "Review patch".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -988,7 +967,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1421,7 +1399,6 @@ mod tests {
                     title: String::new(),
                     description: "Missing repo".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -1442,7 +1419,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1456,7 +1432,6 @@ mod tests {
                     title: String::new(),
                     description: "Missing image".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -1477,7 +1452,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1557,7 +1531,6 @@ mod tests {
                     title: String::new(),
                     description: "Override retries".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -1578,7 +1551,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1616,7 +1588,6 @@ mod tests {
                     title: String::new(),
                     description: "Already running".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -1626,7 +1597,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1678,7 +1648,6 @@ mod tests {
                     title: String::new(),
                     description: "First issue".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -1688,7 +1657,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -1701,7 +1669,6 @@ mod tests {
                     title: String::new(),
                     description: "Second issue".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -1711,7 +1678,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2000,11 +1966,11 @@ mod tests {
             .await?;
         assert!(!blocked.is_spawned());
 
-        // Update the child's progress field — status stays Closed but
-        // the version bumps, which counts as parent progress.
+        // Update the child's title — status stays Closed but the version
+        // bumps, which counts as parent progress.
         let child = handles.store.get_issue(&child_id, false).await?;
         let mut child_item = child.item;
-        child_item.progress = "made further notes".to_string();
+        child_item.title = "made further notes".to_string();
         handles
             .store
             .update_issue(&child_id, child_item, &ActorRef::test())
@@ -2167,7 +2133,6 @@ mod tests {
                     title: String::new(),
                     description: "Assigned".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -2188,7 +2153,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2245,7 +2209,6 @@ mod tests {
                     title: String::new(),
                     description: "Issue with secrets".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -2266,7 +2229,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2301,7 +2263,6 @@ mod tests {
                     title: String::new(),
                     description: "Issue without secrets".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -2322,7 +2283,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -2709,237 +2669,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn feedback_bypasses_guards() -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-
-        // Create a blocker issue (open, so the dependent is not ready).
-        let (blocker_id, _) = handles
-            .store
-            .add_issue(
-                issue("Blocker", status("open"), None, vec![], &repo_name),
-                &ActorRef::test(),
-            )
-            .await?;
-
-        // Create a parent issue with a running session (blocks child spawning).
-        let (parent_id, _) = handles
-            .store
-            .add_issue(
-                issue(
-                    "Parent issue",
-                    status("open"),
-                    Some("agent-a"),
-                    vec![],
-                    &repo_name,
-                ),
-                &ActorRef::test(),
-            )
-            .await?;
-
-        let (parent_task_id, _) = handles
-            .store
-            .add_session(
-                task(
-                    "Parent task",
-                    Bundle::None,
-                    Some(parent_id.clone()),
-                    Some("hydra-worker:latest"),
-                    HashMap::from([
-                        (ISSUE_ID_ENV_VAR.to_string(), parent_id.to_string()),
-                        (AGENT_NAME_ENV_VAR.to_string(), "agent-a".to_string()),
-                    ]),
-                ),
-                Utc::now(),
-                &ActorRef::test(),
-            )
-            .await?;
-        handles
-            .state
-            .transition_task_to_pending(&parent_task_id, ActorRef::test())
-            .await?;
-
-        // Create a closed issue with feedback, blocked deps, and a running parent.
-        let (issue_id, _) = handles
-            .store
-            .add_issue(
-                Issue {
-                    issue_type: IssueType::Task,
-                    title: String::new(),
-                    description: "Needs feedback".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: status("closed"),
-                    project_id: crate::domain::projects::default_project_id(),
-                    assignee: Some(test_agent_principal("agent-a")),
-                    session_settings: session_settings(&repo_name),
-                    dependencies: vec![
-                        IssueDependency::new(IssueDependencyType::BlockedOn, blocker_id.clone()),
-                        IssueDependency::new(IssueDependencyType::ChildOf, parent_id.clone()),
-                    ],
-                    patches: Vec::new(),
-                    deleted: false,
-                    form: None,
-                    form_response: None,
-                    feedback: None,
-                },
-                &ActorRef::test(),
-            )
-            .await?;
-
-        let queue = queue("agent-a");
-
-        // Without feedback: should NOT spawn (closed + blocked deps + parent running).
-        let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(!result.is_spawned(), "should not spawn without feedback");
-
-        // Set feedback on the issue.
-        let mut updated_issue = handles.store.get_issue(&issue_id, false).await?.item;
-        updated_issue.feedback = Some("Please fix the approach".to_string());
-        handles
-            .store
-            .update_issue(&issue_id, updated_issue, &ActorRef::test())
-            .await?;
-
-        // With feedback: should spawn despite closed status, blocked deps, and parent running.
-        let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(result.is_spawned(), "should spawn with feedback set");
-
-        // Feedback does NOT bypass the active session guard.
-        // Simulate an active session for this issue by adding it to existing_issue_ids.
-        let mut task_state = agent_task_state(&handles.state, "agent-a").await?;
-        task_state.existing_issue_ids.insert(issue_id.clone());
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(
-            !result.is_spawned(),
-            "feedback should NOT bypass active session guard"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn feedback_respawns_dropped_issue() -> anyhow::Result<()> {
-        let (handles, repo_name) = state_with_repository().await?;
-        seed_agent_prompt(&handles, "agent-a", "Reconsider").await?;
-
-        let (issue_id, _) = handles
-            .store
-            .add_issue(
-                Issue {
-                    issue_type: IssueType::Task,
-                    title: String::new(),
-                    description: "Dropped with feedback".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: status("dropped"),
-                    project_id: crate::domain::projects::default_project_id(),
-                    assignee: Some(test_agent_principal("agent-a")),
-                    session_settings: session_settings(&repo_name),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                    deleted: false,
-                    form: None,
-                    form_response: None,
-                    feedback: Some("please reconsider".to_string()),
-                },
-                &ActorRef::test(),
-            )
-            .await?;
-
-        let queue = queue("agent-a");
-        let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(
-            result.is_spawned(),
-            "feedback should bypass Dropped status and respawn"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn feedback_change_resets_spawn_attempts() -> anyhow::Result<()> {
-        let handles = test_state_handles();
-        seed_agent_prompt(&handles, "agent-a", "Fix the issue").await?;
-
-        let (issue_id, _) = handles
-            .store
-            .add_issue(
-                Issue {
-                    issue_type: IssueType::Task,
-                    title: String::new(),
-                    description: "Feedback attempt reset".to_string(),
-                    creator: default_user(),
-                    progress: String::new(),
-                    status: status("open"),
-                    project_id: crate::domain::projects::default_project_id(),
-                    assignee: Some(test_agent_principal("agent-a")),
-                    session_settings: SessionSettings::default(),
-                    dependencies: vec![],
-                    patches: Vec::new(),
-                    deleted: false,
-                    form: None,
-                    form_response: None,
-                    feedback: Some("first feedback".to_string()),
-                },
-                &ActorRef::test(),
-            )
-            .await?;
-
-        let mut queue = queue("agent-a");
-        queue.agent.max_tries = 1;
-
-        // First spawn attempt with feedback should succeed.
-        let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(result.is_spawned(), "first attempt should succeed");
-        record_completed_task(&handles, result.into_session_id().unwrap()).await?;
-
-        // Second attempt with same feedback should be blocked (max_tries=1).
-        let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(!result.is_spawned(), "should be blocked by max_tries");
-
-        // Change the feedback text.
-        let mut updated_issue = handles.store.get_issue(&issue_id, false).await?.item;
-        updated_issue.feedback = Some("new feedback".to_string());
-        handles
-            .store
-            .update_issue(&issue_id, updated_issue, &ActorRef::test())
-            .await?;
-
-        // Should spawn again because feedback changed resets attempts.
-        let task_state = agent_task_state(&handles.state, "agent-a").await?;
-        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
-        let result = queue
-            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
-            .await?;
-        assert!(result.is_spawned(), "new feedback should reset attempts");
-
-        Ok(())
-    }
-
     /// Regression for §2.5: agent_queue spawns must go through
     /// `AppState::create_session` so the persisted `Session` matches the
     /// shape produced by `POST /v1/sessions`. Build structurally-equivalent
@@ -3178,7 +2907,6 @@ mod tests {
             title: "Test Title".to_string(),
             description: description.to_string(),
             creator: default_user(),
-            progress: String::new(),
             status: status_key.clone(),
             project_id: project_id.clone(),
             assignee: Some(test_agent_principal("agent-a")),
@@ -3188,7 +2916,6 @@ mod tests {
             deleted: false,
             form: None,
             form_response: None,
-            feedback: None,
         }
     }
 
@@ -3676,8 +3403,8 @@ mod tests {
     }
 
     /// Retry budget bounds conversations too — after `max_tries` attempts
-    /// for the same `(issue_id, status, children_snapshot, feedback)`
-    /// scope key, the queue returns `RetriesExhausted`.
+    /// for the same `(issue_id, status, children_snapshot)` scope key, the
+    /// queue returns `RetriesExhausted`.
     #[tokio::test]
     async fn interactive_branch_respects_retry_budget() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
@@ -4052,7 +3779,6 @@ mod tests {
                     title: String::new(),
                     description: "Inherit from status".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -4066,7 +3792,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )
@@ -4111,7 +3836,6 @@ mod tests {
                     title: String::new(),
                     description: "Issue overrides status".to_string(),
                     creator: default_user(),
-                    progress: String::new(),
                     status: status("open"),
                     project_id: crate::domain::projects::default_project_id(),
                     assignee: Some(test_agent_principal("agent-a")),
@@ -4126,7 +3850,6 @@ mod tests {
                     deleted: false,
                     form: None,
                     form_response: None,
-                    feedback: None,
                 },
                 &ActorRef::test(),
             )

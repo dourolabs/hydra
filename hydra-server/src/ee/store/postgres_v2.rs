@@ -397,8 +397,8 @@ impl PostgresStoreV2 {
         )
         .await?;
         let query = format!(
-            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, progress, status_sequence, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, feedback, project_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+            "INSERT INTO {TABLE_ISSUES_V2} (id, version_number, issue_type, title, description, creator, status_sequence, assignee, assignee_principal, job_settings, deleted, actor, form, form_response, project_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"
         );
         sqlx::query(&query)
             .bind(id.as_ref())
@@ -407,7 +407,6 @@ impl PostgresStoreV2 {
             .bind(&issue.title)
             .bind(&issue.description)
             .bind(issue.creator.as_str())
-            .bind(&issue.progress)
             .bind(status_sequence)
             .bind(assignee_path.as_deref())
             .bind(&assignee_principal_json)
@@ -416,7 +415,6 @@ impl PostgresStoreV2 {
             .bind(actor)
             .bind(&form_json)
             .bind(&form_response_json)
-            .bind(issue.feedback.as_deref())
             .bind(issue.project_id.as_ref())
             .execute(&mut **tx)
             .await
@@ -524,7 +522,6 @@ impl PostgresStoreV2 {
             title: row.title.clone(),
             description: row.description.clone(),
             creator: Username::from(row.creator.clone()),
-            progress: row.progress.clone(),
             status,
             project_id,
             assignee,
@@ -534,7 +531,6 @@ impl PostgresStoreV2 {
             deleted: row.deleted,
             form,
             form_response,
-            feedback: row.feedback.clone(),
         })
     }
 
@@ -1492,12 +1488,12 @@ impl PostgresStoreV2 {
             sqlx::query(
                 "INSERT INTO metis.issues_v2 \
                   (id, version_number, issue_type, title, description, creator, \
-                   progress, status_sequence, assignee, assignee_principal, \
-                   job_settings, deleted, actor, form, form_response, feedback, \
+                   status_sequence, assignee, assignee_principal, \
+                   job_settings, deleted, actor, form, form_response, \
                    project_id) \
-                 SELECT id, $2, issue_type, title, description, creator, progress, \
+                 SELECT id, $2, issue_type, title, description, creator, \
                         status_sequence, assignee, assignee_principal, job_settings, \
-                        TRUE, $3, form, form_response, feedback, project_id \
+                        TRUE, $3, form, form_response, project_id \
                  FROM metis.issues_v2 \
                  WHERE id = $1 AND version_number = $4",
             )
@@ -1809,7 +1805,6 @@ struct IssueRow {
     title: String,
     description: String,
     creator: String,
-    progress: String,
     status: String,
     /// Legacy `assignee TEXT` column. `assignee_principal` is the source
     /// of truth; this field is still selected so the dual-written column
@@ -1831,8 +1826,6 @@ struct IssueRow {
     form: Option<Value>,
     #[sqlx(default)]
     form_response: Option<Value>,
-    #[sqlx(default)]
-    feedback: Option<String>,
     project_id: String,
 }
 
@@ -2217,16 +2210,14 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         let idx_id = bindings.len() + 1;
         let idx_title = bindings.len() + 2;
         let idx_desc = bindings.len() + 3;
-        let idx_progress = bindings.len() + 4;
-        let idx_type = bindings.len() + 5;
-        let idx_status = bindings.len() + 6;
-        let idx_creator = bindings.len() + 7;
-        let idx_assignee = bindings.len() + 8;
+        let idx_type = bindings.len() + 4;
+        let idx_status = bindings.len() + 5;
+        let idx_creator = bindings.len() + 6;
+        let idx_assignee = bindings.len() + 7;
         predicates.push(format!(
             "(LOWER(i.id) LIKE ${idx_id} \
              OR LOWER(i.title) LIKE ${idx_title} \
              OR LOWER(i.description) LIKE ${idx_desc} \
-             OR LOWER(i.progress) LIKE ${idx_progress} \
              OR i.issue_type = ${idx_type} \
              OR s.key = ${idx_status} \
              OR LOWER(i.creator) LIKE ${idx_creator} \
@@ -2236,7 +2227,6 @@ fn build_issues_predicates_pg(query: &SearchIssuesQuery) -> (Vec<String>, Vec<St
         bindings.push(pattern.clone()); // id
         bindings.push(pattern.clone()); // title
         bindings.push(pattern.clone()); // description
-        bindings.push(pattern.clone()); // progress
         bindings.push(term.clone()); // type (exact match)
         bindings.push(term.clone()); // status (exact match)
         bindings.push(pattern.clone()); // creator
@@ -2721,9 +2711,9 @@ impl ReadOnlyStore for PostgresStoreV2 {
         include_deleted: bool,
     ) -> Result<Versioned<Issue>, StoreError> {
         let query = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
              (SELECT MIN(created_at) FROM {TABLE_ISSUES_V2} WHERE id = $1) AS creation_time, \
-             i.form, i.form_response, i.feedback, i.project_id
+             i.form, i.form_response, i.project_id
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
              WHERE i.id = $1
@@ -2763,8 +2753,8 @@ impl ReadOnlyStore for PostgresStoreV2 {
 
     async fn get_issue_versions(&self, id: &IssueId) -> Result<Vec<Versioned<Issue>>, StoreError> {
         let query = format!(
-            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
-             i.form, i.form_response, i.feedback, i.project_id
+            "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, i.created_at, i.updated_at, \
+             i.form, i.form_response, i.project_id
              FROM {TABLE_ISSUES_V2} i
              INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence
              WHERE i.id = $1
@@ -6582,10 +6572,10 @@ fn build_flat_issues_sql_pg(
     };
     let mut sql = format!(
         "SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-         i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
+         s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
          i.created_at, i.updated_at, \
          (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
-         i.form, i.form_response, i.feedback, i.project_id \
+         i.form, i.form_response, i.project_id \
          FROM {TABLE_ISSUES_V2} i \
          INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}"
     );
@@ -6662,10 +6652,10 @@ fn build_bucketed_issues_sql_pg(
 
     let mut sql = format!(
         "SELECT * FROM (SELECT i.id, i.version_number, i.issue_type, i.title, i.description, i.creator, \
-         i.progress, s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
+         s.key AS status, i.assignee, i.assignee_principal, i.job_settings, i.deleted, i.actor, \
          i.created_at, i.updated_at, \
          (SELECT MIN(i2.created_at) FROM {TABLE_ISSUES_V2} i2 WHERE i2.id = i.id) AS creation_time, \
-         i.form, i.form_response, i.feedback, i.project_id{extra_select}, \
+         i.form, i.form_response, i.project_id{extra_select}, \
          ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY {inner_order}) AS rn \
          FROM {TABLE_ISSUES_V2} i \
          INNER JOIN metis.statuses s ON s.project_id = i.project_id AND s.sequence = i.status_sequence{projects_join}{where_clause}) sub \
@@ -6845,14 +6835,12 @@ mod tests {
             "Test Title".to_string(),
             "details".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             dependencies,
             Vec::new(),
-            None,
             None,
             None,
         )
@@ -7038,7 +7026,6 @@ mod tests {
             "Test Title".to_string(),
             "full description".to_string(),
             Username::from("issue-creator"),
-            "50%".to_string(),
             status("open"),
             crate::domain::projects::default_project_id(),
             Some(hydra_common::principal::Principal::User {
@@ -7155,7 +7142,6 @@ mod tests {
                 ]),
                 submitted_at: truncate_to_micros(Utc::now()),
             }),
-            Some("some feedback text".to_string()),
         )
     }
 
@@ -9485,11 +9471,11 @@ mod tests {
 
         // Update the first issue twice so it has 3 versions.
         let mut updated = sample_issue(vec![]);
-        updated.progress = "v2 progress".to_string();
+        updated.title = "v2 title".to_string();
         store.update_issue(&ids[0], updated, &actor).await.unwrap();
 
         let mut updated = sample_issue(vec![]);
-        updated.progress = "v3 progress".to_string();
+        updated.title = "v3 title".to_string();
         updated.status = status("in-progress");
         store.update_issue(&ids[0], updated, &actor).await.unwrap();
 
@@ -9500,7 +9486,7 @@ mod tests {
 
         // The first issue (ids[0]) should reflect the latest update.
         let first = results.iter().find(|(id, _)| *id == ids[0]).unwrap();
-        assert_eq!(first.1.item.progress, "v3 progress");
+        assert_eq!(first.1.item.title, "v3 title");
         assert_eq!(first.1.item.status, status("in-progress"));
         assert_eq!(first.1.version, 3);
 
@@ -9711,7 +9697,7 @@ mod tests {
 
         // Update the issue with no document changes; the unmanaged row must survive.
         let mut updated = sample_issue(vec![]);
-        updated.progress = "halfway".to_string();
+        updated.title = "updated title".to_string();
         store
             .update_issue(&issue_id, updated, &actor)
             .await

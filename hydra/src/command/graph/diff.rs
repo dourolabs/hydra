@@ -528,7 +528,6 @@ mod tests {
             title.to_string(),
             String::new(),
             Username::from("creator"),
-            String::new(),
             make_status_def(status),
             ProjectId::default_project(),
             None,
@@ -536,7 +535,6 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            None,
             None,
             None,
         )

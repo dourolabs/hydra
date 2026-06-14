@@ -368,6 +368,18 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("add_statuses_archived: existing rows backfill to FALSE via column default")?;
 
+    seed_progress_as_comments_drops_columns(&pool)
+        .await
+        .context("seed_progress_as_comments: progress and feedback columns dropped")?;
+    seed_progress_as_comments_seeds_one_comment_per_issue(&pool)
+        .await
+        .context(
+            "seed_progress_as_comments: one comment per populated-progress issue, with correct attribution",
+        )?;
+    seed_progress_as_comments_drops_feedback_outright(&pool)
+        .await
+        .context("seed_progress_as_comments: feedback-only issues get no seeded comment")?;
+
     // Re-run the migration plan to confirm the cleanup is idempotent —
     // every classify rule treats post-cleanup shapes as no-ops, so a
     // second pass must produce no extra writes.
@@ -420,6 +432,12 @@ async fn migration_roundtrip() -> Result<()> {
     add_statuses_archived_defaults_to_false(&pool)
         .await
         .context("add_statuses_archived: idempotent rerun keeps existing FALSE values")?;
+
+    seed_progress_as_comments_migration_is_idempotent(&pool)
+        .await
+        .context(
+            "seed_progress_as_comments: idempotent rerun does not duplicate seeded comments",
+        )?;
 
     Ok(())
 }
@@ -4401,6 +4419,132 @@ async fn add_statuses_archived_defaults_to_false(pool: &PgPool) -> Result<()> {
                 "metis.statuses({project_id}, sequence={sequence}): expected archived=false (no backfill); got true"
             );
         }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260720000000 seed-progress-as-comments Rust migration +
+// 20260721000000 column-drop SQL migration.
+// ---------------------------------------------------------------------------
+
+async fn seed_progress_as_comments_drops_columns(pool: &PgPool) -> Result<()> {
+    let progress_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS ( \
+             SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'metis' AND table_name = 'issues_v2' \
+                   AND column_name = 'progress' \
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .context("check existence of metis.issues_v2.progress")?;
+    if progress_exists {
+        bail!("expected metis.issues_v2.progress column to be dropped post-rollforward");
+    }
+    let feedback_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS ( \
+             SELECT 1 FROM information_schema.columns \
+             WHERE table_schema = 'metis' AND table_name = 'issues_v2' \
+                   AND column_name = 'feedback' \
+         )",
+    )
+    .fetch_one(pool)
+    .await
+    .context("check existence of metis.issues_v2.feedback")?;
+    if feedback_exists {
+        bail!("expected metis.issues_v2.feedback column to be dropped post-rollforward");
+    }
+    Ok(())
+}
+
+async fn seed_progress_as_comments_seeds_one_comment_per_issue(pool: &PgPool) -> Result<()> {
+    let row = sqlx::query(
+        "SELECT body, actor, created_at FROM metis.issue_comments \
+         WHERE issue_id = 'i-progseed1' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read seeded comments for i-progseed1")?;
+    if row.len() != 1 {
+        bail!(
+            "expected exactly 1 seeded comment on i-progseed1; got {}",
+            row.len()
+        );
+    }
+    let body: String = row[0].try_get("body")?;
+    let actor: serde_json::Value = row[0].try_get("actor")?;
+    let created_at: chrono::DateTime<chrono::Utc> = row[0].try_get("created_at")?;
+    if body != "latest progress note" {
+        bail!("i-progseed1: expected seeded body to be the v2 progress; got {body:?}");
+    }
+    let actor_str = actor.to_string();
+    if !actor_str.contains("\"bob\"") {
+        bail!("i-progseed1: expected seeded comment actor to be bob (v2 actor); got {actor_str}");
+    }
+    let iso = created_at.to_rfc3339();
+    if !iso.starts_with("2026-07-02T") {
+        bail!("i-progseed1: expected seeded comment created_at to match v2 timestamp; got {iso:?}");
+    }
+
+    let row = sqlx::query(
+        "SELECT body, actor, created_at FROM metis.issue_comments \
+         WHERE issue_id = 'i-progseed2' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read seeded comments for i-progseed2")?;
+    if row.len() != 1 {
+        bail!(
+            "expected exactly 1 seeded comment on i-progseed2; got {}",
+            row.len()
+        );
+    }
+    let body: String = row[0].try_get("body")?;
+    let actor: serde_json::Value = row[0].try_get("actor")?;
+    let created_at: chrono::DateTime<chrono::Utc> = row[0].try_get("created_at")?;
+    if body != "only progress note" {
+        bail!("i-progseed2: expected seeded body to be the v1 progress; got {body:?}");
+    }
+    let actor_str = actor.to_string();
+    if !actor_str.contains("\"carol\"") {
+        bail!("i-progseed2: expected seeded comment actor to be carol; got {actor_str}");
+    }
+    let iso = created_at.to_rfc3339();
+    if !iso.starts_with("2026-07-03T") {
+        bail!("i-progseed2: expected seeded comment created_at to match v1 timestamp; got {iso:?}");
+    }
+    Ok(())
+}
+
+async fn seed_progress_as_comments_drops_feedback_outright(pool: &PgPool) -> Result<()> {
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM metis.issue_comments WHERE issue_id = 'i-progfb'")
+            .fetch_one(pool)
+            .await
+            .context("count seeded comments on i-progfb")?;
+    if count != 0 {
+        bail!("expected no seeded comments on i-progfb; got {count}");
+    }
+    Ok(())
+}
+
+async fn seed_progress_as_comments_migration_is_idempotent(pool: &PgPool) -> Result<()> {
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metis.issue_comments")
+        .fetch_one(pool)
+        .await
+        .context("count issue_comments before idempotency rerun")?;
+    postgres_v2::run_migrations(pool, None)
+        .await
+        .context("re-apply postgres migrations to confirm seed-progress idempotency")?;
+    let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metis.issue_comments")
+        .fetch_one(pool)
+        .await
+        .context("count issue_comments after idempotency rerun")?;
+    if count_before != count_after {
+        bail!(
+            "issue_comments row count changed across idempotency rerun: {count_before} -> {count_after}"
+        );
     }
     Ok(())
 }

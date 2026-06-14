@@ -26,7 +26,6 @@ async fn create_spawnable_issue(
         "Test Title".to_string(),
         description.to_string(),
         Username::from("default"),
-        String::new(),
         status("open"),
         ProjectId::default_project(),
         // The agent_queue assignment check is typed: it only picks up
@@ -40,7 +39,6 @@ async fn create_spawnable_issue(
         Vec::new(),
         Vec::new(),
         false,
-        None,
         None,
         None,
     );

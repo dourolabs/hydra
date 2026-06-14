@@ -59,7 +59,6 @@ pub enum ActivityObjectSummary {
         status: StatusKey,
         description: String,
         assignee: Option<hydra_common::principal::Principal>,
-        progress: String,
     },
     Patch {
         title: String,
@@ -119,7 +118,6 @@ pub fn summarize_activity_object(entry: &ActivityLogEntry) -> Result<ActivityObj
                 status: issue.status.key,
                 description: issue.description,
                 assignee: issue.assignee,
-                progress: issue.progress,
             })
         }
         ActivityObjectKind::Patch => {
@@ -253,7 +251,6 @@ pub fn tracked_field_for_path(kind: &ActivityObjectKind, path: &str) -> Option<&
             "/status" => Some("Status"),
             "/description" => Some("Description"),
             "/assignee" => Some("Assignee"),
-            "/progress" => Some("Progress"),
             _ => None,
         },
         ActivityObjectKind::Patch => {
@@ -442,7 +439,6 @@ pub fn write_activity_object_summary(
             status,
             description,
             assignee,
-            progress,
         } => {
             write_activity_scalar_field(
                 "Type",
@@ -470,13 +466,6 @@ pub fn write_activity_object_summary(
                 "Description",
                 description,
                 change_map.get("Description").copied(),
-                indent,
-                writer,
-            )?;
-            write_activity_multiline_field(
-                "Progress",
-                progress,
-                change_map.get("Progress").copied(),
                 indent,
                 writer,
             )?;

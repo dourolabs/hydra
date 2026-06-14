@@ -116,8 +116,6 @@ pub struct Issue {
     pub title: String,
     pub description: String,
     pub creator: Username,
-    #[serde(default)]
-    pub progress: String,
     /// Project-scoped status key. Validated against the resolved project's
     /// status list at the route layer (`/v1/issues`); the store does not
     /// reinterpret unknown keys.
@@ -139,8 +137,6 @@ pub struct Issue {
     pub form: Option<Form>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form_response: Option<FormResponse>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub feedback: Option<String>,
 }
 
 fn default_status_key() -> StatusKey {
@@ -154,7 +150,6 @@ impl Issue {
         title: String,
         description: String,
         creator: Username,
-        progress: String,
         status: StatusKey,
         project_id: ProjectId,
         assignee: Option<Principal>,
@@ -163,14 +158,12 @@ impl Issue {
         patches: Vec<PatchId>,
         form: Option<Form>,
         form_response: Option<FormResponse>,
-        feedback: Option<String>,
     ) -> Self {
         Self {
             issue_type,
             title,
             description,
             creator,
-            progress,
             status,
             project_id,
             assignee,
@@ -180,7 +173,6 @@ impl Issue {
             deleted: false,
             form,
             form_response,
-            feedback,
         }
     }
 }
@@ -365,7 +357,6 @@ impl From<api::issues::Issue> for Issue {
             title: value.title,
             description: value.description,
             creator: value.creator.into(),
-            progress: value.progress,
             status: value.status.key,
             project_id: value.project_id,
             assignee: value.assignee,
@@ -375,7 +366,6 @@ impl From<api::issues::Issue> for Issue {
             deleted: value.deleted,
             form: value.form,
             form_response: value.form_response,
-            feedback: value.feedback,
         }
     }
 }
@@ -387,7 +377,6 @@ impl From<api::issues::IssueInput> for Issue {
             title: value.title,
             description: value.description,
             creator: value.creator.into(),
-            progress: value.progress,
             status: value.status,
             project_id: value.project_id,
             assignee: value.assignee,
@@ -397,7 +386,6 @@ impl From<api::issues::IssueInput> for Issue {
             deleted: value.deleted,
             form: value.form,
             form_response: value.form_response,
-            feedback: value.feedback,
         }
     }
 }
@@ -409,7 +397,6 @@ impl From<Issue> for api::issues::IssueInput {
             value.title,
             value.description,
             value.creator.into(),
-            value.progress,
             value.status,
             value.project_id,
             value.assignee,
@@ -419,7 +406,6 @@ impl From<Issue> for api::issues::IssueInput {
             value.deleted,
             value.form,
             value.form_response,
-            value.feedback,
         )
     }
 }
