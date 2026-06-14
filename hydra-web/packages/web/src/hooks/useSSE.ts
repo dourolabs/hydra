@@ -46,12 +46,15 @@ const RETRIES_RESET_AFTER_OPEN_MS = 30_000;
 const SESSION_IDS_RECONNECT_DEBOUNCE_MS = 200;
 const BASE_EVENT_TYPES_QUERY = "types=issues,sessions,patches,documents,labels,conversations";
 
-function buildEventsUrl(sessionIds: readonly string[]): string {
-  if (sessionIds.length === 0) {
-    return `/api/v1/events?${BASE_EVENT_TYPES_QUERY}`;
+function buildEventsUrl(sessionIds: readonly string[], lastEventId: string | null): string {
+  const params = new URLSearchParams(BASE_EVENT_TYPES_QUERY);
+  if (sessionIds.length > 0) {
+    params.set("session_ids", sessionIds.join(","));
   }
-  const ids = sessionIds.map((id) => encodeURIComponent(id)).join(",");
-  return `/api/v1/events?${BASE_EVENT_TYPES_QUERY}&session_ids=${ids}`;
+  if (lastEventId !== null) {
+    params.set("last_event_id", lastEventId);
+  }
+  return `/api/v1/events?${params.toString()}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -845,7 +848,7 @@ export function useSSE(): SSEConnectionState {
 
     const sessionIds = sessionLogRegistry.sessionIds();
     currentSessionIdsKeyRef.current = sessionIds.join(",");
-    const es = new EventSource(buildEventsUrl(sessionIds));
+    const es = new EventSource(buildEventsUrl(sessionIds, lastEventIdRef.current));
     esRef.current = es;
 
     es.onopen = () => {
@@ -862,12 +865,6 @@ export function useSSE(): SSEConnectionState {
         retriesResetTimerRef.current = null;
         retriesRef.current = 0;
       }, RETRIES_RESET_AFTER_OPEN_MS);
-
-      // If this is a reconnection (we previously received events), invalidate
-      // caches to cover any events missed during the disconnect window.
-      if (lastEventIdRef.current !== null) {
-        debouncedInvalidate();
-      }
     };
 
     // Entity mutation events
@@ -1027,7 +1024,6 @@ export function useSSE(): SSEConnectionState {
       }
       retriesRef.current = 0;
       connectingRef.current = false;
-      debouncedInvalidate();
       connect();
     };
 
@@ -1047,7 +1043,7 @@ export function useSSE(): SSEConnectionState {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("online", handleOnline);
     };
-  }, [connect, debouncedInvalidate]);
+  }, [connect]);
 
   return state;
 }
