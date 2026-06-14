@@ -5,9 +5,9 @@ import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
 import { SecretsSelector } from "./SecretsSelector";
 import {
-  AgentSessionSettingsFields,
-  collapseAgentSessionSettings,
-} from "./AgentSessionSettingsFields";
+  SessionSettingsFields,
+  collapseSessionSettings,
+} from "../sessions/SessionSettingsFields";
 import {
   parseSimultaneousCap,
   SIMULTANEOUS_HEADLESS_HELP,
@@ -81,7 +81,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       max_simultaneous_headless: parseSimultaneousCap(maxSimultaneousHeadless),
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
-      session_settings: collapseAgentSessionSettings(sessionSettings),
+      session_settings: collapseSessionSettings(sessionSettings),
     });
   }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneousInteractive, maxSimultaneousHeadless, isDefaultConversationAgent, selectedSecrets, sessionSettings, isValid, mutation]);
 
@@ -159,10 +159,11 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           selected={selectedSecrets}
           onChange={setSelectedSecrets}
         />
-        <AgentSessionSettingsFields
+        <SessionSettingsFields
           testIdPrefix="agent-create-form"
           value={sessionSettings}
           onChange={setSessionSettings}
+          helpText="Per-agent defaults applied when spawning sessions for this agent. Issue-, status-, and project-level settings still win over these. Leave blank to inherit the global defaults."
         />
         <div className={sharedStyles.formActions}>
           <Button

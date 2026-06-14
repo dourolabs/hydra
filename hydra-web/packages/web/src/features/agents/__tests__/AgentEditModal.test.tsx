@@ -208,7 +208,7 @@ vi.mock("../AgentsSection.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
-vi.mock("../AgentSessionSettingsFields.module.css", () => ({
+vi.mock("../../sessions/SessionSettingsFields.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 

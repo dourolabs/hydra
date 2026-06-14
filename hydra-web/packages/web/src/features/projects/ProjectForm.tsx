@@ -1,20 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Button,
-  Icons,
-  Input,
-  Picker,
-  PickerRow,
-  Textarea,
-} from "@hydra/ui";
+import { Button, Input, Textarea } from "@hydra/ui";
 import type {
   DocumentPath,
   ListProjectsResponse,
   Project,
   ProjectId,
   SessionSettings,
-  Timeout,
 } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
@@ -27,6 +19,10 @@ import {
 import { slugifyStatusKey } from "./statusDefaults";
 import { DeleteConfirmModal } from "../../components/DeleteConfirmModal/DeleteConfirmModal";
 import { upsertPromptDoc, usePromptDocumentBody } from "./promptDocument";
+import {
+  SessionSettingsFields,
+  collapseSessionSettings,
+} from "../sessions/SessionSettingsFields";
 import styles from "./ProjectForm.module.css";
 
 export interface ProjectFormProps {
@@ -63,8 +59,6 @@ export function ProjectForm({
   const [session, setSession] = useState<SessionSettings>(
     () => initial?.session_settings ?? {},
   );
-  const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
-  const [idleTimeoutPickerOpen, setIdleTimeoutPickerOpen] = useState(false);
 
   const key = useMemo(() => slugifyStatusKey(name), [name]);
   const promptPath = key ? `/projects/${key}/prompt.md` : "";
@@ -97,25 +91,10 @@ export function ProjectForm({
   const { body, setBody, loading: promptLoading } =
     usePromptDocumentBody(initialPromptPath);
 
-  // Collapse the session_settings payload back to `undefined` only when every
-  // subfield is empty — surfaced AND un-surfaced. CLI users can set
-  // `repo_name` / `remote_url` / `branch` / `secrets` (not on the form), so
-  // preserving them is required to round-trip the form without dropping
-  // CLI-only overrides. Mirrors the StatusSettingsModal patchSession check.
-  const collapsedSession = useMemo<SessionSettings | undefined>(() => {
-    const allEmpty =
-      (session.image ?? null) == null &&
-      (session.model ?? null) == null &&
-      (session.cpu_limit ?? null) == null &&
-      (session.memory_limit ?? null) == null &&
-      (session.max_retries ?? null) == null &&
-      (session.idle_timeout ?? null) == null &&
-      (session.repo_name ?? null) == null &&
-      (session.remote_url ?? null) == null &&
-      (session.branch ?? null) == null &&
-      !(session.secrets && session.secrets.length > 0);
-    return allEmpty ? undefined : session;
-  }, [session]);
+  const collapsedSession = useMemo<SessionSettings | undefined>(
+    () => collapseSessionSettings(session),
+    [session],
+  );
 
   const buildProject = useCallback(
     (): Project => ({
@@ -245,71 +224,6 @@ export function ProjectForm({
     saveMutation.mutate();
   }, [canSave, saveMutation]);
 
-  const setSessionString = (
-    field: "image" | "model" | "cpu_limit" | "memory_limit",
-    raw: string,
-  ) => {
-    setSession((prev) => ({ ...prev, [field]: raw === "" ? null : raw }));
-  };
-
-  const setSessionMaxRetries = (raw: string) => {
-    const trimmed = raw.trim();
-    if (trimmed === "") {
-      setSession((prev) => ({ ...prev, max_retries: null }));
-      return;
-    }
-    const n = Number(trimmed);
-    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) return;
-    setSession((prev) => ({ ...prev, max_retries: n }));
-  };
-
-  // Idle timeout has three discrete modes: Default (None), Infinite, or an
-  // explicit seconds count. The picker chooses the mode; the seconds input is
-  // only meaningful in the "seconds" mode and converts on the fly.
-  const idleTimeoutMode: "default" | "infinite" | "seconds" = (() => {
-    const t = session.idle_timeout;
-    if (t == null) return "default";
-    if (t.kind === "infinite") return "infinite";
-    return "seconds";
-  })();
-  const idleTimeoutSeconds =
-    session.idle_timeout?.kind === "seconds"
-      ? String(session.idle_timeout.value)
-      : "";
-
-  const setIdleTimeoutMode = (mode: "default" | "infinite" | "seconds") => {
-    if (mode === "default") {
-      setSession((prev) => ({ ...prev, idle_timeout: null }));
-      return;
-    }
-    if (mode === "infinite") {
-      setSession((prev) => ({ ...prev, idle_timeout: { kind: "infinite" } }));
-      return;
-    }
-    const current =
-      session.idle_timeout?.kind === "seconds"
-        ? session.idle_timeout.value
-        : (60n as unknown as bigint);
-    setSession((prev) => ({
-      ...prev,
-      idle_timeout: { kind: "seconds", value: current } as Timeout,
-    }));
-  };
-
-  const setIdleTimeoutSeconds = (raw: string) => {
-    const trimmed = raw.trim();
-    if (trimmed === "") {
-      setSession((prev) => ({ ...prev, idle_timeout: null }));
-      return;
-    }
-    const n = Number(trimmed);
-    if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) return;
-    setSession((prev) => ({
-      ...prev,
-      idle_timeout: { kind: "seconds", value: n as unknown as bigint } as Timeout,
-    }));
-  };
-
   return (
     <div className={styles.form} data-testid="project-form">
       <Input
@@ -333,153 +247,12 @@ export function ProjectForm({
         disabled={promptLoading}
         data-testid="project-form-prompt-body"
       />
-      <div className={styles.sessionSettings}>
-        <button
-          type="button"
-          className={styles.collapsibleSummary}
-          aria-expanded={sessionSettingsOpen}
-          onClick={() => setSessionSettingsOpen((v) => !v)}
-          data-testid="project-form-session-settings-toggle"
-        >
-          <span className={styles.collapsibleChevron} aria-hidden="true">
-            {sessionSettingsOpen ? (
-              <Icons.IconChevronDown size={10} />
-            ) : (
-              <Icons.IconChevronRight size={10} />
-            )}
-          </span>
-          <span className={styles.sectionTitle}>Default session settings</span>
-        </button>
-        {sessionSettingsOpen && (
-          <div
-            className={styles.collapsibleContent}
-            data-testid="project-form-session-settings-content"
-          >
-            <span className={styles.helpText}>
-              Per-project defaults applied when spawning sessions for issues
-              in this project. Issue- and status-level settings still win
-              over these. Leave blank to inherit the global defaults.
-            </span>
-            <div className={styles.sessionInputs}>
-              <Input
-                label="CPU limit"
-                value={session.cpu_limit ?? ""}
-                onChange={(e) => setSessionString("cpu_limit", e.target.value)}
-                placeholder="e.g. 500m, 2"
-                data-testid="project-form-cpu-limit"
-              />
-              <Input
-                label="Memory limit"
-                value={session.memory_limit ?? ""}
-                onChange={(e) =>
-                  setSessionString("memory_limit", e.target.value)
-                }
-                placeholder="e.g. 1Gi, 512Mi"
-                data-testid="project-form-memory-limit"
-              />
-            </div>
-            <div className={styles.sessionInputs}>
-              <Input
-                label="Container image"
-                value={session.image ?? ""}
-                onChange={(e) => setSessionString("image", e.target.value)}
-                placeholder="ghcr.io/org/image:tag"
-                data-testid="project-form-image"
-              />
-              <Input
-                label="Model"
-                value={session.model ?? ""}
-                onChange={(e) => setSessionString("model", e.target.value)}
-                placeholder="e.g. claude-opus-4-7"
-                data-testid="project-form-model"
-              />
-            </div>
-            <div className={styles.sessionInputs}>
-              <Input
-                label="Max retries"
-                type="number"
-                min={0}
-                step={1}
-                value={
-                  session.max_retries == null ? "" : String(session.max_retries)
-                }
-                onChange={(e) => setSessionMaxRetries(e.target.value)}
-                placeholder="Inherit"
-                data-testid="project-form-max-retries"
-              />
-              <span className={styles.spacer} />
-            </div>
-            <div
-              className={styles.idleTimeout}
-              data-testid="project-form-idle-timeout"
-            >
-              <label className={styles.label}>Idle timeout</label>
-              <div className={styles.idleTimeoutInputs}>
-                <Input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={idleTimeoutSeconds}
-                  onChange={(e) => setIdleTimeoutSeconds(e.target.value)}
-                  disabled={idleTimeoutMode !== "seconds"}
-                  placeholder={
-                    idleTimeoutMode === "infinite" ? "Never" : "Seconds"
-                  }
-                  aria-label="Idle timeout seconds"
-                  data-testid="project-form-idle-timeout-seconds"
-                />
-                <Picker
-                  label="Idle timeout"
-                  hideLabel
-                  open={idleTimeoutPickerOpen}
-                  onToggle={() => setIdleTimeoutPickerOpen((v) => !v)}
-                  value={
-                    idleTimeoutMode === "default" ? (
-                      <span className={styles.pillEmpty}>Server default</span>
-                    ) : idleTimeoutMode === "infinite" ? (
-                      <span>Never</span>
-                    ) : (
-                      <span>Custom</span>
-                    )
-                  }
-                  data-testid="project-form-idle-timeout-mode"
-                >
-                  <PickerRow
-                    active={idleTimeoutMode === "default"}
-                    onClick={() => {
-                      setIdleTimeoutMode("default");
-                      setIdleTimeoutPickerOpen(false);
-                    }}
-                  >
-                    <span>Server default</span>
-                    <span className={styles.popSpacer} />
-                  </PickerRow>
-                  <PickerRow
-                    active={idleTimeoutMode === "seconds"}
-                    onClick={() => {
-                      setIdleTimeoutMode("seconds");
-                      setIdleTimeoutPickerOpen(false);
-                    }}
-                  >
-                    <span>Custom (seconds)</span>
-                    <span className={styles.popSpacer} />
-                  </PickerRow>
-                  <PickerRow
-                    active={idleTimeoutMode === "infinite"}
-                    onClick={() => {
-                      setIdleTimeoutMode("infinite");
-                      setIdleTimeoutPickerOpen(false);
-                    }}
-                  >
-                    <span>Never</span>
-                    <span className={styles.popSpacer} />
-                  </PickerRow>
-                </Picker>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      <SessionSettingsFields
+        testIdPrefix="project-form"
+        value={session}
+        onChange={setSession}
+        helpText="Per-project defaults applied when spawning sessions for issues in this project. Issue- and status-level settings still win over these. Leave blank to inherit the global defaults."
+      />
       <div className={styles.notes}>
         <span className={styles.readOnlyNote} data-testid="project-form-key">
           Key: {key || "<key>"}

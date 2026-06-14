@@ -1,23 +1,30 @@
 import { useState } from "react";
 import { Icons, Input, Picker, PickerRow } from "@hydra/ui";
 import type { SessionSettings, Timeout } from "@hydra/api";
-import styles from "./AgentSessionSettingsFields.module.css";
+import styles from "./SessionSettingsFields.module.css";
 
-interface AgentSessionSettingsFieldsProps {
+interface SessionSettingsFieldsProps {
   testIdPrefix: string;
   value: SessionSettings;
   onChange: (next: SessionSettings) => void;
+  /**
+   * Per-entity copy under the collapsible header. Wording differs across
+   * agent / project / status, so the caller supplies the line.
+   */
+  helpText: string;
 }
 
-// Shared "Default session settings" collapsible used by both the agent create
-// and edit modals. Mirrors the StatusSettingsModal / ProjectForm panel shape:
-// CPU / memory / image / model / max retries / idle timeout, with the
-// repo / branch / secrets fields explicitly omitted (out of scope for agents).
-export function AgentSessionSettingsFields({
+// Shared "Default session settings" collapsible used by the agent create/edit
+// modals and the project form. Renders the six surfaced fields (CPU, memory,
+// image, model, max retries, idle timeout); the CLI-only fields
+// (`repo_name` / `remote_url` / `branch` / `secrets`) ride through `value`
+// untouched so a CLI-managed entity round-trips without dropping overrides.
+export function SessionSettingsFields({
   testIdPrefix,
   value,
   onChange,
-}: AgentSessionSettingsFieldsProps) {
+  helpText,
+}: SessionSettingsFieldsProps) {
   const [open, setOpen] = useState(false);
   const [idleTimeoutPickerOpen, setIdleTimeoutPickerOpen] = useState(false);
 
@@ -111,11 +118,7 @@ export function AgentSessionSettingsFields({
           className={styles.collapsibleContent}
           data-testid={`${testIdPrefix}-session-settings-content`}
         >
-          <span className={styles.helpText}>
-            Per-agent defaults applied when spawning sessions for this agent.
-            Issue-, status-, and project-level settings still win over these.
-            Leave blank to inherit the global defaults.
-          </span>
+          <span className={styles.helpText}>{helpText}</span>
           <div className={styles.sessionInputs}>
             <Input
               label="CPU limit"
@@ -240,7 +243,7 @@ export function AgentSessionSettingsFields({
 // `repo_name` / `remote_url` / `branch` / `secrets` (not on the form), so
 // preserving them is required to round-trip the modal without dropping
 // CLI-only overrides. Mirrors the StatusSettingsModal patchSession check.
-export function collapseAgentSessionSettings(
+export function collapseSessionSettings(
   value: SessionSettings,
 ): SessionSettings | undefined {
   const allEmpty =
