@@ -381,37 +381,18 @@
   overflow: hidden;
 }
 
-/* Floating "Join / Resume conversation" affordance — small solid-accent chat
-   button pinned to the card's top-right corner. Always visible when the card
-   has a live conversation (no hover-reveal). Visually 28x28 on desktop; on
-   mobile the tap target expands to 44x44 via `--touch-min` to meet the
-   minimum-touch-target guideline. */
+/* Floating "Join / Resume conversation" affordance — pins the canonical
+   primary Button (rendered via `<Button asChild variant="primary">` on a
+   react-router `<Link>`) to the card's top-right corner. All visual styling
+   — solid accent fill, hover/focus colors, 28x28 desktop / 44x44 mobile
+   touch target, icon-only square — comes from `Button.module.css`; this
+   rule only places the element. */
 .cardChatIcon {
   position: absolute;
   top: 6px;
   right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  min-width: var(--touch-min);
-  min-height: var(--touch-min);
-  background: var(--acc);
-  border-radius: var(--radius-sm);
-  color: var(--acc-fg-on);
   text-decoration: none;
-  transition: background var(--tx-fast);
   z-index: 1;
-}
-
-.cardChatIcon:hover {
-  background: var(--acc-bright);
-}
-
-.cardChatIcon:focus-visible {
-  outline: 1px solid var(--acc);
-  outline-offset: 1px;
 }
 
 .cardFoot {

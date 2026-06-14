@@ -1,9 +1,23 @@
-import { type ButtonHTMLAttributes, Children } from "react";
+import {
+  type ButtonHTMLAttributes,
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+} from "react";
 import styles from "./Button.module.css";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "secondary" | "ghost" | "danger" | "danger-subtle";
   size?: "sm" | "md" | "lg";
+  /**
+   * Render Button's styling on the single React child instead of a native
+   * `<button>`. Used to project the canonical button styling onto an element
+   * with different semantics — most commonly a react-router `<Link>` so a
+   * navigation affordance shares the same hover/focus/touch-target rules as
+   * a real button without duplicating the CSS.
+   */
+  asChild?: boolean;
 }
 
 function getTextLength(children: React.ReactNode): number {
@@ -18,6 +32,7 @@ function getTextLength(children: React.ReactNode): number {
 export function Button({
   variant = "primary",
   size = "md",
+  asChild = false,
   className,
   children,
   ...props
@@ -33,6 +48,17 @@ export function Button({
   ]
     .filter(Boolean)
     .join(" ");
+
+  if (asChild) {
+    const child = Children.only(children);
+    if (!isValidElement<{ className?: string }>(child)) {
+      throw new Error("<Button asChild> expects a single React element child");
+    }
+    const merged = [child.props.className, cls].filter(Boolean).join(" ");
+    return cloneElement(child as ReactElement<{ className?: string }>, {
+      className: merged,
+    });
+  }
 
   return (
     <button className={cls} {...props}>

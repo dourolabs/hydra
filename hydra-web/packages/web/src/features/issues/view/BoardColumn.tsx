@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { Link } from "react-router-dom";
-import { Avatar, FlowPill, Icons, TypeChip } from "@hydra/ui";
+import { Avatar, Button, FlowPill, Icons, TypeChip } from "@hydra/ui";
 import type {
   ConversationSummary,
   ProjectRecord,
@@ -420,25 +420,26 @@ function BoardIssueCard({
       data-archived={archived ? "true" : undefined}
     >
       {conversation && (
-        <Link
-          to={`/chat/${conversation.conversation_id}`}
-          className={styles.cardChatIcon}
-          title={
-            conversation.status === "idle"
-              ? "Resume conversation"
-              : "Join conversation"
-          }
-          aria-label={
-            conversation.status === "idle"
-              ? "Resume conversation"
-              : "Join conversation"
-          }
-          onClick={(e) => e.stopPropagation()}
-          data-conversation-status={conversation.status}
-          data-testid={`board-card-conversation-${id}`}
-        >
-          <Icons.IconChat size={14} />
-        </Link>
+        <Button asChild variant="primary" className={styles.cardChatIcon}>
+          <Link
+            to={`/chat/${conversation.conversation_id}`}
+            title={
+              conversation.status === "idle"
+                ? "Resume conversation"
+                : "Join conversation"
+            }
+            aria-label={
+              conversation.status === "idle"
+                ? "Resume conversation"
+                : "Join conversation"
+            }
+            onClick={(e) => e.stopPropagation()}
+            data-conversation-status={conversation.status}
+            data-testid={`board-card-conversation-${id}`}
+          >
+            <Icons.IconChat size={14} />
+          </Link>
+        </Button>
       )}
       {(archived || (issue.type && issue.type !== "unknown")) && (
         <div className={styles.cardHead}>
