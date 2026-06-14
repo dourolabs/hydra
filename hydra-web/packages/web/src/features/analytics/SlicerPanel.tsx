@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Input, Panel, Select } from "@hydra/ui";
 import { useProjects, useProjectStatuses } from "../projects/useProjects";
 import { useRepositories } from "../../hooks/useRepositories";
@@ -10,10 +10,48 @@ export interface SlicerPanelProps {
   onChange: (patch: Partial<SlicerState>) => void;
 }
 
+const FREE_TEXT_DEBOUNCE_MS = 300;
+
+// Tracks a free-text slicer field locally so each keystroke doesn't rewrite
+// the URL — and therefore every chart's React Query cache key. Re-syncs from
+// `external` when the URL changes from outside (back/forward nav).
+function useDebouncedTextSlicer(external: string | null, onCommit: (value: string | null) => void) {
+  const [draft, setDraft] = useState(external ?? "");
+  const lastCommittedRef = useRef(external ?? "");
+  const onCommitRef = useRef(onCommit);
+  onCommitRef.current = onCommit;
+
+  useEffect(() => {
+    const next = external ?? "";
+    if (next !== lastCommittedRef.current) {
+      lastCommittedRef.current = next;
+      setDraft(next);
+    }
+  }, [external]);
+
+  useEffect(() => {
+    if (draft === lastCommittedRef.current) return;
+    const timeout = setTimeout(() => {
+      lastCommittedRef.current = draft;
+      onCommitRef.current(draft || null);
+    }, FREE_TEXT_DEBOUNCE_MS);
+    return () => clearTimeout(timeout);
+  }, [draft]);
+
+  return [draft, setDraft] as const;
+}
+
 export function SlicerPanel({ state, onChange }: SlicerPanelProps) {
   const { data: projects } = useProjects();
   const { data: statusesResp } = useProjectStatuses(state.projectId);
   const { data: repos } = useRepositories();
+
+  const [assigneeDraft, setAssigneeDraft] = useDebouncedTextSlicer(state.assignee, (assignee) =>
+    onChange({ assignee }),
+  );
+  const [creatorDraft, setCreatorDraft] = useDebouncedTextSlicer(state.creator, (creator) =>
+    onChange({ creator }),
+  );
 
   const projectOptions = useMemo(
     () => [
@@ -138,8 +176,8 @@ export function SlicerPanel({ state, onChange }: SlicerPanelProps) {
               id="slicer-assignee"
               type="text"
               placeholder="users/alice or agents/bot"
-              value={state.assignee ?? ""}
-              onChange={(e) => onChange({ assignee: e.target.value || null })}
+              value={assigneeDraft}
+              onChange={(e) => setAssigneeDraft(e.target.value)}
               data-testid="slicer-assignee"
             />
           </div>
@@ -152,8 +190,8 @@ export function SlicerPanel({ state, onChange }: SlicerPanelProps) {
               id="slicer-creator"
               type="text"
               placeholder="username"
-              value={state.creator ?? ""}
-              onChange={(e) => onChange({ creator: e.target.value || null })}
+              value={creatorDraft}
+              onChange={(e) => setCreatorDraft(e.target.value)}
               data-testid="slicer-creator"
             />
           </div>
