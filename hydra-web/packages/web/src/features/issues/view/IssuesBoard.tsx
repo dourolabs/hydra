@@ -5,20 +5,19 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  MeasuringStrategy,
   MouseSensor,
   TouchSensor,
-  closestCenter,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
-  type Modifier,
+  type DragOverEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
   arrayMove,
   sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
+  type SortingStrategy,
 } from "@dnd-kit/sortable";
 import type {
   IssueSummaryRecord,
@@ -120,25 +119,42 @@ function computeReorderPriority(
   return 0;
 }
 
-// Keep the DragOverlay header vertically centred on the cursor. Because every
-// section collapses to its bar at drag start and we re-measure continuously
-// (MeasuringStrategy.Always), the overlay's measured origin shifts up by the
-// height collapsed above the grabbed bar — which would otherwise drift the
-// preview off the pointer for any bar below the first. Snapping to the cursor
-// each frame makes that measured origin irrelevant. (This is the vertical half
-// of dnd-kit's snapCenterToCursor; horizontal is left alone so the full-width
-// header keeps spanning the board.)
-const snapHeaderToCursorY: Modifier = ({
-  activatorEvent,
-  draggingNodeRect,
-  transform,
+// Project sections vary wildly in height (a project with 6 columns of cards is
+// many times taller than an empty one), so `closestCenter` against full section
+// rects makes drop targeting feel sluggish for tall sections. We compare the
+// pointer's Y to each section's project-BAR center instead — every bar is the
+// same height, so the cursor crossing a bar always resolves to that section.
+const closestBar: CollisionDetection = ({
+  droppableContainers,
+  pointerCoordinates,
 }) => {
-  if (draggingNodeRect && activatorEvent && "clientY" in activatorEvent) {
-    const offsetY = (activatorEvent as PointerEvent).clientY - draggingNodeRect.top;
-    return { ...transform, y: transform.y + offsetY - draggingNodeRect.height / 2 };
+  if (!pointerCoordinates) return [];
+  let best: { id: string | number; distance: number } | null = null;
+  for (const container of droppableContainers) {
+    const node = container.node.current;
+    if (!node) continue;
+    const bar = node.querySelector("[data-project-bar]") as HTMLElement | null;
+    const rect = bar
+      ? bar.getBoundingClientRect()
+      : node.getBoundingClientRect();
+    const centerY = rect.top + rect.height / 2;
+    const distance = Math.abs(pointerCoordinates.y - centerY);
+    if (!best || distance < best.distance) {
+      best = { id: container.id, distance };
+    }
   }
-  return transform;
+  return best ? [{ id: best.id }] : [];
 };
+
+// No-op sorting strategy: don't apply any transforms to non-active items
+// during the drag. The original `verticalListSortingStrategy` slides items
+// around the active to visualise the reorder, but with tall, variable-height
+// project sections that animation either jumps by hundreds of pixels (full
+// section height) or — if the source collapses — leaves the source visually
+// overlapping the item that shifted into its slot. A static layout plus the
+// in-section drop indicator (see `dropIndicator` on `ProjectSection`) gives a
+// stable, readable preview at any section height.
+const noSortShift: SortingStrategy = () => null;
 
 function sortProjectsByPriority(list: ProjectRecord[]): ProjectRecord[] {
   return list
@@ -304,6 +320,10 @@ export function IssuesBoard({
   // the full-height section (which dnd-kit would otherwise stretch to match
   // each neighbor it passes over).
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  // The section currently under the cursor (by `closestBar` collision). Used
+  // to render the insertion indicator above or below it depending on which
+  // side of the source it sits on.
+  const [overProjectId, setOverProjectId] = useState<string | null>(null);
 
   const handleCardClick = (id: string) => {
     const params = new URLSearchParams({
@@ -647,6 +667,10 @@ export function IssuesBoard({
     [projects],
   );
 
+  const handleProjectDragOver = useCallback((event: DragOverEvent) => {
+    setOverProjectId(event.over ? String(event.over.id) : null);
+  }, []);
+
   const handleProjectDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
@@ -668,6 +692,18 @@ export function IssuesBoard({
     [projects, projectRecordById, projectReorder],
   );
 
+  // Resolve where to draw the drop indicator for each section. The indicator
+  // sits above `over` if the user is dragging the source upward (active is
+  // currently below over), and below `over` if dragging downward. We hide it
+  // entirely on the source itself (the ghost outline already marks where it
+  // was), and skip it when there's no active drag.
+  const activeIdx = activeProjectId
+    ? projects.findIndex((p) => p.project_id === activeProjectId)
+    : -1;
+  const overIdx = overProjectId
+    ? projects.findIndex((p) => p.project_id === overProjectId)
+    : -1;
+
   const sections = projects.map((project) => {
     const perStatus = cells.get(project.project_id);
     const projectIssueCount = project.statuses.reduce((acc, s) => {
@@ -675,6 +711,18 @@ export function IssuesBoard({
       return acc + (cell?.issues.length ?? 0);
     }, 0);
     const projectRecord = projectRecordById.get(project.project_id)!;
+    const isDragSource = activeProjectId === project.project_id;
+    let dropIndicator: "above" | "below" | null = null;
+    if (
+      activeProjectId &&
+      overProjectId &&
+      overProjectId === project.project_id &&
+      !isDragSource &&
+      activeIdx >= 0 &&
+      overIdx >= 0
+    ) {
+      dropIndicator = activeIdx > overIdx ? "above" : "below";
+    }
     const sectionProps: ProjectSectionProps = {
       project,
       projectRecord,
@@ -686,7 +734,8 @@ export function IssuesBoard({
       hideIssues,
       collapsed: isCollapsed(project.project_id),
       onToggleCollapsed: onToggleCollapse,
-      dragActive: activeProjectId !== null,
+      isDragSource,
+      dropIndicator,
       onCardClick: handleCardClick,
       onOpenSettings: setSettingsProjectId,
       onGearClick: handleGearClick,
@@ -763,26 +812,23 @@ export function IssuesBoard({
       {allowProjectReorder ? (
         <DndContext
           sensors={projectSensors}
-          collisionDetection={closestCenter}
-          // The dragged section collapses to its bar mid-drag, so the
-          // surrounding sections shift. Re-measure droppables continuously,
-          // otherwise drop targets resolve against the pre-collapse layout
-          // and the drop snaps back to the original slot.
-          measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+          collisionDetection={closestBar}
           onDragStart={(event) => setActiveProjectId(String(event.active.id))}
+          onDragOver={handleProjectDragOver}
           onDragEnd={(event) => {
             setActiveProjectId(null);
+            setOverProjectId(null);
             handleProjectDragEnd(event);
           }}
-          onDragCancel={() => setActiveProjectId(null)}
+          onDragCancel={() => {
+            setActiveProjectId(null);
+            setOverProjectId(null);
+          }}
         >
-          <SortableContext
-            items={projectSortableIds}
-            strategy={verticalListSortingStrategy}
-          >
+          <SortableContext items={projectSortableIds} strategy={noSortShift}>
             {sections}
           </SortableContext>
-          <DragOverlay modifiers={[snapHeaderToCursorY]}>
+          <DragOverlay>
             {activeProject ? (
               <ProjectDragPreview
                 project={activeProject}

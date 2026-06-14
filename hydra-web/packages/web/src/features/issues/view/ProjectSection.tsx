@@ -57,10 +57,14 @@ export interface ProjectSectionProps {
   hideIssues: boolean;
   collapsed: boolean;
   onToggleCollapsed: (projectId: string) => void;
-  // True while any project section is being dragged. Every section collapses
-  // to just its bar so the reorder list is a row of uniform-height headers —
-  // far more reliable for dnd-kit than reordering full-height sections.
-  dragActive: boolean;
+  // True only for the project currently being dragged. The section stays at
+  // its natural height (preserving the user's spatial context) and gets a
+  // ghost outline so the original position is unmistakable.
+  isDragSource: boolean;
+  // Where to render the insertion indicator relative to this section. Set on
+  // the section currently under the cursor: "above" when the source is being
+  // dragged upward over it, "below" when downward.
+  dropIndicator: "above" | "below" | null;
   onCardClick: (id: string) => void;
   onOpenSettings: (id: ProjectId) => void;
   onGearClick: (
@@ -89,14 +93,12 @@ export function SortableProjectSection(props: ProjectSectionProps) {
     useSortable({ id: props.project.project_id });
   const style: React.CSSProperties = {
     // While dragging, the moving preview is rendered by <DragOverlay>; leave
-    // the source section in place (no self-transform) as a dimmed placeholder
-    // so neighbors reflow around a stable slot instead of a stretching one.
+    // the source section in place (no self-transform) as a visible ghost
+    // anchored at its original screen position. Other sections also stay put
+    // (no-op sorting strategy in the parent), so the user keeps a stable
+    // spatial reference for where the dragged item came from.
     transform: isDragging ? undefined : transformToCss(transform),
     transition: transition ?? undefined,
-    // Hide the source entirely while dragging; the only thing visible is the
-    // header in <DragOverlay> following the cursor. The collapsed (bar-only)
-    // node stays mounted so dnd-kit keeps a drop slot to reorder against.
-    opacity: isDragging ? 0 : undefined,
   };
   return (
     <ProjectSection
@@ -150,7 +152,8 @@ export function ProjectSection({
   hideIssues,
   collapsed,
   onToggleCollapsed,
-  dragActive,
+  isDragSource,
+  dropIndicator,
   onCardClick,
   onOpenSettings,
   onGearClick,
@@ -303,8 +306,13 @@ export function ProjectSection({
 
   const sectionClasses = [styles.projectGroup];
   if (sortableIsDragging) sectionClasses.push(styles.projectGroupDragging);
+  // The "ghost" outline marks the source's original spot for the duration of
+  // the drag. `isDragSource` comes from the parent (id-based) so the styling
+  // also applies on non-sortable mounts that share a code path.
+  if (isDragSource) sectionClasses.push(styles.projectGroupGhost);
   const barClasses = [styles.projectBar];
   if (sortableDragHandleProps) barClasses.push(styles.projectBarDraggable);
+  if (isDragSource) barClasses.push(styles.projectBarGhost);
 
   return (
     <section
@@ -313,9 +321,17 @@ export function ProjectSection({
       className={sectionClasses.join(" ")}
       data-testid={`board-project-${project.key}`}
     >
+      {dropIndicator === "above" && (
+        <div
+          className={styles.dropIndicator}
+          data-testid={`board-project-drop-above-${project.key}`}
+          aria-hidden
+        />
+      )}
       {!hideBar && (
       <div
         className={barClasses.join(" ")}
+        data-project-bar=""
         data-testid={`board-project-bar-${project.key}`}
         {...(sortableDragHandleProps ?? {})}
       >
@@ -359,6 +375,14 @@ export function ProjectSection({
             {project.statuses.length}{" "}
             {project.statuses.length === 1 ? "status" : "statuses"}
           </span>
+          {isDragSource && (
+            <span
+              className={styles.projectOriginalPositionTag}
+              data-testid={`board-project-original-${project.key}`}
+            >
+              Original position
+            </span>
+          )}
         </div>
         <div
           className={styles.projectBarRight}
@@ -378,35 +402,36 @@ export function ProjectSection({
         </div>
       </div>
       )}
-      {/* While any project is being dragged, every section collapses to just
-          the bar above. This keeps the reorder list a row of uniform-height
-          headers (reliable drop targets) and hides the body of the section
-          that's travelling with the cursor inside <DragOverlay>. */}
-      {!dragActive && (
-        <div
-          className={
-            collapsed && !hideBar
-              ? `${styles.projectGroupBody} ${styles.projectGroupBodyCollapsed}`
-              : styles.projectGroupBody
-          }
-          data-testid={`board-project-body-${project.key}`}
-          aria-hidden={collapsed && !hideBar}
-        >
-          <div className={styles.projectGroupBodyInner}>
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
+      <div
+        className={
+          collapsed && !hideBar
+            ? `${styles.projectGroupBody} ${styles.projectGroupBodyCollapsed}`
+            : styles.projectGroupBody
+        }
+        data-testid={`board-project-body-${project.key}`}
+        aria-hidden={collapsed && !hideBar}
+      >
+        <div className={styles.projectGroupBodyInner}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={sortableIds}
+              strategy={horizontalListSortingStrategy}
             >
-              <SortableContext
-                items={sortableIds}
-                strategy={horizontalListSortingStrategy}
-              >
-                {columnsRow}
-              </SortableContext>
-            </DndContext>
-          </div>
+              {columnsRow}
+            </SortableContext>
+          </DndContext>
         </div>
+      </div>
+      {dropIndicator === "below" && (
+        <div
+          className={styles.dropIndicator}
+          data-testid={`board-project-drop-below-${project.key}`}
+          aria-hidden
+        />
       )}
     </section>
   );

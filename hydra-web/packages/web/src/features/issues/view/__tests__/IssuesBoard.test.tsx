@@ -69,19 +69,27 @@ vi.mock("../../../chat/useActiveConversationsByIssue", () => ({
 let lastDragEndHandler: ((event: unknown) => void) | null = null;
 let lastSortableItems: unknown[] = [];
 let dragEndHandlers: Array<(event: unknown) => void> = [];
+let dragStartHandlers: Array<(event: unknown) => void> = [];
+let dragOverHandlers: Array<(event: unknown) => void> = [];
 let sortableItemsList: unknown[][] = [];
 vi.mock("@dnd-kit/core", () => ({
   DndContext: ({
     children,
+    onDragStart,
+    onDragOver,
     onDragEnd,
   }: {
     children: React.ReactNode;
+    onDragStart?: (event: unknown) => void;
+    onDragOver?: (event: unknown) => void;
     onDragEnd?: (event: unknown) => void;
   }) => {
     if (onDragEnd) {
       dragEndHandlers.push(onDragEnd);
       lastDragEndHandler = onDragEnd;
     }
+    if (onDragStart) dragStartHandlers.push(onDragStart);
+    if (onDragOver) dragOverHandlers.push(onDragOver);
     return <>{children}</>;
   },
   DragOverlay: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
@@ -454,6 +462,8 @@ beforeEach(() => {
   lastDragEndHandler = null;
   lastSortableItems = [];
   dragEndHandlers = [];
+  dragStartHandlers = [];
+  dragOverHandlers = [];
   sortableItemsList = [];
   mockUpdateProject.mockReset();
   mockUpdateProjectStatus.mockClear();
@@ -1224,6 +1234,109 @@ describe("IssuesBoard project drag-and-drop reordering", () => {
       expect(ids).toEqual(["j-a", "j-b", "j-c"]);
     });
     expect(mockAddToast).toHaveBeenCalledWith("nope", "error");
+  });
+
+  // Regression: the original implementation collapsed every section to its
+  // bar on drag start. That shifted the source bar away from where the user
+  // clicked and (via a snap-to-cursor modifier) made the resolved drop target
+  // depend on the original click Y rather than on cursor motion. The fix
+  // keeps every section at its natural height; the source's spot is marked
+  // by an "Original position" tag instead of a layout collapse.
+  it("tags the source section with an 'Original position' indicator while dragging", () => {
+    renderBoard();
+    // The tag is hidden by default for every section.
+    expect(screen.queryByTestId("board-project-original-alpha")).toBeNull();
+    expect(screen.queryByTestId("board-project-original-beta")).toBeNull();
+    expect(screen.queryByTestId("board-project-original-gamma")).toBeNull();
+
+    // Simulate the parent DndContext firing onDragStart for beta.
+    expect(dragStartHandlers.length).toBeGreaterThan(0);
+    act(() => {
+      dragStartHandlers[0]!({ active: { id: "j-b" } });
+    });
+
+    // Only the source section gets the tag.
+    expect(screen.getByTestId("board-project-original-beta")).toBeDefined();
+    expect(screen.queryByTestId("board-project-original-alpha")).toBeNull();
+    expect(screen.queryByTestId("board-project-original-gamma")).toBeNull();
+  });
+
+  it("renders the drop indicator below `over` when the source is being dragged downward", () => {
+    renderBoard();
+    expect(dragStartHandlers.length).toBeGreaterThan(0);
+    expect(dragOverHandlers.length).toBeGreaterThan(0);
+
+    // Drag alpha (index 0) downward over beta (index 1).
+    act(() => {
+      dragStartHandlers[0]!({ active: { id: "j-a" } });
+      dragOverHandlers[0]!({ active: { id: "j-a" }, over: { id: "j-b" } });
+    });
+
+    // Below beta, because the source came from above.
+    expect(screen.getByTestId("board-project-drop-below-beta")).toBeDefined();
+    expect(screen.queryByTestId("board-project-drop-above-beta")).toBeNull();
+  });
+
+  it("renders the drop indicator above `over` when the source is being dragged upward", () => {
+    renderBoard();
+    // Drag gamma (index 2) upward over alpha (index 0).
+    act(() => {
+      dragStartHandlers[0]!({ active: { id: "j-c" } });
+      dragOverHandlers[0]!({ active: { id: "j-c" }, over: { id: "j-a" } });
+    });
+
+    expect(screen.getByTestId("board-project-drop-above-alpha")).toBeDefined();
+    expect(screen.queryByTestId("board-project-drop-below-alpha")).toBeNull();
+  });
+
+  it("hides the drop indicator on the source itself (only the ghost outline marks it)", () => {
+    renderBoard();
+    act(() => {
+      dragStartHandlers[0]!({ active: { id: "j-b" } });
+      // `over` snaps to the source when the cursor hasn't moved yet.
+      dragOverHandlers[0]!({ active: { id: "j-b" }, over: { id: "j-b" } });
+    });
+
+    expect(screen.queryByTestId("board-project-drop-above-beta")).toBeNull();
+    expect(screen.queryByTestId("board-project-drop-below-beta")).toBeNull();
+  });
+
+  it("clears the drop indicator on drag end", () => {
+    renderBoard();
+    act(() => {
+      dragStartHandlers[0]!({ active: { id: "j-a" } });
+      dragOverHandlers[0]!({ active: { id: "j-a" }, over: { id: "j-b" } });
+    });
+    expect(screen.getByTestId("board-project-drop-below-beta")).toBeDefined();
+
+    act(() => {
+      projectDragEndHandler()({
+        active: { id: "j-a" },
+        over: { id: "j-b" },
+      });
+    });
+
+    expect(screen.queryByTestId("board-project-drop-below-beta")).toBeNull();
+    expect(screen.queryByTestId("board-project-drop-above-beta")).toBeNull();
+    expect(screen.queryByTestId("board-project-original-alpha")).toBeNull();
+  });
+
+  it("exposes a data-project-bar marker on each section bar for bar-center collision detection", () => {
+    renderBoard();
+    // The custom `closestBar` collision detection queries each droppable
+    // container for `[data-project-bar]` to anchor the comparison rect at
+    // the bar (uniform height) rather than the full section (variable
+    // height). The marker is the public contract that wires those two
+    // halves together — assert it is present on every section bar.
+    expect(
+      screen.getByTestId("board-project-bar-alpha").hasAttribute("data-project-bar"),
+    ).toBe(true);
+    expect(
+      screen.getByTestId("board-project-bar-beta").hasAttribute("data-project-bar"),
+    ).toBe(true);
+    expect(
+      screen.getByTestId("board-project-bar-gamma").hasAttribute("data-project-bar"),
+    ).toBe(true);
   });
 });
 

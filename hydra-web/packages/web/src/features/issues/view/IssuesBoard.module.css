@@ -22,6 +22,29 @@
   z-index: 2;
 }
 
+/* Visual treatment for the source section during a project reorder drag.
+   The section stays at its natural height (so the user keeps a stable
+   spatial reference for "where did I grab this from"), with a dimmed body
+   and an accent dashed outline marking the original slot. */
+.projectGroupGhost {
+  opacity: 0.45;
+}
+
+.projectGroupGhost > .projectGroupBody {
+  filter: grayscale(0.4);
+}
+
+/* Accent-coloured horizontal insertion line shown above or below the section
+   currently under the cursor. Tells the user exactly where the dragged
+   project will land on drop. */
+.dropIndicator {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--acc);
+  box-shadow: 0 0 0 1px var(--acc-soft);
+  margin: 2px 0;
+}
+
 .projectBar {
   display: flex;
   align-items: center;
@@ -46,6 +69,26 @@
 .projectBarDraggable {
   cursor: grab;
   touch-action: none;
+}
+
+/* Source-bar marker during a project reorder drag. Dashed accent border so the
+   user can pick out the "I started here" slot at a glance, even when the
+   board has scrolled. */
+.projectBarGhost {
+  border-style: dashed;
+  border-color: var(--acc);
+}
+
+.projectOriginalPositionTag {
+  font-family: var(--f-mono);
+  font-size: var(--t-xxs);
+  color: var(--acc);
+  padding: 1px 6px;
+  border: 1px solid var(--acc);
+  border-radius: var(--radius-xs);
+  background: var(--acc-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 /* Full-width header that follows the cursor inside <DragOverlay>. It fills
