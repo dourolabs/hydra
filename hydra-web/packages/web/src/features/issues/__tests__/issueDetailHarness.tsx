@@ -28,10 +28,6 @@ vi.mock("../IssueUpdateModal", () => ({
   IssueUpdateModal: () => null,
 }));
 
-vi.mock("../FeedbackModal", () => ({
-  FeedbackModal: () => null,
-}));
-
 vi.mock("../CommentsPanel", () => ({
   CommentsPanel: ({ issueId }: { issueId: string }) => (
     <div data-testid="comments-panel-stub" data-issue-id={issueId} />

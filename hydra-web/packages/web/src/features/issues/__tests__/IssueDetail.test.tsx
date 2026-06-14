@@ -251,7 +251,7 @@ describe("IssueDetail title and overflow menu", () => {
     expect(heading.tagName).toBe("H1");
   });
 
-  it("renders an overflow trigger and feedback / archive menu items", () => {
+  it("renders an overflow trigger and archive menu item", () => {
     render(<IssueDetail record={makeRecord({})} />, { wrapper: makeWrapper() });
 
     const trigger = screen.getByTestId("issue-overflow-trigger");
@@ -259,7 +259,6 @@ describe("IssueDetail title and overflow menu", () => {
 
     fireEvent.click(trigger);
 
-    expect(screen.getByTestId("issue-overflow-feedback")).toBeDefined();
     expect(screen.getByTestId("issue-overflow-archive")).toBeDefined();
     // No conversation menu item without a live spawned conversation.
     expect(screen.queryByTestId("issue-overflow-conversation")).toBeNull();
@@ -273,6 +272,5 @@ describe("IssueDetail title and overflow menu", () => {
     fireEvent.click(screen.getByTestId("issue-overflow-trigger"));
 
     expect(screen.queryByTestId("issue-overflow-archive")).toBeNull();
-    expect(screen.getByTestId("issue-overflow-feedback")).toBeDefined();
   });
 });
