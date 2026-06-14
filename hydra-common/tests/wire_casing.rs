@@ -279,7 +279,11 @@ pub enum FakeStatus {
 }
 "#;
     let violations = check_pascal_case("synthetic", broken);
-    assert_eq!(violations.len(), 1, "expected one violation, got {violations:?}");
+    assert_eq!(
+        violations.len(),
+        1,
+        "expected one violation, got {violations:?}"
+    );
     assert!(violations[0].contains("FakeStatus"), "{violations:?}");
 }
 
