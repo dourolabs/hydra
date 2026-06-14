@@ -305,6 +305,7 @@ export function createSessionRoutes(store: Store): Hono {
     const creator = c.req.query("creator");
     const conversationId = c.req.query("conversation_id");
     const limitParam = c.req.query("limit");
+    const cursorParam = c.req.query("cursor");
     const countParam = c.req.query("count");
 
     const items = store.list<Session>(COLLECTION, includeDeleted);
@@ -337,9 +338,19 @@ export function createSessionRoutes(store: Store): Hono {
     }
 
     const totalCount = filtered.length;
+
+    if (cursorParam) {
+      const cursorIndex = filtered.findIndex(({ id }) => id === cursorParam);
+      if (cursorIndex !== -1) {
+        filtered = filtered.slice(cursorIndex + 1);
+      }
+    }
+
+    let nextCursor: string | null = null;
     if (limitParam !== undefined && limitParam !== null) {
       const limit = Number(limitParam);
-      if (Number.isFinite(limit) && limit >= 0) {
+      if (Number.isFinite(limit) && limit >= 0 && filtered.length > limit) {
+        nextCursor = filtered[limit - 1]?.id ?? null;
         filtered = filtered.slice(0, limit);
       }
     }
@@ -349,6 +360,7 @@ export function createSessionRoutes(store: Store): Hono {
     );
     const resp: ListSessionsResponse = {
       sessions,
+      next_cursor: nextCursor,
       total_count: countParam === "true" ? BigInt(totalCount) : undefined,
     };
     return c.json(resp);
