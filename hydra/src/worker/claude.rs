@@ -11,8 +11,10 @@
 
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{ExitStatus, Stdio},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -26,7 +28,7 @@ use tokio::{
     fs,
     io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::Command,
-    sync::mpsc,
+    sync::{mpsc, Notify},
 };
 
 use super::claude_formatter::StreamFormatter;
@@ -43,6 +45,13 @@ const SIGTERM_WAIT: Duration = Duration::from_secs(5);
 
 /// Timeout for stdout/stderr pipe reads after process group kill.
 const PIPE_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Once Claude emits its stream-json `result` event the harness is done
+/// generating output and should exit within milliseconds. If it does not
+/// (the harness has been observed to hang on MCP/teardown), we kill the
+/// process group after this grace period rather than letting `child.wait()`
+/// block forever.
+const POST_RESULT_EXIT_GRACE: Duration = Duration::from_secs(30);
 
 /// Resume input for a Claude run. Both variants ultimately become
 /// `claude --resume <UUID>`; the `TranscriptFile` variant is sugar for the
@@ -275,68 +284,43 @@ impl Claude {
             Ok::<Vec<u8>, anyhow::Error>(stderr_buf)
         });
 
-        let mut stdout_handle = tokio::spawn(async move {
-            let mut event_tx = event_tx;
-            let mut formatter = StreamFormatter::new();
-            let mut reader = BufReader::new(child_stdout);
-            let mut stdout_buf = String::new();
-            let mut stdout_writer = io::stdout();
-            let mut line = String::new();
-            let mut session_id: Option<String> = None;
-            loop {
-                line.clear();
-                let read = reader
-                    .read_line(&mut line)
-                    .await
-                    .context("failed to read claude stdout")?;
-                if read == 0 {
-                    let elapsed = spawn_time.elapsed().as_secs_f64();
-                    println!("Claude stdout EOF reached (PID: {pid}, elapsed: {elapsed:.2}s)");
-                    break;
-                }
-                if let Some(sid) = extract_session_id(&line) {
-                    session_id = Some(sid);
-                }
-                for formatted in formatter.handle_line(&line) {
-                    stdout_writer
-                        .write_all(formatted.as_bytes())
-                        .await
-                        .context("failed to stream claude stdout")?;
-                    stdout_writer
-                        .flush()
-                        .await
-                        .context("failed to flush claude stdout")?;
-                    stdout_buf.push_str(&formatted);
-                }
-                if let Some(tx) = event_tx.as_ref() {
-                    let mut closed = false;
-                    for event in parse_claude_events(&line) {
-                        let translated = translate_claude_event(event);
-                        if tx.send(translated).await.is_err() {
-                            closed = true;
-                            break;
-                        }
-                    }
-                    if closed {
-                        event_tx = None;
-                    }
-                }
-            }
-            let last_message = formatter.last_assistant_text().map(str::to_owned);
-            let usage = formatter.aggregated_usage().clone();
-            Ok::<(String, Option<String>, Option<String>, TokenUsage), anyhow::Error>((
-                stdout_buf,
-                last_message,
-                session_id,
-                usage,
-            ))
-        });
+        let result_signal = Arc::new(Notify::new());
+        let pump_signal = Arc::clone(&result_signal);
+
+        let mut stdout_handle = tokio::spawn(pump_headless_stdout(
+            child_stdout,
+            event_tx,
+            pump_signal,
+            spawn_time,
+            pid,
+        ));
 
         println!("Waiting for claude process to exit (PID: {pid})…");
-        let status = child
-            .wait()
-            .await
-            .context("failed waiting for claude command to finish")?;
+        let status = match await_headless_exit(
+            child.wait(),
+            Arc::clone(&result_signal),
+            POST_RESULT_EXIT_GRACE,
+        )
+        .await
+        {
+            HeadlessExitReason::ChildExited(s) => {
+                s.context("failed waiting for claude command to finish")?
+            }
+            HeadlessExitReason::PostResultGraceElapsed => {
+                eprintln!(
+                    "Claude emitted `result` but did not exit within \
+                     {POST_RESULT_EXIT_GRACE:?}; killing process group"
+                );
+                #[cfg(unix)]
+                if let Some(pgid) = child_pgid {
+                    kill_process_group(pgid).await;
+                }
+                tokio::time::timeout(PROCESS_GROUP_GRACE_PERIOD + SIGTERM_WAIT, child.wait())
+                    .await
+                    .context("claude failed to exit after post-result kill")?
+                    .context("failed waiting for claude command to finish")?
+            }
+        };
         let wait_elapsed = spawn_time.elapsed().as_secs_f64();
         println!(
             "Claude process exited (PID: {pid}, status: {status}, elapsed: {wait_elapsed:.2}s)"
@@ -710,6 +694,138 @@ async fn kill_process_group(pgid: u32) {
     unsafe {
         libc::kill(neg_pgid, libc::SIGKILL);
     }
+}
+
+/// Outcome of racing `child.wait()` against the post-`result` exit grace.
+/// Extracted so the race can be unit-tested without a real `Child` (we can
+/// hand it a `std::future::pending()` to simulate a wedged harness, or a
+/// pre-resolved future to simulate prompt exit).
+enum HeadlessExitReason {
+    /// The child exited on its own before the grace branch fired.
+    ChildExited(io::Result<ExitStatus>),
+    /// The pump fired `result_signal`, the grace elapsed, and the child has
+    /// not exited yet. Caller must kill the process group and re-await.
+    PostResultGraceElapsed,
+}
+
+/// Race `wait_fut` against `result_signal.notified() + sleep(grace)`. Biased
+/// toward the wait future so a clean exit at the same instant always wins —
+/// the kill path only fires when the harness has demonstrably not exited
+/// within `grace` of emitting its stream-json `result` line.
+async fn await_headless_exit<F>(
+    wait_fut: F,
+    result_signal: Arc<Notify>,
+    grace: Duration,
+) -> HeadlessExitReason
+where
+    F: Future<Output = io::Result<ExitStatus>>,
+{
+    tokio::pin!(wait_fut);
+    tokio::select! {
+        biased;
+        status = &mut wait_fut => HeadlessExitReason::ChildExited(status),
+        _ = async {
+            result_signal.notified().await;
+            tokio::time::sleep(grace).await;
+        } => HeadlessExitReason::PostResultGraceElapsed,
+    }
+}
+
+/// Drive the headless stdout pump: stream the child's stdout, format it for
+/// the worker log, forward parsed events on `event_tx`, and fire
+/// `result_signal` the first time we see a stream-json `type:"result"` line.
+///
+/// The result detection lives here (parallel to [`extract_session_id`])
+/// rather than in `StreamFormatter` because the `result` line is intentionally
+/// not user-visible — it's a wrapper-internal "harness is done" signal that
+/// the outer race uses to arm the post-result exit grace.
+async fn pump_headless_stdout<R>(
+    child_stdout: R,
+    event_tx: Option<mpsc::Sender<WorkerEvent>>,
+    result_signal: Arc<Notify>,
+    spawn_time: Instant,
+    pid: u32,
+) -> Result<(String, Option<String>, Option<String>, TokenUsage)>
+where
+    R: io::AsyncRead + Unpin,
+{
+    let mut event_tx = event_tx;
+    let mut formatter = StreamFormatter::new();
+    let mut reader = BufReader::new(child_stdout);
+    let mut stdout_buf = String::new();
+    let mut stdout_writer = io::stdout();
+    let mut line = String::new();
+    let mut session_id: Option<String> = None;
+    let mut result_observed = false;
+    loop {
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .await
+            .context("failed to read claude stdout")?;
+        if read == 0 {
+            let elapsed = spawn_time.elapsed().as_secs_f64();
+            println!("Claude stdout EOF reached (PID: {pid}, elapsed: {elapsed:.2}s)");
+            break;
+        }
+        if let Some(sid) = extract_session_id(&line) {
+            session_id = Some(sid);
+        }
+        if !result_observed && is_claude_result_line(&line) {
+            result_observed = true;
+            let elapsed = spawn_time.elapsed().as_secs_f64();
+            println!(
+                "Phase: agent execution — result observed (PID: {pid}, elapsed: {elapsed:.2}s)"
+            );
+            result_signal.notify_one();
+        }
+        for formatted in formatter.handle_line(&line) {
+            stdout_writer
+                .write_all(formatted.as_bytes())
+                .await
+                .context("failed to stream claude stdout")?;
+            stdout_writer
+                .flush()
+                .await
+                .context("failed to flush claude stdout")?;
+            stdout_buf.push_str(&formatted);
+        }
+        if let Some(tx) = event_tx.as_ref() {
+            let mut closed = false;
+            for event in parse_claude_events(&line) {
+                let translated = translate_claude_event(event);
+                if tx.send(translated).await.is_err() {
+                    closed = true;
+                    break;
+                }
+            }
+            if closed {
+                event_tx = None;
+            }
+        }
+    }
+    let last_message = formatter.last_assistant_text().map(str::to_owned);
+    let usage = formatter.aggregated_usage().clone();
+    Ok((stdout_buf, last_message, session_id, usage))
+}
+
+/// Detect a stream-json `type:"result"` line — the harness's "done generating
+/// turns" signal. Matches the parse shape in
+/// [`StreamFormatter::handle_line`] but is intentionally separate: the result
+/// line is wrapper-internal, not formatted for user-facing logs.
+fn is_claude_result_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|v| {
+            v.get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(|s| s == "result")
+        })
+        .unwrap_or(false)
 }
 
 /// Builds the Claude CLI argument list for a one-shot run.
@@ -1760,5 +1876,220 @@ mod tests {
             .expect("task panicked");
 
         assert!(session_id.is_none());
+    }
+
+    #[test]
+    fn is_claude_result_line_detects_result_type() {
+        assert!(is_claude_result_line(
+            r#"{"type":"result","subtype":"success"}"#
+        ));
+        assert!(!is_claude_result_line(
+            r#"{"type":"assistant","message":{"content":[]}}"#
+        ));
+        assert!(!is_claude_result_line(""));
+        assert!(!is_claude_result_line("not json"));
+        // A line whose `type` is not `result` (e.g. `system`) must not trip
+        // the detector even though it's well-formed JSON.
+        assert!(!is_claude_result_line(
+            r#"{"type":"system","subtype":"init","session_id":"abc"}"#
+        ));
+    }
+
+    /// Pump path: when the harness emits a `type:"result"` line, the pump
+    /// must fire `result_signal` so the outer race can arm the post-result
+    /// grace deadline. Other line types (assistant/system) must not fire it.
+    #[tokio::test]
+    async fn pump_headless_stdout_fires_result_signal_on_result_line() {
+        let (mut stdout_writer, stdout_reader) = tokio::io::duplex(1024);
+        let signal = Arc::new(Notify::new());
+        let pump_signal = Arc::clone(&signal);
+
+        let task = tokio::spawn(pump_headless_stdout(
+            stdout_reader,
+            None,
+            pump_signal,
+            Instant::now(),
+            0,
+        ));
+
+        stdout_writer
+            .write_all(
+                br#"{"type":"assistant","session_id":"sid-1","message":{"content":[{"type":"text","text":"hi"}]}}
+"#,
+            )
+            .await
+            .unwrap();
+        stdout_writer
+            .write_all(
+                br#"{"type":"result","subtype":"success"}
+"#,
+            )
+            .await
+            .unwrap();
+        drop(stdout_writer);
+
+        tokio::time::timeout(Duration::from_secs(5), signal.notified())
+            .await
+            .expect("result_signal was not fired within budget");
+
+        let (_stdout_buf, _last_message, session_id, _usage) =
+            tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .expect("pump did not finish within budget")
+                .expect("pump task panicked")
+                .expect("pump returned error");
+        assert_eq!(session_id.as_deref(), Some("sid-1"));
+    }
+
+    /// When the harness never emits a `result` line, the pump must NOT fire
+    /// `result_signal` — the outer race then has nothing to arm and the
+    /// behavior reduces to the original `child.wait()`-only path.
+    #[tokio::test(start_paused = true)]
+    async fn pump_headless_stdout_no_result_line_does_not_fire_signal() {
+        let (mut stdout_writer, stdout_reader) = tokio::io::duplex(1024);
+        let signal = Arc::new(Notify::new());
+        let pump_signal = Arc::clone(&signal);
+
+        let task = tokio::spawn(pump_headless_stdout(
+            stdout_reader,
+            None,
+            pump_signal,
+            Instant::now(),
+            0,
+        ));
+
+        stdout_writer
+            .write_all(
+                br#"{"type":"assistant","session_id":"sid-1","message":{"content":[{"type":"text","text":"hi"}]}}
+"#,
+            )
+            .await
+            .unwrap();
+        drop(stdout_writer);
+
+        let _ = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("pump did not finish within budget")
+            .expect("pump task panicked")
+            .expect("pump returned error");
+
+        // After the pump has fully drained and exited, no permit should be
+        // stored in the Notify. A subsequent `notified()` must hang.
+        let result = tokio::time::timeout(Duration::from_millis(50), signal.notified()).await;
+        assert!(
+            result.is_err(),
+            "result_signal should not have fired; got {result:?}"
+        );
+    }
+
+    /// Race path: when the child exits on its own before the grace branch
+    /// can fire, the outcome must be `ChildExited` carrying the real status.
+    /// This is the hot path — the only added behavior in the normal-exit
+    /// case is the `biased` select arm preferring the wait future.
+    #[tokio::test(start_paused = true)]
+    async fn await_headless_exit_returns_child_exited_when_wait_resolves_first() {
+        let signal = Arc::new(Notify::new());
+        // Pre-resolved wait future — child has already exited cleanly.
+        let wait_fut = async { Ok::<ExitStatus, std::io::Error>(fake_exit_status_success()) };
+
+        let outcome = await_headless_exit(wait_fut, signal, Duration::from_secs(30)).await;
+        match outcome {
+            HeadlessExitReason::ChildExited(Ok(status)) => assert!(status.success()),
+            other => panic!("expected ChildExited(Ok), got {:?}", reason_label(&other)),
+        }
+    }
+
+    /// Race path: when `result_signal` fires and the child does NOT exit
+    /// within the grace, the outcome must be `PostResultGraceElapsed` so the
+    /// caller kills the process group and re-awaits. This is the bug fix —
+    /// previously this case wedged `child.wait()` indefinitely.
+    #[tokio::test(start_paused = true)]
+    async fn await_headless_exit_returns_grace_elapsed_when_wait_hangs_after_result() {
+        let signal = Arc::new(Notify::new());
+        let signal_for_fire = Arc::clone(&signal);
+        // Child future never resolves — simulates the wedged harness.
+        let wait_fut = std::future::pending::<io::Result<ExitStatus>>();
+        let grace = Duration::from_secs(30);
+
+        // Fire the result signal "from the pump" and then advance virtual
+        // time past the grace deadline.
+        let advancer = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            signal_for_fire.notify_one();
+            tokio::time::advance(grace + Duration::from_secs(5)).await;
+        });
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(120),
+            await_headless_exit(wait_fut, signal, grace),
+        )
+        .await
+        .expect("await_headless_exit did not complete within budget");
+        advancer.await.unwrap();
+
+        assert!(
+            matches!(outcome, HeadlessExitReason::PostResultGraceElapsed),
+            "expected PostResultGraceElapsed, got {}",
+            reason_label(&outcome)
+        );
+    }
+
+    /// Race path: when `result_signal` is never fired (the harness never
+    /// emits a `result` line), the race must fall through to the child
+    /// future with no grace timer involvement. Advancing virtual time
+    /// arbitrarily far must not cause the grace branch to win.
+    #[tokio::test(start_paused = true)]
+    async fn await_headless_exit_falls_through_to_wait_when_no_result_signal() {
+        let signal = Arc::new(Notify::new());
+        let (wait_tx, wait_rx) = tokio::sync::oneshot::channel::<io::Result<ExitStatus>>();
+        let wait_fut = async move { wait_rx.await.expect("wait_tx dropped") };
+        let grace = Duration::from_secs(30);
+
+        let race = tokio::spawn(await_headless_exit(wait_fut, signal, grace));
+
+        tokio::task::yield_now().await;
+        // Advance well past the grace — should be a no-op since
+        // `result_signal` was never fired.
+        tokio::time::advance(grace * 100).await;
+        tokio::task::yield_now().await;
+        assert!(
+            !race.is_finished(),
+            "race must not have completed without a child exit or result signal"
+        );
+
+        wait_tx
+            .send(Ok(fake_exit_status_success()))
+            .expect("send wait status");
+
+        let outcome = tokio::time::timeout(Duration::from_secs(5), race)
+            .await
+            .expect("race did not finish after wait resolved")
+            .expect("race task panicked");
+        assert!(matches!(outcome, HeadlessExitReason::ChildExited(Ok(_))));
+    }
+
+    /// Construct a fake successful `ExitStatus` for race tests. Cross-platform
+    /// concern: only Unix exposes `ExitStatusExt::from_raw`; the headless
+    /// path itself only spawns subprocesses on platforms supported by the
+    /// worker, so a Unix-only test is acceptable here.
+    #[cfg(unix)]
+    fn fake_exit_status_success() -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        ExitStatus::from_raw(0)
+    }
+
+    #[cfg(not(unix))]
+    fn fake_exit_status_success() -> ExitStatus {
+        // Non-Unix builds: we don't ship the worker on these platforms, but
+        // keep the helper present so the tests still compile.
+        unimplemented!("fake_exit_status_success is only used in unix-only tests")
+    }
+
+    fn reason_label(reason: &HeadlessExitReason) -> &'static str {
+        match reason {
+            HeadlessExitReason::ChildExited(Ok(_)) => "ChildExited(Ok)",
+            HeadlessExitReason::ChildExited(Err(_)) => "ChildExited(Err)",
+            HeadlessExitReason::PostResultGraceElapsed => "PostResultGraceElapsed",
+        }
     }
 }
