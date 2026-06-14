@@ -1041,6 +1041,235 @@ describe("useSSE paginated-cache patching", () => {
     expect(cached?.pages[0].sessions.map((s) => s.session_id)).toEqual(["s-new"]);
   });
 
+  it("does not create the comments cache when comment_created arrives for an issue with no seeded cache", () => {
+    // The IssueDetail Comments tab populates ["issues", id, "comments"] only
+    // when the user opens the issue. The SSE handler must NOT seed an empty
+    // page from a comment event — that would short-circuit the initial
+    // fetch and leave the user staring at a one-item list instead of the
+    // full history.
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("comment_created", {
+        entity_type: "comment",
+        entity_id: "i-1",
+        version: 1,
+        timestamp: "2026-06-09T00:00:00Z",
+        entity: {
+          issue_id: "i-1",
+          sequence: 1,
+          body: "hello",
+          actor: { Authenticated: { actor_id: { User: { name: "alice" } } } },
+          created_at: "2026-06-09T00:00:00Z",
+        },
+      });
+    });
+
+    expect(queryClient.getQueryData(["issues", "i-1", "comments"])).toBeUndefined();
+  });
+
+  it("prepends a new comment to ['issues', id, 'comments'] on comment_created", () => {
+    const key = ["issues", "i-1", "comments"];
+    queryClient.setQueryData(key, {
+      pages: [
+        {
+          comments: [
+            {
+              issue_id: "i-1",
+              sequence: 5,
+              body: "old",
+              actor: { Authenticated: { actor_id: { User: { name: "alice" } } } },
+              created_at: "2026-06-09T00:00:00Z",
+            },
+          ],
+          next_before_sequence: null,
+        },
+      ],
+      pageParams: [undefined],
+    });
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("comment_created", {
+        entity_type: "comment",
+        entity_id: "i-1",
+        version: 6,
+        timestamp: "2026-06-09T00:01:00Z",
+        entity: {
+          issue_id: "i-1",
+          sequence: 6,
+          body: "new",
+          actor: { Authenticated: { actor_id: { User: { name: "bob" } } } },
+          created_at: "2026-06-09T00:01:00Z",
+        },
+      });
+    });
+
+    const cached = queryClient.getQueryData<{
+      pages: Array<{ comments: Array<{ sequence: number; body: string }> }>;
+    }>(key);
+    expect(cached?.pages[0].comments.map((c) => [c.sequence, c.body])).toEqual([
+      [6, "new"],
+      [5, "old"],
+    ]);
+  });
+
+  it("dedups by sequence when comment_created arrives for an already-present sequence", () => {
+    // Real-world trigger: a refetch interleaves with the SSE event so the
+    // refreshed page already contains the new comment. The handler must
+    // recognise the collision and leave the cache alone instead of
+    // double-inserting.
+    const key = ["issues", "i-1", "comments"];
+    queryClient.setQueryData(key, {
+      pages: [
+        {
+          comments: [
+            {
+              issue_id: "i-1",
+              sequence: 5,
+              body: "hi",
+              actor: { Authenticated: { actor_id: { User: { name: "alice" } } } },
+              created_at: "2026-06-09T00:00:00Z",
+            },
+          ],
+          next_before_sequence: null,
+        },
+      ],
+      pageParams: [undefined],
+    });
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("comment_created", {
+        entity_type: "comment",
+        entity_id: "i-1",
+        version: 5,
+        timestamp: "2026-06-09T00:00:00Z",
+        entity: {
+          issue_id: "i-1",
+          sequence: 5,
+          body: "hi",
+          actor: { Authenticated: { actor_id: { User: { name: "alice" } } } },
+          created_at: "2026-06-09T00:00:00Z",
+        },
+      });
+    });
+
+    const cached = queryClient.getQueryData<{
+      pages: Array<{ comments: Array<{ sequence: number }> }>;
+    }>(key);
+    expect(cached?.pages[0].comments.map((c) => c.sequence)).toEqual([5]);
+  });
+
+  it("dedups the issuing tab's optimistic placeholder by (actor, body) when a real comment_created arrives", () => {
+    // useAddIssueComment inserts an optimistic placeholder with a guessed
+    // sequence (`maxSeq + 1n`, a bigint) before the server assigns a real
+    // monotonic sequence. The placeholder's guessed seq won't match the
+    // real seq, so sequence dedup falls through — actor+body dedup is what
+    // drops the placeholder when the real event lands.
+    const key = ["issues", "i-1", "comments"];
+    const placeholderActor = {
+      Authenticated: { actor_id: { User: { name: "alice" } } },
+    };
+    queryClient.setQueryData(key, {
+      pages: [
+        {
+          comments: [
+            {
+              issue_id: "i-1",
+              sequence: 99n,
+              body: "hi",
+              actor: placeholderActor,
+              created_at: "2026-06-09T00:00:00Z",
+            },
+          ],
+          next_before_sequence: null,
+        },
+      ],
+      pageParams: [undefined],
+    });
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("comment_created", {
+        entity_type: "comment",
+        entity_id: "i-1",
+        version: 42,
+        timestamp: "2026-06-09T00:00:00Z",
+        entity: {
+          issue_id: "i-1",
+          sequence: 42,
+          body: "hi",
+          actor: placeholderActor,
+          created_at: "2026-06-09T00:00:00Z",
+        },
+      });
+    });
+
+    const cached = queryClient.getQueryData<{
+      pages: Array<{ comments: Array<{ sequence: number | bigint; body: string }> }>;
+    }>(key);
+    // Placeholder dropped, real-sequenced comment inserted at the top.
+    expect(cached?.pages[0].comments.length).toBe(1);
+    expect(cached?.pages[0].comments[0].sequence).toBe(42);
+    expect(cached?.pages[0].comments[0].body).toBe("hi");
+  });
+
+  it("does not touch other issues' comment caches when comment_created targets a different issue", () => {
+    // Cross-issue safety: a comment event for issue i-2 must not write into
+    // issue i-1's cache. Without it the dedup logic could prepend the wrong
+    // comment into an unrelated open tab.
+    const i1Key = ["issues", "i-1", "comments"];
+    const i1Cache = {
+      pages: [
+        {
+          comments: [
+            {
+              issue_id: "i-1",
+              sequence: 1,
+              body: "i-1's only comment",
+              actor: { Authenticated: { actor_id: { User: { name: "alice" } } } },
+              created_at: "2026-06-09T00:00:00Z",
+            },
+          ],
+          next_before_sequence: null,
+        },
+      ],
+      pageParams: [undefined],
+    };
+    queryClient.setQueryData(i1Key, i1Cache);
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("comment_created", {
+        entity_type: "comment",
+        entity_id: "i-2",
+        version: 1,
+        timestamp: "2026-06-09T00:00:00Z",
+        entity: {
+          issue_id: "i-2",
+          sequence: 1,
+          body: "for i-2",
+          actor: { Authenticated: { actor_id: { User: { name: "bob" } } } },
+          created_at: "2026-06-09T00:00:00Z",
+        },
+      });
+    });
+
+    // i-1's cache is untouched; i-2's cache is left absent (no seed).
+    expect(queryClient.getQueryData(i1Key)).toBe(i1Cache);
+    expect(queryClient.getQueryData(["issues", "i-2", "comments"])).toBeUndefined();
+  });
+
   it("does not throw or write into the ['issues', id, 'comments'] infinite cache on issue_updated (P9 regression)", () => {
     // The IssueDetail Comments tab keys on ["issues", id, "comments"], whose
     // InfiniteData<ListCommentsResponse> shape has no `.issues` field. The
