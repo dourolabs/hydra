@@ -631,6 +631,53 @@ describe("Repositories", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+describe("Projects", () => {
+  beforeEach(async () => {
+    await resetServer();
+  });
+
+  it("session_settings round-trips through POST /v1/projects and PUT /v1/projects/:ref", async () => {
+    // Create a project carrying a non-default session_settings; the response
+    // round-trips through GET so the FE's prefill path is exercised.
+    const created = await client.createProject({
+      key: "session-roundtrip" as never,
+      name: "Session roundtrip",
+      prompt_path: null,
+      priority: 0,
+      session_settings: {
+        cpu_limit: "750m",
+        memory_limit: "1Gi",
+        image: "ghcr.io/org/img:tag",
+        model: "claude-opus-4-7",
+        max_retries: 4,
+      },
+    });
+    const id = created.project_id;
+
+    const fetched = await client.getProject(id);
+    expect(fetched.project.session_settings).toMatchObject({
+      cpu_limit: "750m",
+      memory_limit: "1Gi",
+      image: "ghcr.io/org/img:tag",
+      model: "claude-opus-4-7",
+      max_retries: 4,
+    });
+
+    // PUT clears the field by omitting it.
+    await client.updateProject(id, {
+      key: "session-roundtrip" as never,
+      name: "Session roundtrip",
+      prompt_path: null,
+      priority: 0,
+    });
+    const cleared = await client.getProject(id);
+    expect(cleared.project.session_settings ?? null).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Agents
 // ---------------------------------------------------------------------------
 describe("Agents", () => {

@@ -69,6 +69,7 @@ the catalog stays in sync.
 - `@projects:status` — A status column's gear icon opens the StatusSettingsModal "Auto-archive after" (value + unit) controls; saving 14 days persists via the per-status PUT and on reload inverse-renders as 2 weeks; clearing the field round-trips back to empty
 - `@projects:status-archive` — The StatusSettingsModal "Archive status" action opens a confirmation that surfaces the active-issue count ("N issue(s) in this status will be archived"); confirm fires `POST /v1/projects/<id>/statuses/<key>/archive`, the backend cascade-archives the issues, and the column drops out of the active board view. On an empty column the prompt collapses to a generic "Archive this status?" with no count.
 - `@projects:archive` — The ProjectSettingsModal's archive action opens a confirmation that surfaces the active-issue count; confirm fires `POST /v1/projects/<id>/archive`, the backend cascade-archives every non-archived issue in the project, and the project's section drops out of the active board view.
+- `@projects:session-settings` — The ProjectSettingsModal exposes a collapsible "Default session settings" section that lets the user set per-project defaults for `cpu_limit`, `memory_limit`, `image`, `model`, `max_retries`, and `idle_timeout`. Saving non-default values fires `PUT /v1/projects/<id>` with the values nested under `session_settings`. On reload the inputs prefill from the persisted project. Clearing every subfield round-trips back to `session_settings: undefined`.
 
 ## Patches
 
