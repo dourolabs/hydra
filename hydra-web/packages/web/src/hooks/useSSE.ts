@@ -3,6 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type {
   EntityEventData,
   IssueSummaryRecord,
+  SessionEvent,
   SessionLogEventData,
   SessionSummaryRecord,
   ConversationSummary,
@@ -272,14 +273,15 @@ export function useSSE(): SSEConnectionState {
         // via link_conversation_to_artifacts; updates flow status/title through).
         queryClient.invalidateQueries({ queryKey: ["chatRelated"] });
       } else if (entity_type === "session_event") {
-        // Live-tail invalidation for the SessionEvent read path consumed by
-        // `useChatTranscript`. `entity_id` is the session_id. Invalidate the
-        // per-session events query (active observers refetch) and the
-        // conversation→sessions index at the root (the SSE payload doesn't
-        // carry conversation_id, so broad-match is the simplest correct
-        // invalidation here — it costs one refetch per open chat page).
-        queryClient.invalidateQueries({ queryKey: ["sessionEvents", entity_id] });
-        queryClient.invalidateQueries({ queryKey: ["sessionsByConversation"] });
+        // Live-tail append for the SessionEvent read path consumed by
+        // `useChatTranscript`. The SSE payload carries the full SessionEvent,
+        // so append it directly into the per-session events cache instead of
+        // invalidating-then-refetching. `entity_id` is the session_id.
+        const evt = entity as unknown as SessionEvent;
+        queryClient.setQueryData<SessionEvent[]>(
+          ["sessionEvents", entity_id],
+          (old) => (old ? [...old, evt] : old),
+        );
       } else if (entity_type === "session_state") {
         // SessionState SSE notifications carry no payload; consumers must
         // refetch the state blob themselves. No current React Query consumer

@@ -484,9 +484,25 @@ describe("useSSE SessionEvent / SessionState live-tail wiring", () => {
     setQueriesDataSpy = vi.spyOn(queryClient, "setQueriesData") as unknown as SetQueriesDataSpy;
   });
 
-  it("invalidates ['sessionEvents', sid] and ['sessionsByConversation'] on session_event_created", () => {
+  it("appends the carried SessionEvent into ['sessionEvents', sid] on session_event_created", () => {
+    // Seed the per-session events cache so the append finds an existing array.
+    const existing = {
+      type: "user_message",
+      content: "first",
+      timestamp: "2026-05-23T16:00:00Z",
+    };
+    queryClient.setQueryData(["sessionEvents", "t-abc"], [existing]);
+
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
+
+    const appended = {
+      type: "user_message",
+      content: "second",
+      timestamp: "2026-05-23T17:00:00Z",
+    };
+
+    invalidateSpy.mockClear();
 
     act(() => {
       es.dispatch("session_event_created", {
@@ -494,8 +510,34 @@ describe("useSSE SessionEvent / SessionState live-tail wiring", () => {
         entity_id: "t-abc",
         version: 4,
         timestamp: "2026-05-23T17:00:00Z",
-        // SessionEvent JSON payload (not a SessionSummaryRecord) — the new
-        // arm must not feed this to upsertBatchSession.
+        entity: appended,
+      });
+    });
+
+    const cached = queryClient.getQueryData<unknown[]>(["sessionEvents", "t-abc"]);
+    expect(cached).toEqual([existing, appended]);
+
+    // The append-into-cache path must NOT invalidate either the per-session
+    // events query (avoid an unnecessary refetch when the carried payload is
+    // already authoritative) or the conversation→sessions index (only changes
+    // on session_created / session_updated).
+    expect(wasInvalidated(invalidateSpy, ["sessionEvents", "t-abc"])).toBe(false);
+    expect(wasInvalidated(invalidateSpy, ["sessionsByConversation"])).toBe(false);
+  });
+
+  it("no-ops the append when ['sessionEvents', sid] is undefined (first-load race)", () => {
+    // Same race semantics as the existing sessionLogRegistry: if the cache
+    // hasn't been populated yet, the in-flight initial fetch will pick up the
+    // new event naturally — so we must leave the slot undefined, not write [evt].
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_event_created", {
+        entity_type: "session_event",
+        entity_id: "t-unseeded",
+        version: 1,
+        timestamp: "2026-05-23T17:00:00Z",
         entity: {
           type: "user_message",
           content: "hi",
@@ -504,12 +546,7 @@ describe("useSSE SessionEvent / SessionState live-tail wiring", () => {
       });
     });
 
-    // The per-session events query is invalidated so the chat page refetches
-    // just that session's SessionEvent log.
-    expect(wasInvalidated(invalidateSpy, ["sessionEvents", "t-abc"])).toBe(true);
-    // The conversation→sessions index is invalidated broadly (SSE payload
-    // doesn't carry conversation_id, so prefix-match covers any open chat).
-    expect(wasInvalidated(invalidateSpy, ["sessionsByConversation"])).toBe(true);
+    expect(queryClient.getQueryData(["sessionEvents", "t-unseeded"])).toBeUndefined();
   });
 
   it("does not poison ['sessions', 'batch'] when a session_event_created arrives", () => {
