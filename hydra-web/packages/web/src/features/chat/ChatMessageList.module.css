@@ -134,7 +134,7 @@
   background: var(--bg-2);
   border: 1px solid var(--line);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--fg-1);
 }
 

@@ -26,7 +26,7 @@
 .groups {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0);
 }
 
 .group {
@@ -45,7 +45,7 @@
 .principals {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .principal {
@@ -54,7 +54,7 @@
   color: var(--fg-0);
   background: var(--bg-1);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   padding: 1px 6px;
 }
 

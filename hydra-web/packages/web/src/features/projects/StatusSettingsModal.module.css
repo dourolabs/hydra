@@ -35,7 +35,7 @@
 .flagRow label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   cursor: pointer;
 }
 
@@ -180,7 +180,7 @@
 
 .popSection {
   font-family: var(--font-family-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xxs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-text-tertiary);

@@ -18,9 +18,9 @@
   z-index: 8;
   box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.2),
-    0 6px 14px rgba(0, 0, 0, 0.25);
+    0 6px 14px var(--color-shadow);
   -webkit-tap-highlight-color: transparent;
-  transition: background 120ms ease;
+  transition: background var(--transition-fast);
 }
 
 .fab:hover {

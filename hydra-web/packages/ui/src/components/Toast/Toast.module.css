@@ -55,7 +55,7 @@
 
 /* Entry animation: fade + slide up */
 .enter {
-  animation: slideIn 200ms ease forwards;
+  animation: slideIn var(--transition-normal) forwards;
 }
 
 /* Exit animation: fade + slide down */

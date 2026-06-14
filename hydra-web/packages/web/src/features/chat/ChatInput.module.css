@@ -53,7 +53,7 @@
   display: block;
   width: 36px;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--line-strong);
   transition: background var(--tx-fast);
 }

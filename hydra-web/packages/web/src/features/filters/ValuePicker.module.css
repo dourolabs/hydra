@@ -227,7 +227,7 @@
     width: 36px;
     height: 4px;
     background: var(--line-strong);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     transform: translateX(-50%);
     pointer-events: none;
   }

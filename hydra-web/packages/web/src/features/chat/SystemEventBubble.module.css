@@ -24,7 +24,7 @@
   color: var(--fg-3);
   padding: 2px 6px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-1);
 }
 
@@ -89,7 +89,7 @@
   font-size: var(--t-xxs);
   padding: 1px 6px;
   border: 1px dashed var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--fg-2);
   text-transform: uppercase;
   letter-spacing: 0.04em;

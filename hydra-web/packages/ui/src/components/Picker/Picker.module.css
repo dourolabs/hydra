@@ -2,12 +2,12 @@
   position: relative;
   display: inline-flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .pickerLabel {
   font-family: var(--f-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xxs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--fg-3);

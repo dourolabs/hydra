@@ -82,7 +82,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .title {
@@ -155,7 +155,7 @@
  * live in @hydra/ui's Picker module. */
 .popSection {
   font-family: var(--f-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xxs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--fg-3);
@@ -328,11 +328,11 @@
 
 .kbdInline {
   font-family: var(--f-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xxs);
   margin-left: 4px;
   padding: 0 4px;
   border: 1px solid color-mix(in srgb, var(--acc-fg-on) 30%, transparent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--acc-fg-on);
 }
 
