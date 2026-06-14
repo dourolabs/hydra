@@ -148,10 +148,6 @@ pub enum IssueCommands {
         #[arg(value_name = "DESCRIPTION")]
         description: String,
 
-        /// Progress notes for the issue.
-        #[arg(long, value_name = "PROGRESS")]
-        progress: Option<String>,
-
         /// Issue id whose job settings will be used as defaults.
         #[arg(
             long = "current-issue-id",
@@ -199,10 +195,6 @@ pub enum IssueCommands {
         /// Inline YAML string defining a form to attach to the issue.
         #[arg(long = "form-inline", value_name = "YAML")]
         form_inline: Option<String>,
-
-        /// Feedback for the issue.
-        #[arg(long, value_name = "FEEDBACK")]
-        feedback: Option<String>,
     },
     /// Update an existing issue.
     Update {
@@ -265,14 +257,6 @@ pub enum IssueCommands {
         /// Remove all patches from the issue.
         #[arg(long)]
         clear_patches: bool,
-
-        /// Updated progress notes.
-        #[arg(long, value_name = "PROGRESS", conflicts_with = "clear_progress")]
-        progress: Option<String>,
-
-        /// Remove all progress notes from the issue.
-        #[arg(long)]
-        clear_progress: bool,
 
         /// Repository name to use for job settings.
         #[arg(
@@ -355,14 +339,6 @@ pub enum IssueCommands {
         #[arg(long = "clear-form")]
         clear_form: bool,
 
-        /// Updated feedback.
-        #[arg(long, value_name = "FEEDBACK", conflicts_with = "clear_feedback")]
-        feedback: Option<String>,
-
-        /// Remove the current feedback.
-        #[arg(long)]
-        clear_feedback: bool,
-
         /// Markdown comment to post on the issue alongside the update. The
         /// comment is posted before the update is applied; if the update
         /// fails, the comment stays on the issue. Empty / whitespace-only
@@ -376,7 +352,7 @@ pub enum IssueCommands {
         #[arg(value_name = "ISSUE_ID")]
         id: IssueId,
     },
-    /// Get the full details of a single issue by ID. Returns all fields including the complete description, progress notes, and job settings that are omitted from the summary returned by `list`.
+    /// Get the full details of a single issue by ID. Returns all fields including the complete description and job settings that are omitted from the summary returned by `list`.
     Get {
         /// Issue ID to get.
         #[arg(value_name = "ISSUE_ID")]
@@ -475,7 +451,6 @@ pub async fn run(
             patches,
             assignee,
             description,
-            progress,
             current_issue_id,
             repo_name,
             remote_url,
@@ -487,7 +462,6 @@ pub async fn run(
             labels,
             form,
             form_inline,
-            feedback,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
             let creator = resolve_username(client).await?;
@@ -506,7 +480,6 @@ pub async fn run(
                 assignee,
                 creator,
                 description,
-                progress,
                 repo_name,
                 remote_url,
                 image,
@@ -517,7 +490,6 @@ pub async fn run(
                 current_issue_id,
                 labels,
                 parsed_form,
-                feedback,
             )
             .await
             .and_then(|issue| write_issue_records(context.output_format, &[issue]))
@@ -535,8 +507,6 @@ pub async fn run(
             clear_dependencies,
             patches,
             clear_patches,
-            progress,
-            clear_progress,
             repo_name,
             remote_url,
             image,
@@ -551,8 +521,6 @@ pub async fn run(
             form,
             form_inline,
             clear_form,
-            feedback,
-            clear_feedback,
             comment,
         } => {
             let parsed_form = parse_form_flag(form, form_inline)?;
@@ -574,8 +542,6 @@ pub async fn run(
                 clear_dependencies,
                 patches,
                 clear_patches,
-                progress,
-                clear_progress,
                 repo_name,
                 remote_url,
                 image,
@@ -589,8 +555,6 @@ pub async fn run(
                 remove_labels,
                 parsed_form,
                 clear_form,
-                feedback,
-                clear_feedback,
                 comment,
             )
             .await
@@ -972,7 +936,6 @@ async fn create_issue(
     assignee: Option<Principal>,
     creator: Username,
     description: String,
-    progress: Option<String>,
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
@@ -983,16 +946,11 @@ async fn create_issue(
     current_issue_id: Option<IssueId>,
     labels: Vec<String>,
     form: Option<Form>,
-    feedback: Option<String>,
 ) -> Result<IssueVersionRecord> {
     let description = description.trim();
     if description.is_empty() {
         bail!("Issue description must not be empty.");
     }
-
-    let progress = progress
-        .map(|value| value.trim().to_string())
-        .unwrap_or_default();
 
     let inherited_job_settings = resolve_inherited_job_settings(client, current_issue_id).await?;
 
@@ -1016,7 +974,7 @@ async fn create_issue(
         title,
         description.to_string(),
         creator,
-        progress,
+        String::new(),
         status,
         project_id.unwrap_or_else(ProjectId::default_project),
         assignee,
@@ -1026,7 +984,7 @@ async fn create_issue(
         false,
         form,
         None,
-        feedback,
+        None,
     );
     let mut request = UpsertIssueRequest::new(input, None);
     let label_names: Vec<String> = labels
@@ -1069,8 +1027,6 @@ async fn update_issue(
     clear_dependencies: bool,
     patches: Vec<PatchId>,
     clear_patches: bool,
-    progress: Option<String>,
-    clear_progress: bool,
     repo_name: Option<String>,
     remote_url: Option<String>,
     image: Option<String>,
@@ -1084,8 +1040,6 @@ async fn update_issue(
     remove_labels: Vec<String>,
     form: Option<Form>,
     clear_form: bool,
-    feedback: Option<String>,
-    clear_feedback: bool,
     comment: Option<String>,
 ) -> Result<IssueVersionRecord> {
     let issue_id = id;
@@ -1139,25 +1093,6 @@ async fn update_issue(
         Some(patches)
     };
 
-    let progress_update = if clear_progress {
-        Some(String::new())
-    } else {
-        progress.map(|value| value.trim().to_string())
-    };
-
-    let feedback_update = if clear_feedback {
-        Some(None)
-    } else {
-        feedback.map(|f| {
-            let trimmed = f.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        })
-    };
-
     let job_settings_requested = clear_job_settings
         || repo_name.is_some()
         || remote_url.is_some()
@@ -1179,8 +1114,6 @@ async fn update_issue(
         && description.is_none()
         && dependencies_update.is_none()
         && patches_update.is_none()
-        && progress_update.is_none()
-        && feedback_update.is_none()
         && !job_settings_requested
         && !labels_requested
         && !form_requested
@@ -1238,8 +1171,6 @@ async fn update_issue(
         || description.is_some()
         || dependencies_update.is_some()
         || patches_update.is_some()
-        || progress_update.is_some()
-        || feedback_update.is_some()
         || job_settings_changed
         || form_update.is_some();
 
@@ -1250,7 +1181,7 @@ async fn update_issue(
             title.unwrap_or(current.issue.title),
             description.unwrap_or(current.issue.description),
             current.issue.creator,
-            progress_update.unwrap_or(current.issue.progress),
+            current.issue.progress,
             status.unwrap_or(current.issue.status.key),
             project_id,
             assignee.unwrap_or(current.issue.assignee),
@@ -1260,7 +1191,7 @@ async fn update_issue(
             current.issue.deleted,
             form_update.unwrap_or(current.issue.form),
             current.issue.form_response,
-            feedback_update.unwrap_or(current.issue.feedback),
+            current.issue.feedback,
         );
 
         let response = client
@@ -1745,7 +1676,7 @@ mod tests {
                 "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
-                "Initial notes".into(),
+                String::new(),
                 make_status_def(status("closed")),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
@@ -1782,7 +1713,6 @@ mod tests {
             Some(user_principal("team-a")),
             Username::from("creator-a"),
             "New issue description".into(),
-            Some("Initial notes".into()),
             None,
             None,
             None,
@@ -1792,7 +1722,6 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
-            None,
             None,
         )
         .await
@@ -1819,7 +1748,7 @@ mod tests {
                 "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
-                "Initial notes".into(),
+                String::new(),
                 make_status_def(status("closed")),
                 ProjectId::default_project(),
                 Some(user_principal("team-a")),
@@ -1856,7 +1785,6 @@ mod tests {
             Some(user_principal("team-a")),
             Username::from("creator-a"),
             "New issue description".into(),
-            Some("Initial notes".into()),
             Some("dourolabs/example".into()),
             Some("https://example.com/service.git".into()),
             Some("worker:latest".into()),
@@ -1866,7 +1794,6 @@ mod tests {
             Vec::new(),
             None,
             Vec::new(),
-            None,
             None,
         )
         .await
@@ -1923,7 +1850,7 @@ mod tests {
                 "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
-                "Initial notes".into(),
+                String::new(),
                 make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
@@ -1960,7 +1887,6 @@ mod tests {
             None,
             Username::from("creator-a"),
             "New issue description".into(),
-            Some("Initial notes".into()),
             None,
             None,
             None,
@@ -1970,7 +1896,6 @@ mod tests {
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
-            None,
             None,
         )
         .await
@@ -2035,7 +1960,7 @@ mod tests {
                 "Test Title".to_string(),
                 "New issue description".into(),
                 Username::from("creator-a"),
-                "Initial notes".into(),
+                String::new(),
                 make_status_def(status("open")),
                 ProjectId::default_project(),
                 None,
@@ -2072,7 +1997,6 @@ mod tests {
             None,
             Username::from("creator-a"),
             "New issue description".into(),
-            Some("Initial notes".into()),
             Some("dourolabs/override".into()),
             None,
             Some("custom:tag".into()),
@@ -2082,7 +2006,6 @@ mod tests {
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
-            None,
             None,
         )
         .await
@@ -2150,11 +2073,9 @@ mod tests {
             None,
             None,
             None,
-            None,
             vec!["my-api-secret".into(), "my-db-secret".into()],
             None,
             Vec::new(),
-            None,
             None,
         )
         .await
@@ -2251,11 +2172,9 @@ mod tests {
             None,
             None,
             None,
-            None,
             Vec::new(),
             Some(current_issue_id),
             Vec::new(),
-            None,
             None,
         )
         .await
@@ -2288,11 +2207,9 @@ mod tests {
             None,
             None,
             None,
-            None,
             Vec::new(),
             None,
             Vec::new(),
-            None,
             None,
         )
         .await
@@ -2365,7 +2282,7 @@ mod tests {
                 "Test Title".to_string(),
                 "Updated issue description".into(),
                 empty_user(),
-                "New progress".into(),
+                String::new(),
                 make_status_def(status("closed")),
                 ProjectId::default_project(),
                 Some(user_principal("owner-b")),
@@ -2416,8 +2333,6 @@ mod tests {
             false,
             vec![patch_id("p-3")],
             false,
-            Some("New progress".into()),
-            false,
             Some("dourolabs/example".into()),
             Some("https://example.com/service.git".into()),
             Some("worker:123".into()),
@@ -2429,8 +2344,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             None,
@@ -2483,7 +2396,7 @@ mod tests {
                 "Test Title".to_string(),
                 "Existing issue".into(),
                 empty_user(),
-                String::new(),
+                "Started work".into(),
                 make_status_def(status("in-progress")),
                 ProjectId::default_project(),
                 None,
@@ -2529,8 +2442,6 @@ mod tests {
             vec![],
             true,
             None,
-            true,
-            None,
             None,
             None,
             None,
@@ -2541,8 +2452,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             None,
@@ -2645,8 +2554,6 @@ mod tests {
             vec![],
             false,
             None,
-            false,
-            None,
             None,
             None,
             None,
@@ -2657,8 +2564,6 @@ mod tests {
             true,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             None,
@@ -2756,8 +2661,6 @@ mod tests {
             vec![],
             false,
             None,
-            false,
-            None,
             None,
             None,
             None,
@@ -2768,8 +2671,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             None,
@@ -2867,8 +2768,6 @@ mod tests {
             vec![],
             false,
             None,
-            false,
-            None,
             None,
             None,
             None,
@@ -2879,8 +2778,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             None,
@@ -2948,8 +2845,6 @@ mod tests {
             vec![],
             false,
             None,
-            false,
-            None,
             None,
             None,
             None,
@@ -2960,8 +2855,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             Some("ship it".into()),
@@ -3014,8 +2907,6 @@ mod tests {
             vec![],
             false,
             None,
-            false,
-            None,
             None,
             None,
             None,
@@ -3026,8 +2917,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             Some("explain the failure".into()),
@@ -3093,8 +2982,6 @@ mod tests {
             vec![],
             false,
             None,
-            false,
-            None,
             None,
             None,
             None,
@@ -3105,8 +2992,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             Some("body".into()),
@@ -3142,8 +3027,6 @@ mod tests {
             vec![],
             false,
             None,
-            false,
-            None,
             None,
             None,
             None,
@@ -3154,8 +3037,6 @@ mod tests {
             false,
             Vec::new(),
             Vec::new(),
-            None,
-            false,
             None,
             false,
             Some("   ".into()),
@@ -3274,11 +3155,10 @@ mod tests {
         assert!(rendered.contains(&format!("Issue {first_issue} (bug, open)")));
         assert!(rendered.contains("Assignee: users/owner-a"));
         assert!(rendered.contains("Description:\n  First issue\n  with context"));
-        assert!(rendered.contains("Progress:\n  Working on repro"));
+        assert!(!rendered.contains("Progress"));
         assert!(rendered.contains(&format!("Dependencies:\n  - blocked-on {dependency_id}")));
         assert!(rendered.contains(&format!("Issue {second_issue} (feature, in-progress)")));
         assert!(rendered.contains("Assignee: -"));
-        assert!(rendered.contains("Progress:\n  -"));
         assert!(rendered.contains("Dependencies: none"));
         assert!(rendered.contains("Follow-up work"));
     }

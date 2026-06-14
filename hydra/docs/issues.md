@@ -4,7 +4,7 @@ The `hydra issues` command drives the complete lifecycle of Hydra tasks: listing
 
 ## Authentication & output
 
-All subcommands inherit the global `hydra` flags such as `--server-url`, `--token`, and `--output-format` (defaults to pretty). Switch to `--output-format jsonl` when you need structured machine-readable output or want to pipe results into other tooling. Pretty output shows truncated descriptions and progress notes, while JSONL preserves the full payload.
+All subcommands inherit the global `hydra` flags such as `--server-url`, `--token`, and `--output-format` (defaults to pretty). Switch to `--output-format jsonl` when you need structured machine-readable output or want to pipe results into other tooling. Pretty output shows truncated descriptions, while JSONL preserves the full payload.
 
 ## Subcommands
 
@@ -31,7 +31,7 @@ hydra issues list \
 hydra issues create \
   [--type <bug|feature|task|chore|merge-request>] \
   [--status <open|in-progress|closed>] \
-  [--assignee <USERNAME>] [--progress "text"] \
+  [--assignee <USERNAME>] \
   [--deps TYPE:ISSUE_ID ...] [--patches PATCH_ID[,PATCH_ID...]] \
   [--repo-name ORG/REPO] [--remote-url URL] [--image IMAGE] \
   [--model MODEL] [--branch BRANCH] [--max-retries N] \
@@ -39,7 +39,7 @@ hydra issues create \
   "DESCRIPTION"
 ```
 
-Descriptions are required; progress defaults to an empty string but may be set inline. Dependencies follow the `TYPE:ISSUE_ID` format (e.g. `child-of:i-abcd`, `blocked-on:i-efgh`); pass `--deps` multiple times to add more than one relationship. `--patches` takes a comma-separated list of existing patch ids. Job settings fields let you pin future jobs to a repo, container image, or branch; inheriting via `--current-issue-id` keeps child tasks aligned with their parent issue’s execution environment.
+Descriptions are required. Dependencies follow the `TYPE:ISSUE_ID` format (e.g. `child-of:i-abcd`, `blocked-on:i-efgh`); pass `--deps` multiple times to add more than one relationship. `--patches` takes a comma-separated list of existing patch ids. Job settings fields let you pin future jobs to a repo, container image, or branch; inheriting via `--current-issue-id` keeps child tasks aligned with their parent issue’s execution environment.
 
 ### Update
 
@@ -50,12 +50,11 @@ hydra issues update <ISSUE_ID> \
   [--description "text"] \
   [--deps TYPE:ISSUE_ID ... | --clear-dependencies] \
   [--patches PATCH_ID[,PATCH_ID...] | --clear-patches] \
-  [--progress "text" | --clear-progress] \
   [--repo-name ORG/REPO | --remote-url URL | --image IMAGE \
    | --model MODEL | --branch BRANCH | --max-retries N | --clear-job-settings]
 ```
 
-Use `hydra issues update` to change status, hand off work, refresh descriptions, or rewrite the dependency graph. Each field has a corresponding `--clear-*` flag so you can remove values explicitly (e.g., `--clear-progress` when you wrap up a note). Job settings behave like `create`: provide any subset of overrides or call `--clear-job-settings` to drop inherited execution context.
+Use `hydra issues update` to change status, hand off work, refresh descriptions, or rewrite the dependency graph. Each field has a corresponding `--clear-*` flag so you can remove values explicitly. Job settings behave like `create`: provide any subset of overrides or call `--clear-job-settings` to drop inherited execution context.
 
 ## Examples
 
@@ -64,14 +63,14 @@ Use `hydra issues update` to change status, hand off work, refresh descriptions,
 hydra issues create \
   --current-issue-id i-root \
   --type bug --assignee swe --repo-name dourolabs/hydra \
-  --deps child-of:i-root --progress "Triaging logs" \
+  --deps child-of:i-root \
   "API times out when payload > 5MB"
 
 # Check everything blocked by a flaky test epic and emit JSON
 hydra --output-format jsonl issues list --graph "**:blocked-on:i-flaky"
 
-# Move work in progress forward and capture notes
-hydra issues update i-1234 --status closed --progress "Tests green, patch merged"
+# Move work in progress forward
+hydra issues update i-1234 --status closed
 
 # Add follow-up dependencies
 hydra issues update i-1234 \
