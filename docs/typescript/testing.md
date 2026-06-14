@@ -70,6 +70,13 @@ curl -X POST -H "Content-Type: application/json" \
 - Traces: recorded on first retry. View with `pnpm --filter @hydra/web exec playwright show-trace <file>`.
 - Headed mode: `--headed` to watch the browser drive the test.
 
+## Mobile testing
+
+- Default visual-regression viewport: **375×667** (iPhone SE / standard mobile width). `pnpm visual-audit` already captures mobile at 375×812 per `playwright-visual-audit.config.ts` — keep that contract.
+- Stress-test at **320×568** (smallest common mobile) for any layout you suspect of wrapping issues. Anything that wraps weirdly at 375px breaks at 320px.
+- For safe-area / keyboard / overlay behavior, test on **real iOS Safari**, not Chrome DevTools mobile emulation. The emulator doesn't fire the real `viewport-fit` / `env(safe-area-inset-*)` paths, and on-screen-keyboard occlusion behavior diverges from real iOS.
+- **Horizontal scroll check:** at every list-page root, assert `document.documentElement.scrollWidth === window.innerWidth` at 375px. Common enough as a regression class to warrant its own assertion.
+
 ## See also
 
 - [packages.md](./packages.md) — `@hydra/mock-server` package layout.
