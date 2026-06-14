@@ -441,7 +441,15 @@ function BoardIssueCard({
           )}
         </div>
       )}
-      <div className={styles.cardTitleRow}>
+      <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
+      <div className={styles.cardFoot}>
+        {issue.assignee && (
+          <Avatar
+            name={principalDisplayName(issue.assignee)}
+            kind={principalAvatarKind(issue.assignee)}
+            size="md"
+          />
+        )}
         {conversation && (
           <Link
             to={`/chat/${conversation.conversation_id}`}
@@ -462,16 +470,6 @@ function BoardIssueCard({
           >
             <Icons.IconChat size={14} />
           </Link>
-        )}
-        <div className={styles.cardTitle}>{issue.title || "(untitled)"}</div>
-      </div>
-      <div className={styles.cardFoot}>
-        {issue.assignee && (
-          <Avatar
-            name={principalDisplayName(issue.assignee)}
-            kind={principalAvatarKind(issue.assignee)}
-            size="md"
-          />
         )}
         <CardRuntime sessions={sessions} />
         <AgoTime iso={record.timestamp} />
