@@ -317,6 +317,73 @@ describe("AgentEditModal — session_settings", () => {
     expect(req.session_settings).toBeUndefined();
   });
 
+  it("preserves CLI-only session_settings fields when the form is submitted untouched", async () => {
+    const seeded = makeAgent({
+      session_settings: {
+        cpu_limit: "500m",
+        repo_name: "dourolabs/hydra",
+        branch: "main",
+        secrets: ["GITHUB_TOKEN"],
+      },
+    });
+    render(
+      <AgentEditModal
+        open
+        agent={seeded}
+        onClose={() => {}}
+        agents={[seeded]}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save Changes"));
+    });
+
+    expect(updateAgentSpy).toHaveBeenCalledTimes(1);
+    const [, req] = updateAgentSpy.mock.calls[0] as unknown as [
+      string,
+      { session_settings?: Record<string, unknown> },
+    ];
+    expect(req.session_settings).toMatchObject({
+      cpu_limit: "500m",
+      repo_name: "dourolabs/hydra",
+      branch: "main",
+      secrets: ["GITHUB_TOKEN"],
+    });
+  });
+
+  it("preserves CLI-only session_settings fields when surfaced inputs are cleared", async () => {
+    const seeded = makeAgent({
+      session_settings: {
+        cpu_limit: "500m",
+        repo_name: "dourolabs/hydra",
+      },
+    });
+    render(
+      <AgentEditModal
+        open
+        agent={seeded}
+        onClose={() => {}}
+        agents={[seeded]}
+      />,
+    );
+    openSessionSettings();
+    fireEvent.change(screen.getByTestId("agent-edit-form-cpu-limit"), {
+      target: { value: "" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save Changes"));
+    });
+
+    expect(updateAgentSpy).toHaveBeenCalledTimes(1);
+    const [, req] = updateAgentSpy.mock.calls[0] as unknown as [
+      string,
+      { session_settings?: Record<string, unknown> },
+    ];
+    expect(req.session_settings).toBeDefined();
+    expect(req.session_settings).toMatchObject({ repo_name: "dourolabs/hydra" });
+    expect(req.session_settings?.cpu_limit ?? null).toBeNull();
+  });
+
   it("prefills inputs from the agent's existing session_settings", () => {
     const seeded = makeAgent({
       session_settings: {

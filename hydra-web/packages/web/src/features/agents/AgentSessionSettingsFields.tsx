@@ -235,8 +235,11 @@ export function AgentSessionSettingsFields({
   );
 }
 
-// Collapse the session_settings payload back to `undefined` when every
-// surfaced subfield is empty, so the wire body stays slim.
+// Collapse the session_settings payload back to `undefined` only when every
+// subfield is empty — surfaced AND un-surfaced. CLI users can set
+// `repo_name` / `remote_url` / `branch` / `secrets` (not on the form), so
+// preserving them is required to round-trip the modal without dropping
+// CLI-only overrides. Mirrors the StatusSettingsModal patchSession check.
 export function collapseAgentSessionSettings(
   value: SessionSettings,
 ): SessionSettings | undefined {
@@ -246,6 +249,10 @@ export function collapseAgentSessionSettings(
     (value.cpu_limit ?? null) == null &&
     (value.memory_limit ?? null) == null &&
     (value.max_retries ?? null) == null &&
-    (value.idle_timeout ?? null) == null;
+    (value.idle_timeout ?? null) == null &&
+    (value.repo_name ?? null) == null &&
+    (value.remote_url ?? null) == null &&
+    (value.branch ?? null) == null &&
+    !(value.secrets && value.secrets.length > 0);
   return allEmpty ? undefined : value;
 }
