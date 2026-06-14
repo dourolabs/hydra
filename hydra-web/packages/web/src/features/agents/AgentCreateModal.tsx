@@ -8,6 +8,12 @@ import {
   AgentSessionSettingsFields,
   collapseAgentSessionSettings,
 } from "./AgentSessionSettingsFields";
+import {
+  parseSimultaneousCap,
+  SIMULTANEOUS_HEADLESS_HELP,
+  SIMULTANEOUS_INTERACTIVE_HELP,
+  SIMULTANEOUS_PLACEHOLDER,
+} from "./simultaneousCaps";
 import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./AgentsSection.module.css";
 
@@ -21,8 +27,8 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [maxTries, setMaxTries] = useState("3");
-  const [maxSimultaneousInteractive, setMaxSimultaneousInteractive] = useState("1");
-  const [maxSimultaneousHeadless, setMaxSimultaneousHeadless] = useState("1");
+  const [maxSimultaneousInteractive, setMaxSimultaneousInteractive] = useState("");
+  const [maxSimultaneousHeadless, setMaxSimultaneousHeadless] = useState("");
   const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(false);
   const [mcpConfigPath, setMcpConfigPath] = useState("");
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
@@ -32,8 +38,8 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     setName("");
     setPrompt("");
     setMaxTries("3");
-    setMaxSimultaneousInteractive("1");
-    setMaxSimultaneousHeadless("1");
+    setMaxSimultaneousInteractive("");
+    setMaxSimultaneousHeadless("");
     setIsDefaultConversationAgent(false);
     setMcpConfigPath("");
     setSelectedSecrets([]);
@@ -71,8 +77,8 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       mcp_config_path: mcpConfigPath.trim() || null,
       mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,
-      max_simultaneous_interactive: parseInt(maxSimultaneousInteractive, 10) || 1,
-      max_simultaneous_headless: parseInt(maxSimultaneousHeadless, 10) || 1,
+      max_simultaneous_interactive: parseSimultaneousCap(maxSimultaneousInteractive),
+      max_simultaneous_headless: parseSimultaneousCap(maxSimultaneousHeadless),
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
       session_settings: collapseAgentSessionSettings(sessionSettings),
@@ -110,20 +116,30 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           onChange={(e) => setMaxTries(e.target.value)}
           type="number"
         />
-        <Input
-          label="Max Simultaneous Interactive"
-          placeholder="1"
-          value={maxSimultaneousInteractive}
-          onChange={(e) => setMaxSimultaneousInteractive(e.target.value)}
-          type="number"
-        />
-        <Input
-          label="Max Simultaneous Headless"
-          placeholder="1"
-          value={maxSimultaneousHeadless}
-          onChange={(e) => setMaxSimultaneousHeadless(e.target.value)}
-          type="number"
-        />
+        <div className={styles.fieldGroup}>
+          <Input
+            label="Max simultaneous interactive sessions"
+            placeholder={SIMULTANEOUS_PLACEHOLDER}
+            value={maxSimultaneousInteractive}
+            onChange={(e) => setMaxSimultaneousInteractive(e.target.value)}
+            type="number"
+            min={0}
+            data-testid="agent-create-max-simultaneous-interactive"
+          />
+          <span className={styles.fieldHelp}>{SIMULTANEOUS_INTERACTIVE_HELP}</span>
+        </div>
+        <div className={styles.fieldGroup}>
+          <Input
+            label="Max simultaneous headless sessions"
+            placeholder={SIMULTANEOUS_PLACEHOLDER}
+            value={maxSimultaneousHeadless}
+            onChange={(e) => setMaxSimultaneousHeadless(e.target.value)}
+            type="number"
+            min={0}
+            data-testid="agent-create-max-simultaneous-headless"
+          />
+          <span className={styles.fieldHelp}>{SIMULTANEOUS_HEADLESS_HELP}</span>
+        </div>
         <label className={styles.checkboxLabel}>
           <input
             type="checkbox"

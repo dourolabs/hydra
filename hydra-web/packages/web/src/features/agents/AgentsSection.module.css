@@ -156,6 +156,18 @@
   margin: 0;
 }
 
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fieldHelp {
+  color: var(--fg-2);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}
+
 @media (max-width: 768px) {
   .cards {
     grid-template-columns: 1fr;
