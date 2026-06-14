@@ -193,9 +193,6 @@ impl Automation for SpawnSessionsAutomation {
                     Ok(SpawnResult::RetriesExhausted {
                         issue_id: exhausted_issue_id,
                     }) => {
-                        // Update the issue to Failed. The status transition is
-                        // the user-visible signal; a structured failure_reason
-                        // field was deliberately deferred.
                         let mut failed_issue = issue.clone();
                         failed_issue.status =
                             hydra_common::api::v1::projects::StatusKey::try_new("failed")
