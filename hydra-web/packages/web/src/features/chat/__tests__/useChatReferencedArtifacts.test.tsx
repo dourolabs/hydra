@@ -74,7 +74,7 @@ function makePatch(id: string, title = `Patch ${id}`): PatchSummaryRecord {
     creation_time: "2026-01-01T00:00:00Z",
     patch: {
       title,
-      status: "Open",
+      status: "open",
       project_id: "j-defaul",
       is_automatic_backup: false,
       creator: "alice",

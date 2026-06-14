@@ -2361,7 +2361,7 @@ mod tests {
                 .json_body_partial(
                     r#"{
                         "patch": {
-                            "status": "ChangesRequested",
+                            "status": "changes-requested",
                             "reviews": [
                                 {"contents": "needs work", "is_approved": false}
                             ]
@@ -2424,7 +2424,7 @@ mod tests {
                 .json_body_partial(
                     r#"{
                         "patch": {
-                            "status": "Open",
+                            "status": "open",
                             "reviews": [
                                 {"contents": "lgtm", "is_approved": true}
                             ]

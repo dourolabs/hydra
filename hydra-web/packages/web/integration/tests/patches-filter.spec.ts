@@ -32,14 +32,14 @@ test.describe("Patches FilterBar @patches:filter-bar", () => {
     await expect(page.getByTestId("filter-chip-status")).toBeVisible();
     await expect(page.getByTestId("value-picker-status")).toBeVisible();
 
-    // Pick Merged. URL reflects `?status=Merged`.
-    await page.getByTestId("value-option-Merged").click();
-    await expect(page).toHaveURL(/[?&]status=Merged\b/);
+    // Pick Merged. URL reflects `?status=merged`.
+    await page.getByTestId("value-option-merged").click();
+    await expect(page).toHaveURL(/[?&]status=merged\b/);
 
-    // The server-side narrow fired with status=Merged.
+    // The server-side narrow fired with status=merged.
     await page.waitForLoadState("networkidle");
     const narrowing = listPatchesRequests.filter(
-      (u) => u.searchParams.get("status") === "Merged",
+      (u) => u.searchParams.get("status") === "merged",
     );
     expect(narrowing.length).toBeGreaterThan(0);
 
@@ -48,9 +48,9 @@ test.describe("Patches FilterBar @patches:filter-bar", () => {
       page.getByText("Implement OAuth2 scopes and permission mapping"),
     ).toBeVisible();
 
-    // Reload preserves URL + chip — the page hydrates from `?status=Merged`.
+    // Reload preserves URL + chip — the page hydrates from `?status=merged`.
     await page.reload();
-    await expect(page).toHaveURL(/[?&]status=Merged\b/);
+    await expect(page).toHaveURL(/[?&]status=merged\b/);
     await expect(page.getByTestId("filter-chip-status")).toBeVisible();
     await expect(
       page.getByText("Implement OAuth2 scopes and permission mapping"),

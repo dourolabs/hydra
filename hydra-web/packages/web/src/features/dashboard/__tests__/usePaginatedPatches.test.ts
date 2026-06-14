@@ -31,7 +31,7 @@ function rec(id: string): PatchSummaryRecord {
       title: `Patch ${id}`,
       description: "",
       diff: "",
-      status: "Open",
+      status: "open",
       is_automatic_backup: false,
       creator: "alice",
       reviews: [],
@@ -91,7 +91,7 @@ describe("usePatchCount", () => {
   it("includes status and q in the request when filters are set", async () => {
     mockListPatches.mockResolvedValueOnce(page([], null, 7n));
 
-    const { result } = renderHook(() => usePatchCount({ status: ["Open"], q: "hello" }), {
+    const { result } = renderHook(() => usePatchCount({ status: ["open"], q: "hello" }), {
       wrapper: makeWrapper(),
     });
 
@@ -100,7 +100,7 @@ describe("usePatchCount", () => {
     });
 
     const call = mockListPatches.mock.calls[0][0] as Partial<SearchPatchesQuery>;
-    expect(call.status).toEqual(["Open"]);
+    expect(call.status).toEqual(["open"]);
     expect(call.q).toBe("hello");
     expect(call.count).toBe(true);
     expect(call.limit).toBe(0);

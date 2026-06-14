@@ -440,7 +440,7 @@ describe("Patches", () => {
       title: "Contract test patch",
       description: "Test patch description",
       diff: "diff --git a/test.ts b/test.ts\n+hello",
-      status: "Open",
+      status: "open",
       is_automatic_backup: false,
       creator: "dev-user",
       reviews: [],
@@ -460,7 +460,7 @@ describe("Patches", () => {
     const fetched = await client.getPatch(patchId);
     expect(fetched.patch_id).toBe(patchId);
     expect(fetched.patch.title).toBe("Contract test patch");
-    expect(fetched.patch.status).toBe("Open");
+    expect(fetched.patch.status).toBe("open");
     expect(fetched.creation_time).toBeTruthy();
 
     // List
@@ -470,13 +470,13 @@ describe("Patches", () => {
 
     // Update
     const updateResp = await client.updatePatch(patchId, {
-      patch: { ...patchPayload.patch, status: "Merged", title: "Updated title" },
+      patch: { ...patchPayload.patch, status: "merged", title: "Updated title" },
     });
     expect(updateResp.patch_id).toBe(patchId);
 
     // Verify update
     const refetched = await client.getPatch(patchId);
-    expect(refetched.patch.status).toBe("Merged");
+    expect(refetched.patch.status).toBe("merged");
     expect(refetched.patch.title).toBe("Updated title");
 
     // Delete
@@ -505,12 +505,12 @@ describe("Patches", () => {
   it("list filtering by status", async () => {
     await client.createPatch(patchPayload);
     await client.createPatch({
-      patch: { ...patchPayload.patch, status: "Closed" },
+      patch: { ...patchPayload.patch, status: "closed" },
     });
 
-    const open = await client.listPatches({ status: ["Open"] });
+    const open = await client.listPatches({ status: ["open"] });
     for (const p of open.patches) {
-      expect(p.patch.status).toBe("Open");
+      expect(p.patch.status).toBe("open");
     }
   });
 });

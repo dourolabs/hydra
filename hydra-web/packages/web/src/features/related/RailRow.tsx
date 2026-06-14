@@ -164,7 +164,7 @@ export function PatchRailRow({ record, linkSearch }: PatchRailRowProps) {
   const navigate = useNavigate();
   const p = record.patch;
   const status: BadgeStatus =
-    p.status === "Open" && p.review_summary.approved ? "approved" : normalizePatchStatus(p.status);
+    p.status === "open" && p.review_summary.approved ? "approved" : normalizePatchStatus(p.status);
   const to = `/patches/${record.patch_id}${linkSearch ?? ""}`;
 
   return (

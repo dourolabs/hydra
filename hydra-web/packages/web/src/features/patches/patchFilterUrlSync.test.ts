@@ -21,8 +21,8 @@ describe("patchFilterUrlSync", () => {
     });
 
     it("parses status as a multi-value (comma-separated) filter", () => {
-      expect(filtersFromUrl(params("status=Open,Merged"))).toEqual([
-        mkFilter("status", ["Open", "Merged"]),
+      expect(filtersFromUrl(params("status=open,merged"))).toEqual([
+        mkFilter("status", ["open", "merged"]),
       ]);
     });
 
@@ -61,9 +61,9 @@ describe("patchFilterUrlSync", () => {
   describe("filtersToUrl", () => {
     it("writes status as a comma-joined list", () => {
       const out = filtersToUrl(params(""), [
-        mkFilter("status", ["Open", "Merged"]),
+        mkFilter("status", ["open", "merged"]),
       ]);
-      expect(out.get("status")).toBe("Open,Merged");
+      expect(out.get("status")).toBe("open,merged");
     });
 
     it("writes repository as a single value", () => {
@@ -76,16 +76,16 @@ describe("patchFilterUrlSync", () => {
     it("clears stale filter params when filters change", () => {
       // Start with two filters in the URL; remove one and confirm the URL no
       // longer carries it.
-      const out = filtersToUrl(params("status=Open&author=alice"), [
-        mkFilter("status", ["Open"]),
+      const out = filtersToUrl(params("status=open&author=alice"), [
+        mkFilter("status", ["open"]),
       ]);
-      expect(out.get("status")).toBe("Open");
+      expect(out.get("status")).toBe("open");
       expect(out.get("author")).toBeNull();
     });
 
     it("does not touch non-filter params", () => {
       const out = filtersToUrl(params("q=oauth&selected=x"), [
-        mkFilter("status", ["Open"]),
+        mkFilter("status", ["open"]),
       ]);
       expect(out.get("q")).toBe("oauth");
       expect(out.get("selected")).toBe("x");
@@ -100,7 +100,7 @@ describe("patchFilterUrlSync", () => {
   describe("round-trip", () => {
     it("preserves status / repository / author / relations through one cycle", () => {
       const input: Filter[] = [
-        mkFilter("status", ["Open", "Merged"]),
+        mkFilter("status", ["open", "merged"]),
         mkFilter("repository", ["acme/web-app"]),
         mkFilter("author", ["users/alice"]),
         mkFilter("relatedIssue", ["i-aa", "i-bb"]),
@@ -116,15 +116,15 @@ describe("patchFilterUrlSync", () => {
 
   describe("searchToUrl", () => {
     it("sets ?q= when non-empty", () => {
-      const out = searchToUrl(params("status=Open"), "oauth");
+      const out = searchToUrl(params("status=open"), "oauth");
       expect(out.get("q")).toBe("oauth");
-      expect(out.get("status")).toBe("Open");
+      expect(out.get("status")).toBe("open");
     });
 
     it("clears ?q= when empty", () => {
-      const out = searchToUrl(params("q=oauth&status=Open"), "");
+      const out = searchToUrl(params("q=oauth&status=open"), "");
       expect(out.has("q")).toBe(false);
-      expect(out.get("status")).toBe("Open");
+      expect(out.get("status")).toBe("open");
     });
   });
 });

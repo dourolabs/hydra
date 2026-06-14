@@ -194,7 +194,7 @@ function makePatchWorkItem(
       timestamp: lastUpdated,
       creation_time: lastUpdated,
       patch: {
-        status: "Open",
+        status: "open",
         project_id: "j-defaul",
         title: "",
         is_automatic_backup: false,

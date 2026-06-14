@@ -107,7 +107,7 @@ function patchRow(id: string, title: string) {
     creation_time: "2026-01-01T00:00:00Z",
     patch: {
       title,
-      status: "Open",
+      status: "open",
       is_automatic_backup: false,
       creator: "alice",
       review_summary: { approved: 0, changes_requested: 0, commented: 0 },

@@ -30,7 +30,7 @@ function makePatch(id: string): PatchSummaryRecord {
     creation_time: "2026-01-01T00:00:00Z",
     patch: {
       title: `Patch ${id}`,
-      status: "Open",
+      status: "open",
       creator: "alice",
       is_automatic_backup: false,
       review_summary: { count: 0, approved: false },

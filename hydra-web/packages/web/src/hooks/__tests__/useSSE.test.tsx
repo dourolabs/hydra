@@ -129,7 +129,7 @@ function makePatchRecord(patchId: string) {
     creation_time: "2026-01-01T00:00:00Z",
     patch: {
       title: "Patch",
-      status: "Open",
+      status: "open",
       is_automatic_backup: false,
       creator: "alice",
       review_summary: { count: 0, approved: false },

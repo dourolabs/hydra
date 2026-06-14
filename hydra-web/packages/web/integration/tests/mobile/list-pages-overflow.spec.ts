@@ -35,7 +35,7 @@ async function seedLongRepoPatch() {
           head_ref: "feat/long-branch",
           base_ref: "main",
           url: "https://github.com/extremely-long-organization-name/very-long-repository-name-here/pull/9999999",
-          ci: { state: "Pending" },
+          ci: { state: "pending" },
         },
       },
     }),
