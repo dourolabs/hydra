@@ -10,21 +10,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--acc);
+  background: var(--acc-dim);
   color: var(--acc-fg-on);
   border: none;
   cursor: pointer;
   /* Above content and the bottom-tab bar (z-index 5), below modals (100+). */
   z-index: 8;
-  box-shadow:
-    0 2px 4px rgba(0, 0, 0, 0.2),
-    0 6px 14px var(--color-shadow);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   -webkit-tap-highlight-color: transparent;
   transition: background var(--transition-fast);
 }
 
 .fab:hover {
-  background: var(--acc-bright);
+  background: var(--acc);
 }
 
 .fab:focus-visible {
