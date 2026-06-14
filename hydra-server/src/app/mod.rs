@@ -22,7 +22,6 @@ mod users;
 
 use crate::{domain::patches::Patch, merge_queue::MergeQueueImpl, store::StoreError};
 use git2::Repository as GitRepository;
-use hydra_common::api::v1::sessions::Bundle;
 use hydra_common::{PatchId, RepoName, merge_queues::MergeQueue};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tempfile::TempDir;
@@ -49,12 +48,6 @@ pub(crate) use sessions::{
 pub use triggers::UpsertTriggerError;
 pub use users::LoginError;
 pub(crate) use users::WORKER_NAME_LOGIN;
-
-#[derive(Debug, Clone)]
-pub struct ResolvedBundle {
-    pub bundle: Bundle,
-    pub default_image: Option<String>,
-}
 
 /// Aggregated cache for repositories the service can interact with.
 #[derive(Debug, Default, Clone)]
@@ -371,8 +364,7 @@ mod tests {
         let expected_head = commit_file(&remote_repo, "README.md", "hello", "init")?;
 
         let repo_name = RepoName::from_str("dourolabs/hydra")?;
-        let repository =
-            Repository::new(remote_dir.path().to_str().unwrap().to_string(), None, None);
+        let repository = Repository::new(remote_dir.path().to_str().unwrap().to_string(), None);
 
         let (repo, _workdir) = connect_repository(&repo_name, &repository)?;
 

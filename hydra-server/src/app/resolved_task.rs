@@ -1,11 +1,11 @@
-use super::{AppState, BundleResolutionError, ResolvedBundle};
+use super::{AppState, BundleResolutionError};
 use crate::domain::sessions::Session;
 use hydra_common::api::v1::sessions::{Bundle, MountItem};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedTask {
-    pub context: ResolvedBundle,
+    pub bundle: Bundle,
     pub image: String,
     pub env_vars: HashMap<String, String>,
     pub secrets: Option<Vec<String>>,
@@ -26,11 +26,11 @@ impl AppState {
         &self,
         session: &Session,
     ) -> Result<ResolvedTask, TaskResolutionError> {
-        let context = Self::resolve_context(session);
-        let image = Self::resolve_image(session, &context, &self.config.job.default_image)?;
+        let bundle = Self::resolve_bundle(session);
+        let image = Self::resolve_image(session, &self.config.job.default_image)?;
 
         Ok(ResolvedTask {
-            context,
+            bundle,
             image,
             env_vars: session.env_vars.clone(),
             secrets: session.secrets.clone(),
@@ -41,8 +41,8 @@ impl AppState {
     /// `MountItem::Bundle` (typically `mounts[0]`) carries the lowered git
     /// source; callers lower service repos before calling `create_session`
     /// (see `agent_queue::resolve_mount_spec`), so this is a straight read.
-    fn resolve_context(session: &Session) -> ResolvedBundle {
-        let bundle = session
+    fn resolve_bundle(session: &Session) -> Bundle {
+        session
             .mount_spec
             .mounts
             .iter()
@@ -50,38 +50,19 @@ impl AppState {
                 MountItem::Bundle { bundle, .. } => Some(bundle.clone()),
                 _ => None,
             })
-            .unwrap_or(Bundle::None);
-        ResolvedBundle {
-            bundle,
-            default_image: None,
-        }
+            .unwrap_or(Bundle::None)
     }
 
     fn resolve_image(
         session: &Session,
-        resolved: &ResolvedBundle,
         fallback_image: &str,
     ) -> Result<String, TaskResolutionError> {
-        let image_from = |value: Option<&String>| -> Result<Option<String>, TaskResolutionError> {
-            match value {
-                Some(image) => {
-                    let trimmed = image.trim();
-                    if trimmed.is_empty() {
-                        Err(TaskResolutionError::EmptyImage)
-                    } else {
-                        Ok(Some(trimmed.to_string()))
-                    }
-                }
-                None => Ok(None),
+        if let Some(image) = session.image.as_ref() {
+            let trimmed = image.trim();
+            if trimmed.is_empty() {
+                return Err(TaskResolutionError::EmptyImage);
             }
-        };
-
-        if let Some(image) = image_from(session.image.as_ref())? {
-            return Ok(image);
-        }
-
-        if let Some(image) = image_from(resolved.default_image.as_ref())? {
-            return Ok(image);
+            return Ok(trimmed.to_string());
         }
 
         let trimmed = fallback_image.trim();

@@ -418,7 +418,6 @@ mod tests {
             crate::app::Repository::new(
                 "https://github.com/octo/repo.git".to_string(),
                 Some("main".to_string()),
-                None,
             ),
         )
         .await?;
@@ -546,7 +545,6 @@ mod tests {
             crate::app::Repository::new(
                 "https://github.com/octo/repo.git".to_string(),
                 Some("main".to_string()),
-                None,
             ),
         )
         .await?;

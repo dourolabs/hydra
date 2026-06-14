@@ -414,11 +414,7 @@ mod tests {
         crate::test_utils::add_repository(
             &handles.state,
             hydra_common::RepoName::from_str("org/repo")?,
-            hydra_common::Repository::new(
-                "https://gitlab.com/org/repo.git".to_string(),
-                None,
-                None,
-            ),
+            hydra_common::Repository::new("https://gitlab.com/org/repo.git".to_string(), None),
         )
         .await?;
 
@@ -701,7 +697,6 @@ mod tests {
             hydra_common::RepoName::from_str("testowner/testrepo").unwrap(),
             hydra_common::Repository::new(
                 "https://github.com/testowner/testrepo.git".to_string(),
-                None,
                 None,
             ),
         )

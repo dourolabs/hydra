@@ -4,7 +4,6 @@ import type { MergePolicy } from "./MergePolicy";
 export type Repository = {
   remote_url: string;
   default_branch: string | null;
-  default_image: string | null;
   archived?: boolean;
   merge_policy?: MergePolicy | null;
 };

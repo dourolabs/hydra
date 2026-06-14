@@ -1555,7 +1555,7 @@ mod tests {
         let response = ListRepositoriesResponse::new(
             matches
                 .into_iter()
-                .map(|(name, url)| RepositoryRecord::new(name, Repository::new(url, None, None)))
+                .map(|(name, url)| RepositoryRecord::new(name, Repository::new(url, None)))
                 .collect(),
         );
         server.mock(move |when, then| {
@@ -3059,7 +3059,7 @@ mod tests {
         let remote_url = origin_remote_url(&repo_path)?;
         let repositories_response = ListRepositoriesResponse::new(vec![RepositoryRecord::new(
             sample_repo_name(),
-            Repository::new(remote_url, None, None),
+            Repository::new(remote_url, None),
         )]);
         let repositories_json = serde_json::to_string(&repositories_response)?;
 

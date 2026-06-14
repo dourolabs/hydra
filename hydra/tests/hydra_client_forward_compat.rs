@@ -1447,7 +1447,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
     let repo_config = Repository::new(
         "https://example.com/repo.git".to_string(),
         Some("main".to_string()),
-        None,
     );
     let repo_create = CreateRepositoryRequest::new(repo_name.clone(), repo_config.clone());
     let repo_update = UpdateRepositoryRequest::new(repo_config);
@@ -2067,8 +2066,7 @@ fn forward_repo_info(repo_name: &RepoName) -> Value {
         "name": repo_name,
         "repository": {
             "remote_url": "https://example.com/repo.git",
-            "default_branch": "main",
-            "default_image": "ghcr.io/dourolabs/hydra:main"
+            "default_branch": "main"
         },
         "sync": "on"
     })

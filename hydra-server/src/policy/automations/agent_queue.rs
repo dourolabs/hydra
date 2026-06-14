@@ -674,7 +674,6 @@ mod tests {
         let repository = Repository::new(
             "https://github.com/dourolabs/hydra.git".to_string(),
             Some("main".to_string()),
-            Some("repo-image".to_string()),
         );
 
         (repo_name, repository)
@@ -2192,11 +2191,11 @@ mod tests {
         // ServiceRepository round-trips through resolved_task → resolver →
         // GitRepository. The persisted `session.mount_spec` already carries
         // a fully-lowered url because agent_queue pre-resolves the mount_spec
-        // before calling `create_session`; `resolved.context.bundle` then
-        // mirrors that.
+        // before calling `create_session`; `resolved.bundle` then mirrors
+        // that.
         let _ = repo_name.clone();
         assert_eq!(
-            resolved.context.bundle,
+            resolved.bundle,
             Bundle::GitRepository {
                 url: "https://github.com/dourolabs/hydra.git".to_string(),
                 rev: default_branch,

@@ -167,7 +167,6 @@ struct RepositoryRow {
     version_number: i64,
     remote_url: String,
     default_branch: Option<String>,
-    default_image: Option<String>,
     archived: bool,
     merge_policy: Option<String>,
     actor: Option<String>,
@@ -825,14 +824,13 @@ impl SqliteStore {
 
         // Insert the new version with is_latest = 1
         sqlx::query(
-            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, is_latest)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)"
+            "INSERT INTO repositories_v2 (id, version_number, remote_url, default_branch, archived, merge_policy, actor, is_latest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)"
         )
         .bind(id)
         .bind(version_number)
         .bind(&repo.remote_url)
         .bind(repo.default_branch.as_deref())
-        .bind(repo.default_image.as_deref())
         .bind(repo.archived)
         .bind(&merge_policy_json)
         .bind(actor)
@@ -856,11 +854,7 @@ impl SqliteStore {
             })
             .transpose()?;
 
-        let mut repo = Repository::new(
-            row.remote_url.clone(),
-            row.default_branch.clone(),
-            row.default_image.clone(),
-        );
+        let mut repo = Repository::new(row.remote_url.clone(), row.default_branch.clone());
         repo.archived = row.archived;
         repo.merge_policy = merge_policy;
         Ok(repo)
@@ -2900,7 +2894,7 @@ impl ReadOnlyStore for SqliteStore {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let row = sqlx::query_as::<_, RepositoryRow>(
-            "SELECT id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, archived, merge_policy, actor, created_at, updated_at
              FROM repositories_v2
              WHERE id = ?1
              ORDER BY version_number DESC
@@ -2942,7 +2936,7 @@ impl ReadOnlyStore for SqliteStore {
             .as_deref()
             .map(Repository::normalize_remote_url);
         let rows = sqlx::query_as::<_, RepositoryRow>(
-            "SELECT r.id, r.version_number, r.remote_url, r.default_branch, r.default_image, r.archived, r.merge_policy, r.actor, r.created_at, r.updated_at
+            "SELECT r.id, r.version_number, r.remote_url, r.default_branch, r.archived, r.merge_policy, r.actor, r.created_at, r.updated_at
              FROM repositories_v2 r
              WHERE r.is_latest = 1
              ORDER BY r.id"
@@ -7097,7 +7091,6 @@ mod tests {
         Repository::new(
             "https://github.com/dourolabs/hydra".to_string(),
             Some("main".to_string()),
-            None,
         )
     }
 
@@ -7314,11 +7307,7 @@ mod tests {
         store
             .add_repository(
                 alpha.clone(),
-                Repository::new(
-                    "https://github.com/dourolabs/alpha.git".to_string(),
-                    None,
-                    None,
-                ),
+                Repository::new("https://github.com/dourolabs/alpha.git".to_string(), None),
                 &ActorRef::test(),
             )
             .await
@@ -7326,11 +7315,7 @@ mod tests {
         store
             .add_repository(
                 beta.clone(),
-                Repository::new(
-                    "https://github.com/dourolabs/beta.git".to_string(),
-                    None,
-                    None,
-                ),
+                Repository::new("https://github.com/dourolabs/beta.git".to_string(), None),
                 &ActorRef::test(),
             )
             .await
@@ -7338,7 +7323,7 @@ mod tests {
         store
             .add_repository(
                 gamma.clone(),
-                Repository::new("git@github.com:dourolabs/alpha".to_string(), None, None),
+                Repository::new("git@github.com:dourolabs/alpha".to_string(), None),
                 &ActorRef::test(),
             )
             .await

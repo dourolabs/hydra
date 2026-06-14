@@ -737,7 +737,7 @@ impl AppState {
 
         // Detect file:// URLs and construct bind mounts for Docker containers.
         // Rewrites the bundle URL in-place to the container-side mount path.
-        let bind_mounts = build_bind_mounts_for_local_repo(&mut resolved.context.bundle);
+        let bind_mounts = build_bind_mounts_for_local_repo(&mut resolved.bundle);
 
         match self
             .job_engine

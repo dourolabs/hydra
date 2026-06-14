@@ -101,7 +101,6 @@ export function RepositoriesSection({ createOpen, onCreateOpenChange }: Reposito
                 <th className={styles.colName}>Repository</th>
                 <th className={styles.colRemote}>Remote URL</th>
                 <th className={styles.colBranch}>Default branch</th>
-                <th className={styles.colImage}>Image</th>
                 <th className={styles.colPolicy}>Merge policy</th>
                 <th className={styles.colActions} aria-label="Actions" />
               </tr>
@@ -124,15 +123,6 @@ export function RepositoriesSection({ createOpen, onCreateOpenChange }: Reposito
                     <td className={styles.colBranch}>
                       {repo.repository.default_branch ? (
                         <span className={styles.mono}>{repo.repository.default_branch}</span>
-                      ) : (
-                        <span className={styles.dash}>—</span>
-                      )}
-                    </td>
-                    <td className={styles.colImage}>
-                      {repo.repository.default_image ? (
-                        <span className={styles.monoDim} title={repo.repository.default_image}>
-                          {repo.repository.default_image}
-                        </span>
                       ) : (
                         <span className={styles.dash}>—</span>
                       )}

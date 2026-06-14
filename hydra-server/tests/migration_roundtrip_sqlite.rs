@@ -212,6 +212,9 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
 
     rename_deleted_to_archived_post_migration_state(&pool).await?;
 
+    drop_repositories_default_image_post_migration_state(&pool).await?;
+    drop_repositories_default_image_migration_is_idempotent(&pool).await?;
+
     Ok(())
 }
 
@@ -4170,5 +4173,28 @@ async fn add_projects_session_settings_store_roundtrip(pool: &SqlitePool) -> Res
             default_project.item.session_settings,
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260723000000_drop_repositories_default_image. The per-repo default_image
+// override was never wired into image resolution at runtime — image is
+// resolved off `session.image` with a fallback to `config.job.default_image`,
+// and the only intended consumer (`ResolvedBundle.default_image`) was
+// hardcoded to `None`. Drop the column.
+// ---------------------------------------------------------------------------
+
+async fn drop_repositories_default_image_post_migration_state(pool: &SqlitePool) -> Result<()> {
+    if column_exists(pool, "repositories_v2", "default_image").await? {
+        bail!("expected `repositories_v2.default_image` column to be dropped post-rollforward");
+    }
+    Ok(())
+}
+
+async fn drop_repositories_default_image_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    sqlite_store::run_migrations(pool, None).await.context(
+        "re-apply sqlite migrations to confirm drop_repositories_default_image idempotency",
+    )?;
+    drop_repositories_default_image_post_migration_state(pool).await?;
     Ok(())
 }

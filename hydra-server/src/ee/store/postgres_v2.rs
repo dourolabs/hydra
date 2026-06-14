@@ -1054,15 +1054,14 @@ impl PostgresStoreV2 {
             .map_err(|e| StoreError::Internal(format!("failed to serialize merge_policy: {e}")))?;
 
         let query = format!(
-            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+            "INSERT INTO {TABLE_REPOSITORIES_V2} (id, version_number, remote_url, default_branch, archived, merge_policy, actor)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         );
         sqlx::query(&query)
             .bind(id)
             .bind(version_number)
             .bind(&repo.remote_url)
             .bind(repo.default_branch.as_deref())
-            .bind(repo.default_image.as_deref())
             .bind(repo.archived)
             .bind(&merge_policy_json)
             .bind(actor)
@@ -1084,11 +1083,7 @@ impl PostgresStoreV2 {
             })
             .transpose()?;
 
-        let mut repo = Repository::new(
-            row.remote_url.clone(),
-            row.default_branch.clone(),
-            row.default_image.clone(),
-        );
+        let mut repo = Repository::new(row.remote_url.clone(), row.default_branch.clone());
         repo.archived = row.archived;
         repo.merge_policy = merge_policy;
         Ok(repo)
@@ -2068,7 +2063,6 @@ struct RepositoryRow {
     version_number: i64,
     remote_url: String,
     default_branch: Option<String>,
-    default_image: Option<String>,
     archived: bool,
     merge_policy: Option<Value>,
     actor: Option<Value>,
@@ -2642,7 +2636,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
     ) -> Result<Versioned<Repository>, StoreError> {
         let name_str = name.as_str();
         let query = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, archived, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE id = $1
              ORDER BY is_latest DESC, version_number DESC
@@ -2684,7 +2678,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
             .as_deref()
             .map(Repository::normalize_remote_url);
         let sql = format!(
-            "SELECT id, version_number, remote_url, default_branch, default_image, archived, merge_policy, actor, created_at, updated_at
+            "SELECT id, version_number, remote_url, default_branch, archived, merge_policy, actor, created_at, updated_at
              FROM {TABLE_REPOSITORIES_V2}
              WHERE is_latest = true
              ORDER BY id"
@@ -6958,7 +6952,6 @@ mod tests {
         Repository::new(
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
-            Some("image:latest".to_string()),
         )
     }
 
@@ -7191,11 +7184,7 @@ mod tests {
         store
             .add_repository(
                 alpha.clone(),
-                Repository::new(
-                    "https://github.com/dourolabs/alpha.git".to_string(),
-                    None,
-                    None,
-                ),
+                Repository::new("https://github.com/dourolabs/alpha.git".to_string(), None),
                 &ActorRef::test(),
             )
             .await
@@ -7203,11 +7192,7 @@ mod tests {
         store
             .add_repository(
                 beta.clone(),
-                Repository::new(
-                    "https://github.com/dourolabs/beta.git".to_string(),
-                    None,
-                    None,
-                ),
+                Repository::new("https://github.com/dourolabs/beta.git".to_string(), None),
                 &ActorRef::test(),
             )
             .await
@@ -7215,7 +7200,7 @@ mod tests {
         store
             .add_repository(
                 gamma.clone(),
-                Repository::new("git@github.com:dourolabs/alpha".to_string(), None, None),
+                Repository::new("git@github.com:dourolabs/alpha".to_string(), None),
                 &ActorRef::test(),
             )
             .await
@@ -7270,7 +7255,7 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         let mut updated = config.clone();
-        updated.default_image = Some("other:latest".to_string());
+        updated.default_branch = Some("release".to_string());
         store
             .update_repository(name.clone(), updated.clone(), &ActorRef::test())
             .await

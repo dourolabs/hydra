@@ -99,9 +99,6 @@ fn normalize_config(mut config: Repository) -> Result<Repository, ApiError> {
     config.default_branch = config
         .default_branch
         .and_then(|value| non_empty(&value).map(str::to_owned));
-    config.default_image = config
-        .default_image
-        .and_then(|value| non_empty(&value).map(str::to_owned));
 
     Ok(config)
 }

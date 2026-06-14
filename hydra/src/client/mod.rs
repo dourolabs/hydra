@@ -3457,7 +3457,6 @@ mod tests {
             Repository::new(
                 "https://example.com/repo.git".to_string(),
                 Some("main".to_string()),
-                Some("ghcr.io/example/repo:main".to_string()),
             ),
         )];
         let payload = ListRepositoriesResponse::new(repositories);
@@ -3493,7 +3492,6 @@ mod tests {
             Repository::new(
                 "https://example.com/new-repo.git".to_string(),
                 Some("main".to_string()),
-                Some("ghcr.io/example/new-repo:main".to_string()),
             ),
         );
         let response_body = UpsertRepositoryResponse::new(RepositoryRecord::new(
@@ -3505,8 +3503,7 @@ mod tests {
             when.method(POST).path("/v1/repositories").json_body(json!({
                 "name": "dourolabs/new-repo",
                 "remote_url": "https://example.com/new-repo.git",
-                "default_branch": "main",
-                "default_image": "ghcr.io/example/new-repo:main"
+                "default_branch": "main"
             }));
             then.status(200).json_body_obj(&response_body);
         });
@@ -3519,8 +3516,8 @@ mod tests {
         mock.assert();
         assert_eq!(response.repository.name, repo_name);
         assert_eq!(
-            response.repository.repository.default_image.as_deref(),
-            Some("ghcr.io/example/new-repo:main")
+            response.repository.repository.default_branch.as_deref(),
+            Some("main")
         );
 
         Ok(())
@@ -3533,7 +3530,6 @@ mod tests {
         let request = UpdateRepositoryRequest::new(Repository::new(
             "https://example.com/updated.git".to_string(),
             None,
-            None,
         ));
 
         let mock = server.mock(|when, then| {
@@ -3541,8 +3537,7 @@ mod tests {
                 .path("/v1/repositories/dourolabs/missing")
                 .json_body(json!({
                     "remote_url": "https://example.com/updated.git",
-                    "default_branch": null,
-                    "default_image": null
+                    "default_branch": null
                 }));
             then.status(404);
         });

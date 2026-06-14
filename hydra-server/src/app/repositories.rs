@@ -180,7 +180,7 @@ mod tests {
     }
 
     fn repo_with_policy(policy: Option<MergePolicy>) -> Repository {
-        let mut repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
+        let mut repo = Repository::new("https://example.com/repo.git".to_string(), None);
         repo.merge_policy = policy;
         repo
     }

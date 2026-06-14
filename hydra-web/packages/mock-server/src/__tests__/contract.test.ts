@@ -603,7 +603,6 @@ describe("Repositories", () => {
       name: "test-org/test-repo",
       remote_url: "https://github.com/test-org/test-repo.git",
       default_branch: "main",
-      default_image: "node:20-slim",
     };
 
     // Create
@@ -622,7 +621,6 @@ describe("Repositories", () => {
     const updateReq: UpdateRepositoryRequest = {
       remote_url: "https://github.com/test-org/test-repo-v2.git",
       default_branch: "develop",
-      default_image: "node:22-slim",
     };
     const updated = await client.updateRepository("test-org/test-repo", updateReq);
     expect(updated.repository.repository.remote_url).toBe(

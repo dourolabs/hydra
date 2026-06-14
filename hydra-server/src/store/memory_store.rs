@@ -3751,7 +3751,6 @@ mod tests {
         Repository::new(
             "https://example.com/repo.git".to_string(),
             Some("main".to_string()),
-            Some("image:latest".to_string()),
         )
     }
 
@@ -4098,11 +4097,7 @@ mod tests {
         store
             .add_repository(
                 alpha.clone(),
-                Repository::new(
-                    "https://github.com/dourolabs/alpha.git".to_string(),
-                    None,
-                    None,
-                ),
+                Repository::new("https://github.com/dourolabs/alpha.git".to_string(), None),
                 &ActorRef::test(),
             )
             .await
@@ -4110,11 +4105,7 @@ mod tests {
         store
             .add_repository(
                 beta.clone(),
-                Repository::new(
-                    "https://github.com/dourolabs/beta.git".to_string(),
-                    None,
-                    None,
-                ),
+                Repository::new("https://github.com/dourolabs/beta.git".to_string(), None),
                 &ActorRef::test(),
             )
             .await
@@ -4122,7 +4113,7 @@ mod tests {
         store
             .add_repository(
                 gamma.clone(),
-                Repository::new("git@github.com:dourolabs/alpha".to_string(), None, None),
+                Repository::new("git@github.com:dourolabs/alpha".to_string(), None),
                 &ActorRef::test(),
             )
             .await

@@ -46,7 +46,6 @@ function parseMergePolicy(text: string): ParsedPolicy {
 export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModalProps) {
   const [remoteUrl, setRemoteUrl] = useState(repo.repository.remote_url);
   const [defaultBranch, setDefaultBranch] = useState(repo.repository.default_branch ?? "");
-  const [defaultImage, setDefaultImage] = useState(repo.repository.default_image ?? "");
   const [mergePolicyText, setMergePolicyText] = useState(() =>
     initialMergePolicyText(repo.repository.merge_policy),
   );
@@ -72,10 +71,9 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
     mutation.mutate({
       remote_url: remoteUrl.trim(),
       default_branch: defaultBranch.trim() || null,
-      default_image: defaultImage.trim() || null,
       merge_policy: parsedPolicy.value,
     });
-  }, [remoteUrl, defaultBranch, defaultImage, parsedPolicy.value, isValid, mutation]);
+  }, [remoteUrl, defaultBranch, parsedPolicy.value, isValid, mutation]);
 
   const handleClearPolicy = useCallback(() => {
     setMergePolicyText("");
@@ -96,12 +94,6 @@ export function RepositoryEditModal({ open, repo, onClose }: RepositoryEditModal
           placeholder="main"
           value={defaultBranch}
           onChange={(e) => setDefaultBranch(e.target.value)}
-        />
-        <Input
-          label="Default Image"
-          placeholder="ghcr.io/org/repo:latest"
-          value={defaultImage}
-          onChange={(e) => setDefaultImage(e.target.value)}
         />
         <div className={styles.policyField}>
           <div className={styles.policyHeader}>
