@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import type {
+  ActorRef,
+  Comment,
   DocumentSummaryRecord,
   EntityEventData,
   IssueSummaryRecord,
+  ListCommentsResponse,
   ListDocumentsResponse,
   ListIssuesResponse,
   ListSessionsResponse,
@@ -35,6 +38,7 @@ const ENTITY_EVENT_TYPES = [
   "label_deleted",
   "conversation_created",
   "conversation_updated",
+  "comment_created",
 ] as const;
 
 const MAX_BACKOFF_MS = 15_000;
@@ -629,6 +633,16 @@ function invalidatePageAndTreeCaches(qc: QueryClient) {
 }
 
 /**
+ * Structural equality on the small `ActorRef` union — used by the comment
+ * SSE handler to spot the issuing tab's optimistic placeholder so the real
+ * server-sequenced comment replaces it instead of duplicating. JSON shape
+ * is the ts-rs externally-tagged wire form, so stringify is sufficient.
+ */
+function actorRefEquals(a: ActorRef, b: ActorRef): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
  * SSE hook that connects to the BFF /api/v1/events endpoint, listens for
  * entity mutation events, and updates React Query caches directly from the
  * entity data included in the event payload to avoid unnecessary HTTP
@@ -666,6 +680,43 @@ export function useSSE(): SSEConnectionState {
       // state blob is fetched separately via `get_session_state`); every
       // other entity type requires `entity` to be present.
       if (entity == null && entity_type !== "session_state") return;
+
+      if (entity_type === "comment" || eventType === "comment_created") {
+        // `entity_id` is the issue_id (a comment's identity is its issue +
+        // per-issue monotonic sequence — we address by issue). `entity` is
+        // the wire Comment JSON.
+        const comment = entity as unknown as Comment;
+        queryClient.setQueryData<InfiniteData<ListCommentsResponse, bigint | undefined>>(
+          ["issues", entity_id, "comments"],
+          (old) => {
+            // Do not create a cache where there isn't one — the no-cache
+            // path lets useIssueComments fetch from scratch when the user
+            // opens the issue.
+            if (!old) return old;
+            const firstPage = old.pages[0];
+            if (!firstPage) return old;
+            // Dedup by sequence — the issuing tab's optimistic placeholder
+            // uses a guessed `maxSeq+1` that often collides with the real
+            // server sequence on first comment.
+            if (firstPage.comments.some((c) => c.sequence === comment.sequence)) {
+              return old;
+            }
+            // Optimistic→real handoff: the issuing tab inserted a placeholder
+            // with the same body and actor before the server assigned a real
+            // sequence. Drop any matching placeholder so the real comment
+            // replaces it cleanly without duplication.
+            const dedupedFirst = firstPage.comments.filter(
+              (c) => !(actorRefEquals(c.actor, comment.actor) && c.body === comment.body),
+            );
+            const newFirstPage: ListCommentsResponse = {
+              ...firstPage,
+              comments: [comment, ...dedupedFirst],
+            };
+            return { ...old, pages: [newFirstPage, ...old.pages.slice(1)] };
+          },
+        );
+        return;
+      }
 
       if (entity_type === "issue" || eventType.startsWith("issue_")) {
         if (eventType === "issue_deleted") {
