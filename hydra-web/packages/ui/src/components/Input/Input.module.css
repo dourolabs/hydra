@@ -55,7 +55,7 @@
 
 @media (max-width: 768px) {
   .input {
-    font-size: 16px;
+    font-size: var(--t-input);
     height: 32px;
   }
 }

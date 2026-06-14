@@ -106,6 +106,6 @@
 
   /* Prevent iOS Safari from auto-zooming on input focus. */
   .input {
-    font-size: 16px;
+    font-size: var(--t-input);
   }
 }

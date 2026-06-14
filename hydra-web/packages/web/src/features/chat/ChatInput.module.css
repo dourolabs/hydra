@@ -121,6 +121,6 @@
 
   /* iOS Safari zooms any focused textarea whose computed font-size is <16px. */
   .textarea {
-    font-size: 16px;
+    font-size: var(--t-input);
   }
 }

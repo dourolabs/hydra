@@ -250,6 +250,6 @@
      font-size < 16px. Bump the search field on mobile so the picker
      doesn't zoom on open (autoFocus) or on tap. */
   .searchInput {
-    font-size: 16px;
+    font-size: var(--t-input);
   }
 }

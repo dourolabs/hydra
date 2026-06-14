@@ -48,7 +48,7 @@
   outline: 0;
   color: var(--fg-0);
   font-family: var(--f-sans);
-  font-size: 16px;
+  font-size: var(--t-input);
   padding: 0;
   min-width: 0;
 }
