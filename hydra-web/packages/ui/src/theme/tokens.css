@@ -97,6 +97,19 @@
   --c-violet: oklch(0.74 0.16 290);
   --c-violet-soft: oklch(0.74 0.16 290 / 0.18);
 
+  /* ----- Issue-type chip colors -----
+     Dedicated palette for the TypeChip component (task/bug/feature/
+     chore/merge-request/review-request). Currently aliases existing
+     status/accent tokens — the visual values match those used before
+     the decoupling — but having separate names means status recolors
+     don't ripple into type chips and vice versa. */
+  --type-task: var(--s-open);
+  --type-bug: var(--s-failed);
+  --type-feature: var(--acc);
+  --type-chore: var(--fg-2);
+  --type-merge-request: var(--c-violet);
+  --type-review-request: var(--s-progress);
+
   /* ----- Activity-line categories -----
      Color-codes what the agent is currently doing in the chat activity
      indicator. Shared status colors (`--s-progress`, `--s-closed`,
@@ -163,8 +176,8 @@
   --color-status-unknown-bg: color-mix(in srgb, var(--s-neutral) 12%, transparent);
   --color-status-neutral-bg: color-mix(in srgb, var(--s-neutral) 12%, transparent);
 
-  --color-type-merge-request: var(--c-violet);
-  --color-type-merge-request-bg: color-mix(in srgb, var(--c-violet) 12%, transparent);
+  --color-type-merge-request: var(--type-merge-request);
+  --color-type-merge-request-bg: color-mix(in srgb, var(--type-merge-request) 12%, transparent);
   --color-archive-bg: color-mix(in srgb, var(--acc-dim) 30%, var(--bg-0));
   --color-danger: var(--s-failed);
   --color-danger-bright: oklch(0.78 0.18 28);
