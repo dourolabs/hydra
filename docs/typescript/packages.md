@@ -58,7 +58,7 @@ Two rules, in order:
 
 Existing generic components — full list in `packages/ui/src/index.ts`; new generic components join this list:
 
-`Avatar`, `Badge`, `Button`, `Chip`, `CopyButton`, `DiffViewer`, `ErrorBoundary`, `FlowPill`, `HydraMark`, `Icons`, `Input`, `Kbd`, `LogViewer`, `MarkdownViewer`, `Modal`, `Panel`, `Picker`, `PreviewCard`, `Select`, `SessionStatusIndicator`, `Spinner`, `StatusDot`, `Tabs`, `Textarea`, `Toast`, `Tooltip`, `TreeView`, `TypeChip`
+`Avatar`, `Badge`, `Button` (enforces the mobile 44px touch-target floor; reach for it before a raw `<button>`), `Chip`, `CopyButton`, `DiffViewer`, `ErrorBoundary`, `FlowPill`, `HydraMark`, `Icons`, `Input`, `Kbd`, `LogViewer`, `MarkdownViewer`, `Modal`, `Panel`, `Picker`, `PreviewCard`, `Select`, `SessionStatusIndicator`, `Spinner`, `StatusDot`, `Tabs`, `Textarea`, `Toast`, `Tooltip`, `TreeView`, `TypeChip`
 
 App-specific extraction:
 
@@ -71,6 +71,15 @@ export function FooPage() { return <FooHeader foo={foo} />; }
 import { FooHeader } from "../features/foo/FooHeader";
 export function FooPage() { return <FooHeader foo={foo} />; }
 ```
+
+## Mobile-aware app components
+
+Two non-generic components encode load-bearing mobile patterns. Reach for them rather than reimplementing:
+
+| Component | Location | Purpose |
+|---|---|---|
+| `StatusChip` | `packages/web/src/features/projects/StatusChip.tsx` | Renders an issue status as icon (phase identity) + label, with the project-defined color used for within-phase differentiation. Do not fork or render bare status dots — pickers and other surfaces depend on the chip's phase metadata. |
+| `CollapsibleSearch` | `packages/web/src/components/CollapsibleSearch/CollapsibleSearch.tsx` | Mobile-aware search input: renders as a magnifier icon at ≤768px and expands inline on tap. Use across list-page toolbars (Issues, Patches, Sessions, Chat) — toolbars that hard-render `<input>` cost a full row on mobile. |
 
 ## Parameters with multiple value spaces must be split
 
