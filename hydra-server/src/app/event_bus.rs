@@ -3322,7 +3322,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_comment_emits_comment_created() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
 
@@ -3367,7 +3367,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_comment_failure_does_not_emit() {
-        let bus = Arc::new(EventBus::new());
+        let bus = Arc::new(EventBus::default());
         let inner: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let store = StoreWithEvents::new(inner, bus.clone());
         let mut rx = bus.subscribe();
