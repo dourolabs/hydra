@@ -97,8 +97,20 @@ impl Automation for ApplyStatusOnEnterAutomation {
             assign_to,
             attach_form,
             clear_assignee,
+            assign_to_creator,
             ..
         } = on_enter;
+
+        // Resolve the creator-as-user principal once when needed so the
+        // idempotency check and the apply step compare/write the same
+        // value.
+        let creator_principal = if assign_to_creator {
+            Some(hydra_common::principal::Principal::User {
+                name: new.creator.clone().into(),
+            })
+        } else {
+            None
+        };
 
         // Resolve the target form (if any) before mutating the issue.
         //
@@ -148,12 +160,16 @@ impl Automation for ApplyStatusOnEnterAutomation {
         // makes a no-op the natural outcome of re-entering the same key
         // with the same assignee/form already in place.
         //
-        // `assign_to` and `clear_assignee` are mutually exclusive at the
-        // wire layer (rejected by [`StatusOnEnter::validate`]); the
-        // server may still encounter a contradictory row if one slipped
-        // in pre-validation, in which case `assign_to` wins by virtue
-        // of running first below.
+        // `assign_to`, `clear_assignee`, and `assign_to_creator` are
+        // pairwise mutually exclusive at the wire layer (rejected by
+        // [`StatusOnEnter::validate`]); the server may still encounter a
+        // contradictory row if one slipped in pre-validation, in which
+        // case `assign_to` wins, then `assign_to_creator`, then
+        // `clear_assignee` — matching the precedence in the apply step
+        // below.
         let assignee_changes = if let Some(principal) = assign_to.as_ref() {
+            Some(principal) != new.assignee.as_ref()
+        } else if let Some(principal) = creator_principal.as_ref() {
             Some(principal) != new.assignee.as_ref()
         } else if clear_assignee {
             new.assignee.is_some()
@@ -169,6 +185,8 @@ impl Automation for ApplyStatusOnEnterAutomation {
 
         let mut updated = new.clone();
         if let Some(principal) = assign_to {
+            updated.assignee = Some(principal);
+        } else if let Some(principal) = creator_principal {
             updated.assignee = Some(principal);
         } else if clear_assignee {
             updated.assignee = None;
@@ -480,6 +498,163 @@ mod tests {
             "clear_assignee should drop the existing assignee; got {:?}",
             stored.assignee
         );
+    }
+
+    #[tokio::test]
+    async fn assign_to_creator_assigns_to_issue_creator() {
+        let handles = test_utils::test_state_handles();
+        test_utils::add_user_with_name(&handles, "alice").await;
+
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.assign_to_creator = true;
+        let project_id = build_engineering_project(&handles, on_enter).await;
+
+        // Override the default `worker` creator with `alice` so the test
+        // shows the resolution actually pulls the creator off the issue.
+        let mut issue = make_issue(status("open"));
+        issue.project_id = project_id;
+        issue.creator = Username::from("alice");
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut transitioned = issue.clone();
+        transitioned.status = StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&issue_id, transitioned.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = issue_updated_event(issue_id.clone(), issue, transitioned);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let stored = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .item;
+        match stored.assignee {
+            Some(Principal::User { ref name }) => assert_eq!(name.as_str(), "alice"),
+            other => panic!("expected user assignee `alice`; got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reentry_with_matching_creator_assignee_is_noop() {
+        let handles = test_utils::test_state_handles();
+        test_utils::add_user_with_name(&handles, "alice").await;
+
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.assign_to_creator = true;
+        let project_id = build_engineering_project(&handles, on_enter).await;
+
+        let mut issue = make_issue(status("open"));
+        issue.project_id = project_id;
+        issue.creator = Username::from("alice");
+        // Pre-assign to the creator-as-user so re-entry produces no
+        // observable state change.
+        issue.assignee = Some(Principal::User {
+            name: hydra_common::api::v1::users::Username::try_new("alice").unwrap(),
+        });
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut transitioned = issue.clone();
+        transitioned.status = StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&issue_id, transitioned.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+        let version_before_automation = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .version;
+
+        let event = issue_updated_event(issue_id.clone(), issue, transitioned);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let version_after = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .version;
+        assert_eq!(
+            version_after, version_before_automation,
+            "re-entry with creator already assigned should be idempotent"
+        );
+    }
+
+    #[tokio::test]
+    async fn assign_to_creator_overwrites_existing_assignee() {
+        let handles = test_utils::test_state_handles();
+        test_utils::add_user_with_name(&handles, "alice").await;
+        test_utils::add_agent_with_name(&handles, "reviewer").await;
+        let agent = hydra_common::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.assign_to_creator = true;
+        let project_id = build_engineering_project(&handles, on_enter).await;
+
+        let mut issue = make_issue(status("open"));
+        issue.project_id = project_id;
+        issue.creator = Username::from("alice");
+        issue.assignee = Some(Principal::Agent { name: agent });
+        let (issue_id, _) = handles
+            .store
+            .add_issue(issue.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let mut transitioned = issue.clone();
+        transitioned.status = StatusKey::try_new("in-review").unwrap();
+        handles
+            .store
+            .update_issue(&issue_id, transitioned.clone(), &ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = issue_updated_event(issue_id.clone(), issue, transitioned);
+        let automation = ApplyStatusOnEnterAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &handles.state,
+            store: handles.store.as_ref(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let stored = handles
+            .store
+            .get_issue(&issue_id, false)
+            .await
+            .unwrap()
+            .item;
+        match stored.assignee {
+            Some(Principal::User { ref name }) => assert_eq!(name.as_str(), "alice"),
+            other => panic!("expected user assignee `alice`; got {other:?}"),
+        }
     }
 
     /// Re-entering a status with `clear_assignee = true` when the issue

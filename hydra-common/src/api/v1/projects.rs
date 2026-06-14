@@ -141,16 +141,19 @@ define_key_newtype!(
 /// `attach_form` is set, `issue.form` is replaced wholesale with that
 /// form (an issue holds at most one form at a time); when
 /// `clear_assignee` is `true`, `issue.assignee` is unset; when
+/// `assign_to_creator` is `true`, `issue.assignee` is set to
+/// `Principal::User { name: issue.creator }` at status-entry time; when
 /// `teardown_work` is `true`, this status is marked as a "teardown" status
 /// — entering it kills any `Created`/`Pending`/`Running` sessions attached
 /// to the issue AND closes any non-`Closed` conversations spawned from
 /// the issue. The teardown effects also fire unconditionally on issue
 /// deletion (regardless of this flag), but the flag is the canonical
 /// "this is a teardown status" marker that gates the status-entry path.
-/// `assign_to` and `clear_assignee` are mutually exclusive — set both
-/// and [`StatusOnEnter::validate`] rejects the config; `teardown_work`
-/// is independent of either. `None` (or `false`) on a field leaves the
-/// corresponding field untouched.
+/// `assign_to`, `clear_assignee`, and `assign_to_creator` are pairwise
+/// mutually exclusive — set any two and [`StatusOnEnter::validate`]
+/// rejects the config; `teardown_work` is independent of the trio.
+/// `None` (or `false`) on a field leaves the corresponding field
+/// untouched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -162,6 +165,8 @@ pub struct StatusOnEnter {
     pub attach_form: Option<DocumentPath>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub clear_assignee: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub assign_to_creator: bool,
     #[serde(
         default,
         alias = "kill_sessions",
@@ -176,16 +181,26 @@ impl StatusOnEnter {
             assign_to,
             attach_form,
             clear_assignee: false,
+            assign_to_creator: false,
             teardown_work: false,
         }
     }
 
-    /// Reject configurations that contradict themselves. Today the only
-    /// rule: `assign_to` (set the assignee to X) and `clear_assignee`
-    /// (unset the assignee) cannot both be set.
+    /// Reject configurations that contradict themselves: `assign_to`,
+    /// `clear_assignee`, and `assign_to_creator` are pairwise mutually
+    /// exclusive — they all target `issue.assignee` and would race each
+    /// other at apply-time.
     pub fn validate(&self) -> Result<(), String> {
         if self.clear_assignee && self.assign_to.is_some() {
             return Err("on_enter cannot set both assign_to and clear_assignee".to_string());
+        }
+        if self.assign_to_creator && self.assign_to.is_some() {
+            return Err("on_enter cannot set both assign_to and assign_to_creator".to_string());
+        }
+        if self.assign_to_creator && self.clear_assignee {
+            return Err(
+                "on_enter cannot set both clear_assignee and assign_to_creator".to_string(),
+            );
         }
         Ok(())
     }
@@ -769,6 +784,72 @@ mod tests {
         let legacy = serde_json::json!({});
         let parsed: StatusOnEnter = serde_json::from_value(legacy).unwrap();
         assert!(!parsed.clear_assignee);
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_assign_to_creator_alone() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.assign_to_creator = true;
+        assert!(on_enter.validate().is_ok());
+    }
+
+    #[test]
+    fn status_on_enter_validate_rejects_assign_to_creator_with_assign_to() {
+        let agent = crate::api::v1::agents::AgentName::try_new("reviewer").unwrap();
+        let mut on_enter = StatusOnEnter::new(Some(Principal::Agent { name: agent }), None);
+        on_enter.assign_to_creator = true;
+        let err = on_enter.validate().unwrap_err();
+        assert!(
+            err.contains("assign_to") && err.contains("assign_to_creator"),
+            "validation error must name both fields; got: {err}"
+        );
+    }
+
+    #[test]
+    fn status_on_enter_validate_rejects_assign_to_creator_with_clear_assignee() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.clear_assignee = true;
+        on_enter.assign_to_creator = true;
+        let err = on_enter.validate().unwrap_err();
+        assert!(
+            err.contains("clear_assignee") && err.contains("assign_to_creator"),
+            "validation error must name both fields; got: {err}"
+        );
+    }
+
+    #[test]
+    fn status_on_enter_omits_assign_to_creator_when_false() {
+        let on_enter = StatusOnEnter::new(None, None);
+        let json = serde_json::to_string(&on_enter).unwrap();
+        assert!(
+            !json.contains("assign_to_creator"),
+            "assign_to_creator should be skipped when false; got {json}"
+        );
+    }
+
+    #[test]
+    fn status_on_enter_round_trips_assign_to_creator_true() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.assign_to_creator = true;
+        let json = serde_json::to_string(&on_enter).unwrap();
+        assert!(json.contains("\"assign_to_creator\":true"));
+        let parsed: StatusOnEnter = serde_json::from_str(&json).unwrap();
+        assert!(parsed.assign_to_creator);
+    }
+
+    #[test]
+    fn status_on_enter_defaults_assign_to_creator_when_field_absent() {
+        let legacy = serde_json::json!({});
+        let parsed: StatusOnEnter = serde_json::from_value(legacy).unwrap();
+        assert!(!parsed.assign_to_creator);
+    }
+
+    #[test]
+    fn status_on_enter_validate_accepts_teardown_work_with_assign_to_creator() {
+        let mut on_enter = StatusOnEnter::new(None, None);
+        on_enter.assign_to_creator = true;
+        on_enter.teardown_work = true;
+        assert!(on_enter.validate().is_ok());
     }
 
     #[test]
