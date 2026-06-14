@@ -59,9 +59,22 @@ test.describe("Mobile list rows render at natural height @mobile:list-row-overla
       if (!mlist) return null;
       const rows = Array.from(mlist.children) as HTMLElement[];
       if (rows.length === 0) return null;
+      // The scroll container is the page-body wrapper (overflow-y: auto), not
+      // the mobile list itself. Walk up until we find an ancestor whose
+      // scrollHeight exceeds clientHeight — proving the list contents do
+      // overflow the viewport somewhere along the chain.
+      let scrolls = false;
+      let node: Element | null = mlist;
+      while (node) {
+        if (node.scrollHeight > node.clientHeight + 1) {
+          scrolls = true;
+          break;
+        }
+        node = node.parentElement;
+      }
       return {
         rowCount: rows.length,
-        scrolls: mlist.scrollHeight > mlist.clientHeight + 1,
+        scrolls,
         minRowHeight: Math.min(
           ...rows.map((r) => r.getBoundingClientRect().height),
         ),

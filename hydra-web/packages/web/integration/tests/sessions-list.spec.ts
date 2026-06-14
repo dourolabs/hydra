@@ -38,7 +38,7 @@ test.describe("Sessions list page @sessions:list", () => {
     expect(ids.some((id) => terminalIds.has(id))).toBe(true);
   });
 
-  test("bounds the first paint to PAGE_SIZE (≤ 50) and hides Load more when exhausted @sessions:list", async ({
+  test("bounds the first paint to PAGE_SIZE (≤ 50) and shows Load more when more sessions remain @sessions:list", async ({
     authenticatedPage: page,
   }) => {
     // `?scope=all` opts out of the Mine-as-default auto-seeded creator chip
@@ -51,13 +51,13 @@ test.describe("Sessions list page @sessions:list", () => {
 
     const rows = page.locator('[data-testid^="sessions-list-row-"]');
     const count = await rows.count();
-    // The seed dataset has < 50 sessions, so the first page should still
-    // contain all of them. PAGE_SIZE bound is enforced regardless.
+    // PAGE_SIZE bound: the first paint never exceeds 50 rows regardless of
+    // how many sessions the seed contains.
     expect(count).toBeLessThanOrEqual(50);
 
-    // With the small seed dataset, the server returns no next_cursor so
-    // the Load more button is not rendered.
-    await expect(page.getByTestId("sessions-load-more")).toHaveCount(0);
+    // The seed has more than 50 sessions, so the server returns a next_cursor
+    // and the Load more button is rendered.
+    await expect(page.getByTestId("sessions-load-more")).toBeVisible();
   });
 
   test("clicking a session row navigates to the universal session detail page @sessions:list", async ({

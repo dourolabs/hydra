@@ -32,7 +32,10 @@ test.describe("Patches @patches:view-detail @patches:navigate", () => {
   test("patches list Repo column links to the linked GitHub PR @patches:view-detail", async ({
     authenticatedPage: page,
   }) => {
-    await page.goto("/patches");
+    // Filter to the specific patch via the URL search param so the list
+    // shows p-seed00001 on the first page regardless of how many other
+    // patches the seed contains.
+    await page.goto("/patches?q=Add+OAuth2+provider+integration");
     await expect(page.getByRole("heading", { name: "Patches" })).toBeVisible();
 
     // p-seed00001 is linked to acme/web-app#142.

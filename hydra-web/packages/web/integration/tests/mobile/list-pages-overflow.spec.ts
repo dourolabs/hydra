@@ -119,13 +119,25 @@ for (const viewportWidth of VIEWPORT_WIDTHS) {
 
         // 3. Catch elements whose bounding box extends past the viewport even
         //    when their parent has overflow:hidden/auto/scroll masking it.
-        //    Skip the sidebar drawer (off-screen by design when hidden).
+        //    Skip the sidebar drawer (off-screen by design when hidden) and
+        //    descendants of horizontally-scrollable containers (e.g. the
+        //    mobile board's column rail) which intentionally extend past
+        //    the viewport behind an overflow-x: auto scroll box.
         const offenders = await page.evaluate((vw: number) => {
           const list: { sel: string; right: number; w: number }[] = [];
           const drawer = document.querySelector('[class*="_sidebarSlot_"]');
+          const hScrollContainers = Array.from(
+            document.querySelectorAll<HTMLElement>("*"),
+          ).filter((el) => {
+            const ox = getComputedStyle(el).overflowX;
+            return (
+              (ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth
+            );
+          });
           const all = document.querySelectorAll("*");
           for (const el of all) {
             if (drawer && (el === drawer || drawer.contains(el))) continue;
+            if (hScrollContainers.some((c) => c !== el && c.contains(el))) continue;
             const r = (el as HTMLElement).getBoundingClientRect();
             if (r.width === 0 && r.height === 0) continue;
             if (r.right > vw + 1) {
