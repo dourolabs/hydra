@@ -1,12 +1,12 @@
 .composer {
   display: flex;
   flex-direction: column;
-  padding: 14px max(28px, var(--safe-area-x));
-  /* Reserve the OS home-indicator inset below the actions row; collapses to
-     18px on devices without a bottom safe area. Pairs with sticky positioning
+  padding: 10px max(28px, var(--safe-area-x));
+  /* Reserve the OS home-indicator inset below the textarea; collapses to
+     14px on devices without a bottom safe area. Pairs with sticky positioning
      so the composer rides any viewport-resize that the soft keyboard
      triggers (see interactive-widget=resizes-content in index.html). */
-  padding-bottom: max(18px, var(--safe-area-bottom));
+  padding-bottom: max(14px, var(--safe-area-bottom));
   border-top: 1px solid var(--line);
   background: var(--bg-0);
   flex-shrink: 0;
@@ -22,9 +22,6 @@
   max-width: 760px;
   width: 100%;
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .textareaWrapper {
@@ -32,50 +29,28 @@
   width: 100%;
 }
 
-.resizeHandle {
-  position: absolute;
-  top: -7px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 56px;
-  height: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: ns-resize;
-  touch-action: none;
-  user-select: none;
-  z-index: 1;
-}
-
-.resizeHandle::before {
-  content: "";
-  display: block;
-  width: 36px;
-  height: 4px;
-  border-radius: var(--radius-xs);
-  background: var(--line-strong);
-  transition: background var(--tx-fast);
-}
-
-.resizeHandle:hover::before,
-.resizeHandle:active::before {
-  background: var(--acc);
-}
-
 .textarea {
   width: 100%;
   resize: none;
-  min-height: 56px;
+  display: block;
+  /* MIN matches MIN_HEIGHT_DESKTOP_PX in ChatInput.tsx. Sized to comfortably
+     fit a 28px Button.iconOnly + breathing room on desktop. The mobile
+     breakpoint below bumps both min-height and right padding to fit the
+     44×44 mobile touch-floor button. */
+  min-height: 36px;
   max-height: 480px;
   background: var(--bg-2);
   color: var(--fg-0);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
-  padding: 9px 12px;
+  /* Right padding reserves room for the absolute-positioned Send button so
+     typed text never slides underneath it (28px button + 6px corner + 6px
+     gap). */
+  padding: 8px 40px 8px 12px;
   font-family: var(--f-sans);
   font-size: var(--t-sm);
   line-height: 1.5;
+  overflow-y: auto;
   transition: border-color var(--tx-fast);
 }
 
@@ -97,30 +72,27 @@
   cursor: not-allowed;
 }
 
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.actionsSpacer {
-  flex: 1;
-}
-
-.hint {
-  font-family: var(--f-mono);
-  font-size: var(--t-xxs);
-  color: var(--fg-3);
+/* iMessage-style Send button positioned in the textarea's bottom-right
+   corner. Size is inherited from `Button.iconOnly` (28×28 desktop, 44×44
+   mobile via the touch-target floor) — only position is set here. */
+.sendButton {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
 }
 
 @media (max-width: 768px) {
   .composer {
-    padding: 12px max(16px, var(--safe-area-x));
-    padding-bottom: max(14px, var(--safe-area-bottom));
+    padding: 8px max(16px, var(--safe-area-x));
+    padding-bottom: max(12px, var(--safe-area-bottom));
   }
 
   /* iOS Safari zooms any focused textarea whose computed font-size is <16px. */
   .textarea {
     font-size: var(--t-input);
+    /* Bump min-height + right padding to fit Button.iconOnly's 44×44 mobile
+       touch-floor (MIN matches MIN_HEIGHT_MOBILE_PX in ChatInput.tsx). */
+    min-height: 52px;
+    padding: 8px 56px 8px 12px;
   }
 }

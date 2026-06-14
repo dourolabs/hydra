@@ -44,6 +44,15 @@
   border-radius: 1px;
 }
 
+/* Trailing-action slot flushes right so callers can colocate a button (e.g.
+   End chat) inside the same row as the tabs. */
+.trailing {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  padding-left: 8px;
+}
+
 /* At very narrow viewports (≤400px) four uppercase, letter-spaced tabs in the
    issue-detail bar (Overview/Related/Activity/Details) don't fit at the
    desktop padding values — the bar's intrinsic width pushes the AppLayout

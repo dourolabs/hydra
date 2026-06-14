@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import styles from "./MobileTabBar.module.css";
 
 export interface MobileTabBarItem {
@@ -11,6 +12,10 @@ interface MobileTabBarProps {
   onChange: (key: string) => void;
   testIdPrefix?: string;
   className?: string;
+  // Optional trailing element rendered flush-right inside the bar (e.g. an
+  // End chat button). Sits in the same row as the tabs so callers don't pay
+  // an extra row of vertical chrome on mobile.
+  trailingAction?: ReactNode;
 }
 
 export function MobileTabBar({
@@ -19,6 +24,7 @@ export function MobileTabBar({
   onChange,
   testIdPrefix = "mobile-tab-",
   className,
+  trailingAction,
 }: MobileTabBarProps) {
   return (
     <div className={className ? `${styles.bar} ${className}` : styles.bar} role="tablist">
@@ -38,6 +44,7 @@ export function MobileTabBar({
           </button>
         );
       })}
+      {trailingAction && <div className={styles.trailing}>{trailingAction}</div>}
     </div>
   );
 }
