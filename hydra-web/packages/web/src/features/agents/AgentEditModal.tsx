@@ -1,9 +1,13 @@
 import { useState, useCallback } from "react";
 import { Button, Modal, Input, Textarea } from "@hydra/ui";
-import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
+import type { AgentRecord, SessionSettings, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
 import { SecretsSelector } from "./SecretsSelector";
+import {
+  AgentSessionSettingsFields,
+  collapseAgentSessionSettings,
+} from "./AgentSessionSettingsFields";
 import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./AgentsSection.module.css";
 
@@ -34,6 +38,9 @@ export function AgentEditModal({
   );
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>(
     agent.secrets ?? [],
+  );
+  const [sessionSettings, setSessionSettings] = useState<SessionSettings>(
+    () => agent.session_settings ?? {},
   );
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<UpsertAgentRequest, unknown>({
@@ -67,8 +74,9 @@ export function AgentEditModal({
       max_simultaneous_headless: parseInt(maxSimultaneousHeadless, 10) || 1,
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
+      session_settings: collapseAgentSessionSettings(sessionSettings),
     });
-  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneousInteractive, maxSimultaneousHeadless, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneousInteractive, maxSimultaneousHeadless, isDefaultConversationAgent, selectedSecrets, sessionSettings, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${agent.name}`}>
@@ -126,6 +134,11 @@ export function AgentEditModal({
         <SecretsSelector
           selected={selectedSecrets}
           onChange={setSelectedSecrets}
+        />
+        <AgentSessionSettingsFields
+          testIdPrefix="agent-edit-form"
+          value={sessionSettings}
+          onChange={setSessionSettings}
         />
         <div className={sharedStyles.formActions}>
           <Button

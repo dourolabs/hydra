@@ -1,9 +1,13 @@
 import { useState, useCallback } from "react";
 import { Button, Modal, Input, Textarea } from "@hydra/ui";
-import type { AgentRecord, UpsertAgentRequest } from "@hydra/api";
+import type { AgentRecord, SessionSettings, UpsertAgentRequest } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useFormModal } from "../../hooks/useFormModal";
 import { SecretsSelector } from "./SecretsSelector";
+import {
+  AgentSessionSettingsFields,
+  collapseAgentSessionSettings,
+} from "./AgentSessionSettingsFields";
 import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./AgentsSection.module.css";
 
@@ -22,6 +26,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(false);
   const [mcpConfigPath, setMcpConfigPath] = useState("");
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
+  const [sessionSettings, setSessionSettings] = useState<SessionSettings>({});
 
   const resetForm = useCallback(() => {
     setName("");
@@ -32,6 +37,7 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     setIsDefaultConversationAgent(false);
     setMcpConfigPath("");
     setSelectedSecrets([]);
+    setSessionSettings({});
   }, []);
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<UpsertAgentRequest, unknown>({
@@ -69,8 +75,9 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       max_simultaneous_headless: parseInt(maxSimultaneousHeadless, 10) || 1,
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
+      session_settings: collapseAgentSessionSettings(sessionSettings),
     });
-  }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneousInteractive, maxSimultaneousHeadless, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
+  }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneousInteractive, maxSimultaneousHeadless, isDefaultConversationAgent, selectedSecrets, sessionSettings, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Agent">
@@ -135,6 +142,11 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
         <SecretsSelector
           selected={selectedSecrets}
           onChange={setSelectedSecrets}
+        />
+        <AgentSessionSettingsFields
+          testIdPrefix="agent-create-form"
+          value={sessionSettings}
+          onChange={setSessionSettings}
         />
         <div className={sharedStyles.formActions}>
           <Button
