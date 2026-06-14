@@ -244,6 +244,10 @@ vi.mock("../ProjectForm.module.css", () => ({
   default: new Proxy({}, { get: (_t, prop) => String(prop) }),
 }));
 
+vi.mock("../../sessions/SessionSettingsFields.module.css", () => ({
+  default: new Proxy({}, { get: (_t, prop) => String(prop) }),
+}));
+
 vi.mock("../../../components/DeleteConfirmModal/DeleteConfirmModal", () => ({
   DeleteConfirmModal: ({
     open,
