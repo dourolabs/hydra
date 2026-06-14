@@ -11,6 +11,7 @@ import type { Project } from "./generated/Project";
 import type { ProjectId } from "./generated/ProjectId";
 import type { ProjectKey } from "./generated/ProjectKey";
 import type { ProjectRef } from "./generated/ProjectRef";
+import type { SessionSettings } from "./generated/SessionSettings";
 import type { StatusDefinition } from "./generated/StatusDefinition";
 
 export type { ProjectRef };
@@ -33,6 +34,15 @@ export interface UpsertProjectRequest {
   name: string;
   prompt_path?: string | null;
   priority?: number;
+  /**
+   * Per-project overrides for the `SessionSettings` applied when spawning
+   * sessions for issues in this project. Mirrors the field on
+   * `hydra-server`'s `Project` (and the ts-rs-generated
+   * `UpsertProjectRequest`). The wire payload omits the field entirely
+   * when undefined so the empty-collapse invariant on the UI form
+   * round-trips unchanged.
+   */
+  session_settings?: SessionSettings;
 }
 
 export interface UpsertProjectResponse {

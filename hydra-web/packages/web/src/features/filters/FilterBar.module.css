@@ -2,12 +2,16 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
   min-width: 0;
 }
 
-.barSpacer {
-  flex: 1;
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .summary {
@@ -15,6 +19,7 @@
   font-size: var(--t-sm);
   color: var(--fg-2);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .summaryCount {
@@ -35,6 +40,8 @@
   font-family: var(--f-sans);
   font-size: var(--t-sm);
   cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
   transition:
     border-color var(--tx-fast),
     background var(--tx-fast),
@@ -53,6 +60,14 @@
   color: var(--fg-0);
 }
 
+.addButtonLabel {
+  display: inline;
+}
+
+.addButtonBadge {
+  display: none;
+}
+
 .clearButton {
   display: inline-flex;
   align-items: center;
@@ -64,6 +79,7 @@
   font-family: var(--f-sans);
   font-size: var(--t-sm);
   cursor: pointer;
+  flex-shrink: 0;
   transition: color var(--tx-fast);
 }
 
@@ -72,8 +88,34 @@
 }
 
 @media (max-width: 768px) {
-  .addButton,
-  .clearButton {
+  .addButton {
     min-height: 44px;
+    min-width: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .addButtonLabel {
+    display: none;
+  }
+
+  .addButtonBadge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    background: var(--acc);
+    color: var(--acc-fg-on);
+    border-radius: var(--radius-pill);
+    font-family: var(--f-sans);
+    font-size: var(--t-xxs);
+    font-weight: 600;
+    line-height: 1;
+    pointer-events: none;
   }
 }

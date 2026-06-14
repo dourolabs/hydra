@@ -7,6 +7,7 @@ import {
   type CSSProperties,
 } from "react";
 import { Icons } from "@hydra/ui";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import type { Filter, FilterDefinitions } from "./types";
 import { FilterChip } from "./FilterChip";
 import { AddFilterMenu } from "./AddFilterMenu";
@@ -93,8 +94,10 @@ export function FilterBar<T>({
 
   const openPicker = useCallback((uid: string) => {
     const el = chipRefs.current.get(uid);
-    if (!el) return;
-    setPickerAnchor(computeAnchor(el.getBoundingClientRect()));
+    // On mobile we hide inline chips, so there's no anchor to compute against;
+    // ValuePicker's mobile styles position it as a bottom sheet regardless of
+    // the anchor we pass in.
+    setPickerAnchor(el ? computeAnchor(el.getBoundingClientRect()) : {});
     setPickerOpenUid(uid);
   }, []);
 
@@ -106,8 +109,7 @@ export function FilterBar<T>({
   useLayoutEffect(() => {
     if (!pendingOpenUid) return;
     const el = chipRefs.current.get(pendingOpenUid);
-    if (!el) return;
-    setPickerAnchor(computeAnchor(el.getBoundingClientRect()));
+    setPickerAnchor(el ? computeAnchor(el.getBoundingClientRect()) : {});
     setPickerOpenUid(pendingOpenUid);
     setPendingOpenUid(null);
   }, [pendingOpenUid]);
@@ -173,7 +175,10 @@ export function FilterBar<T>({
     : null;
   const openDef = openFilter ? definitions[openFilter.id] ?? null : null;
 
+  const isMobile = useIsMobile();
   const hasFilters = filters.length > 0;
+  const hasActiveFilters = filters.some((f) => f.values.length > 0);
+  const showSummary = !isMobile || hasActiveFilters;
   const summary =
     hasFilters && count !== total ? (
       <>
@@ -183,63 +188,91 @@ export function FilterBar<T>({
       `${total} results`
     );
 
+  // On mobile, drop the inline chip row entirely — the filter icon's badge
+  // surfaces the count, and the AddFilterMenu becomes the single place to see,
+  // edit, and remove active filters.
+  const handlePickExisting = useCallback(
+    (uid: string) => {
+      closeMenu();
+      openPicker(uid);
+    },
+    [closeMenu, openPicker],
+  );
+
   return (
     <div className={styles.bar} role="toolbar" aria-label="Filters">
-      {filters.map((filter) => {
-        const def = definitions[filter.id];
-        if (!def) return null;
-        const isPresence = def.kind === "presence";
-        return (
-          <FilterChip
-            key={filter._uid}
-            filter={filter}
-            definition={def}
-            open={pickerOpenUid === filter._uid}
-            onOpen={isPresence ? undefined : () => openPicker(filter._uid)}
-            onRemove={() => handleRemove(filter._uid)}
-            chipRef={(el) => {
-              if (el) chipRefs.current.set(filter._uid, el);
-              else chipRefs.current.delete(filter._uid);
-            }}
-          />
-        );
-      })}
+      <div className={styles.chips}>
+        {!isMobile &&
+          filters.map((filter) => {
+            const def = definitions[filter.id];
+            if (!def) return null;
+            const isPresence = def.kind === "presence";
+            return (
+              <FilterChip
+                key={filter._uid}
+                filter={filter}
+                definition={def}
+                open={pickerOpenUid === filter._uid}
+                onOpen={isPresence ? undefined : () => openPicker(filter._uid)}
+                onRemove={() => handleRemove(filter._uid)}
+                chipRef={(el) => {
+                  if (el) chipRefs.current.set(filter._uid, el);
+                  else chipRefs.current.delete(filter._uid);
+                }}
+              />
+            );
+          })}
 
-      <button
-        ref={addButtonRef}
-        type="button"
-        className={`${styles.addButton}${menuOpen ? ` ${styles.addButtonActive}` : ""}`}
-        onClick={() => (menuOpen ? closeMenu() : openMenu())}
-        aria-expanded={menuOpen}
-        aria-haspopup="menu"
-        data-testid="filter-bar-add"
-      >
-        <Icons.IconPlus size={12} />
-        Filter
-      </button>
-
-      {hasFilters && (
         <button
+          ref={addButtonRef}
           type="button"
-          className={styles.clearButton}
-          onClick={handleClearAll}
-          data-testid="filter-bar-clear-all"
+          className={`${styles.addButton}${menuOpen ? ` ${styles.addButtonActive}` : ""}`}
+          onClick={() => (menuOpen ? closeMenu() : openMenu())}
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          aria-label="Add filter"
+          data-testid="filter-bar-add"
         >
-          Clear all
+          <Icons.IconFilter size={12} />
+          <span className={styles.addButtonLabel}>Filter</span>
+          {hasFilters && (
+            <span
+              className={styles.addButtonBadge}
+              aria-hidden="true"
+              data-testid="filter-bar-add-badge"
+            >
+              {filters.length}
+            </span>
+          )}
         </button>
+
+        {!isMobile && hasFilters && (
+          <button
+            type="button"
+            className={styles.clearButton}
+            onClick={handleClearAll}
+            data-testid="filter-bar-clear-all"
+          >
+            Clear all
+          </button>
+        )}
+      </div>
+
+      {showSummary && (
+        <span className={styles.summary} data-testid="filter-bar-summary">
+          {summary}
+        </span>
       )}
-
-      <span className={styles.barSpacer} />
-
-      <span className={styles.summary} data-testid="filter-bar-summary">
-        {summary}
-      </span>
 
       {menuOpen && menuAnchor && (
         <AddFilterMenu
           definitions={definitions}
+          filters={filters}
           anchorStyle={menuAnchor}
           onPick={handlePick}
+          onPickExisting={isMobile ? handlePickExisting : undefined}
+          onRemoveExisting={isMobile ? handleRemove : undefined}
+          onClearAll={isMobile ? handleClearAll : undefined}
           onClose={closeMenu}
         />
       )}
