@@ -4,6 +4,7 @@ import { useTriggers } from "../features/triggers/useTriggers";
 import { TriggersSection } from "../features/triggers/TriggersSection";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
 import styles from "./TriggersListPage.module.css";
 
 export function TriggersListPage() {
@@ -32,6 +33,12 @@ export function TriggersListPage() {
           onCreateOpenChange={setCreateOpen}
         />
       </div>
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="Add trigger"
+        onClick={() => setCreateOpen(true)}
+        testId="triggers-fab"
+      />
     </div>
   );
 }

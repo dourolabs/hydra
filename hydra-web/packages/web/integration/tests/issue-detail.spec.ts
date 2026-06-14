@@ -61,7 +61,9 @@ test.describe("Issue Detail @issues:view-detail @issues:update-status @issues:na
     await page.goto("/issues/i-seed00001");
     await page.getByTestId("issue-rail-tab-details").click();
     await expect(page.getByText("Project", { exact: true })).toBeVisible();
-    await expect(page.getByText("Default", { exact: true })).toBeVisible();
+    const chip = page.getByTestId("issue-rail-project");
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText("Default");
   });
 
   test("shows 404 for non-existent issue @errors:404", async ({

@@ -5,6 +5,7 @@ import { ProjectCreateModal } from "../features/projects/ProjectCreateModal";
 import { useProjects } from "../features/projects/useProjects";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { FloatingActionButton } from "../layout/FloatingActionButton";
 import styles from "./ProjectsListPage.module.css";
 
 export function ProjectsListPage() {
@@ -41,6 +42,12 @@ export function ProjectsListPage() {
       </div>
 
       <ProjectCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
+      <FloatingActionButton
+        icon={<Icons.IconPlus size={24} />}
+        label="Add project"
+        onClick={() => setCreateOpen(true)}
+        testId="projects-fab"
+      />
     </div>
   );
 }

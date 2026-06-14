@@ -38,25 +38,39 @@ export function SiteHeader({ hidden, onHide, onShow, onOpenSearch }: SiteHeaderP
         : `${activeSessionCount} sessions`;
   const sessionsActive = activeSessionCount > 0;
 
+  // On mobile, the bottom-tab bar's "More" cell reaches the same drawer the
+  // hamburger opens, so the hamburger is redundant. The single-item
+  // breadcrumb (just the section name) is also redundant — the active
+  // bottom-tab cell already names the page. Multi-item breadcrumbs stay
+  // visible on detail pages as the "back" affordance.
+  const showHamburger = !isMobile;
+  const showBreadcrumbs = !isMobile || items.length > 0;
+
   return (
     <header className={styles.topbar} data-testid="site-header">
-      <Tooltip content={toggleLabel} position="right">
-        <Button
-          variant="ghost"
-          className={styles.hamburger}
-          onClick={onToggleSidebar}
-          aria-label={toggleLabel}
-          data-testid="site-header-toggle-sidebar"
-        >
-          <Icons.IconMenu />
-        </Button>
-      </Tooltip>
+      {showHamburger && (
+        <Tooltip content={toggleLabel} position="right">
+          <Button
+            variant="ghost"
+            className={styles.hamburger}
+            onClick={onToggleSidebar}
+            aria-label={toggleLabel}
+            data-testid="site-header-toggle-sidebar"
+          >
+            <Icons.IconMenu />
+          </Button>
+        </Tooltip>
+      )}
 
-      <div className={styles.breadcrumbs} data-testid="site-header-breadcrumbs">
-        {current !== null && (
-          <Breadcrumbs items={items} current={current} currentKind={currentKind} />
-        )}
-      </div>
+      {showBreadcrumbs ? (
+        <div className={styles.breadcrumbs} data-testid="site-header-breadcrumbs">
+          {current !== null && (
+            <Breadcrumbs items={items} current={current} currentKind={currentKind} />
+          )}
+        </div>
+      ) : (
+        <div className={styles.spacer} aria-hidden="true" />
+      )}
 
       <div className={styles.right}>
         <Link

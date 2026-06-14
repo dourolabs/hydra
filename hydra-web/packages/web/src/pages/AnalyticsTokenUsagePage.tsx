@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import type { TokenUsageOverTimeQuery, TokenUsageQuery } from "@hydra/api";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { MobilePageActions } from "../layout/MobilePageActions";
 import { TimeRangePicker } from "../features/analytics/TimeRangePicker";
 import {
   DEFAULT_TIME_RANGE,
@@ -78,6 +79,10 @@ export function AnalyticsTokenUsagePage() {
         title="Token Usage"
         actions={<TimeRangePicker value={range} onChange={onRangeChange} />}
       />
+
+      <MobilePageActions>
+        <TimeRangePicker value={range} onChange={onRangeChange} />
+      </MobilePageActions>
 
       <div className={styles.body}>
         <section

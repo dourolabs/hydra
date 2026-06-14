@@ -272,4 +272,33 @@ describe("SiteHeader", () => {
     renderHeader();
     expect(activeSessionCountMock).toHaveBeenCalledWith("Alice");
   });
+
+  describe("mobile (≤768px)", () => {
+    beforeEach(() => {
+      mockMatchMedia(true);
+    });
+
+    it("hides the hamburger and the single-item breadcrumb on list-page roots", () => {
+      renderHeader({ breadcrumbs: { items: [], current: "Issues" } });
+      expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
+      expect(screen.queryByTestId("site-header-breadcrumbs")).toBeNull();
+      // The right-side sessions chip and search button still render so users
+      // can reach those from the topbar. The "Create new" menu is hidden on
+      // mobile — section FABs are the canonical create affordance.
+      expect(screen.getByTestId("site-header-sessions")).toBeTruthy();
+      expect(screen.getByTestId("site-header-search")).toBeTruthy();
+      expect(screen.queryByTestId("site-header-create")).toBeNull();
+    });
+
+    it("keeps multi-item breadcrumbs visible on detail pages", () => {
+      renderHeader({
+        breadcrumbs: {
+          items: [{ label: "Issues", to: "/" }],
+          current: "Platform v2.0",
+        },
+      });
+      expect(screen.queryByTestId("site-header-toggle-sidebar")).toBeNull();
+      expect(screen.getByTestId("site-header-breadcrumbs")).toBeTruthy();
+    });
+  });
 });

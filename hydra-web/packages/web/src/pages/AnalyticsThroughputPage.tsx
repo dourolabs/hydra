@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import type { IssuesThroughputQuery, PatchesThroughputQuery } from "@hydra/api";
 import { useBreadcrumbs } from "../layout/useBreadcrumbs";
 import { PageHead } from "../layout/PageHead";
+import { MobilePageActions } from "../layout/MobilePageActions";
 import { SlicerPanel } from "../features/analytics/SlicerPanel";
 import { TimeRangePicker } from "../features/analytics/TimeRangePicker";
 import {
@@ -95,6 +96,13 @@ export function AnalyticsThroughputPage() {
           />
         }
       />
+
+      <MobilePageActions>
+        <TimeRangePicker
+          value={state.range}
+          onChange={(range) => onSlicerChange({ range })}
+        />
+      </MobilePageActions>
 
       <div className={styles.body}>
         <div className={styles.main}>
