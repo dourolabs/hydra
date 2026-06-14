@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useLocation } from "react-router-dom";
 import type { IssueSummaryRecord, SessionSummaryRecord } from "@hydra/api";
 import { Icons } from "@hydra/ui";
 import type { IssueNeighborhood } from "../flowPill";
@@ -6,6 +8,7 @@ import { FilterBar, type Filter, type FilterDefinitions } from "../../filters";
 import { PageHead } from "../../../layout/PageHead";
 import { CollapsibleSearch } from "../../../components/CollapsibleSearch/CollapsibleSearch";
 import { useIsMobile } from "../../../hooks/useIsMobile";
+import { useScrollRestoration } from "../../../hooks/useScrollRestoration";
 import { IssuesTable } from "./IssuesTable";
 import { IssuesBoard } from "./IssuesBoard";
 import styles from "./IssuesView.module.css";
@@ -72,6 +75,19 @@ export function IssuesView({
   // since it would only ever offer a worse option.
   const isMobile = useIsMobile();
   const effectiveLayout: IssuesLayout = isMobile ? "board" : layout;
+  const { pathname } = useLocation();
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // Desktop board only: persist the outer-scroller position across
+  // navigations so returning from an issue detail lands on the same column.
+  // Mobile uses per-project horizontal scrolling (handled inside the board)
+  // and the table layout already keys scroll off filter URL state, so
+  // neither needs this.
+  useScrollRestoration(
+    !isMobile && effectiveLayout === "board"
+      ? `hydra:board:scroll:${pathname}`
+      : null,
+    bodyRef,
+  );
   const layoutSegmentedControl = (
     <div className={styles.segmented} role="tablist" aria-label="Layout">
       <button
@@ -124,7 +140,7 @@ export function IssuesView({
         />
       </div>
 
-      <div className={styles.body}>
+      <div className={styles.body} ref={bodyRef}>
         {effectiveLayout === "table" && (
           <>
             {isLoading && issues.length === 0 && (

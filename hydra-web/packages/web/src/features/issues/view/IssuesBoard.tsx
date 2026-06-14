@@ -77,31 +77,46 @@ interface IssuesBoardProps {
 // inserts before float precision forces a renumber.
 const PROJECT_PRIORITY_STEP = 1024;
 
-// On mobile, the board view shows one project section at a time. Last
-// selection persists across navigations so the user lands back on the same
-// board after popping the issue detail page.
-const MOBILE_BOARD_LS_KEY = "hydra:board-mobile-selected-project";
+// Mobile single-board view state is persisted to sessionStorage so that any
+// in-tab return path to /issues — back button, nav-bar tap, page reload —
+// lands the user back on the (project, status) cell they were last viewing.
+// Per-tab by design: a new tab starts fresh. We deliberately don't mirror
+// this to URL params; a top-level nav (tapping "Issues" from /sessions)
+// doesn't carry the previous URL forward, so URL-only persistence broke
+// that case.
+const MOBILE_BOARD_STATE_STORAGE_KEY = "hydra:board-mobile-state";
 
-function loadMobileSelectedProjectId(): string | null {
-  if (typeof window === "undefined") return null;
+type StoredMobileBoardState = {
+  project: string | null;
+  status: string | null;
+};
+
+function loadStoredMobileBoardState(): StoredMobileBoardState {
+  if (typeof window === "undefined") {
+    return { project: null, status: null };
+  }
   try {
-    const raw = window.localStorage.getItem(MOBILE_BOARD_LS_KEY);
-    return raw && raw.length > 0 ? raw : null;
+    const raw = window.sessionStorage.getItem(MOBILE_BOARD_STATE_STORAGE_KEY);
+    if (!raw) return { project: null, status: null };
+    const parsed = JSON.parse(raw) as Partial<StoredMobileBoardState>;
+    return {
+      project: typeof parsed.project === "string" ? parsed.project : null,
+      status: typeof parsed.status === "string" ? parsed.status : null,
+    };
   } catch {
-    return null;
+    return { project: null, status: null };
   }
 }
 
-function saveMobileSelectedProjectId(projectId: string | null): void {
+function saveStoredMobileBoardState(state: StoredMobileBoardState): void {
   if (typeof window === "undefined") return;
   try {
-    if (projectId) {
-      window.localStorage.setItem(MOBILE_BOARD_LS_KEY, projectId);
-    } else {
-      window.localStorage.removeItem(MOBILE_BOARD_LS_KEY);
-    }
+    window.sessionStorage.setItem(
+      MOBILE_BOARD_STATE_STORAGE_KEY,
+      JSON.stringify(state),
+    );
   } catch {
-    /* swallow quota / private-mode errors — picker still works in-memory */
+    /* quota / private-mode — best-effort */
   }
 }
 
@@ -159,14 +174,33 @@ export function IssuesBoard({
   const { isCollapsed, onToggle: onToggleCollapse } = useProjectCollapseState();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
   const isMobile = useIsMobile();
-  const [mobileSelectedProjectId, setMobileSelectedProjectIdState] = useState<
-    string | null
-  >(() => loadMobileSelectedProjectId());
+  const [mobileBoardState, setMobileBoardState] = useState<StoredMobileBoardState>(
+    () => loadStoredMobileBoardState(),
+  );
+  const mobileSelectedProjectId = mobileBoardState.project;
+  const mobileSelectedStatusKey = mobileBoardState.status;
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
 
   const setMobileSelectedProjectId = useCallback((id: string | null) => {
-    setMobileSelectedProjectIdState(id);
-    saveMobileSelectedProjectId(id);
+    setMobileBoardState((prev) => {
+      if (prev.project === id) return prev;
+      // Switching project: clear the status key because status columns are
+      // per-project and the previous key likely doesn't exist on the new
+      // project. ProjectSection's scroll-snap detection will repopulate it
+      // once the user scrolls.
+      const next = { project: id, status: null };
+      saveStoredMobileBoardState(next);
+      return next;
+    });
+  }, []);
+
+  const setMobileSelectedStatusKey = useCallback((key: string | null) => {
+    setMobileBoardState((prev) => {
+      if (prev.status === key) return prev;
+      const next = { project: prev.project, status: key };
+      saveStoredMobileBoardState(next);
+      return next;
+    });
   }, []);
 
   const allProjectDescriptors: BoardProjectDescriptor[] = useMemo(() => {
@@ -215,8 +249,8 @@ export function IssuesBoard({
     isMobile && !baseFilters.project_id && allProjectDescriptors.length > 1;
 
   // Keep the selected id in range if projects load late or the previously
-  // selected one disappears (deleted, filter shifts). Falls back to the first
-  // descriptor so the board always has *something* mounted.
+  // selected one disappears (deleted, filter shifts). Falls back to the
+  // first descriptor so the board always has something mounted.
   useEffect(() => {
     if (!showMobilePicker) return;
     const stillExists =
@@ -694,6 +728,8 @@ export function IssuesBoard({
       onAddIssue: handleAddIssueClick,
       onIssueDrop: handleIssueDrop,
       hideBar: showMobilePicker,
+      mobileSelectedStatusKey: isMobile ? mobileSelectedStatusKey : null,
+      onMobileStatusChange: isMobile ? setMobileSelectedStatusKey : undefined,
     };
     return allowProjectReorder ? (
       <SortableProjectSection key={project.project_id} {...sectionProps} />

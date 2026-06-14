@@ -1711,9 +1711,11 @@ describe("IssuesBoard chat button", () => {
 });
 
 describe("IssuesBoard mobile single-board view", () => {
+  const STORAGE_KEY = "hydra:board-mobile-state";
+
   beforeEach(() => {
     mobileMatches = true;
-    window.localStorage.clear();
+    window.sessionStorage.clear();
     projectsData = [
       makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
       makeProject("j-design", "design", DEFAULT_STATUSES, "Design"),
@@ -1721,7 +1723,7 @@ describe("IssuesBoard mobile single-board view", () => {
   });
 
   afterEach(() => {
-    window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   it("renders the mobile board picker when multiple projects exist", () => {
@@ -1747,7 +1749,7 @@ describe("IssuesBoard mobile single-board view", () => {
     expect(screen.getByTestId("board-project-design")).toBeDefined();
   });
 
-  it("persists the picker selection in localStorage", () => {
+  it("persists the picker selection to sessionStorage", () => {
     renderBoard();
 
     fireEvent.click(
@@ -1755,20 +1757,36 @@ describe("IssuesBoard mobile single-board view", () => {
     );
     fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
 
-    expect(
-      window.localStorage.getItem("hydra:board-mobile-selected-project"),
-    ).toBe("j-design");
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!).project).toBe("j-design");
   });
 
-  it("rehydrates the picker selection from localStorage on mount", () => {
-    window.localStorage.setItem(
-      "hydra:board-mobile-selected-project",
-      "j-design",
+  it("hydrates the picker selection from sessionStorage on mount", () => {
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ project: "j-design", status: null }),
     );
     renderBoard();
 
     expect(screen.getByTestId("board-project-design")).toBeDefined();
     expect(screen.queryByTestId("board-project-engineering")).toBeNull();
+  });
+
+  it("switching project clears the saved status (columns differ per project)", () => {
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ project: "j-eng", status: "in-progress" }),
+    );
+    renderBoard();
+
+    fireEvent.click(
+      screen.getByTestId("board-mobile-picker").querySelector("button")!,
+    );
+    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
+
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    expect(JSON.parse(raw!)).toEqual({ project: "j-design", status: null });
   });
 
   it("suppresses the picker when scoped to a single project", () => {
@@ -1814,9 +1832,9 @@ describe("IssuesBoard mobile single-board view", () => {
   });
 
   it("falls back to the first project when the stored selection no longer exists", () => {
-    window.localStorage.setItem(
-      "hydra:board-mobile-selected-project",
-      "j-deleted",
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ project: "j-deleted", status: null }),
     );
     renderBoard();
     expect(screen.getByTestId("board-project-engineering")).toBeDefined();
