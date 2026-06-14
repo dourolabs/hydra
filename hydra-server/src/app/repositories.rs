@@ -221,6 +221,7 @@ mod tests {
                 None,
                 3,
                 4,
+                4,
                 false,
                 Vec::new(),
             ))

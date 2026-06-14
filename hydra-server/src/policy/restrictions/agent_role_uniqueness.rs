@@ -78,6 +78,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         )

@@ -278,6 +278,17 @@ async fn migration_roundtrip() -> Result<()> {
         .await
         .context("drop_is_assignment_agent: baseline agents rows survive the column drop")?;
 
+    split_agents_max_simultaneous_schema_invariants(&pool)
+        .await
+        .context(
+            "split_agents_max_simultaneous: max_simultaneous renamed to max_simultaneous_headless; max_simultaneous_interactive added",
+        )?;
+    split_agents_max_simultaneous_backfills_baselines(&pool)
+        .await
+        .context(
+            "split_agents_max_simultaneous: existing per-row caps copied identically into both new columns",
+        )?;
+
     teardown_work_on_default_terminal_statuses_post_migration_state(&pool)
         .await
         .context(
@@ -892,12 +903,15 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &PgPool) -> Result<()>
         bail!("expected `metis.agents.is_assignment_agent` column to be dropped post-rollforward");
     }
     // The later `rename_deleted_to_archived` migration flips `deleted`
-    // over to `archived` by the time this post-state assertion runs.
+    // over to `archived` and `split_agents_max_simultaneous` splits
+    // `max_simultaneous` into per-mode caps by the time this post-state
+    // assertion runs.
     for required in [
         "name",
         "prompt_path",
         "max_tries",
-        "max_simultaneous",
+        "max_simultaneous_interactive",
+        "max_simultaneous_headless",
         "archived",
         "created_at",
         "updated_at",
@@ -910,6 +924,11 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &PgPool) -> Result<()>
                 "expected `metis.agents.{required}` to remain present post-drop-is-assignment-agent"
             );
         }
+    }
+    if column_exists(pool, "agents", "max_simultaneous").await? {
+        bail!(
+            "expected `metis.agents.max_simultaneous` to be renamed to `max_simultaneous_headless` post-split"
+        );
     }
     Ok(())
 }
@@ -1038,9 +1057,12 @@ async fn rename_kill_sessions_to_teardown_work_is_idempotent(pool: &PgPool) -> R
 }
 
 async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
+    // `max_simultaneous` was renamed to `max_simultaneous_headless` by the
+    // later `split_agents_max_simultaneous` migration; the baseline values
+    // back-filled identically into `max_simultaneous_interactive`.
     let rows = sqlx::query(
-        "SELECT name, max_tries, max_simultaneous, archived, \
-                secrets::text AS secrets, mcp_config_path, is_default_conversation_agent \
+        "SELECT name, max_tries, max_simultaneous_interactive, max_simultaneous_headless, \
+                archived, secrets::text AS secrets, mcp_config_path, is_default_conversation_agent \
          FROM metis.agents \
          WHERE name IN ('pm-baseline', 'chat-baseline', 'deleted-baseline') \
          ORDER BY name",
@@ -1058,7 +1080,8 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
     let chat = &rows[0];
     assert_eq!(chat.try_get::<String, _>("name")?, "chat-baseline");
     assert_eq!(chat.try_get::<i32, _>("max_tries")?, 5);
-    assert_eq!(chat.try_get::<i32, _>("max_simultaneous")?, 10);
+    assert_eq!(chat.try_get::<i32, _>("max_simultaneous_headless")?, 10);
+    assert_eq!(chat.try_get::<i32, _>("max_simultaneous_interactive")?, 10);
     assert!(!chat.try_get::<bool, _>("archived")?);
     assert_eq!(
         chat.try_get::<String, _>("secrets")?,
@@ -1073,13 +1096,85 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
     let archived = &rows[1];
     assert_eq!(archived.try_get::<String, _>("name")?, "deleted-baseline");
     assert!(archived.try_get::<bool, _>("archived")?);
+    assert_eq!(archived.try_get::<i32, _>("max_simultaneous_headless")?, 1);
+    assert_eq!(
+        archived.try_get::<i32, _>("max_simultaneous_interactive")?,
+        1
+    );
 
     let pm = &rows[2];
     assert_eq!(pm.try_get::<String, _>("name")?, "pm-baseline");
     assert_eq!(pm.try_get::<i32, _>("max_tries")?, 3);
+    assert_eq!(
+        pm.try_get::<i32, _>("max_simultaneous_headless")?,
+        2147483647
+    );
+    assert_eq!(
+        pm.try_get::<i32, _>("max_simultaneous_interactive")?,
+        2147483647
+    );
     assert!(!pm.try_get::<bool, _>("archived")?);
     assert!(!pm.try_get::<bool, _>("is_default_conversation_agent")?);
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260722000000_split_agents_max_simultaneous. Renames
+// `metis.agents.max_simultaneous` to `max_simultaneous_headless` and adds
+// a new `max_simultaneous_interactive` column back-filled from the
+// pre-migration value so existing per-agent caps are preserved on both
+// axes.
+// ---------------------------------------------------------------------------
+
+async fn split_agents_max_simultaneous_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "agents", "max_simultaneous_interactive").await? {
+        bail!(
+            "expected `metis.agents.max_simultaneous_interactive` column to exist post-rollforward"
+        );
+    }
+    if !column_exists(pool, "agents", "max_simultaneous_headless").await? {
+        bail!("expected `metis.agents.max_simultaneous_headless` column to exist post-rollforward");
+    }
+    if column_exists(pool, "agents", "max_simultaneous").await? {
+        bail!(
+            "expected `metis.agents.max_simultaneous` column to be renamed away post-rollforward"
+        );
+    }
+    if column_is_nullable(pool, "agents", "max_simultaneous_interactive").await? {
+        bail!("expected `metis.agents.max_simultaneous_interactive` to be NOT NULL");
+    }
+    if column_is_nullable(pool, "agents", "max_simultaneous_headless").await? {
+        bail!("expected `metis.agents.max_simultaneous_headless` to be NOT NULL");
+    }
+    Ok(())
+}
+
+async fn split_agents_max_simultaneous_backfills_baselines(pool: &PgPool) -> Result<()> {
+    // Every row carries `max_simultaneous_interactive ==
+    // max_simultaneous_headless` after the back-fill (the rename copied
+    // forward the prior value identically into both columns).
+    let rows = sqlx::query(
+        "SELECT name, max_simultaneous_interactive, max_simultaneous_headless \
+         FROM metis.agents ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read metis.agents rows for split_agents_max_simultaneous back-fill check")?;
+    if rows.is_empty() {
+        bail!("expected at least one metis.agents row to assert back-fill against");
+    }
+    for row in &rows {
+        let name: String = row.try_get("name")?;
+        let interactive: i32 = row.try_get("max_simultaneous_interactive")?;
+        let headless: i32 = row.try_get("max_simultaneous_headless")?;
+        if interactive != headless {
+            bail!(
+                "metis.agents.{name}: expected max_simultaneous_interactive == max_simultaneous_headless \
+                 after back-fill; got interactive={interactive}, headless={headless}"
+            );
+        }
+    }
     Ok(())
 }
 

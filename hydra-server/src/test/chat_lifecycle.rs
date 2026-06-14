@@ -1863,6 +1863,7 @@ async fn register_agent_with_prompt_body(
         None,
         1,
         1,
+        1,
         false,
         vec![],
     );

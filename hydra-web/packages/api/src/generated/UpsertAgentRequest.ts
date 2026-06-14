@@ -7,7 +7,8 @@ export type UpsertAgentRequest = {
   mcp_config_path: string | null;
   mcp_config: string | null;
   max_tries: number;
-  max_simultaneous: number;
+  max_simultaneous_interactive: number;
+  max_simultaneous_headless: number;
   is_default_conversation_agent: boolean;
   secrets: Array<string>;
 };

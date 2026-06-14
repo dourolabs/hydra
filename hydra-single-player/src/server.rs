@@ -413,6 +413,7 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
             prompt,
             3,
             i32::MAX,
+            i32::MAX,
             None,
             None,
             is_default_conversation_agent,

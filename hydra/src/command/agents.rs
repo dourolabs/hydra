@@ -63,13 +63,22 @@ pub struct CreateAgentArgs {
     #[arg(long = "max-tries", value_name = "MAX_TRIES", default_value_t = 3)]
     pub max_tries: i32,
 
-    /// Maximum simultaneous tasks for this agent.
+    /// Maximum simultaneous interactive (conversation-mode) sessions for
+    /// this agent.
     #[arg(
-        long = "max-simultaneous",
-        value_name = "MAX_SIMULTANEOUS",
+        long = "max-simultaneous-interactive",
+        value_name = "MAX_SIMULTANEOUS_INTERACTIVE",
         default_value_t = i32::MAX
     )]
-    pub max_simultaneous: i32,
+    pub max_simultaneous_interactive: i32,
+
+    /// Maximum simultaneous headless sessions for this agent.
+    #[arg(
+        long = "max-simultaneous-headless",
+        value_name = "MAX_SIMULTANEOUS_HEADLESS",
+        default_value_t = i32::MAX
+    )]
+    pub max_simultaneous_headless: i32,
 
     /// Mark this agent as the default conversation agent (at most one allowed).
     #[arg(long = "is-default-conversation-agent")]
@@ -114,9 +123,20 @@ pub struct UpdateAgentArgs {
     #[arg(long = "max-tries", value_name = "MAX_TRIES")]
     pub max_tries: Option<i32>,
 
-    /// Updated max simultaneous tasks for the agent.
-    #[arg(long = "max-simultaneous", value_name = "MAX_SIMULTANEOUS")]
-    pub max_simultaneous: Option<i32>,
+    /// Updated max simultaneous interactive (conversation-mode) sessions
+    /// for the agent.
+    #[arg(
+        long = "max-simultaneous-interactive",
+        value_name = "MAX_SIMULTANEOUS_INTERACTIVE"
+    )]
+    pub max_simultaneous_interactive: Option<i32>,
+
+    /// Updated max simultaneous headless sessions for the agent.
+    #[arg(
+        long = "max-simultaneous-headless",
+        value_name = "MAX_SIMULTANEOUS_HEADLESS"
+    )]
+    pub max_simultaneous_headless: Option<i32>,
 
     /// Mark this agent as the default conversation agent (at most one allowed).
     #[arg(long = "is-default-conversation-agent")]
@@ -241,7 +261,8 @@ async fn create_agent(
             name,
             prompt,
             args.max_tries,
-            args.max_simultaneous,
+            args.max_simultaneous_interactive,
+            args.max_simultaneous_headless,
             None,
             mcp_config,
             args.is_default_conversation_agent,
@@ -253,7 +274,8 @@ async fn create_agent(
             name,
             String::new(),
             args.max_tries,
-            args.max_simultaneous,
+            args.max_simultaneous_interactive,
+            args.max_simultaneous_headless,
             None,
             mcp_config,
             args.is_default_conversation_agent,
@@ -304,8 +326,11 @@ async fn update_agent(
     if let Some(max_tries) = args.max_tries {
         request.max_tries = max_tries;
     }
-    if let Some(max_simultaneous) = args.max_simultaneous {
-        request.max_simultaneous = max_simultaneous;
+    if let Some(max_simultaneous_interactive) = args.max_simultaneous_interactive {
+        request.max_simultaneous_interactive = max_simultaneous_interactive;
+    }
+    if let Some(max_simultaneous_headless) = args.max_simultaneous_headless {
+        request.max_simultaneous_headless = max_simultaneous_headless;
     }
     if args.is_default_conversation_agent {
         request.is_default_conversation_agent = true;
@@ -370,8 +395,30 @@ mod tests {
     async fn list_agents_fetches_agents_and_prints_jsonl() -> Result<()> {
         let server = MockServer::start();
         let list_agents_response = ListAgentsResponse::new(vec![
-            AgentRecord::new("alpha", "", "", None, None, 3, i32::MAX, false, Vec::new()),
-            AgentRecord::new("beta", "", "", None, None, 3, i32::MAX, false, Vec::new()),
+            AgentRecord::new(
+                "alpha",
+                "",
+                "",
+                None,
+                None,
+                3,
+                i32::MAX,
+                i32::MAX,
+                false,
+                Vec::new(),
+            ),
+            AgentRecord::new(
+                "beta",
+                "",
+                "",
+                None,
+                None,
+                3,
+                i32::MAX,
+                i32::MAX,
+                false,
+                Vec::new(),
+            ),
         ]);
 
         let mock = server.mock(|when, then| {
@@ -407,6 +454,7 @@ mod tests {
             None,
             None,
             2,
+            3,
             5,
             false,
             Vec::new(),
@@ -423,7 +471,8 @@ mod tests {
         assert!(output.contains("alpha"));
         assert!(output.contains("/agents/alpha/prompt.md"));
         assert!(output.contains("max_tries: 2"));
-        assert!(output.contains("max_simultaneous: 5"));
+        assert!(output.contains("max_simultaneous_interactive: 3"));
+        assert!(output.contains("max_simultaneous_headless: 5"));
         assert!(output.contains("is_default_conversation_agent: false"));
 
         Ok(())
@@ -441,6 +490,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -474,7 +524,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: 2,
-            max_simultaneous: 4,
+            max_simultaneous_interactive: 3,
+            max_simultaneous_headless: 4,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -485,6 +536,7 @@ mod tests {
             None,
             None,
             2,
+            3,
             4,
             false,
             Vec::new(),
@@ -497,7 +549,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 2,
-                "max_simultaneous": 4,
+                "max_simultaneous_interactive": 3,
+                "max_simultaneous_headless": 4,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -509,7 +562,8 @@ mod tests {
 
         assert_eq!(agent.name, "writer");
         assert_eq!(agent.max_tries, 2);
-        assert_eq!(agent.max_simultaneous, 4);
+        assert_eq!(agent.max_simultaneous_interactive, 3);
+        assert_eq!(agent.max_simultaneous_headless, 4);
 
         Ok(())
     }
@@ -529,7 +583,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: 3,
-            max_simultaneous: i32::MAX,
+            max_simultaneous_interactive: i32::MAX,
+            max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: true,
             secrets: None,
         };
@@ -540,6 +595,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             true,
             Vec::new(),
@@ -552,7 +608,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": true,
                 "secrets": []
             }));
@@ -581,6 +638,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -591,6 +649,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             true,
             Vec::new(),
@@ -608,7 +667,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647,
+                "max_simultaneous_interactive": 2147483647,
+                "max_simultaneous_headless": 2147483647,
                 "is_default_conversation_agent": true,
                 "secrets": []
             }));
@@ -622,7 +682,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: true,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -649,6 +710,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             true,
             Vec::new(),
         ));
@@ -659,6 +721,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -676,7 +739,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647,
+                "max_simultaneous_interactive": 2147483647,
+                "max_simultaneous_headless": 2147483647,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -690,7 +754,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: true,
             secrets: None,
@@ -741,6 +806,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -751,6 +817,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             10,
             false,
             Vec::new(),
@@ -770,7 +837,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 10,
+                "max_simultaneous_interactive": 2147483647,
+                "max_simultaneous_headless": 10,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -784,7 +852,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: Some(10),
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: Some(10),
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -794,7 +863,7 @@ mod tests {
         get_mock.assert();
         put_mock.assert();
         assert_eq!(response.prompt, "revised");
-        assert_eq!(response.max_simultaneous, 10);
+        assert_eq!(response.max_simultaneous_headless, 10);
         assert_eq!(response.max_tries, 3);
 
         Ok(())
@@ -805,8 +874,18 @@ mod tests {
         let server = MockServer::start();
         let client =
             HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
-        let archived =
-            AgentRecord::new("writer", "", "", None, None, 3, i32::MAX, false, Vec::new());
+        let archived = AgentRecord::new(
+            "writer",
+            "",
+            "",
+            None,
+            None,
+            3,
+            i32::MAX,
+            i32::MAX,
+            false,
+            Vec::new(),
+        );
         let mock = server.mock(|when, then| {
             when.method(DELETE).path("/v1/agents/writer");
             then.status(200)
@@ -835,7 +914,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: 3,
-            max_simultaneous: i32::MAX,
+            max_simultaneous_interactive: i32::MAX,
+            max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: Some("OPENAI_API_KEY,GH_TOKEN".to_string()),
         };
@@ -846,6 +926,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             vec!["OPENAI_API_KEY".to_string(), "GH_TOKEN".to_string()],
@@ -858,7 +939,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": false,
                 "secrets": ["OPENAI_API_KEY", "GH_TOKEN"]
             }));
@@ -887,6 +969,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -897,6 +980,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             vec!["ANTHROPIC_API_KEY".to_string()],
@@ -914,7 +998,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": false,
                 "secrets": ["ANTHROPIC_API_KEY"]
             }));
@@ -928,7 +1013,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: Some("ANTHROPIC_API_KEY".to_string()),
@@ -955,6 +1041,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             vec!["EXISTING_SECRET".to_string()],
         ));
@@ -965,6 +1052,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             vec!["EXISTING_SECRET".to_string()],
@@ -982,7 +1070,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": false,
                 "secrets": ["EXISTING_SECRET"]
             }));
@@ -996,7 +1085,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1019,6 +1109,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             vec!["OPENAI_API_KEY".to_string(), "GH_TOKEN".to_string()],
@@ -1106,7 +1197,8 @@ mod tests {
             mcp_config_path: Some("/agents/tester/mcp-config.json".to_string()),
             mcp_config_file: None,
             max_tries: 3,
-            max_simultaneous: i32::MAX,
+            max_simultaneous_interactive: i32::MAX,
+            max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -1117,6 +1209,7 @@ mod tests {
             Some("/agents/tester/mcp-config.json".to_string()),
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -1129,7 +1222,8 @@ mod tests {
                 "mcp_config_path": "/agents/tester/mcp-config.json",
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1163,7 +1257,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: 3,
-            max_simultaneous: i32::MAX,
+            max_simultaneous_interactive: i32::MAX,
+            max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -1218,7 +1313,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: Some(mcp_file.path().to_str().unwrap().to_string()),
             max_tries: 3,
-            max_simultaneous: i32::MAX,
+            max_simultaneous_interactive: i32::MAX,
+            max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: None,
         };
@@ -1229,6 +1325,7 @@ mod tests {
             None,
             Some(r#"{"mcpServers": {"test": {}}}"#.to_string()),
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -1241,7 +1338,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": "{\"mcpServers\": {\"test\": {}}}",
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1272,6 +1370,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -1282,6 +1381,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -1299,7 +1399,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647,
+                "max_simultaneous_interactive": 2147483647,
+                "max_simultaneous_headless": 2147483647,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1313,7 +1414,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1341,6 +1443,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -1351,6 +1454,7 @@ mod tests {
             Some("/agents/writer/mcp-config.json".to_string()),
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -1368,7 +1472,8 @@ mod tests {
                 "mcp_config_path": "/agents/writer/mcp-config.json",
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647,
+                "max_simultaneous_interactive": 2147483647,
+                "max_simultaneous_headless": 2147483647,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1382,7 +1487,8 @@ mod tests {
             mcp_config_path: Some("/agents/writer/mcp-config.json".to_string()),
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1412,6 +1518,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -1423,6 +1530,7 @@ mod tests {
             None,
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -1440,7 +1548,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": "{\"mcpServers\": {}}",
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1454,7 +1563,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: Some(mcp_file.path().to_str().unwrap().to_string()),
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1484,6 +1594,7 @@ mod tests {
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -1494,6 +1605,7 @@ mod tests {
             Some("/agents/worker/mcp-config.json".to_string()),
             Some(r#"{"mcpServers": {}}"#.to_string()),
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -1511,7 +1623,8 @@ mod tests {
                 "mcp_config_path": "/agents/worker/mcp-config.json",
                 "mcp_config": "{\"mcpServers\": {}}",
                 "max_tries": 3,
-                "max_simultaneous": 2147483647i64,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1525,7 +1638,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1555,6 +1669,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         ));
@@ -1565,6 +1680,7 @@ mod tests {
             None,
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),
@@ -1584,7 +1700,8 @@ mod tests {
                 "mcp_config_path": null,
                 "mcp_config": null,
                 "max_tries": 3,
-                "max_simultaneous": 2147483647,
+                "max_simultaneous_interactive": 2147483647,
+                "max_simultaneous_headless": 2147483647,
                 "is_default_conversation_agent": false,
                 "secrets": []
             }));
@@ -1598,7 +1715,8 @@ mod tests {
             mcp_config_path: None,
             mcp_config_file: None,
             max_tries: None,
-            max_simultaneous: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
@@ -1622,6 +1740,7 @@ mod tests {
             Some("/agents/worker/mcp-config.json".to_string()),
             None,
             3,
+            i32::MAX,
             i32::MAX,
             false,
             Vec::new(),

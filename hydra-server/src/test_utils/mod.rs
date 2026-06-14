@@ -194,6 +194,7 @@ pub async fn add_agent_with_name(handles: &TestStateHandles, name: &str) {
         None,
         1,
         1,
+        1,
         false,
         vec![],
     );
@@ -357,6 +358,7 @@ async fn seed_default_conversation_agent(store: &dyn Store) -> anyhow::Result<()
         "default-test-agent".to_string(),
         prompt_path.clone(),
         None,
+        1,
         1,
         1,
         true,

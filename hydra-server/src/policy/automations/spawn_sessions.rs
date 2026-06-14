@@ -145,15 +145,19 @@ impl Automation for SpawnSessionsAutomation {
                     ))
                 })?;
 
-            let max_simultaneous = queue.agent.max_simultaneous as usize;
-            let active_tasks = task_state.running_tasks + task_state.pending_tasks;
-            let mut remaining_capacity = max_simultaneous.saturating_sub(active_tasks);
+            let max_interactive = queue.agent.max_simultaneous_interactive as usize;
+            let max_headless = queue.agent.max_simultaneous_headless as usize;
+            let active_interactive =
+                task_state.running_interactive + task_state.pending_interactive;
+            let active_headless = task_state.running_headless + task_state.pending_headless;
+            let mut remaining_interactive = max_interactive.saturating_sub(active_interactive);
+            let mut remaining_headless = max_headless.saturating_sub(active_headless);
 
             // Server-side `create_session` (AgentSpec::Named branch) now
             // resolves the agent prompt + mcp_config per call. The caller
             // no longer caches them across iterations.
             for (issue_id, issue) in &target_issues {
-                if remaining_capacity == 0 {
+                if remaining_interactive == 0 && remaining_headless == 0 {
                     break;
                 }
 
@@ -165,7 +169,7 @@ impl Automation for SpawnSessionsAutomation {
                         // `build_task` now persists through
                         // `AppState::create_session`, so we just decrement
                         // capacity and log the assigned id.
-                        remaining_capacity -= 1;
+                        remaining_headless = remaining_headless.saturating_sub(1);
                         tracing::info!(
                             automation = AUTOMATION_NAME,
                             agent = queue.agent.name,
@@ -181,7 +185,7 @@ impl Automation for SpawnSessionsAutomation {
                         // `SpawnConversationSessionsAutomation`; capacity is
                         // still consumed here so a queue full of interactive
                         // issues can't run away.
-                        remaining_capacity -= 1;
+                        remaining_interactive = remaining_interactive.saturating_sub(1);
                         tracing::info!(
                             automation = AUTOMATION_NAME,
                             agent = queue.agent.name,
@@ -328,6 +332,7 @@ mod tests {
             None,
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
             vec![],
         );
@@ -346,7 +351,7 @@ mod tests {
     async fn register_agent_with_capacity(
         handles: &test_utils::TestStateHandles,
         name: &str,
-        max_simultaneous: i32,
+        max_simultaneous_headless: i32,
         max_tries: i32,
     ) -> anyhow::Result<()> {
         let agent = Agent::new(
@@ -354,7 +359,8 @@ mod tests {
             format!("/agents/{name}/prompt.md"),
             None,
             max_tries,
-            max_simultaneous,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            max_simultaneous_headless,
             false,
             vec![],
         );

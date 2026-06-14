@@ -501,8 +501,8 @@ struct AgentRow {
     prompt_path: String,
     mcp_config_path: Option<String>,
     max_tries: i32,
-    max_simultaneous: i32,
-    #[sqlx(default)]
+    max_simultaneous_interactive: i32,
+    max_simultaneous_headless: i32,
     is_default_conversation_agent: bool,
     secrets: String,
     archived: bool,
@@ -541,7 +541,8 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         prompt_path: row.prompt_path,
         mcp_config_path: row.mcp_config_path,
         max_tries: row.max_tries,
-        max_simultaneous: row.max_simultaneous,
+        max_simultaneous_interactive: row.max_simultaneous_interactive,
+        max_simultaneous_headless: row.max_simultaneous_headless,
         is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
         archived: row.archived,
@@ -4123,7 +4124,8 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn get_agent(&self, name: &str) -> Result<Agent, StoreError> {
         let sql = format!(
-            "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
+            "SELECT name, prompt_path, mcp_config_path, max_tries, \
+                    max_simultaneous_interactive, max_simultaneous_headless, \
                     is_default_conversation_agent, secrets, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = ?1"
@@ -4143,7 +4145,8 @@ impl ReadOnlyStore for SqliteStore {
 
     async fn list_agents(&self) -> Result<Vec<Agent>, StoreError> {
         let sql = format!(
-            "SELECT name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
+            "SELECT name, prompt_path, mcp_config_path, max_tries, \
+                    max_simultaneous_interactive, max_simultaneous_headless, \
                     is_default_conversation_agent, secrets, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE archived = 0 ORDER BY name"
@@ -5715,16 +5718,18 @@ impl Store for SqliteStore {
                 })?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
-                     SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
-                         is_default_conversation_agent = ?5, secrets = ?6, \
-                         archived = 0, created_at = ?7, updated_at = ?8 \
-                     WHERE name = ?9"
+                     SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, \
+                         max_simultaneous_interactive = ?4, max_simultaneous_headless = ?5, \
+                         is_default_conversation_agent = ?6, secrets = ?7, \
+                         archived = 0, created_at = ?8, updated_at = ?9 \
+                     WHERE name = ?10"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
-                    .bind(agent.max_simultaneous)
+                    .bind(agent.max_simultaneous_interactive)
+                    .bind(agent.max_simultaneous_headless)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(&now)
@@ -5742,16 +5747,18 @@ impl Store for SqliteStore {
                 })?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
-                     (name, prompt_path, mcp_config_path, max_tries, max_simultaneous, \
+                     (name, prompt_path, mcp_config_path, max_tries, \
+                      max_simultaneous_interactive, max_simultaneous_headless, \
                       is_default_conversation_agent, secrets, archived, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
                     .bind(&agent.prompt_path)
                     .bind(agent.mcp_config_path.as_deref())
                     .bind(agent.max_tries)
-                    .bind(agent.max_simultaneous)
+                    .bind(agent.max_simultaneous_interactive)
+                    .bind(agent.max_simultaneous_headless)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
                     .bind(agent.archived)
@@ -5773,16 +5780,18 @@ impl Store for SqliteStore {
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
-             SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, max_simultaneous = ?4, \
-                 is_default_conversation_agent = ?5, secrets = ?6, \
-                 updated_at = ?7 \
-             WHERE name = ?8"
+             SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, \
+                 max_simultaneous_interactive = ?4, max_simultaneous_headless = ?5, \
+                 is_default_conversation_agent = ?6, secrets = ?7, \
+                 updated_at = ?8 \
+             WHERE name = ?9"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
             .bind(agent.mcp_config_path.as_deref())
             .bind(agent.max_tries)
-            .bind(agent.max_simultaneous)
+            .bind(agent.max_simultaneous_interactive)
+            .bind(agent.max_simultaneous_headless)
             .bind(agent.is_default_conversation_agent)
             .bind(&secrets_json)
             .bind(Utc::now().to_rfc3339())
@@ -10081,6 +10090,7 @@ mod tests {
             None,
             3,
             i32::MAX,
+            i32::MAX,
             false,
             Vec::new(),
         )
@@ -10277,6 +10287,7 @@ mod tests {
             Some("/agents/swe/mcp-config.json".to_string()),
             3,
             i32::MAX,
+            i32::MAX,
             false,
             vec!["OPENAI_API_KEY".to_string(), "GITHUB_TOKEN".to_string()],
         );
@@ -10305,6 +10316,44 @@ mod tests {
 
         let fetched = store.get_agent("swe").await.unwrap();
         assert!(fetched.secrets.is_empty());
+    }
+
+    /// Persist an agent with non-default per-mode caps and read it back to
+    /// confirm both `max_simultaneous_interactive` and
+    /// `max_simultaneous_headless` round-trip through every projection
+    /// (`get_agent`, `list_agents`).
+    #[tokio::test]
+    async fn agent_max_simultaneous_split_round_trip() {
+        let store = create_test_store().await;
+        let agent = Agent::new(
+            "split".to_string(),
+            "/agents/split/prompt.md".to_string(),
+            None,
+            3,
+            2,
+            7,
+            false,
+            Vec::new(),
+        );
+        store.add_agent(agent).await.unwrap();
+
+        let fetched = store.get_agent("split").await.unwrap();
+        assert_eq!(fetched.max_simultaneous_interactive, 2);
+        assert_eq!(fetched.max_simultaneous_headless, 7);
+
+        let listed = store.list_agents().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].max_simultaneous_interactive, 2);
+        assert_eq!(listed[0].max_simultaneous_headless, 7);
+
+        let mut updated = fetched;
+        updated.max_simultaneous_interactive = 4;
+        updated.max_simultaneous_headless = 12;
+        store.update_agent(updated).await.unwrap();
+
+        let fetched2 = store.get_agent("split").await.unwrap();
+        assert_eq!(fetched2.max_simultaneous_interactive, 4);
+        assert_eq!(fetched2.max_simultaneous_headless, 12);
     }
 
     // ---- Label helpers ----

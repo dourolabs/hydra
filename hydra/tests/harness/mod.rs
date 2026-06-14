@@ -454,6 +454,7 @@ impl TestHarnessBuilder {
                 None,
                 3,
                 10,
+                10,
                 false,
                 Vec::new(),
             );

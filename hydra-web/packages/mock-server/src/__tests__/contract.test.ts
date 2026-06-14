@@ -650,7 +650,8 @@ describe("Agents", () => {
     mcp_config_path: null,
     mcp_config: null,
     max_tries: 5,
-    max_simultaneous: 3,
+    max_simultaneous_interactive: 2,
+    max_simultaneous_headless: 3,
     is_default_conversation_agent: false,
     secrets: [],
   };
@@ -664,7 +665,8 @@ describe("Agents", () => {
     const fetched = await client.getAgent("test-agent");
     expect(fetched.agent.prompt).toBe("You are a test agent.");
     expect(fetched.agent.max_tries).toBe(5);
-    expect(fetched.agent.max_simultaneous).toBe(3);
+    expect(fetched.agent.max_simultaneous_interactive).toBe(2);
+    expect(fetched.agent.max_simultaneous_headless).toBe(3);
 
     // List
     const list = await client.listAgents();

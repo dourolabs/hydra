@@ -23,8 +23,11 @@ export function AgentEditModal({
   const [prompt, setPrompt] = useState(agent.prompt);
   const [mcpConfigPath, setMcpConfigPath] = useState(agent.mcp_config_path ?? "");
   const [maxTries, setMaxTries] = useState(String(agent.max_tries));
-  const [maxSimultaneous, setMaxSimultaneous] = useState(
-    String(agent.max_simultaneous),
+  const [maxSimultaneousInteractive, setMaxSimultaneousInteractive] = useState(
+    String(agent.max_simultaneous_interactive),
+  );
+  const [maxSimultaneousHeadless, setMaxSimultaneousHeadless] = useState(
+    String(agent.max_simultaneous_headless),
   );
   const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(
     agent.is_default_conversation_agent,
@@ -60,11 +63,12 @@ export function AgentEditModal({
       mcp_config_path: mcpConfigPath.trim() || null,
       mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,
-      max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
+      max_simultaneous_interactive: parseInt(maxSimultaneousInteractive, 10) || 1,
+      max_simultaneous_headless: parseInt(maxSimultaneousHeadless, 10) || 1,
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
     });
-  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneous, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
+  }, [agent.name, agent.prompt_path, mcpConfigPath, prompt, maxTries, maxSimultaneousInteractive, maxSimultaneousHeadless, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose)} title={`Edit ${agent.name}`}>
@@ -91,10 +95,17 @@ export function AgentEditModal({
           type="number"
         />
         <Input
-          label="Max Simultaneous"
+          label="Max Simultaneous Interactive"
           placeholder="1"
-          value={maxSimultaneous}
-          onChange={(e) => setMaxSimultaneous(e.target.value)}
+          value={maxSimultaneousInteractive}
+          onChange={(e) => setMaxSimultaneousInteractive(e.target.value)}
+          type="number"
+        />
+        <Input
+          label="Max Simultaneous Headless"
+          placeholder="1"
+          value={maxSimultaneousHeadless}
+          onChange={(e) => setMaxSimultaneousHeadless(e.target.value)}
           type="number"
         />
         <label className={styles.checkboxLabel}>
