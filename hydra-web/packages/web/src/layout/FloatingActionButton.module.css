@@ -10,9 +10,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-2);
-  color: var(--fg-1);
-  border: 1px solid var(--line);
+  background: var(--acc-dim);
+  color: var(--acc-fg-on);
+  border: none;
   cursor: pointer;
   /* Above content and the bottom-tab bar (z-index 5), below modals (100+). */
   z-index: 8;
@@ -22,7 +22,7 @@
 }
 
 .fab:hover {
-  background: var(--bg-3);
+  background: var(--acc);
 }
 
 .fab:focus-visible {
