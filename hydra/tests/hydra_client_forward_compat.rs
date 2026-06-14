@@ -1225,7 +1225,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "Test Title".to_string(),
         "desc".to_string(),
         Username::from("creator"),
-        "progress".to_string(),
         status("open"),
         ProjectId::default_project(),
         Some(hydra_common::principal::Principal::User {
@@ -1235,7 +1234,6 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         vec![],
         vec![],
         false,
-        None,
         None,
         None,
     );

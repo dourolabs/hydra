@@ -467,7 +467,6 @@ async fn test_client_state(
                 input.title,
                 input.description,
                 input.creator,
-                input.progress,
                 resolved,
                 input.project_id,
                 input.assignee,
@@ -477,7 +476,6 @@ async fn test_client_state(
                 input.deleted,
                 input.form,
                 input.form_response,
-                input.feedback,
             );
             let summary = hydra_common::api::v1::issues::IssueSummary::from(&api_issue);
             hydra_common::api::v1::issues::IssueSummaryRecord::new(

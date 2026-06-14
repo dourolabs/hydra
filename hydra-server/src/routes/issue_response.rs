@@ -52,7 +52,6 @@ pub async fn build_issue_response(
         issue.title,
         issue.description,
         issue.creator.into(),
-        issue.progress,
         resolved,
         issue.project_id,
         issue.assignee,
@@ -62,7 +61,6 @@ pub async fn build_issue_response(
         issue.deleted,
         issue.form,
         issue.form_response,
-        issue.feedback,
     ))
 }
 

@@ -105,7 +105,7 @@ Safety / shape, accepted by all three subcommands:
   selection.
 - `--verbosity <1|2|3>` — controls how much of each node is rendered:
   - `1` (default) — terse: id, kind, title, status.
-  - `2` — intermediate: adds description / progress / assignee for issues,
+  - `2` — intermediate: adds description / assignee for issues,
     the diff for patches, the body for documents.
   - `3` — full: the entire record as stored in the server.
 

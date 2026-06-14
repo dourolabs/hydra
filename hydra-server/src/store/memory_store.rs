@@ -3590,7 +3590,6 @@ fn issue_matches(
 
         return issue.title.to_lowercase().contains(term)
             || issue.description.to_lowercase().contains(term)
-            || issue.progress.to_lowercase().contains(term)
             || issue.issue_type.as_str() == term
             || issue.status.as_str() == term
             || issue.creator.as_ref().to_lowercase().contains(term)
@@ -3813,14 +3812,12 @@ mod tests {
             "Test Title".to_string(),
             "issue details".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             dependencies,
             Vec::new(),
-            None,
             None,
             None,
         )
@@ -8635,14 +8632,12 @@ mod tests {
             "Bug Title".to_string(),
             "a bug".to_string(),
             Username::from("creator"),
-            String::new(),
             status("open"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -8653,14 +8648,12 @@ mod tests {
             "Closed".to_string(),
             "closed task".to_string(),
             Username::from("creator"),
-            String::new(),
             status("closed"),
             crate::domain::projects::default_project_id(),
             None,
             None,
             Vec::new(),
             Vec::new(),
-            None,
             None,
             None,
         );
@@ -8902,7 +8895,7 @@ mod tests {
 
         // Update the issue with no document changes; the unmanaged row must survive.
         let mut updated = sample_issue(vec![]);
-        updated.progress = "halfway".to_string();
+        updated.title = "updated title".to_string();
         store
             .update_issue(&issue_id, updated, &actor_ref)
             .await

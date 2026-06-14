@@ -170,7 +170,7 @@ impl IssueAssertions for IssueVersionRecord {
 /// Structured assertions on issue summary records (from list endpoints).
 ///
 /// Mirrors [`IssueAssertions`] but works with `IssueSummaryRecord`, which
-/// excludes `progress` and `job_settings`.
+/// excludes `job_settings`.
 pub trait IssueSummaryAssertions {
     /// Assert the issue has the expected status.
     fn assert_status(&self, expected: StatusKey);

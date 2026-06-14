@@ -5,7 +5,6 @@
       "title": "Platform v2.0 Migration",
       "description": "Platform v2.0 Migration\n\nMigrate the entire platform to v2.0 architecture. This is a large initiative covering authentication, database, API changes, and real-time collaboration.\n\n## Goals\n- Modernize authentication with OAuth2\n- Migrate database schema for new entity model\n- Implement API rate limiting\n- Build real-time collaboration engine\n- Deploy GraphQL federation gateway\n\n## Timeline\nTargeting completion by end of Q2.",
       "creator": "alice",
-      "progress": "5 of 8 subtasks complete. Auth and DB migrations done. 3 agents actively working on remaining items.",
       "status": "in-progress",
       "assignee": { "User": { "name": "alice" } },
       "dependencies": [],
@@ -19,7 +18,6 @@
             "title": "Platform v2.0 Migration",
             "description": "Platform v2.0 Migration\n\nMigrate the entire platform to v2.0 architecture. This is a large initiative covering authentication, database, API changes, and real-time collaboration.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "dependencies": [],
@@ -30,20 +28,17 @@
           "timestamp": "2026-02-20T11:15:00.000Z",
           "patch": {
             "assignee": { "User": { "name": "alice" } },
-            "status": "in-progress",
-            "progress": "Kicked off — splitting work into subtasks for auth, database, rate limiting, real-time collab, and GraphQL gateway."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-01T16:45:00.000Z",
           "patch": {
-            "progress": "Subtasks created. OAuth2 provider chosen (Keycloak); DB migration in flight; rate limiting design underway."
           }
         },
         {
           "timestamp": "2026-03-14T10:00:00.000Z",
           "patch": {
-            "progress": "Database migration shipped. Auth scope work complete. Federation gateway live with Users + Issues subgraphs."
           }
         },
         {
@@ -59,7 +54,6 @@
       "title": "Migrate authentication to OAuth2",
       "description": "Migrate authentication to OAuth2\n\nReplace the existing session-based authentication with OAuth2 / OpenID Connect. This involves:\n\n1. Setting up an OAuth2 provider (e.g., Auth0 or Keycloak)\n2. Implementing authorization code flow\n3. Migrating existing user sessions\n4. Updating all API endpoints to validate JWT tokens\n\n```typescript\n// Example token validation middleware\nconst validateToken = async (req, res, next) => {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token) return res.status(401).json({ error: 'Unauthorized' });\n  try {\n    const decoded = await verifyJwt(token);\n    req.user = decoded;\n    next();\n  } catch (err) {\n    return res.status(403).json({ error: 'Invalid token' });\n  }\n};\n```",
       "creator": "alice",
-      "progress": "Provider selected (Keycloak). Authorization code flow implemented. Token refresh in progress.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -76,7 +70,6 @@
             "title": "Migrate authentication to OAuth2",
             "description": "Replace the existing session-based authentication with OAuth2 / OpenID Connect.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
@@ -87,20 +80,17 @@
           "timestamp": "2026-03-01T09:30:00.000Z",
           "patch": {
             "assignee": { "Agent": { "name": "swe" } },
-            "status": "in-progress",
-            "progress": "Picked up by swe agent. Evaluating Keycloak vs Auth0."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-05T14:10:00.000Z",
           "patch": {
-            "progress": "Keycloak selected. Standing up dev instance."
           }
         },
         {
           "timestamp": "2026-03-10T18:00:00.000Z",
           "patch": {
-            "progress": "Authorization code flow implemented; PR open for review.",
             "patches": ["p-seed00001"]
           }
         }
@@ -111,7 +101,6 @@
       "title": "Implement OAuth2 token refresh logic",
       "description": "Implement OAuth2 token refresh logic\n\nAdd automatic token refresh when access tokens expire. Must handle concurrent requests gracefully and queue refresh operations.",
       "creator": "swe",
-      "progress": "Agent implementing concurrent request queuing and token refresh flow.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -128,7 +117,6 @@
             "title": "Implement OAuth2 token refresh logic",
             "description": "Implement OAuth2 token refresh logic\n\nAdd automatic token refresh when access tokens expire. Must handle concurrent requests gracefully and queue refresh operations.",
             "creator": "swe",
-            "progress": "",
             "status": "open",
             "assignee": { "Agent": { "name": "swe" } },
             "session_settings": { "repo_name": "acme/web-app" },
@@ -139,14 +127,12 @@
         {
           "timestamp": "2026-03-12T11:15:00.000Z",
           "patch": {
-            "status": "in-progress",
-            "progress": "Agent picked up; first session investigating approach."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-14T17:40:00.000Z",
           "patch": {
-            "progress": "Token refresh endpoint implemented. Working on queuing logic next."
           }
         }
       ]
@@ -156,7 +142,6 @@
       "title": "Add OAuth2 scopes and permissions support",
       "description": "Add OAuth2 scopes and permissions support\n\nImplement fine-grained authorization using OAuth2 scopes. Map existing role-based permissions to scope definitions.",
       "creator": "alice",
-      "progress": "Scope definitions finalized. Implementation merged.",
       "status": "closed",
       "assignee": { "Agent": { "name": "swe" } },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
@@ -170,7 +155,6 @@
             "title": "Add OAuth2 scopes and permissions support",
             "description": "Add OAuth2 scopes and permissions support\n\nImplement fine-grained authorization using OAuth2 scopes. Map existing role-based permissions to scope definitions.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": { "Agent": { "name": "swe" } },
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00002" }],
@@ -180,14 +164,12 @@
         {
           "timestamp": "2026-03-02T15:30:00.000Z",
           "patch": {
-            "status": "in-progress",
-            "progress": "Defining scope taxonomy."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-12T09:00:00.000Z",
           "patch": {
-            "progress": "Middleware implemented, PR up for review.",
             "patches": ["p-seed00002"]
           }
         }
@@ -198,7 +180,6 @@
       "title": "Database schema migration for v2.0",
       "description": "Database schema migration for v2.0\n\nMigrate the PostgreSQL schema to support new entity relationships and the audit log table.",
       "creator": "alice",
-      "progress": "Migration scripts written and tested. Deployed to staging successfully.",
       "status": "closed",
       "assignee": { "Agent": { "name": "swe" } },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
@@ -212,7 +193,6 @@
             "title": "Database schema migration for v2.0",
             "description": "Database schema migration for v2.0\n\nMigrate the PostgreSQL schema to support new entity relationships and the audit log table.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],
@@ -223,14 +203,12 @@
           "timestamp": "2026-02-26T09:00:00.000Z",
           "patch": {
             "assignee": { "Agent": { "name": "swe" } },
-            "status": "in-progress",
-            "progress": "Writing migration scripts; planning blue/green rollout."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-14T09:45:00.000Z",
           "patch": {
-            "progress": "Migration applied in staging; verified."
           }
         }
       ]
@@ -240,7 +218,6 @@
       "title": "Implement API rate limiting",
       "description": "Implement API rate limiting\n\nAdd rate limiting middleware to protect API endpoints from abuse. Use a sliding window algorithm with Redis backing.",
       "creator": "alice",
-      "progress": "Initial implementation had memory leak in Redis connection pool. Agent investigating and fixing.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -257,7 +234,6 @@
             "title": "Implement API rate limiting",
             "description": "Implement API rate limiting\n\nAdd rate limiting middleware to protect API endpoints from abuse. Use a sliding window algorithm with Redis backing.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
@@ -269,21 +245,18 @@
           "timestamp": "2026-03-10T13:30:00.000Z",
           "patch": {
             "assignee": { "Agent": { "name": "swe" } },
-            "status": "in-progress",
-            "progress": "swe picked up. Researching sliding window in Redis."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-12T15:00:00.000Z",
           "patch": {
-            "progress": "Sliding window prototype works. Opening PR.",
             "patches": ["p-seed00003"]
           }
         },
         {
           "timestamp": "2026-03-14T15:30:00.000Z",
           "patch": {
-            "progress": "Review surfaced a connection pool leak under load. Spawning new session to fix."
           }
         }
       ]
@@ -293,7 +266,6 @@
       "title": "Fix login page 500 error on expired sessions",
       "description": "Fix login page 500 error on expired sessions\n\nUsers are seeing a 500 error when their session expires and they try to access the login page. The session cleanup middleware is throwing an unhandled exception.",
       "creator": "dev-user",
-      "progress": "Root cause identified: session middleware not handling null session gracefully. Fix deployed.",
       "status": "closed",
       "assignee": { "User": { "name": "dev-user" } },
       "dependencies": [],
@@ -307,7 +279,6 @@
             "title": "Fix login page 500 error on expired sessions",
             "description": "Fix login page 500 error on expired sessions\n\nUsers are seeing a 500 error when their session expires and they try to access the login page. The session cleanup middleware is throwing an unhandled exception.",
             "creator": "dev-user",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "dependencies": [],
@@ -318,14 +289,12 @@
           "timestamp": "2026-02-07T11:30:00.000Z",
           "patch": {
             "assignee": { "User": { "name": "dev-user" } },
-            "status": "in-progress",
-            "progress": "Reproduced locally — null session triggers TypeError in cleanup middleware."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-02-08T14:50:00.000Z",
           "patch": {
-            "progress": "Patched cleanup middleware to handle null session. Verifying in staging."
           }
         }
       ]
@@ -335,7 +304,6 @@
       "title": "Add dark mode support",
       "description": "Add dark mode support\n\nImplement a dark mode theme that users can toggle from their profile settings. Should respect the OS-level preference by default.\n\n## Requirements\n- Toggle in user profile settings\n- Respect `prefers-color-scheme` media query\n- Persist preference in localStorage\n- Smooth transition animation between themes\n- All components must support both themes",
       "creator": "dev-user",
-      "progress": "",
       "status": "inbox",
       "assignee": null,
       "project_id": "j-engv2",
@@ -356,7 +324,6 @@
       "title": "Improve search performance",
       "description": "Improve search performance\n\nThe full-text search endpoint is too slow for large datasets. Need to add proper indexing and consider Elasticsearch integration.",
       "creator": "alice",
-      "progress": "Profiling complete. Main bottleneck is the unindexed LIKE query on description field. Adding GIN index.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -373,7 +340,6 @@
             "title": "Improve search performance",
             "description": "Improve search performance\n\nThe full-text search endpoint is too slow for large datasets. Need to add proper indexing and consider Elasticsearch integration.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
@@ -385,14 +351,12 @@
           "timestamp": "2026-03-13T14:00:00.000Z",
           "patch": {
             "assignee": { "Agent": { "name": "swe" } },
-            "status": "in-progress",
-            "progress": "Profiling: 95th percentile latency at 2.4s on description LIKE search."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-15T08:55:00.000Z",
           "patch": {
-            "progress": "GIN index PR open. Pending benchmark.",
             "patches": ["p-seed00007"]
           }
         }
@@ -403,7 +367,6 @@
       "title": "Update deployment documentation",
       "description": "Update deployment documentation\n\nThe deployment docs are outdated after the Kubernetes migration. Need to update with new kubectl commands and Helm chart references.",
       "creator": "dev-user",
-      "progress": "",
       "status": "dropped",
       "assignee": { "User": { "name": "dev-user" } },
       "dependencies": [],
@@ -414,7 +377,6 @@
       "title": "Review: OAuth2 provider integration patch",
       "description": "Review: OAuth2 provider integration patch\n\nPlease review the OAuth2 provider integration patch (p-seed00001). Focus areas:\n- Security of token handling\n- Error handling edge cases\n- Test coverage",
       "creator": "swe",
-      "progress": "Agent reviewing patch. Checking security of token handling and error edge cases.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "reviewer" } },
       "dependencies": [],
@@ -487,7 +449,6 @@
       "title": "Merge: Rate limiter middleware",
       "description": "Merge: Rate limiter middleware\n\nMerge the rate limiter middleware patch after addressing review feedback.",
       "creator": "alice",
-      "progress": "",
       "status": "in-development",
       "assignee": { "Agent": { "name": "swe" } },
       "project_id": "j-engv2",
@@ -509,7 +470,6 @@
       "title": "Build WebSocket connection manager for real-time collab",
       "description": "Build WebSocket connection manager for real-time collab\n\nImplement the core WebSocket infrastructure: ConnectionManager class that handles connect/disconnect/reconnect, heartbeat, and message routing.",
       "creator": "alice",
-      "progress": "Agent implementing ConnectionManager with JWT auth and exponential backoff reconnection.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -526,7 +486,6 @@
             "title": "Build WebSocket connection manager for real-time collab",
             "description": "Build WebSocket connection manager for real-time collab\n\nImplement the core WebSocket infrastructure: ConnectionManager class that handles connect/disconnect/reconnect, heartbeat, and message routing.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": { "Agent": { "name": "swe" } },
             "session_settings": { "repo_name": "acme/web-app" },
@@ -537,14 +496,12 @@
         {
           "timestamp": "2026-03-13T16:00:00.000Z",
           "patch": {
-            "status": "in-progress",
-            "progress": "ConnectionManager skeleton up. Wiring JWT auth next."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-15T10:45:00.000Z",
           "patch": {
-            "progress": "ConnectionManager + JWT auth done. PR open.",
             "patches": ["p-seed00008"]
           }
         }
@@ -555,7 +512,6 @@
       "title": "Integrate Yjs CRDT library for concurrent editing",
       "description": "Integrate Yjs CRDT library for concurrent editing\n\nIntegrate the Yjs CRDT library to enable conflict-free concurrent editing of shared documents. Set up Y-WebSocket provider and persistence layer.",
       "creator": "alice",
-      "progress": "Yjs integration complete. Y-WebSocket provider connected. Persistence adapter merged.",
       "status": "closed",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -572,7 +528,6 @@
             "title": "Integrate Yjs CRDT library for concurrent editing",
             "description": "Integrate Yjs CRDT library for concurrent editing\n\nIntegrate the Yjs CRDT library to enable conflict-free concurrent editing of shared documents. Set up Y-WebSocket provider and persistence layer.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": { "Agent": { "name": "swe" } },
             "session_settings": { "repo_name": "acme/web-app" },
@@ -583,14 +538,12 @@
         {
           "timestamp": "2026-03-10T14:15:00.000Z",
           "patch": {
-            "status": "in-progress",
-            "progress": "Y.Doc model defined; provider wiring underway."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-14T17:30:00.000Z",
           "patch": {
-            "progress": "Provider + persistence adapter merged.",
             "patches": ["p-seed00005"]
           }
         }
@@ -601,7 +554,6 @@
       "title": "Fix race condition in session cleanup worker",
       "description": "Fix race condition in session cleanup worker\n\nThe background worker that cleans up expired sessions has a TOCTOU race condition. Two workers can pick up the same expired session.",
       "creator": "alice",
-      "progress": "Agent analyzing the race condition and implementing distributed lock with Redis SETNX.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -618,7 +570,6 @@
             "title": "Fix race condition in session cleanup worker",
             "description": "Fix race condition in session cleanup worker\n\nThe background worker that cleans up expired sessions has a TOCTOU race condition. Two workers can pick up the same expired session.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
@@ -630,14 +581,12 @@
           "timestamp": "2026-03-13T10:00:00.000Z",
           "patch": {
             "assignee": { "Agent": { "name": "swe" } },
-            "status": "in-progress",
-            "progress": "swe agent investigating. Reproduced race in test harness."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-15T13:20:00.000Z",
           "patch": {
-            "progress": "Distributed lock implemented; PR up for review.",
             "patches": ["p-seed00009"]
           }
         }
@@ -648,7 +597,6 @@
       "title": "Fix memory leak in SSE event broadcaster",
       "description": "Fix memory leak in SSE event broadcaster\n\nThe SSE broadcaster accumulates event listeners for disconnected clients. The cleanup callback isn't firing on aborted connections.",
       "creator": "alice",
-      "progress": "Root cause found: AbortSignal listener not registered. Fix implemented and patch submitted.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -665,7 +613,6 @@
             "title": "Fix memory leak in SSE event broadcaster",
             "description": "Fix memory leak in SSE event broadcaster\n\nThe SSE broadcaster accumulates event listeners for disconnected clients. The cleanup callback isn't firing on aborted connections.",
             "creator": "alice",
-            "progress": "",
             "status": "open",
             "assignee": null,
             "session_settings": { "repo_name": "acme/web-app" },
@@ -677,20 +624,17 @@
           "timestamp": "2026-03-10T09:20:00.000Z",
           "patch": {
             "assignee": { "Agent": { "name": "swe" } },
-            "status": "in-progress",
-            "progress": "Memory profile shows listener set growing unbounded — investigating."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-13T17:00:00.000Z",
           "patch": {
-            "progress": "Root cause found: AbortSignal listener not registered."
           }
         },
         {
           "timestamp": "2026-03-15T11:30:00.000Z",
           "patch": {
-            "progress": "Fix implemented; PR p-seed00006 submitted for review.",
             "patches": ["p-seed00006"]
           }
         }
@@ -701,7 +645,6 @@
       "title": "Deploy GraphQL federation gateway",
       "description": "Deploy GraphQL federation gateway\n\nSet up Apollo Federation v2 gateway with subgraphs for users, issues, sessions, and patches. Incremental migration from REST.",
       "creator": "alice",
-      "progress": "Gateway deployed. Users and Issues subgraphs live. Sessions subgraph in progress.",
       "status": "pending-release",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -725,7 +668,6 @@
       "title": "Review: SSE memory leak fix",
       "description": "Review: SSE memory leak fix\n\nReview the fix for the SSE broadcaster memory leak. Verify the AbortSignal cleanup approach and check the new metrics endpoint.",
       "creator": "swe",
-      "progress": "Agent reviewing patch p-seed00006. Checking cleanup logic.",
       "status": "in-review",
       "assignee": { "Agent": { "name": "reviewer" } },
       "project_id": "j-engv2",
@@ -750,7 +692,6 @@
       "title": "Add webhook delivery system",
       "description": "Add webhook delivery system\n\nImplement a webhook delivery system so external integrations can receive real-time notifications about events.",
       "creator": "alice",
-      "progress": "",
       "status": "backlog",
       "assignee": null,
       "project_id": "j-engv2",
@@ -772,7 +713,6 @@
       "title": "Implement concurrent refresh queue with mutex",
       "description": "Implement concurrent refresh queue with mutex\n\nGuard the OAuth2 token refresh flow with a per-client mutex so concurrent requests share a single in-flight refresh and don't all hit the IdP simultaneously.\n\n## Approach\n- Wrap refresh in a `p-limit`-style queue keyed by client_id\n- Pending callers await the resolved token from the in-flight refresh\n- Surface refresh errors to all queued callers (not just the first)",
       "creator": "swe",
-      "progress": "Mutex implementation in progress. First attempt deadlocked under burst load; redesigning with explicit promise sharing.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -789,7 +729,6 @@
             "title": "Implement concurrent refresh queue with mutex",
             "description": "Implement concurrent refresh queue with mutex\n\nGuard the OAuth2 token refresh flow with a per-client mutex so concurrent requests share a single in-flight refresh and don't all hit the IdP simultaneously.",
             "creator": "swe",
-            "progress": "",
             "status": "open",
             "assignee": { "Agent": { "name": "swe" } },
             "session_settings": { "repo_name": "acme/web-app" },
@@ -800,14 +739,12 @@
         {
           "timestamp": "2026-03-15T09:00:00.000Z",
           "patch": {
-            "status": "in-progress",
-            "progress": "API design ratified. Implementing mutex."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-15T14:30:00.000Z",
           "patch": {
-            "progress": "Initial wiring complete; deadlock observed under burst load. Investigating.",
             "patches": ["p-seed00010"]
           }
         }
@@ -818,7 +755,6 @@
       "title": "Add unit tests for refresh queue mutex",
       "description": "Add unit tests for refresh queue mutex\n\nWrite unit tests covering: single in-flight refresh, queued caller resolution, error propagation, and deadlock prevention under burst load. Target 90% branch coverage in `refresh-queue.ts`.",
       "creator": "swe",
-      "progress": "Initial test scaffolding in place. Covering burst-load scenarios.",
       "status": "in-progress",
       "assignee": { "Agent": { "name": "swe" } },
       "session_settings": {
@@ -835,7 +771,6 @@
             "title": "Add unit tests for refresh queue mutex",
             "description": "Add unit tests for refresh queue mutex\n\nWrite unit tests covering: single in-flight refresh, queued caller resolution, error propagation, and deadlock prevention under burst load.",
             "creator": "swe",
-            "progress": "",
             "status": "open",
             "assignee": { "Agent": { "name": "swe" } },
             "session_settings": { "repo_name": "acme/web-app" },
@@ -846,14 +781,12 @@
         {
           "timestamp": "2026-03-15T13:00:00.000Z",
           "patch": {
-            "status": "in-progress",
-            "progress": "Test scaffolding up. Happy path green."
+            "status": "in-progress"
           }
         },
         {
           "timestamp": "2026-03-15T17:45:00.000Z",
           "patch": {
-            "progress": "Concurrent caller resolution test green. Error propagation next."
           }
         }
       ]
@@ -863,7 +796,6 @@
       "title": "Benchmark refresh queue performance under load",
       "description": "Benchmark refresh queue performance under load\n\nRun load tests against the new mutex-guarded refresh queue at 1k, 5k, and 10k concurrent callers. Compare wall-clock token-acquisition latency and IdP call volume against the pre-mutex baseline.",
       "creator": "swe",
-      "progress": "",
       "status": "pending",
       "assignee": null,
       "session_settings": {
@@ -890,7 +822,6 @@
       "title": "Review: OAuth2 migration ADR",
       "description": "Review the proposed OAuth2 migration approach (see ADR-001). Please review the strategy and select whether to approve, request changes, or reject.",
       "creator": "alice",
-      "progress": "",
       "status": "open",
       "assignee": { "User": { "name": "bob" } },
       "dependencies": [],
@@ -960,7 +891,6 @@
       "title": "Review: Refresh queue mutex design",
       "description": "Review the per-client refresh queue mutex design from i-seed00020. This response is already submitted and shown read-only.",
       "creator": "swe",
-      "progress": "",
       "status": "closed",
       "assignee": { "User": { "name": "alice" } },
       "dependencies": [],
@@ -1015,7 +945,6 @@
       "title": "Survey: text inputs",
       "description": "Survey covering every text-style input. Exercises both `text` (single line) and `textarea` (multi-line) with the full range of optional config: placeholder, min_length, max_length, pattern, rows, and prefilled defaults.",
       "creator": "alice",
-      "progress": "",
       "status": "open",
       "assignee": { "User": { "name": "dev-user" } },
       "dependencies": [],
@@ -1094,7 +1023,6 @@
       "title": "Survey: selection inputs",
       "description": "Survey covering every selection-style input. Includes a radio `select`, a dropdown `select`, and `checkbox` (one defaulted on, one defaulted off, one unset).",
       "creator": "alice",
-      "progress": "",
       "status": "open",
       "assignee": { "User": { "name": "dev-user" } },
       "dependencies": [],
@@ -1174,7 +1102,6 @@
       "title": "Survey: numeric inputs",
       "description": "Survey covering every flavor of `number` input: bounded with step, bounded with a `default`, and unbounded (no min/max/step) for contrast.",
       "creator": "alice",
-      "progress": "",
       "status": "open",
       "assignee": { "User": { "name": "dev-user" } },
       "dependencies": [],
@@ -1240,7 +1167,6 @@
       "title": "Survey: actions & states",
       "description": "Already-submitted survey demonstrating the read-only `form_response` path on a non-review issue, plus a mix of action `style` (`primary` / `danger` / `default`) and `effect` (`update_issue` / `record_only`) variants.",
       "creator": "alice",
-      "progress": "Response submitted by bob — issue closed via the `confirm_shutdown` action.",
       "status": "closed",
       "assignee": { "User": { "name": "bob" } },
       "dependencies": [],
@@ -1319,7 +1245,6 @@
       "title": "Re-index search corpus",
       "description": "Child task spawned to regenerate the search index after the v2 schema migration. Used as the seed fixture for the `SystemEvent::ChildUnblocked` chip in the conversation timeline.",
       "creator": "swe",
-      "progress": "Index rebuild finished; verification passed.",
       "status": "closed",
       "assignee": { "Agent": { "name": "swe" } },
       "dependencies": [{ "type": "child-of", "issue_id": "i-seed00001" }],

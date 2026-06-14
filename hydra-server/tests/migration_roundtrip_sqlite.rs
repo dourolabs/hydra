@@ -200,6 +200,128 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     add_statuses_archived_defaults_to_false(&pool).await?;
     add_statuses_archived_migration_is_idempotent(&pool).await?;
 
+    seed_progress_as_comments_drops_columns(&pool).await?;
+    seed_progress_as_comments_seeds_one_comment_per_issue(&pool).await?;
+    seed_progress_as_comments_drops_feedback_outright(&pool).await?;
+    seed_progress_as_comments_migration_is_idempotent(&pool).await?;
+
+    Ok(())
+}
+
+/// After the column-drop SQL migration at 20260721000000 lands, the
+/// `progress` and `feedback` columns must be gone from `issues_v2`.
+async fn seed_progress_as_comments_drops_columns(pool: &SqlitePool) -> Result<()> {
+    if column_exists(pool, "issues_v2", "progress").await? {
+        bail!("expected `issues_v2.progress` column to be dropped post-rollforward");
+    }
+    if column_exists(pool, "issues_v2", "feedback").await? {
+        bail!("expected `issues_v2.feedback` column to be dropped post-rollforward");
+    }
+    Ok(())
+}
+
+/// For each baseline issue whose progress was populated, the
+/// migration must have inserted exactly one `issue_comments` row whose
+/// body matches the latest progress value, attributed to the actor
+/// and timestamp of the version that last changed it.
+async fn seed_progress_as_comments_seeds_one_comment_per_issue(pool: &SqlitePool) -> Result<()> {
+    // i-progseed1: progress changed across two versions; the seeded
+    // body must be the v2 value ("latest progress note"), attributed
+    // to bob (v2's actor) at v2's created_at timestamp.
+    let row = sqlx::query(
+        "SELECT body, actor, created_at FROM issue_comments \
+         WHERE issue_id = 'i-progseed1' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read seeded comments for i-progseed1")?;
+    if row.len() != 1 {
+        bail!(
+            "expected exactly 1 seeded comment on i-progseed1; got {}",
+            row.len()
+        );
+    }
+    let body: String = row[0].try_get("body")?;
+    let actor: String = row[0].try_get("actor")?;
+    let created_at: String = row[0].try_get("created_at")?;
+    if body != "latest progress note" {
+        bail!("i-progseed1: expected seeded body to be the v2 progress; got {body:?}");
+    }
+    if !actor.contains("\"bob\"") {
+        bail!("i-progseed1: expected seeded comment actor to be bob (v2 actor); got {actor:?}");
+    }
+    if !created_at.starts_with("2026-07-02T") {
+        bail!(
+            "i-progseed1: expected seeded comment created_at to match v2 timestamp; got {created_at:?}"
+        );
+    }
+
+    // i-progseed2: single version. Seeded body matches v1 progress;
+    // actor and created_at come from v1.
+    let row = sqlx::query(
+        "SELECT body, actor, created_at FROM issue_comments \
+         WHERE issue_id = 'i-progseed2' ORDER BY sequence",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read seeded comments for i-progseed2")?;
+    if row.len() != 1 {
+        bail!(
+            "expected exactly 1 seeded comment on i-progseed2; got {}",
+            row.len()
+        );
+    }
+    let body: String = row[0].try_get("body")?;
+    let actor: String = row[0].try_get("actor")?;
+    let created_at: String = row[0].try_get("created_at")?;
+    if body != "only progress note" {
+        bail!("i-progseed2: expected seeded body to be the v1 progress; got {body:?}");
+    }
+    if !actor.contains("\"carol\"") {
+        bail!("i-progseed2: expected seeded comment actor to be carol; got {actor:?}");
+    }
+    if !created_at.starts_with("2026-07-03T") {
+        bail!(
+            "i-progseed2: expected seeded comment created_at to match v1 timestamp; got {created_at:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `i-progfb` had a populated `feedback` and empty `progress`. The
+/// migration must not seed any comment for that issue — feedback is
+/// dropped outright per the parent spec.
+async fn seed_progress_as_comments_drops_feedback_outright(pool: &SqlitePool) -> Result<()> {
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM issue_comments WHERE issue_id = 'i-progfb'")
+            .fetch_one(pool)
+            .await
+            .context("count seeded comments on i-progfb")?;
+    if count != 0 {
+        bail!("expected no seeded comments on i-progfb; got {count}");
+    }
+    Ok(())
+}
+
+/// Re-running the migration registry (which the server does on every
+/// boot) must not duplicate the seeded comments.
+async fn seed_progress_as_comments_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM issue_comments")
+        .fetch_one(pool)
+        .await
+        .context("count issue_comments before idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm seed-progress idempotency")?;
+    let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM issue_comments")
+        .fetch_one(pool)
+        .await
+        .context("count issue_comments after idempotency rerun")?;
+    if count_before != count_after {
+        bail!(
+            "issue_comments row count changed across idempotency rerun: {count_before} -> {count_after}"
+        );
+    }
     Ok(())
 }
 
