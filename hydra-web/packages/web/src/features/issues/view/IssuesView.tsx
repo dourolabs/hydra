@@ -98,13 +98,11 @@ export function IssuesView({
   );
   return (
     <div className={styles.page}>
-      {!isMobile && (
-        <PageHead
-          eyebrow={eyebrow}
-          title={title}
-          actions={layoutSegmentedControl}
-        />
-      )}
+      <PageHead
+        eyebrow={eyebrow}
+        title={title}
+        actions={layoutSegmentedControl}
+      />
 
       <div className={styles.toolbar}>
         <CollapsibleSearch
