@@ -37,7 +37,7 @@ pub use conversations::{
 pub use documents::UpsertDocumentError;
 pub use event_bus::{EventBus, ServerEvent, StoreWithEvents};
 pub use hydra_common::repositories::{Repository, RepositoryRecord};
-pub use issues::{SubmitFeedbackError, SubmitFormActionError, UpsertIssueError};
+pub use issues::{SubmitFormActionError, UpsertIssueError};
 pub use labels::{CreateLabelError, UpdateLabelError};
 pub use patches::UpsertPatchError;
 pub use projects::ResolveStatusError;
