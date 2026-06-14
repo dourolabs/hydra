@@ -298,10 +298,4 @@
   .headOverflow {
     display: inline-flex;
   }
-
-  .metaRow {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
 }
