@@ -1728,10 +1728,15 @@ describe("IssuesBoard chat button", () => {
 describe("IssuesBoard mobile single-board view", () => {
   beforeEach(() => {
     mobileMatches = true;
+    window.sessionStorage.clear();
     projectsData = [
       makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
       makeProject("j-design", "design", DEFAULT_STATUSES, "Design"),
     ];
+  });
+
+  afterEach(() => {
+    window.sessionStorage.clear();
   });
 
   it("renders the mobile board picker when multiple projects exist", () => {
@@ -1836,5 +1841,46 @@ describe("IssuesBoard mobile single-board view", () => {
   it("falls back to the first project when ?board_project points at a missing one", () => {
     renderBoard(undefined, { initialUrl: "/?board_project=j-deleted" });
     expect(screen.getByTestId("board-project-engineering")).toBeDefined();
+  });
+
+  it("persists picker selection to sessionStorage so a fresh nav restores it", () => {
+    renderBoard();
+
+    fireEvent.click(
+      screen.getByTestId("board-mobile-picker").querySelector("button")!,
+    );
+    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
+
+    const raw = window.sessionStorage.getItem("hydra:board:mobile-state");
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!).project).toBe("j-design");
+  });
+
+  it("hydrates from sessionStorage when URL has no board params (nav-menu return)", async () => {
+    window.sessionStorage.setItem(
+      "hydra:board:mobile-state",
+      JSON.stringify({ project: "j-design", status: "in-progress" }),
+    );
+    renderBoard();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("board-project-design")).toBeDefined();
+    });
+    expect(screen.queryByTestId("board-project-engineering")).toBeNull();
+    // Hydration should also seed the URL so back/forward keeps working.
+    const sp = readSearchProbe();
+    expect(sp.get("board_project")).toBe("j-design");
+    expect(sp.get("board_status")).toBe("in-progress");
+  });
+
+  it("URL wins over sessionStorage when both are present", () => {
+    window.sessionStorage.setItem(
+      "hydra:board:mobile-state",
+      JSON.stringify({ project: "j-eng" }),
+    );
+    renderBoard(undefined, { initialUrl: "/?board_project=j-design" });
+
+    expect(screen.getByTestId("board-project-design")).toBeDefined();
+    expect(screen.queryByTestId("board-project-engineering")).toBeNull();
   });
 });
