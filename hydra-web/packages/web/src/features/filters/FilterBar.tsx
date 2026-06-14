@@ -267,12 +267,12 @@ export function FilterBar<T>({
       {menuOpen && menuAnchor && (
         <AddFilterMenu
           definitions={definitions}
-          filters={isMobile ? filters : undefined}
+          filters={filters}
           anchorStyle={menuAnchor}
           onPick={handlePick}
-          onPickExisting={handlePickExisting}
-          onRemoveExisting={handleRemove}
-          onClearAll={handleClearAll}
+          onPickExisting={isMobile ? handlePickExisting : undefined}
+          onRemoveExisting={isMobile ? handleRemove : undefined}
+          onClearAll={isMobile ? handleClearAll : undefined}
           onClose={closeMenu}
         />
       )}

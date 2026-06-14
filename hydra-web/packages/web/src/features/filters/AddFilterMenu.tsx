@@ -14,13 +14,20 @@ import styles from "./AddFilterMenu.module.css";
 interface AddFilterMenuProps<T> {
   definitions: FilterDefinitions<T>;
   /**
-   * When provided (mobile only — desktop renders chips inline on the bar),
-   * the menu prepends an "Active filters" section above the add list so the
-   * user can edit or remove existing filters without leaving the sheet.
+   * Currently-active filters. Used to (a) hide already-active filter types
+   * from the add list when applying twice doesn't make sense (anything outside
+   * the `relations` group — an item has at most one status/type/creator/…),
+   * and (b) populate the mobile "Active" section when the caller wires up the
+   * edit/remove handlers below.
    */
   filters?: Filter[];
   anchorStyle: CSSProperties;
   onPick: (id: string) => void;
+  /**
+   * When provided (mobile only — desktop shows the chips inline on the bar),
+   * the menu prepends an "Active" section that lets the user edit, remove,
+   * or clear existing filters without leaving the sheet.
+   */
   onPickExisting?: (uid: string) => void;
   onRemoveExisting?: (uid: string) => void;
   onClearAll?: () => void;
@@ -78,6 +85,18 @@ export function AddFilterMenu<T>({
   const menuRef = useRef<HTMLDivElement | null>(null);
   useOutsideClick(menuRef, onClose, true);
 
+  // Filter types where applying twice doesn't make sense — an item has at most
+  // one of each (one status, one type, one creator, …). Relations are exempt
+  // because an item can relate to many issues / patches / sessions / chats.
+  const activeNonRelationIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of filters ?? []) {
+      const def = definitions[f.id];
+      if (def && def.group !== "relations") set.add(f.id);
+    }
+    return set;
+  }, [filters, definitions]);
+
   const grouped = useMemo(() => {
     const out: Record<FilterGroup, { id: string; def: FilterDefinitions<T>[string] }[]> = {
       properties: [],
@@ -86,13 +105,16 @@ export function AddFilterMenu<T>({
       relations: [],
     };
     for (const [id, def] of Object.entries(definitions)) {
+      if (activeNonRelationIds.has(id)) continue;
       out[def.group].push({ id, def });
     }
     return out;
-  }, [definitions]);
+  }, [definitions, activeNonRelationIds]);
 
   const activeFilters = filters?.filter((f) => definitions[f.id]) ?? [];
-  const showActive = activeFilters.length > 0;
+  // Active section is mobile-only — gated on the caller wiring up edit/remove
+  // handlers. Desktop renders chips inline on the bar instead.
+  const showActive = activeFilters.length > 0 && !!onPickExisting;
 
   return createPortal(
     <>
