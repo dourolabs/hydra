@@ -839,8 +839,8 @@ fn render_server_config(
     job_log_dir: Option<&str>,
 ) -> String {
     use hydra_server::config::{
-        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, HydraSection, JobEngineConfig,
-        JobSection, StorageConfig,
+        AppConfig, AuthConfig, BackgroundSection, BuildCacheSection, EventsSection, HydraSection,
+        JobEngineConfig, JobSection, StorageConfig,
     };
 
     let job_engine_config = match job_engine {
@@ -883,6 +883,7 @@ fn render_server_config(
         },
         background: BackgroundSection::default(),
         build_cache: BuildCacheSection::default(),
+        events: EventsSection::default(),
         policies: None,
     };
 

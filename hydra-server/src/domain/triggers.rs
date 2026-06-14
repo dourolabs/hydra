@@ -766,7 +766,7 @@ mod tests {
         }
 
         fn wrap(store: Arc<dyn Store>) -> StoreWithEvents {
-            StoreWithEvents::new(store, Arc::new(EventBus::new()))
+            StoreWithEvents::new(store, Arc::new(EventBus::default()))
         }
 
         async fn add_user(store: &dyn Store, username: &str) {

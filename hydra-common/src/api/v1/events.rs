@@ -32,6 +32,16 @@ pub struct EventsQuery {
     /// Comma-separated document IDs to filter.
     #[serde(default)]
     pub document_ids: Option<String>,
+
+    /// SSE replay cursor. Either this OR the `Last-Event-ID` header may be
+    /// supplied; the header takes precedence when both are present (matches
+    /// the standard browser `EventSource` auto-retry behavior).
+    ///
+    /// Browser `EventSource` only attaches `Last-Event-ID` on its own
+    /// auto-retry path; clients that close and reconstruct the connection
+    /// manually need this query-param form to carry the cursor.
+    #[serde(default)]
+    pub last_event_id: Option<u64>,
 }
 
 impl EventsQuery {
@@ -55,6 +65,9 @@ impl EventsQuery {
         }
         if let Some(ref ids) = self.document_ids {
             params.push(("document_ids", ids.clone()));
+        }
+        if let Some(last) = self.last_event_id {
+            params.push(("last_event_id", last.to_string()));
         }
         params
     }
