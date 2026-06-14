@@ -79,7 +79,11 @@ export function IssueDetailsTab({ record, onOpenStatusModal }: IssueDetailsTabPr
         <span className={styles.blockLabel}>Project</span>
         {project ? (
           <span className={styles.blockValue}>
-            <ProjectChip projectKey={project.key} name={project.name} />
+            <ProjectChip
+              projectKey={project.key}
+              name={project.name}
+              data-testid="issue-rail-project"
+            />
           </span>
         ) : (
           <span className={`${styles.blockValue} ${styles.blockEmpty}`}>—</span>
