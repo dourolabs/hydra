@@ -104,7 +104,7 @@ Use this playbook whenever an issue requires a design document before implementa
 11. Once the design is approved, continue with the normal planning and issue-creation flow:
     - Break the approved design into PR-sized implementation tasks.
     - Create child issues for each task with appropriate dependencies.
-    - Update the parent issue's progress field with the implementation plan and task list.
+    - Post a comment on the parent issue with the implementation plan and task list.
 
 ## Summary of issue statuses used in review
 
