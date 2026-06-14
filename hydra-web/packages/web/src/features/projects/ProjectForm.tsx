@@ -97,9 +97,11 @@ export function ProjectForm({
   const { body, setBody, loading: promptLoading } =
     usePromptDocumentBody(initialPromptPath);
 
-  // Collapse the session_settings payload back to `undefined` when every
-  // surfaced subfield is empty, so the wire body stays slim — mirroring the
-  // empty-collapse invariant on the status modal's session_settings.
+  // Collapse the session_settings payload back to `undefined` only when every
+  // subfield is empty — surfaced AND un-surfaced. CLI users can set
+  // `repo_name` / `remote_url` / `branch` / `secrets` (not on the form), so
+  // preserving them is required to round-trip the form without dropping
+  // CLI-only overrides. Mirrors the StatusSettingsModal patchSession check.
   const collapsedSession = useMemo<SessionSettings | undefined>(() => {
     const allEmpty =
       (session.image ?? null) == null &&
@@ -107,7 +109,11 @@ export function ProjectForm({
       (session.cpu_limit ?? null) == null &&
       (session.memory_limit ?? null) == null &&
       (session.max_retries ?? null) == null &&
-      (session.idle_timeout ?? null) == null;
+      (session.idle_timeout ?? null) == null &&
+      (session.repo_name ?? null) == null &&
+      (session.remote_url ?? null) == null &&
+      (session.branch ?? null) == null &&
+      !(session.secrets && session.secrets.length > 0);
     return allEmpty ? undefined : session;
   }, [session]);
 
