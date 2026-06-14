@@ -75,10 +75,11 @@ export interface ProjectSectionProps {
   // where the picker above the board already shows the project's key and
   // name and reordering / collapsing don't apply.
   hideBar?: boolean;
-  // Mobile single-board view only: the persisted status column key (URL-
-  // backed) the user last snapped to. On mount the columns scroller is
-  // aligned to that column; on scroll the dominant snapped column is
-  // reported up via `onMobileStatusChange`. Both are no-ops on desktop.
+  // Mobile single-board view only: the persisted status column key the user
+  // last snapped to (sessionStorage-backed in the parent). On mount the
+  // columns scroller is aligned to that column; on scroll the dominant
+  // snapped column is reported up via `onMobileStatusChange`. Both are
+  // no-ops on desktop.
   mobileSelectedStatusKey?: string | null;
   onMobileStatusChange?: (key: string) => void;
 }
@@ -294,11 +295,11 @@ export function ProjectSection({
 
   const columnsRef = useRef<HTMLDivElement | null>(null);
 
-  // Mobile: align the columns scroller to the URL-persisted status column on
-  // mount (and whenever the URL key changes externally — e.g. browser back).
-  // The container has scroll-snap-mandatory so once a column is at scrollLeft
-  // 0 of the viewport, the snap point holds it there. Using `behavior: auto`
-  // avoids a visible animation on mount.
+  // Mobile: align the columns scroller to the persisted status column on
+  // mount and whenever the parent's saved key changes. The container has
+  // scroll-snap-mandatory so once a column is at scrollLeft 0 of the
+  // viewport, the snap point holds it there. Using `behavior: auto` avoids
+  // a visible animation on mount.
   useEffect(() => {
     if (!isMobile) return;
     if (!mobileSelectedStatusKey) return;
@@ -315,10 +316,11 @@ export function ProjectSection({
     container.scrollTo({ left: target, behavior: "auto" });
   }, [isMobile, mobileSelectedStatusKey, project.statuses]);
 
-  // Mobile: report the dominant snapped column up to the parent (URL).
-  // Debounced so a flick across columns only writes the final landing, not
-  // every intermediate column. `onMobileStatusChange` is responsible for the
-  // no-op-when-unchanged check so the URL doesn't churn on identical writes.
+  // Mobile: report the dominant snapped column up to the parent so it can
+  // persist it. Debounced so a flick across columns only writes the final
+  // landing, not every intermediate column. `onMobileStatusChange` is
+  // responsible for the no-op-when-unchanged check so identical writes
+  // don't churn the stored state.
   useEffect(() => {
     if (!isMobile) return;
     if (!onMobileStatusChange) return;
