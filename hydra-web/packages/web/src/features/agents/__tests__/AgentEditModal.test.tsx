@@ -217,6 +217,7 @@ vi.mock("../../../components/SettingsSection/SettingsSection.module.css", () => 
 }));
 
 const { AgentEditModal } = await import("../AgentEditModal");
+const { I32_MAX } = await import("../simultaneousCaps");
 
 function makeAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
@@ -365,5 +366,160 @@ describe("AgentEditModal — session_settings", () => {
         ) as HTMLInputElement
       ).value,
     ).toBe("600");
+  });
+});
+
+describe("AgentEditModal — cap inputs", () => {
+  beforeEach(() => {
+    addToastSpy.mockReset();
+    invalidateQueriesSpy.mockReset();
+    updateAgentSpy.mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("seeds the interactive + headless inputs from the agent record independently", () => {
+    render(
+      <AgentEditModal
+        open
+        onClose={() => {}}
+        agent={makeAgent({
+          max_simultaneous_interactive: 2,
+          max_simultaneous_headless: 7,
+        })}
+        agents={[]}
+      />,
+    );
+    const interactive = screen.getByTestId(
+      "agent-edit-max-simultaneous-interactive",
+    ) as HTMLInputElement;
+    const headless = screen.getByTestId(
+      "agent-edit-max-simultaneous-headless",
+    ) as HTMLInputElement;
+    expect(interactive.value).toBe("2");
+    expect(headless.value).toBe("7");
+  });
+
+  it("renders i32::MAX caps as an empty 'Unlimited' input so users can spot the default", () => {
+    render(
+      <AgentEditModal
+        open
+        onClose={() => {}}
+        agent={makeAgent({
+          max_simultaneous_interactive: I32_MAX,
+          max_simultaneous_headless: I32_MAX,
+        })}
+        agents={[]}
+      />,
+    );
+    const interactive = screen.getByTestId(
+      "agent-edit-max-simultaneous-interactive",
+    ) as HTMLInputElement;
+    const headless = screen.getByTestId(
+      "agent-edit-max-simultaneous-headless",
+    ) as HTMLInputElement;
+    expect(interactive.value).toBe("");
+    expect(headless.value).toBe("");
+    expect(interactive.placeholder).toBe("Unlimited");
+    expect(headless.placeholder).toBe("Unlimited");
+  });
+
+  it("submits each cap independently — changing interactive leaves headless untouched", async () => {
+    render(
+      <AgentEditModal
+        open
+        onClose={() => {}}
+        agent={makeAgent({
+          max_simultaneous_interactive: 2,
+          max_simultaneous_headless: 7,
+        })}
+        agents={[]}
+      />,
+    );
+    fireEvent.change(
+      screen.getByTestId("agent-edit-max-simultaneous-interactive"),
+      { target: { value: "4" } },
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save Changes"));
+    });
+    expect(updateAgentSpy).toHaveBeenCalledTimes(1);
+    const [, req] = updateAgentSpy.mock.calls[0] as unknown as [
+      string,
+      {
+        max_simultaneous_interactive: number;
+        max_simultaneous_headless: number;
+      },
+    ];
+    expect(req.max_simultaneous_interactive).toBe(4);
+    expect(req.max_simultaneous_headless).toBe(7);
+  });
+
+  it("submits each cap independently — changing headless leaves interactive untouched", async () => {
+    render(
+      <AgentEditModal
+        open
+        onClose={() => {}}
+        agent={makeAgent({
+          max_simultaneous_interactive: 2,
+          max_simultaneous_headless: 7,
+        })}
+        agents={[]}
+      />,
+    );
+    fireEvent.change(
+      screen.getByTestId("agent-edit-max-simultaneous-headless"),
+      { target: { value: "12" } },
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save Changes"));
+    });
+    expect(updateAgentSpy).toHaveBeenCalledTimes(1);
+    const [, req] = updateAgentSpy.mock.calls[0] as unknown as [
+      string,
+      {
+        max_simultaneous_interactive: number;
+        max_simultaneous_headless: number;
+      },
+    ];
+    expect(req.max_simultaneous_interactive).toBe(2);
+    expect(req.max_simultaneous_headless).toBe(12);
+  });
+
+  it("defaults empty cap inputs back to i32::MAX on submit", async () => {
+    render(
+      <AgentEditModal
+        open
+        onClose={() => {}}
+        agent={makeAgent({
+          max_simultaneous_interactive: 2,
+          max_simultaneous_headless: 7,
+        })}
+        agents={[]}
+      />,
+    );
+    fireEvent.change(
+      screen.getByTestId("agent-edit-max-simultaneous-interactive"),
+      { target: { value: "" } },
+    );
+    fireEvent.change(
+      screen.getByTestId("agent-edit-max-simultaneous-headless"),
+      { target: { value: "   " } },
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByText("Save Changes"));
+    });
+    expect(updateAgentSpy).toHaveBeenCalledTimes(1);
+    const [, req] = updateAgentSpy.mock.calls[0] as unknown as [
+      string,
+      {
+        max_simultaneous_interactive: number;
+        max_simultaneous_headless: number;
+      },
+    ];
+    expect(req.max_simultaneous_interactive).toBe(I32_MAX);
+    expect(req.max_simultaneous_headless).toBe(I32_MAX);
   });
 });

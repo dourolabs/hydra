@@ -8,6 +8,13 @@ import {
   AgentSessionSettingsFields,
   collapseAgentSessionSettings,
 } from "./AgentSessionSettingsFields";
+import {
+  formatSimultaneousCap,
+  parseSimultaneousCap,
+  SIMULTANEOUS_HEADLESS_HELP,
+  SIMULTANEOUS_INTERACTIVE_HELP,
+  SIMULTANEOUS_PLACEHOLDER,
+} from "./simultaneousCaps";
 import sharedStyles from "../../components/SettingsSection/SettingsSection.module.css";
 import styles from "./AgentsSection.module.css";
 
@@ -28,10 +35,10 @@ export function AgentEditModal({
   const [mcpConfigPath, setMcpConfigPath] = useState(agent.mcp_config_path ?? "");
   const [maxTries, setMaxTries] = useState(String(agent.max_tries));
   const [maxSimultaneousInteractive, setMaxSimultaneousInteractive] = useState(
-    String(agent.max_simultaneous_interactive),
+    formatSimultaneousCap(agent.max_simultaneous_interactive),
   );
   const [maxSimultaneousHeadless, setMaxSimultaneousHeadless] = useState(
-    String(agent.max_simultaneous_headless),
+    formatSimultaneousCap(agent.max_simultaneous_headless),
   );
   const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(
     agent.is_default_conversation_agent,
@@ -70,8 +77,8 @@ export function AgentEditModal({
       mcp_config_path: mcpConfigPath.trim() || null,
       mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,
-      max_simultaneous_interactive: parseInt(maxSimultaneousInteractive, 10) || 1,
-      max_simultaneous_headless: parseInt(maxSimultaneousHeadless, 10) || 1,
+      max_simultaneous_interactive: parseSimultaneousCap(maxSimultaneousInteractive),
+      max_simultaneous_headless: parseSimultaneousCap(maxSimultaneousHeadless),
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
       session_settings: collapseAgentSessionSettings(sessionSettings),
@@ -102,20 +109,30 @@ export function AgentEditModal({
           onChange={(e) => setMaxTries(e.target.value)}
           type="number"
         />
-        <Input
-          label="Max Simultaneous Interactive"
-          placeholder="1"
-          value={maxSimultaneousInteractive}
-          onChange={(e) => setMaxSimultaneousInteractive(e.target.value)}
-          type="number"
-        />
-        <Input
-          label="Max Simultaneous Headless"
-          placeholder="1"
-          value={maxSimultaneousHeadless}
-          onChange={(e) => setMaxSimultaneousHeadless(e.target.value)}
-          type="number"
-        />
+        <div className={styles.fieldGroup}>
+          <Input
+            label="Max simultaneous interactive sessions"
+            placeholder={SIMULTANEOUS_PLACEHOLDER}
+            value={maxSimultaneousInteractive}
+            onChange={(e) => setMaxSimultaneousInteractive(e.target.value)}
+            type="number"
+            min={0}
+            data-testid="agent-edit-max-simultaneous-interactive"
+          />
+          <span className={styles.fieldHelp}>{SIMULTANEOUS_INTERACTIVE_HELP}</span>
+        </div>
+        <div className={styles.fieldGroup}>
+          <Input
+            label="Max simultaneous headless sessions"
+            placeholder={SIMULTANEOUS_PLACEHOLDER}
+            value={maxSimultaneousHeadless}
+            onChange={(e) => setMaxSimultaneousHeadless(e.target.value)}
+            type="number"
+            min={0}
+            data-testid="agent-edit-max-simultaneous-headless"
+          />
+          <span className={styles.fieldHelp}>{SIMULTANEOUS_HEADLESS_HELP}</span>
+        </div>
         <label className={styles.checkboxLabel}>
           <input
             type="checkbox"
