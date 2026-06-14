@@ -273,3 +273,32 @@ export const IconNoWrap = (p: IconProps) => (
     <path d="M2 12h12" />
   </IconBase>
 );
+
+export const IconHalfCircle = (p: IconProps) => (
+  <IconBase {...p}>
+    <circle cx="8" cy="8" r="5.5" />
+    <path d="M8 2.5a5.5 5.5 0 0 0 0 11z" fill="currentColor" stroke="none" />
+  </IconBase>
+);
+
+export const IconEye = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
+    <circle cx="8" cy="8" r="1.75" fill="currentColor" stroke="none" />
+  </IconBase>
+);
+
+export const IconRefresh = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M13 8a5 5 0 1 1-1.5-3.5" />
+    <path d="M13 2.5V5h-2.5" />
+  </IconBase>
+);
+
+export const IconAlert = (p: IconProps) => (
+  <IconBase {...p}>
+    <path d="M8 2.5L14 13H2z" />
+    <path d="M8 6.5v3" />
+    <circle cx="8" cy="11.25" r="0.6" fill="currentColor" stroke="none" />
+  </IconBase>
+);

@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { StatusDefinition } from "@hydra/api";
+import { StatusIcon } from "./StatusIcon";
 import styles from "./StatusChip.module.css";
 
 interface StatusChipProps {
@@ -13,11 +14,10 @@ function isInProgressKey(key: string): boolean {
   return key === "in-progress";
 }
 
-function dotStyle(color: string, inProgress: boolean): CSSProperties {
-  if (!inProgress) return { background: color };
+function pulseStyle(color: string): CSSProperties {
   return {
-    background: color,
     boxShadow: `0 0 0 3px color-mix(in srgb, ${color} 18%, transparent)`,
+    borderRadius: "50%",
   };
 }
 
@@ -28,10 +28,17 @@ export function StatusChip({
 }: StatusChipProps) {
   const cls = [styles.chip, className].filter(Boolean).join(" ");
   const inProgress = isInProgressKey(status.key);
-  const dotCls = [styles.dot, inProgress && styles.dotInProgress].filter(Boolean).join(" ");
+  const iconWrapCls = [styles.iconWrap, inProgress && styles.iconWrapInProgress]
+    .filter(Boolean)
+    .join(" ");
   return (
     <span className={cls} data-testid={testId}>
-      <span className={dotCls} style={dotStyle(status.color, inProgress)} />
+      <span
+        className={iconWrapCls}
+        style={inProgress ? pulseStyle(status.color) : undefined}
+      >
+        <StatusIcon statusKey={status.key} color={status.color} size={12} />
+      </span>
       <span className={styles.label}>{status.label}</span>
     </span>
   );

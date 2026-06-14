@@ -11,14 +11,15 @@
   white-space: nowrap;
 }
 
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.iconWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  line-height: 0;
 }
 
-.dotInProgress {
+.iconWrapInProgress {
   animation: statusChipPulse 1.8s ease-in-out infinite;
 }
 
@@ -31,6 +32,6 @@
 
 @keyframes statusChipPulse {
   50% {
-    box-shadow: 0 0 0 5px transparent;
+    box-shadow: 0 0 0 6px transparent;
   }
 }

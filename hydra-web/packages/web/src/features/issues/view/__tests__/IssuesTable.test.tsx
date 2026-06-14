@@ -51,6 +51,15 @@ vi.mock("@hydra/ui", () => ({
   Icons: {
     IconDoc: () => <span />,
     IconRepo: () => <span />,
+    IconArchive: () => <span />,
+    IconHalfCircle: () => <span />,
+    IconPlay: () => <span />,
+    IconEye: () => <span />,
+    IconSearch: () => <span />,
+    IconRefresh: () => <span />,
+    IconAlert: () => <span />,
+    IconCheck: () => <span />,
+    IconX: () => <span />,
   },
 }));
 
