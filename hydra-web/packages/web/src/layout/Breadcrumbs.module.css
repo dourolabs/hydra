@@ -46,14 +46,14 @@
   background: var(--bg-2);
   border: 1px solid var(--line);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .currentSkeleton {
   display: inline-block;
   width: 140px;
   height: 0.85em;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-2);
   vertical-align: middle;
 }
@@ -65,7 +65,7 @@
   background: var(--bg-2);
   border: 1px solid var(--line);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 /* On mobile, collapse to the trailing (current) crumb only. The current span

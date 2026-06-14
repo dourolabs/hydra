@@ -130,7 +130,7 @@
 .rowActions {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   justify-content: flex-end;
 }
 
@@ -182,13 +182,13 @@
 .mobileList {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .mobileItem {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   padding: 4px 0;
   border-bottom: 1px solid var(--line);
 }
@@ -200,7 +200,7 @@
 .mobileActions {
   display: flex;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .mobilePolicy {

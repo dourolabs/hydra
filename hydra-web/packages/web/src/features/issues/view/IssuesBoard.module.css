@@ -252,7 +252,7 @@
 .modeBadgeInteractive {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   padding: 1px 6px;
   border: 0;
   border-radius: var(--radius-sm);

@@ -58,7 +58,7 @@
 .keyval {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -144,7 +144,7 @@
   background: var(--bg-2);
   border: 1px solid var(--line);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   color: var(--fg-1);
 }
 

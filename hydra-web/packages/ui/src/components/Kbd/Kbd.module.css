@@ -7,6 +7,6 @@
   background: var(--bg-2);
   border: 1px solid var(--line);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   letter-spacing: 0.04em;
 }

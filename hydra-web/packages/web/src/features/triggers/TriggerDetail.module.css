@@ -204,7 +204,7 @@
 .firingTime {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--fg-2);
   font-size: var(--t-xs);
 }
@@ -238,7 +238,7 @@
   }
   .dlRow {
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space-0);
   }
   .dlLabel {
     width: auto;

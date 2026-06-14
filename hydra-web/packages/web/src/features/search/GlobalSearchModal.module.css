@@ -233,6 +233,6 @@
   }
   .footer {
     flex-wrap: wrap;
-    row-gap: 4px;
+    row-gap: var(--space-1);
   }
 }

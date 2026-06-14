@@ -35,7 +35,7 @@
  * Agents and Users sections. Mirrors `popSection` in `IssueCreateModal.module.css`. */
 .popSection {
   font-family: var(--f-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xxs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--fg-3);
