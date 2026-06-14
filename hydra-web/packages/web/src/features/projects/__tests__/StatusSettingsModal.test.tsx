@@ -2153,7 +2153,7 @@ describe("StatusSettingsModal", () => {
       expect(onEnter?.assign_to ?? null).toBeNull();
     });
 
-    it("picking an assignee clears a previously set clear_assignee", () => {
+    it("switching to Pick mode and picking an assignee clears a previously set clear_assignee", () => {
       agentsList = [{ name: "swe" }];
       const project = makeProject([
         makeStatus("closed", {
@@ -2182,6 +2182,10 @@ describe("StatusSettingsModal", () => {
         ) as HTMLInputElement).checked,
       ).toBe(true);
 
+      // Picker is disabled outside "Pick" mode — switch the radio first.
+      fireEvent.click(
+        screen.getByTestId("status-settings-assignment-mode-pick"),
+      );
       fireEvent.click(screen.getByLabelText("Assign to"));
       const menu = screen.getByRole("menu");
       const rows = within(menu).getAllByRole("menuitem");
@@ -2194,6 +2198,177 @@ describe("StatusSettingsModal", () => {
       const onEnter = payload.nextStatuses[0].on_enter;
       expect(onEnter?.clear_assignee).toBe(false);
       expect(onEnter?.assign_to).toEqual({ Agent: { name: "swe" } });
+    });
+  });
+
+  describe("on-enter assign_to_creator (radio)", () => {
+    it("selecting Assign to creator sets on_enter.assign_to_creator=true and clears assign_to + clear_assignee", () => {
+      const project = makeProject([
+        makeStatus("triage", {
+          on_enter: {
+            assign_to: { Agent: { name: "swe" } },
+            attach_form: null,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="triage"
+          issueCount={0}
+        />,
+      );
+      openOnEnter();
+      fireEvent.click(
+        screen.getByTestId("status-settings-assign-to-creator"),
+      );
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      const onEnter = payload.nextStatuses[0].on_enter;
+      expect(onEnter?.assign_to_creator).toBe(true);
+      expect(onEnter?.clear_assignee ?? false).toBe(false);
+      expect(onEnter?.assign_to ?? null).toBeNull();
+    });
+
+    it("selecting Pick clears a previously set assign_to_creator", () => {
+      const project = makeProject([
+        makeStatus("triage", {
+          on_enter: {
+            assign_to: null,
+            attach_form: null,
+            assign_to_creator: true,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="triage"
+          issueCount={0}
+        />,
+      );
+      openOnEnter();
+      // Sanity: the radio starts pointing at Assign to creator.
+      expect(
+        (screen.getByTestId(
+          "status-settings-assign-to-creator",
+        ) as HTMLInputElement).checked,
+      ).toBe(true);
+
+      fireEvent.click(
+        screen.getByTestId("status-settings-assignment-mode-pick"),
+      );
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      // Pick mode + no principal + no other on-enter fields collapses to null.
+      expect(payload.nextStatuses[0].on_enter).toBeNull();
+    });
+
+    it("selecting Clear assignee clears a previously set assign_to_creator", () => {
+      const project = makeProject([
+        makeStatus("triage", {
+          on_enter: {
+            assign_to: null,
+            attach_form: null,
+            assign_to_creator: true,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="triage"
+          issueCount={0}
+        />,
+      );
+      openOnEnter();
+      fireEvent.click(screen.getByTestId("status-settings-clear-assignee"));
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      const onEnter = payload.nextStatuses[0].on_enter;
+      expect(onEnter?.assign_to_creator ?? false).toBe(false);
+      expect(onEnter?.clear_assignee).toBe(true);
+    });
+
+    it("renders the Assign to creator radio selected for an on_enter that carries assign_to_creator=true", () => {
+      const project = makeProject([
+        makeStatus("triage", {
+          on_enter: {
+            assign_to: null,
+            attach_form: null,
+            assign_to_creator: true,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="triage"
+          issueCount={0}
+        />,
+      );
+      openOnEnter();
+      expect(
+        (screen.getByTestId(
+          "status-settings-assign-to-creator",
+        ) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(
+        (screen.getByTestId(
+          "status-settings-assignment-mode-pick",
+        ) as HTMLInputElement).checked,
+      ).toBe(false);
+      expect(
+        (screen.getByTestId(
+          "status-settings-clear-assignee",
+        ) as HTMLInputElement).checked,
+      ).toBe(false);
+    });
+
+    it("round-trip: loading with assign_to_creator=true and saving without changes preserves the flag", () => {
+      const project = makeProject([
+        makeStatus("triage", {
+          on_enter: {
+            assign_to: null,
+            attach_form: null,
+            assign_to_creator: true,
+          },
+        }),
+      ]);
+      render(
+        <StatusSettingsModal
+          open={true}
+          onClose={() => {}}
+          projectRecord={project}
+          statusKey="triage"
+          issueCount={0}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("status-settings-save"));
+      const payload = mutateSpy.mock.calls[0][0] as {
+        nextStatuses: StatusDefinition[];
+      };
+      const onEnter = payload.nextStatuses[0].on_enter;
+      expect(onEnter?.assign_to_creator).toBe(true);
+      expect(onEnter?.clear_assignee ?? false).toBe(false);
+      expect(onEnter?.assign_to ?? null).toBeNull();
     });
   });
 
