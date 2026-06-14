@@ -369,16 +369,53 @@
   white-space: nowrap;
 }
 
+.cardTitleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
 .cardTitle {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--f-sans);
   font-size: var(--t-sm);
   color: var(--fg-0);
   line-height: 1.35;
-  margin-bottom: 8px;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* Inline "Join / Resume conversation" affordance — small accent-colored chat
+   icon that leads the card title when a live conversation exists. Visually
+   compact; tap target meets `--touch-min` via min-height and negative margins
+   that absorb the extra height into the card's padding so a single-line
+   title row doesn't grow taller than the title text. */
+.cardChatIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--touch-min);
+  min-height: var(--touch-min);
+  margin: -8px -6px -8px -4px;
+  padding: 0 6px;
+  color: var(--acc);
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+  transition: color var(--tx-fast);
+}
+
+.cardChatIcon:hover {
+  color: var(--acc-bright);
+}
+
+.cardChatIcon:focus-visible {
+  outline: 1px solid var(--acc);
+  outline-offset: 1px;
 }
 
 .cardFoot {
@@ -392,64 +429,6 @@
 
 .cardFootSpacer {
   flex: 1;
-}
-
-/* Floating "Join / Resume conversation" affordance — chat icon docked to the
-   top-right corner of a board card. On hover-capable pointer devices it is
-   hidden by default and revealed on card hover or keyboard focus; on touch
-   devices (`@media (hover: none)`) it stays visible so it remains reachable
-   without a hover trigger. Matches the issue-detail header's
-   .openConversation accent-colored pattern. */
-.cardChatButton {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  min-width: var(--touch-min);
-  min-height: var(--touch-min);
-  padding: 0;
-  background: var(--acc-soft);
-  border: 1px solid var(--acc);
-  border-radius: var(--radius-sm);
-  color: var(--acc);
-  text-decoration: none;
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity var(--tx-fast),
-    background var(--tx-fast),
-    border-color var(--tx-fast),
-    color var(--tx-fast);
-  z-index: 1;
-}
-
-.card:hover .cardChatButton,
-.card:focus-within .cardChatButton {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-@media (hover: none) {
-  .cardChatButton {
-    opacity: 1;
-    pointer-events: auto;
-  }
-}
-
-.cardChatButton:hover {
-  background: var(--acc);
-  border-color: var(--acc-bright);
-  color: var(--acc-fg-on);
-}
-
-.cardChatButton:focus-visible {
-  outline: 1px solid var(--acc);
-  outline-offset: 1px;
 }
 
 .colEmpty {
