@@ -190,7 +190,7 @@
 .markdown :global(.hljs-literal),
 .markdown :global(.hljs-section),
 .markdown :global(.hljs-link) {
-  color: #cc7832;
+  color: var(--code-keyword);
 }
 
 .markdown :global(.hljs-string),
@@ -204,27 +204,27 @@
 .markdown :global(.hljs-variable),
 .markdown :global(.hljs-template-tag),
 .markdown :global(.hljs-template-variable) {
-  color: #6a8759;
+  color: var(--code-string);
 }
 
 .markdown :global(.hljs-comment),
 .markdown :global(.hljs-quote),
 .markdown :global(.hljs-deletion),
 .markdown :global(.hljs-meta) {
-  color: #808080;
+  color: var(--code-comment);
 }
 
 .markdown :global(.hljs-number),
 .markdown :global(.hljs-regexp),
 .markdown :global(.hljs-literal),
 .markdown :global(.hljs-built_in) {
-  color: #6897bb;
+  color: var(--code-number);
 }
 
 .markdown :global(.hljs-attr),
 .markdown :global(.hljs-selector-id),
 .markdown :global(.hljs-selector-class) {
-  color: #9876aa;
+  color: var(--code-class);
 }
 
 .markdown :global(.hljs-emphasis) {
