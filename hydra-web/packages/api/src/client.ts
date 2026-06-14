@@ -372,11 +372,6 @@ export class HydraApiClient {
     return this.del(`/v1/issues/${encodeURIComponent(issueId)}`);
   }
 
-  /** POST /v1/issues/:issueId/feedback */
-  submitFeedback(issueId: string, feedback: string): Promise<IssueVersionRecord> {
-    return this.post(`/v1/issues/${encodeURIComponent(issueId)}/feedback`, { feedback });
-  }
-
   /** GET /v1/issues/:issueId/comments — list comments most-recent-first. */
   listIssueComments(
     issueId: string,
