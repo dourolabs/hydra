@@ -592,6 +592,67 @@ describe("ProjectSettingsModal", () => {
       expect(req.session_settings).toBeUndefined();
     });
 
+    it("preserves CLI-only session_settings fields when the form is submitted untouched", async () => {
+      const seeded: ProjectRecord = {
+        ...makeProject(),
+        project: {
+          ...makeProject().project,
+          session_settings: {
+            cpu_limit: "500m",
+            repo_name: "foo/bar" as never,
+          },
+        },
+      };
+      render(
+        <ProjectSettingsModal open onClose={() => {}} project={seeded} />,
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("project-form-save"));
+      });
+
+      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
+      const [, req] = updateProjectSpy.mock.calls[0] as unknown as [
+        string,
+        { session_settings?: Record<string, unknown> },
+      ];
+      expect(req.session_settings).toMatchObject({
+        cpu_limit: "500m",
+        repo_name: "foo/bar",
+      });
+    });
+
+    it("preserves CLI-only session_settings fields when surfaced inputs are cleared", async () => {
+      const seeded: ProjectRecord = {
+        ...makeProject(),
+        project: {
+          ...makeProject().project,
+          session_settings: {
+            cpu_limit: "500m",
+            repo_name: "foo/bar" as never,
+          },
+        },
+      };
+      render(
+        <ProjectSettingsModal open onClose={() => {}} project={seeded} />,
+      );
+      openSessionSettings();
+      fireEvent.change(screen.getByTestId("project-form-cpu-limit"), {
+        target: { value: "" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("project-form-save"));
+      });
+
+      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
+      const [, req] = updateProjectSpy.mock.calls[0] as unknown as [
+        string,
+        { session_settings?: Record<string, unknown> },
+      ];
+      expect(req.session_settings).toBeDefined();
+      expect(req.session_settings).toMatchObject({ repo_name: "foo/bar" });
+      expect(req.session_settings?.cpu_limit ?? null).toBeNull();
+    });
+
     it("prefills inputs from the project's existing session_settings", () => {
       const seeded: ProjectRecord = {
         ...makeProject(),
