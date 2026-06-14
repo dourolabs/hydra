@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -75,6 +75,12 @@ export interface ProjectSectionProps {
   // where the picker above the board already shows the project's key and
   // name and reordering / collapsing don't apply.
   hideBar?: boolean;
+  // Mobile single-board view only: the persisted status column key (URL-
+  // backed) the user last snapped to. On mount the columns scroller is
+  // aligned to that column; on scroll the dominant snapped column is
+  // reported up via `onMobileStatusChange`. Both are no-ops on desktop.
+  mobileSelectedStatusKey?: string | null;
+  onMobileStatusChange?: (key: string) => void;
 }
 
 interface SortableSectionHandleProps {
@@ -158,6 +164,8 @@ export function ProjectSection({
   onAddIssue,
   onIssueDrop,
   hideBar,
+  mobileSelectedStatusKey,
+  onMobileStatusChange,
   sortableSetNodeRef,
   sortableStyle,
   sortableIsDragging,
@@ -284,8 +292,69 @@ export function ProjectSection({
     );
   });
 
+  const columnsRef = useRef<HTMLDivElement | null>(null);
+
+  // Mobile: align the columns scroller to the URL-persisted status column on
+  // mount (and whenever the URL key changes externally — e.g. browser back).
+  // The container has scroll-snap-mandatory so once a column is at scrollLeft
+  // 0 of the viewport, the snap point holds it there. Using `behavior: auto`
+  // avoids a visible animation on mount.
+  useEffect(() => {
+    if (!isMobile) return;
+    if (!mobileSelectedStatusKey) return;
+    const container = columnsRef.current;
+    if (!container) return;
+    const idx = project.statuses.findIndex(
+      (s) => s.key === mobileSelectedStatusKey,
+    );
+    if (idx < 0) return;
+    const col = container.children[idx] as HTMLElement | undefined;
+    if (!col) return;
+    const target = col.offsetLeft - container.offsetLeft;
+    if (Math.abs(container.scrollLeft - target) < 1) return;
+    container.scrollTo({ left: target, behavior: "auto" });
+  }, [isMobile, mobileSelectedStatusKey, project.statuses]);
+
+  // Mobile: report the dominant snapped column up to the parent (URL).
+  // Debounced so a flick across columns only writes the final landing, not
+  // every intermediate column. `onMobileStatusChange` is responsible for the
+  // no-op-when-unchanged check so the URL doesn't churn on identical writes.
+  useEffect(() => {
+    if (!isMobile) return;
+    if (!onMobileStatusChange) return;
+    const container = columnsRef.current;
+    if (!container) return;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const onScroll = () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        const scrollLeft = container.scrollLeft;
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < project.statuses.length; i++) {
+          const col = container.children[i] as HTMLElement | undefined;
+          if (!col) continue;
+          const dist = Math.abs(
+            col.offsetLeft - container.offsetLeft - scrollLeft,
+          );
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = i;
+          }
+        }
+        const key = project.statuses[bestIdx]?.key;
+        if (key) onMobileStatusChange(key);
+      }, 150);
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [isMobile, onMobileStatusChange, project.statuses]);
+
   const columnsRow = (
-    <div className={styles.projectColumns}>
+    <div className={styles.projectColumns} ref={columnsRef}>
       {columns}
       <button
         type="button"

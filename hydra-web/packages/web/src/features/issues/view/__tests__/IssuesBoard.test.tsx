@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   ConversationSummary,
@@ -420,9 +420,23 @@ function emptyCell(overrides: Partial<BoardCellQuery> = {}): BoardCellQuery {
   };
 }
 
+// Probe that snapshots the current URL search params into a `data-search`
+// attribute so tests can read what `useSearchParams` mutators wrote. Sibling-
+// renders the board.
+function SearchProbe() {
+  const location = useLocation();
+  return <span data-testid="search-probe" data-search={location.search} />;
+}
+
+function readSearchProbe(): URLSearchParams {
+  const el = screen.getByTestId("search-probe");
+  const raw = el.getAttribute("data-search") ?? "";
+  return new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw);
+}
+
 function renderBoard(
   queryClient?: QueryClient,
-  opts: { hideIssues?: boolean } = {},
+  opts: { hideIssues?: boolean; initialUrl?: string } = {},
 ) {
   const client =
     queryClient ??
@@ -431,7 +445,8 @@ function renderBoard(
     });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[opts.initialUrl ?? "/"]}>
+        <SearchProbe />
         <IssuesBoard
           baseFilters={{}}
           filterRootId={null}
@@ -1713,15 +1728,10 @@ describe("IssuesBoard chat button", () => {
 describe("IssuesBoard mobile single-board view", () => {
   beforeEach(() => {
     mobileMatches = true;
-    window.localStorage.clear();
     projectsData = [
       makeProject("j-eng", "engineering", ENG_STATUSES, "Engineering"),
       makeProject("j-design", "design", DEFAULT_STATUSES, "Design"),
     ];
-  });
-
-  afterEach(() => {
-    window.localStorage.clear();
   });
 
   it("renders the mobile board picker when multiple projects exist", () => {
@@ -1747,7 +1757,7 @@ describe("IssuesBoard mobile single-board view", () => {
     expect(screen.getByTestId("board-project-design")).toBeDefined();
   });
 
-  it("persists the picker selection in localStorage", () => {
+  it("persists the picker selection to the URL via ?board_project", () => {
     renderBoard();
 
     fireEvent.click(
@@ -1755,20 +1765,30 @@ describe("IssuesBoard mobile single-board view", () => {
     );
     fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
 
-    expect(
-      window.localStorage.getItem("hydra:board-mobile-selected-project"),
-    ).toBe("j-design");
+    expect(readSearchProbe().get("board_project")).toBe("j-design");
   });
 
-  it("rehydrates the picker selection from localStorage on mount", () => {
-    window.localStorage.setItem(
-      "hydra:board-mobile-selected-project",
-      "j-design",
-    );
-    renderBoard();
+  it("hydrates the picker selection from ?board_project on mount", () => {
+    renderBoard(undefined, { initialUrl: "/?board_project=j-design" });
 
     expect(screen.getByTestId("board-project-design")).toBeDefined();
     expect(screen.queryByTestId("board-project-engineering")).toBeNull();
+  });
+
+  it("writes ?board_project with replace (no history pollution)", () => {
+    // The page-level filter URL params should remain untouched when only the
+    // picker mutates state — the picker write must merge, not replace, the
+    // existing search.
+    renderBoard(undefined, { initialUrl: "/?status=in-progress" });
+
+    fireEvent.click(
+      screen.getByTestId("board-mobile-picker").querySelector("button")!,
+    );
+    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
+
+    const sp = readSearchProbe();
+    expect(sp.get("board_project")).toBe("j-design");
+    expect(sp.get("status")).toBe("in-progress");
   });
 
   it("suppresses the picker when scoped to a single project", () => {
@@ -1813,12 +1833,8 @@ describe("IssuesBoard mobile single-board view", () => {
     }
   });
 
-  it("falls back to the first project when the stored selection no longer exists", () => {
-    window.localStorage.setItem(
-      "hydra:board-mobile-selected-project",
-      "j-deleted",
-    );
-    renderBoard();
+  it("falls back to the first project when ?board_project points at a missing one", () => {
+    renderBoard(undefined, { initialUrl: "/?board_project=j-deleted" });
     expect(screen.getByTestId("board-project-engineering")).toBeDefined();
   });
 });

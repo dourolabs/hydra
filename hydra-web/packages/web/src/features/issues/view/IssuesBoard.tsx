@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -77,33 +77,14 @@ interface IssuesBoardProps {
 // inserts before float precision forces a renumber.
 const PROJECT_PRIORITY_STEP = 1024;
 
-// On mobile, the board view shows one project section at a time. Last
-// selection persists across navigations so the user lands back on the same
-// board after popping the issue detail page.
-const MOBILE_BOARD_LS_KEY = "hydra:board-mobile-selected-project";
-
-function loadMobileSelectedProjectId(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(MOBILE_BOARD_LS_KEY);
-    return raw && raw.length > 0 ? raw : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveMobileSelectedProjectId(projectId: string | null): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (projectId) {
-      window.localStorage.setItem(MOBILE_BOARD_LS_KEY, projectId);
-    } else {
-      window.localStorage.removeItem(MOBILE_BOARD_LS_KEY);
-    }
-  } catch {
-    /* swallow quota / private-mode errors — picker still works in-memory */
-  }
-}
+// Mobile single-board view state is mirrored to URL params (not the page-
+// level FilterBar's `?project=`, which would scope the entire issues view —
+// see filterUrlSync). These ride alongside the FilterBar params so a copied
+// URL restores the picker selection AND the currently snapped status column
+// for the recipient on mobile, and back-navigation from issue detail
+// restores both without going through localStorage.
+const MOBILE_PROJECT_URL_PARAM = "board_project";
+const MOBILE_STATUS_URL_PARAM = "board_status";
 
 // Pick a new `priority` for a project that just landed between `left` and
 // `right` after a drag-and-drop. Mid-points between neighbors give O(1)
@@ -159,15 +140,48 @@ export function IssuesBoard({
   const { isCollapsed, onToggle: onToggleCollapse } = useProjectCollapseState();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
   const isMobile = useIsMobile();
-  const [mobileSelectedProjectId, setMobileSelectedProjectIdState] = useState<
-    string | null
-  >(() => loadMobileSelectedProjectId());
+  const [searchParams, setSearchParams] = useSearchParams();
+  const mobileSelectedProjectId = searchParams.get(MOBILE_PROJECT_URL_PARAM);
+  const mobileSelectedStatusKey = searchParams.get(MOBILE_STATUS_URL_PARAM);
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
 
-  const setMobileSelectedProjectId = useCallback((id: string | null) => {
-    setMobileSelectedProjectIdState(id);
-    saveMobileSelectedProjectId(id);
-  }, []);
+  const setMobileSelectedProjectId = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) {
+            next.set(MOBILE_PROJECT_URL_PARAM, id);
+          } else {
+            next.delete(MOBILE_PROJECT_URL_PARAM);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const setMobileSelectedStatusKey = useCallback(
+    (key: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const current = prev.get(MOBILE_STATUS_URL_PARAM);
+          if (current === key) return prev;
+          const next = new URLSearchParams(prev);
+          if (key) {
+            next.set(MOBILE_STATUS_URL_PARAM, key);
+          } else {
+            next.delete(MOBILE_STATUS_URL_PARAM);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const allProjectDescriptors: BoardProjectDescriptor[] = useMemo(() => {
     const out: BoardProjectDescriptor[] = [];
@@ -694,6 +708,8 @@ export function IssuesBoard({
       onAddIssue: handleAddIssueClick,
       onIssueDrop: handleIssueDrop,
       hideBar: showMobilePicker,
+      mobileSelectedStatusKey: isMobile ? mobileSelectedStatusKey : null,
+      onMobileStatusChange: isMobile ? setMobileSelectedStatusKey : undefined,
     };
     return allowProjectReorder ? (
       <SortableProjectSection key={project.project_id} {...sectionProps} />
