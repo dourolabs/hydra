@@ -504,6 +504,12 @@ struct AgentRow {
     max_simultaneous_headless: i32,
     is_default_conversation_agent: bool,
     secrets: String,
+    // `session_settings_json` is explicitly listed in every `agents`
+    // SELECT projection — do NOT add `#[sqlx(default)]`. A missing
+    // projection would silently zero-fill the field instead of failing
+    // loudly. See sister status `session_settings_json` plumbing for
+    // the same pattern.
+    session_settings_json: Option<String>,
     archived: bool,
     created_at: String,
     updated_at: String,
@@ -535,6 +541,19 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
     let updated_at = parse_sqlite_timestamp(&row.updated_at)?;
     let secrets: Vec<String> = serde_json::from_str(&row.secrets)
         .map_err(|e| StoreError::Internal(format!("invalid secrets JSON in database: {e}")))?;
+    let session_settings: crate::domain::issues::SessionSettings = match row
+        .session_settings_json
+        .as_deref()
+    {
+        None => crate::domain::issues::SessionSettings::default(),
+        Some(json) => {
+            let api: hydra_common::api::v1::issues::SessionSettings = serde_json::from_str(json)
+                .map_err(|e| {
+                    StoreError::Internal(format!("invalid session_settings_json in database: {e}"))
+                })?;
+            api.into()
+        }
+    };
     Ok(Agent {
         name: row.name,
         prompt_path: row.prompt_path,
@@ -544,10 +563,23 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         max_simultaneous_headless: row.max_simultaneous_headless,
         is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
+        session_settings,
         archived: row.archived,
         created_at,
         updated_at,
     })
+}
+
+fn agent_session_settings_to_json(
+    session_settings: &crate::domain::issues::SessionSettings,
+) -> Result<Option<String>, StoreError> {
+    if crate::domain::issues::SessionSettings::is_default(session_settings) {
+        return Ok(None);
+    }
+    let api: hydra_common::api::v1::issues::SessionSettings = session_settings.clone().into();
+    serde_json::to_string(&api)
+        .map(Some)
+        .map_err(|e| StoreError::Internal(format!("failed to serialize session_settings: {e}")))
 }
 
 fn row_to_comment(row: CommentRow) -> Result<crate::domain::comments::Comment, StoreError> {
@@ -4120,7 +4152,7 @@ impl ReadOnlyStore for SqliteStore {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, \
                     max_simultaneous_interactive, max_simultaneous_headless, \
-                    is_default_conversation_agent, secrets, archived, \
+                    is_default_conversation_agent, secrets, session_settings_json, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = ?1"
         );
@@ -4141,7 +4173,7 @@ impl ReadOnlyStore for SqliteStore {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, \
                     max_simultaneous_interactive, max_simultaneous_headless, \
-                    is_default_conversation_agent, secrets, archived, \
+                    is_default_conversation_agent, secrets, session_settings_json, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE archived = 0 ORDER BY name"
         );
@@ -5710,13 +5742,16 @@ impl Store for SqliteStore {
                 let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
+                let session_settings_json =
+                    agent_session_settings_to_json(&agent.session_settings)?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, \
                          max_simultaneous_interactive = ?4, max_simultaneous_headless = ?5, \
                          is_default_conversation_agent = ?6, secrets = ?7, \
-                         archived = 0, created_at = ?8, updated_at = ?9 \
-                     WHERE name = ?10"
+                         session_settings_json = ?8, \
+                         archived = 0, created_at = ?9, updated_at = ?10 \
+                     WHERE name = ?11"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
@@ -5726,6 +5761,7 @@ impl Store for SqliteStore {
                     .bind(agent.max_simultaneous_headless)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
+                    .bind(session_settings_json.as_deref())
                     .bind(&now)
                     .bind(&now)
                     .bind(&agent.name)
@@ -5739,12 +5775,15 @@ impl Store for SqliteStore {
                 let secrets_json = serde_json::to_string(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
+                let session_settings_json =
+                    agent_session_settings_to_json(&agent.session_settings)?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, mcp_config_path, max_tries, \
                       max_simultaneous_interactive, max_simultaneous_headless, \
-                      is_default_conversation_agent, secrets, archived, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                      is_default_conversation_agent, secrets, session_settings_json, \
+                      archived, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
@@ -5755,6 +5794,7 @@ impl Store for SqliteStore {
                     .bind(agent.max_simultaneous_headless)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
+                    .bind(session_settings_json.as_deref())
                     .bind(agent.archived)
                     .bind(agent.created_at.to_rfc3339())
                     .bind(agent.updated_at.to_rfc3339())
@@ -5772,13 +5812,15 @@ impl Store for SqliteStore {
 
         let secrets_json = serde_json::to_string(&agent.secrets)
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
+        let session_settings_json = agent_session_settings_to_json(&agent.session_settings)?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = ?1, mcp_config_path = ?2, max_tries = ?3, \
                  max_simultaneous_interactive = ?4, max_simultaneous_headless = ?5, \
                  is_default_conversation_agent = ?6, secrets = ?7, \
-                 updated_at = ?8 \
-             WHERE name = ?9"
+                 session_settings_json = ?8, \
+                 updated_at = ?9 \
+             WHERE name = ?10"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
@@ -5788,6 +5830,7 @@ impl Store for SqliteStore {
             .bind(agent.max_simultaneous_headless)
             .bind(agent.is_default_conversation_agent)
             .bind(&secrets_json)
+            .bind(session_settings_json.as_deref())
             .bind(Utc::now().to_rfc3339())
             .bind(&agent.name)
             .execute(&self.pool)
@@ -10152,6 +10195,89 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, StoreError::AgentNotFound(_)));
+    }
+
+    /// PR-B: `Agent.session_settings` survives an INSERT/SELECT cycle
+    /// against the SQLite-backed `agents` table. Catches the
+    /// `#[sqlx(default)]` foot-gun — every SELECT projection on
+    /// `agents` must list `session_settings_json` explicitly.
+    #[tokio::test]
+    async fn add_and_get_agent_round_trips_session_settings() {
+        let store = create_test_store().await;
+        let mut agent = sample_agent("chat");
+        agent.session_settings = crate::domain::issues::SessionSettings {
+            cpu_limit: Some("200m".to_string()),
+            memory_limit: Some("512Mi".to_string()),
+            image: Some("ghcr.io/dourolabs/hydra:latest".to_string()),
+            ..crate::domain::issues::SessionSettings::default()
+        };
+
+        store.add_agent(agent.clone()).await.unwrap();
+
+        let fetched = store.get_agent("chat").await.unwrap();
+        assert_eq!(fetched.session_settings.cpu_limit.as_deref(), Some("200m"));
+        assert_eq!(
+            fetched.session_settings.memory_limit.as_deref(),
+            Some("512Mi")
+        );
+        assert_eq!(
+            fetched.session_settings.image.as_deref(),
+            Some("ghcr.io/dourolabs/hydra:latest")
+        );
+
+        let listed = store.list_agents().await.unwrap();
+        let listed_chat = listed
+            .iter()
+            .find(|a| a.name == "chat")
+            .expect("list_agents must include the agent");
+        assert_eq!(
+            listed_chat.session_settings.cpu_limit.as_deref(),
+            Some("200m"),
+            "list_agents projection must include session_settings_json"
+        );
+    }
+
+    /// PR-B: an agent added with `SessionSettings::default()` must
+    /// round-trip as `SessionSettings::default()` (NULL column → default
+    /// on the read path) — never a deserialization error.
+    #[tokio::test]
+    async fn add_and_get_agent_default_session_settings_reads_back_default() {
+        let store = create_test_store().await;
+        store.add_agent(sample_agent("swe")).await.unwrap();
+        let fetched = store.get_agent("swe").await.unwrap();
+        assert_eq!(
+            fetched.session_settings,
+            crate::domain::issues::SessionSettings::default()
+        );
+    }
+
+    /// PR-B: `update_agent` writes the new `session_settings` blob and
+    /// the read path materializes it. Combined with the add/get test
+    /// above, this locks the column into every `agents` write path.
+    #[tokio::test]
+    async fn update_agent_changes_session_settings() {
+        let store = create_test_store().await;
+        store.add_agent(sample_agent("chat")).await.unwrap();
+
+        let mut updated = sample_agent("chat");
+        updated.session_settings = crate::domain::issues::SessionSettings {
+            cpu_limit: Some("300m".to_string()),
+            ..crate::domain::issues::SessionSettings::default()
+        };
+        store.update_agent(updated).await.unwrap();
+
+        let fetched = store.get_agent("chat").await.unwrap();
+        assert_eq!(fetched.session_settings.cpu_limit.as_deref(), Some("300m"));
+
+        // Clearing back to default also round-trips (writes NULL).
+        let mut cleared = sample_agent("chat");
+        cleared.session_settings = crate::domain::issues::SessionSettings::default();
+        store.update_agent(cleared).await.unwrap();
+        let fetched = store.get_agent("chat").await.unwrap();
+        assert_eq!(
+            fetched.session_settings,
+            crate::domain::issues::SessionSettings::default()
+        );
     }
 
     #[tokio::test]

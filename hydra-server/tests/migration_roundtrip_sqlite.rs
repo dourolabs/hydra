@@ -219,6 +219,100 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     drop_repositories_default_image_post_migration_state(&pool).await?;
     drop_repositories_default_image_migration_is_idempotent(&pool).await?;
 
+    add_agents_session_settings_schema_invariants(&pool).await?;
+    add_agents_session_settings_defaults_to_null(&pool).await?;
+    add_agents_session_settings_migration_is_idempotent(&pool).await?;
+    add_agents_session_settings_store_roundtrip(&pool).await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260724000000_add_agents_session_settings. Adds the
+// `session_settings_json TEXT NULL` column to `agents` for the per-agent
+// `SessionSettings` default layer. Backfills to NULL — the read path
+// materializes `SessionSettings::default()`.
+// ---------------------------------------------------------------------------
+
+async fn add_agents_session_settings_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "agents", "session_settings_json").await? {
+        bail!("expected `agents.session_settings_json` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "agents", "session_settings_json").await? {
+        bail!("expected `agents.session_settings_json` to be NULLABLE");
+    }
+    Ok(())
+}
+
+async fn add_agents_session_settings_defaults_to_null(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query("SELECT name, session_settings_json FROM agents")
+        .fetch_all(pool)
+        .await
+        .context("read agents for session_settings_json default check")?;
+    for row in &rows {
+        let name: String = row.try_get("name")?;
+        let value: Option<String> = row.try_get("session_settings_json")?;
+        if value.is_some() {
+            bail!(
+                "agents({name}): expected session_settings_json=NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn add_agents_session_settings_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    sqlite_store::run_migrations(pool, None)
+        .await
+        .context("re-apply sqlite migrations to confirm agents session_settings idempotency")?;
+    // After re-running, the column still exists and is still nullable.
+    add_agents_session_settings_schema_invariants(pool).await?;
+    Ok(())
+}
+
+/// Per the issue spec: the test surface MUST be a SqliteStore-level
+/// roundtrip on `get_agent` after an agent with non-empty
+/// `session_settings` is written. This catches the `#[sqlx(default)]`
+/// foot-gun — every SELECT projection on `agents` must include the new
+/// `session_settings_json` column. A MemoryStore roundtrip is insufficient.
+async fn add_agents_session_settings_store_roundtrip(pool: &SqlitePool) -> Result<()> {
+    use hydra_server::domain::agents::Agent as DomainAgent;
+    use hydra_server::domain::issues::SessionSettings as DomainSessionSettings;
+
+    let store = SqliteStore::new(pool.clone());
+
+    let mut agent = DomainAgent::new(
+        "ss_roundtrip_chat".to_string(),
+        "/agents/ss_roundtrip_chat/prompt.md".to_string(),
+        None,
+        3,
+        i32::MAX,
+        i32::MAX,
+        false,
+        Vec::new(),
+    );
+    agent.session_settings = DomainSessionSettings {
+        cpu_limit: Some("200m".to_string()),
+        memory_limit: Some("512Mi".to_string()),
+        ..DomainSessionSettings::default()
+    };
+    store
+        .add_agent(agent.clone())
+        .await
+        .context("add_agent for session_settings roundtrip")?;
+
+    let fetched = store
+        .get_agent("ss_roundtrip_chat")
+        .await
+        .context("get_agent for session_settings roundtrip")?;
+    if fetched.session_settings != agent.session_settings {
+        bail!(
+            "ss_roundtrip_chat.session_settings roundtrip mismatch: wrote {:?}, read {:?}",
+            agent.session_settings,
+            fetched.session_settings
+        );
+    }
+
     Ok(())
 }
 

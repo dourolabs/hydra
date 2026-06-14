@@ -259,7 +259,8 @@ async fn spawn_session(
         ))
     })?;
 
-    let conversation_settings = resolve_conversation_session_settings(ctx, conversation).await;
+    let conversation_settings =
+        resolve_conversation_session_settings(ctx, &agent, conversation).await;
 
     let mount_spec = match ctx
         .app_state
@@ -366,12 +367,14 @@ async fn spawn_session(
 /// Merge a conversation's effective [`crate::domain::issues::SessionSettings`]
 /// from (most → least specific) conversation overrides → per-status
 /// overrides on the spawning issue's resolved status → per-project
-/// overrides on the spawning issue's project → global default. Legacy
-/// `/chat` conversations carry `spawned_from = None` and skip both the
-/// status and project layers. A `resolve_status` or `get_project`
-/// failure degrades by skipping just that layer.
+/// overrides on the spawning issue's project → per-agent defaults
+/// declared on the conversation's assigned agent → global default.
+/// Legacy `/chat` conversations carry `spawned_from = None` and skip
+/// both the status and project layers. A `resolve_status` or
+/// `get_project` failure degrades by skipping just that layer.
 async fn resolve_conversation_session_settings(
     ctx: &AutomationContext<'_>,
+    agent: &crate::domain::agents::Agent,
     conversation: &Conversation,
 ) -> crate::domain::issues::SessionSettings {
     let (status_settings, project_settings) = match conversation.spawned_from.as_ref() {
@@ -431,6 +434,8 @@ async fn resolve_conversation_session_settings(
         status_settings,
     );
     let merged = crate::domain::issues::SessionSettings::merge(merged, project_settings);
+    let merged =
+        crate::domain::issues::SessionSettings::merge(merged, agent.session_settings.clone());
     ctx.app_state.apply_session_settings_defaults(merged)
 }
 
@@ -524,6 +529,19 @@ mod tests {
 
     async fn register_default_conversation_agent(state: &AppState) {
         register_agent(state, "swe", "you are an SWE", true).await;
+    }
+
+    async fn register_agent_with_session_settings(
+        state: &AppState,
+        name: &str,
+        prompt_body: &str,
+        is_default: bool,
+        session_settings: SessionSettings,
+    ) {
+        register_agent(state, name, prompt_body, is_default).await;
+        let mut agent = state.store.get_agent(name).await.unwrap();
+        agent.session_settings = session_settings;
+        state.store.update_agent(agent).await.unwrap();
     }
 
     async fn register_agent(state: &AppState, name: &str, prompt_body: &str, is_default: bool) {
@@ -1844,6 +1862,126 @@ mod tests {
             session.memory_limit.as_deref(),
             Some("128Mi"),
             "project memory_limit must surface when both conversation and status are unset"
+        );
+    }
+
+    /// PR-B: locks the full conversation-side precedence chain across
+    /// conversation > status > project > agent. Each layer sets a
+    /// different field; the resolved settings must combine the per-field
+    /// winners and the agent layer must surface only when every higher
+    /// layer is `None`.
+    #[tokio::test]
+    async fn resolve_conversation_settings_merges_conversation_status_project_agent_layers() {
+        use crate::app::test_helpers::issue_with_status;
+        use hydra_common::api::v1::issues::SessionSettings as ApiSessionSettings;
+        use hydra_common::api::v1::projects::StatusKey;
+
+        let state = state_with_default_model("default-model");
+        // Agent layer: image=A, cpu=A, memory=A, model=A
+        register_agent_with_session_settings(
+            &state,
+            "swe",
+            "you are an SWE",
+            true,
+            SessionSettings {
+                image: Some("agent-image".to_string()),
+                cpu_limit: Some("50m".to_string()),
+                memory_limit: Some("64Mi".to_string()),
+                model: Some("agent-model".to_string()),
+                ..SessionSettings::default()
+            },
+        )
+        .await;
+
+        // Project layer: image=B, cpu=B, memory=B (model unset — falls through to agent)
+        let project_id = crate::domain::projects::default_project_id();
+        let mut project = state
+            .store
+            .get_project(&project_id, false)
+            .await
+            .unwrap()
+            .item;
+        let mut project_settings = ApiSessionSettings::default();
+        project_settings.image = Some("project-image".to_string());
+        project_settings.cpu_limit = Some("100m".to_string());
+        project_settings.memory_limit = Some("128Mi".to_string());
+        project.session_settings = project_settings;
+        state
+            .store
+            .update_project(&project_id, project, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Status layer (open): image=C, cpu=C (memory/model unset — fall through)
+        let key = StatusKey::try_new("open").unwrap();
+        let project = state
+            .store
+            .get_project(&project_id, false)
+            .await
+            .unwrap()
+            .item;
+        let mut def = project
+            .statuses
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap()
+            .clone();
+        def.session_settings.image = Some("status-image".to_string());
+        def.session_settings.cpu_limit = Some("200m".to_string());
+        state
+            .store
+            .update_status(&project_id, &key, def, &ActorRef::test())
+            .await
+            .unwrap();
+
+        // Conversation layer: image=D only (cpu/memory/model unset — fall through)
+        let issue = issue_with_status("merge precedence", status("open"), vec![]);
+        let (issue_id, _) = state
+            .store
+            .add_issue_with_actor(issue, ActorRef::test())
+            .await
+            .unwrap();
+        let mut conversation = make_conversation(Some("swe"));
+        conversation.spawned_from = Some(issue_id);
+        conversation.session_settings = SessionSettings {
+            image: Some("conversation-image".to_string()),
+            ..SessionSettings::default()
+        };
+        let (conversation_id, _) = state
+            .store
+            .add_conversation_with_actor(conversation.clone(), ActorRef::test())
+            .await
+            .unwrap();
+
+        let event = conversation_created_event(conversation_id.clone(), conversation);
+        let automation = SpawnConversationSessionsAutomation::new(None).unwrap();
+        let ctx = AutomationContext {
+            event: &event,
+            app_state: &state,
+            store: state.store(),
+        };
+        automation.execute(&ctx).await.unwrap();
+
+        let session = spawned_session(&state, &conversation_id).await;
+        assert_eq!(
+            session.image.as_deref(),
+            Some("conversation-image"),
+            "conversation image must beat status, project, and agent image"
+        );
+        assert_eq!(
+            session.cpu_limit.as_deref(),
+            Some("200m"),
+            "status cpu_limit must beat project and agent cpu_limit when conversation is unset"
+        );
+        assert_eq!(
+            session.memory_limit.as_deref(),
+            Some("128Mi"),
+            "project memory_limit must surface when conversation and status are unset"
+        );
+        assert_eq!(
+            session.agent_config.model.as_deref(),
+            Some("agent-model"),
+            "agent model must surface when no higher layer sets it"
         );
     }
 }

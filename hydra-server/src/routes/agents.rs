@@ -199,7 +199,7 @@ fn normalize_and_build_agent(
         payload.mcp_config_path
     };
 
-    let agent = Agent::new(
+    let mut agent = Agent::new(
         name,
         prompt_path,
         mcp_config_path,
@@ -209,6 +209,7 @@ fn normalize_and_build_agent(
         payload.is_default_conversation_agent,
         payload.secrets,
     );
+    agent.session_settings = payload.session_settings.into();
 
     Ok((agent, prompt_text, mcp_config_text))
 }
@@ -222,7 +223,7 @@ fn normalize_non_empty(field: &str, value: String) -> Result<String, ApiError> {
 }
 
 fn agent_to_record(agent: Agent, prompt: String, mcp_config: Option<String>) -> AgentRecord {
-    AgentRecord::new(
+    let mut record = AgentRecord::new(
         agent.name,
         prompt,
         agent.prompt_path,
@@ -233,7 +234,9 @@ fn agent_to_record(agent: Agent, prompt: String, mcp_config: Option<String>) -> 
         agent.max_simultaneous_headless,
         agent.is_default_conversation_agent,
         agent.secrets,
-    )
+    );
+    record.session_settings = agent.session_settings.into();
+    record
 }
 
 async fn write_prompt(

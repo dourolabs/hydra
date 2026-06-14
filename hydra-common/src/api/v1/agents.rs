@@ -1,3 +1,4 @@
+use crate::api::v1::issues::SessionSettings;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -127,6 +128,12 @@ pub struct AgentRecord {
     pub is_default_conversation_agent: bool,
     #[serde(default)]
     pub secrets: Vec<String>,
+    /// Per-agent default `SessionSettings`. Inserted into the spawn-time
+    /// merge chain as the least-specific user-controllable layer (below
+    /// status / project / issue). Lets agents like `chat` / `pm` declare
+    /// small machine defaults without per-issue configuration.
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
 }
 
 impl AgentRecord {
@@ -154,6 +161,7 @@ impl AgentRecord {
             max_simultaneous_headless,
             is_default_conversation_agent,
             secrets,
+            session_settings: SessionSettings::default(),
         }
     }
 }
@@ -181,6 +189,8 @@ pub struct UpsertAgentRequest {
     pub is_default_conversation_agent: bool,
     #[serde(default)]
     pub secrets: Vec<String>,
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
 }
 
 impl UpsertAgentRequest {
@@ -207,6 +217,7 @@ impl UpsertAgentRequest {
             max_simultaneous_headless,
             is_default_conversation_agent,
             secrets,
+            session_settings: SessionSettings::default(),
         }
     }
 }
@@ -224,6 +235,7 @@ impl From<UpsertAgentRequest> for AgentRecord {
             max_simultaneous_headless: request.max_simultaneous_headless,
             is_default_conversation_agent: request.is_default_conversation_agent,
             secrets: request.secrets,
+            session_settings: request.session_settings,
         }
     }
 }
@@ -241,6 +253,7 @@ impl From<AgentRecord> for UpsertAgentRequest {
             max_simultaneous_headless: record.max_simultaneous_headless,
             is_default_conversation_agent: record.is_default_conversation_agent,
             secrets: record.secrets,
+            session_settings: record.session_settings,
         }
     }
 }
@@ -389,5 +402,25 @@ mod tests {
         }"#;
         let parsed: UpsertAgentRequest = serde_json::from_str(json).unwrap();
         assert!(!parsed.is_default_conversation_agent);
+    }
+
+    #[test]
+    fn agent_record_deserializes_without_session_settings() {
+        // Existing on-disk / on-wire shapes must continue to deserialize
+        // after `session_settings` was added.
+        let json = r#"{
+            "name": "swe",
+            "prompt": "",
+            "prompt_path": "/agents/swe/prompt.md",
+            "mcp_config_path": null,
+            "mcp_config": null,
+            "max_tries": 3,
+            "max_simultaneous_interactive": 5,
+            "max_simultaneous_headless": 5,
+            "is_default_conversation_agent": false,
+            "secrets": []
+        }"#;
+        let parsed: AgentRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.session_settings, SessionSettings::default());
     }
 }

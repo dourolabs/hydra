@@ -1,3 +1,4 @@
+use super::issues::SessionSettings;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,8 @@ pub struct Agent {
     pub max_simultaneous_headless: i32,
     pub is_default_conversation_agent: bool,
     pub secrets: Vec<String>,
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
     pub archived: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -41,6 +44,7 @@ impl Agent {
             max_simultaneous_headless,
             is_default_conversation_agent,
             secrets,
+            session_settings: SessionSettings::default(),
             archived: false,
             created_at: now,
             updated_at: now,

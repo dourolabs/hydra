@@ -117,7 +117,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
     ) -> anyhow::Result<Option<SessionId>> {
-        let session_settings = resolve_session_settings_for_issue(state, issue).await;
+        let session_settings = resolve_session_settings_for_issue(state, &self.agent, issue).await;
 
         // Pre-resolve the mount_spec via `mount_spec_from_create_request`. The
         // server-side `create_session` defaulting from `session_settings` is
@@ -183,7 +183,7 @@ impl AgentQueue {
         issue_id: &IssueId,
         issue: &Issue,
     ) -> anyhow::Result<Option<ConversationId>> {
-        let session_settings = resolve_session_settings_for_issue(state, issue).await;
+        let session_settings = resolve_session_settings_for_issue(state, &self.agent, issue).await;
 
         let agent_name = hydra_common::api::v1::agents::AgentName::try_new(self.agent.name.clone())
             .with_context(|| {
@@ -484,20 +484,24 @@ pub(crate) async fn agent_task_state(
 
 /// Resolve the effective [`crate::domain::issues::SessionSettings`] for
 /// `issue` by merging issue-level overrides over the per-status overrides
-/// on the issue's resolved [`StatusDefinition`] over the per-project
-/// overrides on the issue's project, then applying the global defaults
-/// via `apply_session_settings_defaults`.
+/// on the issue's resolved [`StatusDefinition`], over the per-project
+/// overrides on the issue's project, over the per-agent defaults declared
+/// on the issue's assigned agent, then applying the global defaults via
+/// `apply_session_settings_defaults`.
 ///
 /// Precedence (most → least specific): `issue.session_settings` →
-/// `status.session_settings` → `project.session_settings` → global
-/// default. `SessionSettings::merge` is None-fill (primary wins
-/// per-field), so each field falls through the layers until one supplies
-/// a `Some`. A `resolve_status` or `get_project` failure degrades by
-/// skipping just that layer — the spawn dispatcher already emits a
-/// warning for the status branch, and we don't want a stale project
-/// lookup to break headless spawning.
+/// `status.session_settings` → `project.session_settings` →
+/// `agent.session_settings` → global default. `SessionSettings::merge`
+/// is None-fill (primary wins per-field), so each field falls through
+/// the layers until one supplies a `Some`. A `resolve_status` or
+/// `get_project` failure degrades by skipping just that layer — the
+/// spawn dispatcher already emits a warning for the status branch, and
+/// we don't want a stale project lookup to break headless spawning. The
+/// Agent layer comes from `agent.session_settings`, which is already in
+/// scope on the queue.
 pub(crate) async fn resolve_session_settings_for_issue(
     state: &AppState,
+    agent: &crate::domain::agents::Agent,
     issue: &Issue,
 ) -> crate::domain::issues::SessionSettings {
     let status_settings: crate::domain::issues::SessionSettings = match state
@@ -535,6 +539,8 @@ pub(crate) async fn resolve_session_settings_for_issue(
         status_settings,
     );
     let merged = crate::domain::issues::SessionSettings::merge(merged, project_settings);
+    let merged =
+        crate::domain::issues::SessionSettings::merge(merged, agent.session_settings.clone());
     state.apply_session_settings_defaults(merged)
 }
 
@@ -605,6 +611,15 @@ mod tests {
             false,
             Vec::new(),
         )
+    }
+
+    fn make_agent_with_session_settings(
+        agent_name: &str,
+        session_settings: SessionSettings,
+    ) -> crate::domain::agents::Agent {
+        let mut agent = make_agent(agent_name);
+        agent.session_settings = session_settings;
+        agent
     }
 
     fn queue(agent_name: &str) -> AgentQueue {
@@ -4162,7 +4177,8 @@ mod tests {
             form_response: None,
         };
 
-        let resolved = resolve_session_settings_for_issue(&handles.state, &issue).await;
+        let agent = make_agent("agent-a");
+        let resolved = resolve_session_settings_for_issue(&handles.state, &agent, &issue).await;
         assert_eq!(
             resolved.image.as_deref(),
             Some("issue-image"),
@@ -4186,6 +4202,186 @@ mod tests {
     /// `cpu_limit`, the issue's value wins. Locks the merge order so
     /// future per-status `SessionSettings` additions can't accidentally
     /// flip the precedence.
+    /// PR-B: when only the agent has a `session_settings.cpu_limit`,
+    /// the spawned session must inherit it. Locks the new Agent layer
+    /// below status / project / issue and above the cluster default.
+    #[tokio::test]
+    async fn agent_cpu_limit_flows_to_spawned_session_when_no_higher_layer_sets_it()
+    -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let agent = make_agent_with_session_settings(
+            "agent-a",
+            SessionSettings {
+                cpu_limit: Some("200m".to_string()),
+                memory_limit: Some("512Mi".to_string()),
+                ..SessionSettings::default()
+            },
+        );
+        // Seed the agent into the store so the server-side `AgentSpec::Named`
+        // resolver finds it; the queue's in-memory copy is what the merge
+        // chain reads from.
+        seed_agent(&handles, agent.clone(), "agent prompt").await?;
+        let queue = AgentQueue::new(agent, shared_attempts());
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Inherit agent defaults".to_string(),
+                    creator: default_user(),
+                    status: status("open"),
+                    project_id: crate::domain::projects::default_project_id(),
+                    assignee: Some(test_agent_principal("agent-a")),
+                    session_settings: SessionSettings {
+                        repo_name: Some(repo_name.clone()),
+                        image: Some("repo-image".to_string()),
+                        ..SessionSettings::default()
+                    },
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    archived: false,
+                    form: None,
+                    form_response: None,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let session_id = result.into_session_id().expect("session spawned");
+        let session = handles.state.get_session(&session_id).await?;
+        assert_eq!(
+            session.cpu_limit.as_deref(),
+            Some("200m"),
+            "agent-level cpu_limit must flow to the session when no higher layer wins"
+        );
+        assert_eq!(
+            session.memory_limit.as_deref(),
+            Some("512Mi"),
+            "agent-level memory_limit must flow to the session when no higher layer wins"
+        );
+
+        Ok(())
+    }
+
+    /// PR-B: when the issue, status, AND agent each set a `cpu_limit`,
+    /// precedence is issue > status > agent. Issue wins.
+    #[tokio::test]
+    async fn issue_cpu_limit_wins_over_status_and_agent_cpu_limit() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        set_status_session_settings(&handles, "open", Some("500m"), None).await;
+        let agent = make_agent_with_session_settings(
+            "agent-a",
+            SessionSettings {
+                cpu_limit: Some("100m".to_string()),
+                ..SessionSettings::default()
+            },
+        );
+        seed_agent(&handles, agent.clone(), "agent prompt").await?;
+        let queue = AgentQueue::new(agent, shared_attempts());
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Issue > status > agent".to_string(),
+                    creator: default_user(),
+                    status: status("open"),
+                    project_id: crate::domain::projects::default_project_id(),
+                    assignee: Some(test_agent_principal("agent-a")),
+                    session_settings: SessionSettings {
+                        repo_name: Some(repo_name.clone()),
+                        image: Some("repo-image".to_string()),
+                        cpu_limit: Some("1000m".to_string()),
+                        ..SessionSettings::default()
+                    },
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    archived: false,
+                    form: None,
+                    form_response: None,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let session_id = result.into_session_id().expect("session spawned");
+        let session = handles.state.get_session(&session_id).await?;
+        assert_eq!(
+            session.cpu_limit.as_deref(),
+            Some("1000m"),
+            "issue-level cpu_limit must win over the status and agent overrides"
+        );
+        Ok(())
+    }
+
+    /// PR-B: when status and agent both set `cpu_limit`, status wins
+    /// (status is more specific than agent).
+    #[tokio::test]
+    async fn status_cpu_limit_wins_over_agent_cpu_limit() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        set_status_session_settings(&handles, "open", Some("500m"), None).await;
+        let agent = make_agent_with_session_settings(
+            "agent-a",
+            SessionSettings {
+                cpu_limit: Some("100m".to_string()),
+                ..SessionSettings::default()
+            },
+        );
+        seed_agent(&handles, agent.clone(), "agent prompt").await?;
+        let queue = AgentQueue::new(agent, shared_attempts());
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Status > agent".to_string(),
+                    creator: default_user(),
+                    status: status("open"),
+                    project_id: crate::domain::projects::default_project_id(),
+                    assignee: Some(test_agent_principal("agent-a")),
+                    session_settings: SessionSettings {
+                        repo_name: Some(repo_name.clone()),
+                        image: Some("repo-image".to_string()),
+                        ..SessionSettings::default()
+                    },
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    archived: false,
+                    form: None,
+                    form_response: None,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let session_id = result.into_session_id().expect("session spawned");
+        let session = handles.state.get_session(&session_id).await?;
+        assert_eq!(
+            session.cpu_limit.as_deref(),
+            Some("500m"),
+            "status-level cpu_limit must win over agent-level when issue sets none"
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn issue_cpu_limit_wins_over_status_cpu_limit() -> anyhow::Result<()> {
         let (handles, repo_name) = state_with_repository().await?;
