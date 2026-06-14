@@ -4054,7 +4054,7 @@ async fn add_statuses_archived_migration_is_idempotent(pool: &SqlitePool) -> Res
 }
 
 // ---------------------------------------------------------------------------
-// 20260722000000_add_projects_session_settings. Adds the
+// 20260722000001_add_projects_session_settings. Adds the
 // `session_settings_json TEXT NULL` column to `projects` for the per-
 // project `SessionSettings` override layer. Backfills to NULL — the read
 // path then materializes `SessionSettings::default()`.
