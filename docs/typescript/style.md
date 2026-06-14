@@ -6,14 +6,14 @@ Dark terminal theme — black background, green accent, monospace numerics. All 
 
 ```tsx
 // wrong — inline styles bypass the token system
-<div style={{ color: "#0f0", padding: 8 }}>…</div>
+<div style={{ color: "#0f0", padding: 8 }}>…</div>;
 
 // wrong — global CSS file outside the module system
 import "./issue-detail.css";
 
 // correct
 import styles from "./IssueDetail.module.css";
-<div className={styles.row}>…</div>
+<div className={styles.row}>…</div>;
 ```
 
 No global stylesheets (other than `tokens.css` itself, imported once from `@hydra/ui`).
@@ -24,6 +24,7 @@ The `style={...}` prop is reserved for **runtime-dynamic values**: computed from
 - A hard-coded token-name string (`style={{ color: "var(--c-accent)" }}`) — set the class instead.
 
 Carve-outs:
+
 - Test files (`__tests__/`, `*.test.tsx`) can use empty `style={{}}` mocks freely — the rule targets shipped components.
 - Library-mandated `style` props (e.g. `react-window` `<List style={style}>` passthrough) — the third-party API requires it. Don't substitute; document the carve-out at the call site with a one-line comment.
 
@@ -48,6 +49,16 @@ Carve-outs:
 ```
 
 Tokens cover type families/scale, density (`--row-h`, `--pad-x`, `--pad-y`, `--gap`), the legacy `--space-*` ramp, and colour. If something you need isn't there, add a token rather than a one-off literal.
+
+### Decorative / brand visuals — carve-out
+
+A small number of surfaces are intentionally decorative (brand visuals, hand-tuned gradients, accent glows) and don't fit the token vocabulary — their values are picked for _that surface_ and aren't reused. These are allowed to stay as literals, but each such surface should:
+
+- Live in a file whose purpose is clearly decorative (e.g. `pages/LoginPage.module.css`).
+- Carry a top-of-file or near-by comment noting that the literal values are intentional and not token candidates.
+- Limit the carve-out to the decorative properties (background gradients, brand glows, shadow stops with non-token opacities). Layout properties — padding, gap, font-size, radii — still come from tokens.
+
+Token-driven sites that _use_ the brand accent (the green glow on `LoginPage.title`, `LoginPage.card`'s outer shadow) should prefer `color-mix(in srgb, var(--acc) X%, transparent)` over hard-coded `rgba(0, 204, 102, X)` so that an accent-preset switch (`data-accent="violet"`, etc.) carries through.
 
 ## Mobile
 
@@ -125,7 +136,9 @@ Groups of related pickers (status / project / assignee, view options, filters) `
 
 /* wrong — three picker rows stacked vertically reads as a form, not a control row */
 @media (max-width: 768px) {
-  .metaRow { flex-direction: column; }
+  .metaRow {
+    flex-direction: column;
+  }
 }
 ```
 
