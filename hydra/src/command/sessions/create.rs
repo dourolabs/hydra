@@ -458,7 +458,6 @@ mod tests {
         let repository = Repository::new(
             "https://github.com/dourolabs/service-repo.git".to_string(),
             Some("main".to_string()),
-            None,
         );
         let list_response = ListRepositoriesResponse::new(vec![RepositoryRecord::new(
             repo_name.clone(),

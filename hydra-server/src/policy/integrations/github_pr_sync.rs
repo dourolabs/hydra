@@ -514,17 +514,14 @@ mod tests {
     fn skips_pr_sync_for_non_github_repo() {
         // A repo with a file:// remote URL should not be considered a GitHub repo,
         // which means github_pr_sync::execute() will return early without API calls.
-        let local_repo = Repository::new("file:///home/user/repo".to_string(), None, None);
+        let local_repo = Repository::new("file:///home/user/repo".to_string(), None);
         assert!(!local_repo.is_github());
         assert!(local_repo.is_local());
         assert_eq!(local_repo.github_owner_repo(), None);
 
         // A GitHub repo should be recognized and have owner/repo extracted.
-        let github_repo = Repository::new(
-            "https://github.com/dourolabs/hydra.git".to_string(),
-            None,
-            None,
-        );
+        let github_repo =
+            Repository::new("https://github.com/dourolabs/hydra.git".to_string(), None);
         assert!(github_repo.is_github());
         assert!(!github_repo.is_local());
         assert_eq!(

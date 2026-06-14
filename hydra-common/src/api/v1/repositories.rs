@@ -239,8 +239,6 @@ pub struct Repository {
     pub remote_url: String,
     #[serde(default)]
     pub default_branch: Option<String>,
-    #[serde(default)]
-    pub default_image: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -248,15 +246,10 @@ pub struct Repository {
 }
 
 impl Repository {
-    pub fn new(
-        remote_url: String,
-        default_branch: Option<String>,
-        default_image: Option<String>,
-    ) -> Self {
+    pub fn new(remote_url: String, default_branch: Option<String>) -> Self {
         Self {
             remote_url,
             default_branch,
-            default_image,
             archived: false,
             merge_policy: None,
         }
@@ -542,11 +535,7 @@ mod tests {
 
     #[test]
     fn github_owner_repo_https_with_git_suffix() {
-        let repo = Repository::new(
-            "https://github.com/dourolabs/hydra.git".to_string(),
-            None,
-            None,
-        );
+        let repo = Repository::new("https://github.com/dourolabs/hydra.git".to_string(), None);
         assert_eq!(
             repo.github_owner_repo(),
             Some(("dourolabs".to_string(), "hydra".to_string()))
@@ -555,7 +544,7 @@ mod tests {
 
     #[test]
     fn github_owner_repo_https_without_git_suffix() {
-        let repo = Repository::new("https://github.com/dourolabs/hydra".to_string(), None, None);
+        let repo = Repository::new("https://github.com/dourolabs/hydra".to_string(), None);
         assert_eq!(
             repo.github_owner_repo(),
             Some(("dourolabs".to_string(), "hydra".to_string()))
@@ -564,7 +553,7 @@ mod tests {
 
     #[test]
     fn github_owner_repo_ssh() {
-        let repo = Repository::new("git@github.com:dourolabs/hydra.git".to_string(), None, None);
+        let repo = Repository::new("git@github.com:dourolabs/hydra.git".to_string(), None);
         assert_eq!(
             repo.github_owner_repo(),
             Some(("dourolabs".to_string(), "hydra".to_string()))
@@ -573,7 +562,7 @@ mod tests {
 
     #[test]
     fn github_owner_repo_ssh_without_git_suffix() {
-        let repo = Repository::new("git@github.com:dourolabs/hydra".to_string(), None, None);
+        let repo = Repository::new("git@github.com:dourolabs/hydra".to_string(), None);
         assert_eq!(
             repo.github_owner_repo(),
             Some(("dourolabs".to_string(), "hydra".to_string()))
@@ -582,60 +571,52 @@ mod tests {
 
     #[test]
     fn github_owner_repo_non_github() {
-        let repo = Repository::new("https://gitlab.com/org/repo.git".to_string(), None, None);
+        let repo = Repository::new("https://gitlab.com/org/repo.git".to_string(), None);
         assert_eq!(repo.github_owner_repo(), None);
     }
 
     #[test]
     fn github_owner_repo_file_url() {
-        let repo = Repository::new("file:///home/user/repo".to_string(), None, None);
+        let repo = Repository::new("file:///home/user/repo".to_string(), None);
         assert_eq!(repo.github_owner_repo(), None);
     }
 
     #[test]
     fn github_owner_repo_empty_segments() {
-        let repo = Repository::new("https://github.com//repo.git".to_string(), None, None);
+        let repo = Repository::new("https://github.com//repo.git".to_string(), None);
         assert_eq!(repo.github_owner_repo(), None);
 
-        let repo2 = Repository::new("https://github.com/owner/".to_string(), None, None);
+        let repo2 = Repository::new("https://github.com/owner/".to_string(), None);
         assert_eq!(repo2.github_owner_repo(), None);
     }
 
     #[test]
     fn is_github_returns_true_for_github_url() {
-        let repo = Repository::new(
-            "https://github.com/dourolabs/hydra.git".to_string(),
-            None,
-            None,
-        );
+        let repo = Repository::new("https://github.com/dourolabs/hydra.git".to_string(), None);
         assert!(repo.is_github());
     }
 
     #[test]
     fn is_github_returns_false_for_non_github_url() {
-        let repo = Repository::new("https://gitlab.com/org/repo.git".to_string(), None, None);
+        let repo = Repository::new("https://gitlab.com/org/repo.git".to_string(), None);
         assert!(!repo.is_github());
     }
 
     #[test]
     fn is_local_file_url() {
-        let repo = Repository::new("file:///home/user/repo".to_string(), None, None);
+        let repo = Repository::new("file:///home/user/repo".to_string(), None);
         assert!(repo.is_local());
     }
 
     #[test]
     fn is_local_absolute_path() {
-        let repo = Repository::new("/home/user/repo".to_string(), None, None);
+        let repo = Repository::new("/home/user/repo".to_string(), None);
         assert!(repo.is_local());
     }
 
     #[test]
     fn is_local_returns_false_for_github() {
-        let repo = Repository::new(
-            "https://github.com/dourolabs/hydra.git".to_string(),
-            None,
-            None,
-        );
+        let repo = Repository::new("https://github.com/dourolabs/hydra.git".to_string(), None);
         assert!(!repo.is_local());
     }
 
@@ -1118,7 +1099,7 @@ mergers:
 
     #[test]
     fn repository_merge_policy_round_trips() {
-        let mut repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
+        let mut repo = Repository::new("https://example.com/repo.git".to_string(), None);
         repo.merge_policy = Some(full_merge_policy());
         let value = serde_json::to_value(&repo).unwrap();
         let back: Repository = serde_json::from_value(value).unwrap();
@@ -1127,7 +1108,7 @@ mergers:
 
     #[test]
     fn repository_merge_policy_none_is_omitted() {
-        let repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
+        let repo = Repository::new("https://example.com/repo.git".to_string(), None);
         let value = serde_json::to_value(&repo).unwrap();
         assert!(
             !value.as_object().unwrap().contains_key("merge_policy"),

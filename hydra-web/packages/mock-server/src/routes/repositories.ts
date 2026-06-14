@@ -33,7 +33,6 @@ export function createRepositoryRoutes(store: Store): Hono {
     const repo: Repository = {
       remote_url: body.remote_url,
       default_branch: body.default_branch,
-      default_image: body.default_image,
       archived: body.archived,
       merge_policy: body.merge_policy,
     };
@@ -56,7 +55,6 @@ export function createRepositoryRoutes(store: Store): Hono {
     const updated: Repository = {
       remote_url: body.remote_url,
       default_branch: body.default_branch,
-      default_image: body.default_image,
       archived: body.archived,
       merge_policy: body.merge_policy,
     };

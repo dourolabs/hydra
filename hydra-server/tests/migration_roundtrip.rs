@@ -1691,6 +1691,7 @@ async fn assert_schema_invariants(pool: &PgPool) -> Result<()> {
         ("tasks_v2", "mcp_config"),
         ("issues_v2", "todo_list"),
         ("repositories_v2", "patch_workflow"),
+        ("repositories_v2", "default_image"),
     ] {
         if column_exists(pool, table, col).await? {
             bail!("expected metis.{table}.{col} to be dropped after rollforward");

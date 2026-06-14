@@ -24,7 +24,6 @@ pub(crate) fn service_repository() -> (RepoName, Repository) {
     let repository = Repository::new(
         format!("https://example.com/{}.git", name.as_str()),
         Some("develop".to_string()),
-        Some("ghcr.io/example/repo:main".to_string()),
     );
 
     (name, repository)

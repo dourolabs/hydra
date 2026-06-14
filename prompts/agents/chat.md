@@ -86,15 +86,12 @@ for GitHub repos, build/test/lint) is dispatched to PM, which has the full playb
        hydra repos create <org/repo> <remote-url> \
            [--reviewer <a>]... [--merger <m>] \
            [--default-branch <branch>]
-
-   Leave `--default-image` off — that gets set later, after the repo has a `Dockerfile.hydra` and
-   a built image (handled by PM via the playbook).
 4. **Dispatch onboarding to PM.** File a follow-up issue assigned to `agents/pm`, telling PM:
    - The repo has **already been registered** via `hydra repos create`, and which patch-workflow
      config was applied (reviewers / merger), so PM should **skip step 1** of [[d-acjndk]].
    - PM should proceed from step 2 (clone) onwards: write the repo summary at
-     `/repos/<repo-name>.md`, prepare the Dockerfile + image build (GitHub repos only), set the
-     default-image, run build/test/lint.
+     `/repos/<repo-name>.md`, prepare the Dockerfile + image build (GitHub repos only), run
+     build/test/lint.
    - Local repos skip the Dockerfile / image-build steps — see the local-repo workflow in the
      playbook.
 
@@ -103,10 +100,13 @@ for GitHub repos, build/test/lint) is dispatched to PM, which has the full playb
 When the user asks to change a registered repo's configuration, use `hydra repos update`:
 
 - `--default-branch <branch>` / `--clear-default-branch`
-- `--default-image <image>` / `--clear-default-image`
 - `--reviewer <assignee>` (repeatable; replaces existing reviewer list)
 - `--merger <assignee>`
 - `--clear-patch-workflow` (clears reviewers + merger together)
+
+If a repo needs a custom runtime image, configure it on the agent (`hydra agents update --image
+<ref>`), on the project, or per-issue via `session_settings.image` — per-repo image overrides
+have been removed.
 
 Run `hydra repos update --help` for the full flag list. Don't `hydra repos delete` from chat unless
 the user explicitly asks — and confirm before doing so; it's a soft-delete but still disruptive.

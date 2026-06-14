@@ -191,7 +191,6 @@ async fn seed_repository(store: &dyn Store) -> Result<RepoName> {
     let repo = Repository::new(
         "https://github.com/dourolabs/hydra".to_string(),
         Some("main".to_string()),
-        None,
     );
     store
         .add_repository(name.clone(), repo, &ActorRef::test())

@@ -62,18 +62,6 @@ pub struct CreateRepositoryArgs {
     /// Clear the configured default branch.
     #[arg(long = "clear-default-branch")]
     pub clear_default_branch: bool,
-
-    /// Default container image for jobs from this repository.
-    #[arg(
-        long = "default-image",
-        value_name = "IMAGE",
-        conflicts_with = "clear_default_image"
-    )]
-    pub default_image: Option<String>,
-
-    /// Clear the configured default image.
-    #[arg(long = "clear-default-image")]
-    pub clear_default_image: bool,
 }
 
 impl CreateRepositoryArgs {
@@ -82,8 +70,6 @@ impl CreateRepositoryArgs {
             resolve_remote_url(&self.remote_url)?,
             &self.default_branch,
             self.clear_default_branch,
-            &self.default_image,
-            self.clear_default_image,
         )?;
         Ok(CreateRepositoryRequest::new(self.name.clone(), repo))
     }
@@ -110,18 +96,6 @@ pub struct UpdateRepositoryArgs {
     /// Clear the configured default branch.
     #[arg(long = "clear-default-branch")]
     pub clear_default_branch: bool,
-
-    /// Default container image for jobs from this repository.
-    #[arg(
-        long = "default-image",
-        value_name = "IMAGE",
-        conflicts_with = "clear_default_image"
-    )]
-    pub default_image: Option<String>,
-
-    /// Clear the configured default image.
-    #[arg(long = "clear-default-image")]
-    pub clear_default_image: bool,
 
     /// Read a YAML merge policy from PATH and apply it to the repository.
     ///
@@ -317,23 +291,6 @@ async fn build_update_request(
         }
     };
 
-    let default_image = if args.clear_default_image {
-        None
-    } else {
-        match &args.default_image {
-            Some(value) => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    bail!(
-                        "default image must not be empty (use --clear-default-image to clear it)"
-                    );
-                }
-                Some(trimmed.to_string())
-            }
-            None => current.default_image,
-        }
-    };
-
     let merge_policy = if args.clear_merge_policy {
         None
     } else if let Some(path) = &args.merge_policy_file {
@@ -342,7 +299,7 @@ async fn build_update_request(
         current.merge_policy
     };
 
-    let mut repo = Repository::new(remote_url, default_branch, default_image);
+    let mut repo = Repository::new(remote_url, default_branch);
     repo.merge_policy = merge_policy;
 
     Ok((args.name.clone(), UpdateRepositoryRequest::new(repo)))
@@ -368,8 +325,6 @@ fn build_repository_config(
     remote_url: String,
     default_branch: &Option<String>,
     clear_default_branch: bool,
-    default_image: &Option<String>,
-    clear_default_image: bool,
 ) -> Result<Repository> {
     Ok(Repository::new(
         remote_url,
@@ -378,12 +333,6 @@ fn build_repository_config(
             clear_default_branch,
             "default branch",
             "--clear-default-branch",
-        )?,
-        parse_optional(
-            default_image,
-            clear_default_image,
-            "default image",
-            "--clear-default-image",
         )?,
     ))
 }
@@ -477,8 +426,6 @@ mod tests {
             remote_url: "https://example.com/hydra.git".to_string(),
             default_branch: Some("main".to_string()),
             clear_default_branch: false,
-            default_image: Some("ghcr.io/dourolabs/hydra:latest".to_string()),
-            clear_default_image: false,
         }
     }
 
@@ -488,8 +435,6 @@ mod tests {
             remote_url: Some("https://example.com/hydra.git".to_string()),
             default_branch: Some("main".to_string()),
             clear_default_branch: false,
-            default_image: Some("ghcr.io/dourolabs/hydra:latest".to_string()),
-            clear_default_image: false,
             merge_policy_file: None,
             clear_merge_policy: false,
         }
@@ -501,7 +446,6 @@ mod tests {
             Repository::new(
                 "https://example.com/hydra.git".to_string(),
                 Some("main".to_string()),
-                Some("ghcr.io/dourolabs/hydra:latest".to_string()),
             ),
         )
     }
@@ -518,7 +462,7 @@ mod tests {
             sample_repository_info(&repo_name),
             RepositoryRecord::new(
                 RepoName::from_str("dourolabs/api").unwrap(),
-                Repository::new("git@github.com:dourolabs/api.git".to_string(), None, None),
+                Repository::new("git@github.com:dourolabs/api.git".to_string(), None),
             ),
         ]);
         let server = MockServer::start();
@@ -541,7 +485,6 @@ mod tests {
         assert!(output.contains("dourolabs/hydra"));
         assert!(output.contains("remote_url: https://example.com/hydra.git"));
         assert!(output.contains("default_branch: main"));
-        assert!(output.contains("default_image: ghcr.io/dourolabs/hydra:latest"));
         assert!(output.contains("dourolabs/api"));
 
         list_mock.assert();
@@ -574,8 +517,7 @@ mod tests {
             when.method(POST).path("/v1/repositories").json_body(json!({
                 "name": "dourolabs/hydra",
                 "remote_url": "https://example.com/hydra.git",
-                "default_branch": "main",
-                "default_image": "ghcr.io/dourolabs/hydra:latest"
+                "default_branch": "main"
             }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(repository.clone()));
@@ -616,7 +558,6 @@ mod tests {
         let mut args = sample_update_args();
         args.clear_default_branch = true;
         args.default_branch = None;
-        args.default_image = Some("ghcr.io/dourolabs/hydra:stable".to_string());
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/repositories");
@@ -630,17 +571,12 @@ mod tests {
                 .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
-                    "default_branch": null,
-                    "default_image": "ghcr.io/dourolabs/hydra:stable"
+                    "default_branch": null
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
                     args.name.clone(),
-                    Repository::new(
-                        args.remote_url.clone().unwrap(),
-                        None,
-                        args.default_image.clone(),
-                    ),
+                    Repository::new(args.remote_url.clone().unwrap(), None),
                 )));
         });
         let client = mock_client(&server);
@@ -665,8 +601,7 @@ mod tests {
     async fn update_repository_uses_remote_url_from_listing() {
         let mut args = sample_update_args();
         args.remote_url = None;
-        args.default_branch = None;
-        args.default_image = Some("ghcr.io/dourolabs/hydra:stable".to_string());
+        args.default_branch = Some("develop".to_string());
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/repositories");
@@ -680,16 +615,14 @@ mod tests {
                 .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:stable"
+                    "default_branch": "develop"
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
                     args.name.clone(),
                     Repository::new(
                         "https://example.com/hydra.git".to_string(),
-                        Some("main".to_string()),
-                        args.default_image.clone(),
+                        Some("develop".to_string()),
                     ),
                 )));
         });
@@ -703,7 +636,7 @@ mod tests {
         );
         assert_eq!(
             repository.repository.default_branch,
-            Some("main".to_string())
+            Some("develop".to_string())
         );
         list_mock.assert();
         update_mock.assert();
@@ -725,8 +658,7 @@ mod tests {
                 .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:latest"
+                    "default_branch": "main"
                 }));
             then.status(404);
         });
@@ -744,11 +676,10 @@ mod tests {
 
     #[tokio::test]
     async fn update_repository_preserves_unmodified_fields() {
-        // Only --default-image is provided; default_branch and remote_url should be preserved.
+        // Only --default-branch is provided; remote_url should be preserved.
         let mut args = sample_update_args();
         args.remote_url = None;
-        args.default_branch = None;
-        args.default_image = Some("ghcr.io/dourolabs/hydra:canary".to_string());
+        args.default_branch = Some("release".to_string());
         let server = MockServer::start();
         let list_mock = server.mock(|when, then| {
             when.method(GET).path("/v1/repositories");
@@ -762,16 +693,14 @@ mod tests {
                 .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:canary"
+                    "default_branch": "release"
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
                     args.name.clone(),
                     Repository::new(
                         "https://example.com/hydra.git".to_string(),
-                        Some("main".to_string()),
-                        Some("ghcr.io/dourolabs/hydra:canary".to_string()),
+                        Some("release".to_string()),
                     ),
                 )));
         });
@@ -785,106 +714,8 @@ mod tests {
         );
         assert_eq!(
             repository.repository.default_branch,
-            Some("main".to_string())
+            Some("release".to_string())
         );
-        assert_eq!(
-            repository.repository.default_image,
-            Some("ghcr.io/dourolabs/hydra:canary".to_string())
-        );
-        list_mock.assert();
-        update_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn update_repository_clear_default_branch_preserves_default_image() {
-        let mut args = sample_update_args();
-        args.remote_url = None;
-        args.default_branch = None;
-        args.clear_default_branch = true;
-        args.default_image = None;
-        args.clear_default_image = false;
-        let server = MockServer::start();
-        let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories");
-            then.status(200)
-                .json_body_obj(&ListRepositoriesResponse::new(vec![
-                    sample_repository_info(&args.name),
-                ]));
-        });
-        let update_mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path("/v1/repositories/dourolabs/hydra")
-                .json_body(json!({
-                    "remote_url": "https://example.com/hydra.git",
-                    "default_branch": null,
-                    "default_image": "ghcr.io/dourolabs/hydra:latest"
-                }));
-            then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
-                    args.name.clone(),
-                    Repository::new(
-                        "https://example.com/hydra.git".to_string(),
-                        None,
-                        Some("ghcr.io/dourolabs/hydra:latest".to_string()),
-                    ),
-                )));
-        });
-        let client = mock_client(&server);
-
-        let repository = update_repository(&client, args).await.unwrap();
-
-        assert_eq!(repository.repository.default_branch, None);
-        assert_eq!(
-            repository.repository.default_image,
-            Some("ghcr.io/dourolabs/hydra:latest".to_string())
-        );
-        list_mock.assert();
-        update_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn update_repository_clear_default_image_preserves_default_branch() {
-        let mut args = sample_update_args();
-        args.remote_url = None;
-        args.default_branch = None;
-        args.clear_default_branch = false;
-        args.default_image = None;
-        args.clear_default_image = true;
-        let server = MockServer::start();
-        let list_mock = server.mock(|when, then| {
-            when.method(GET).path("/v1/repositories");
-            then.status(200)
-                .json_body_obj(&ListRepositoriesResponse::new(vec![
-                    sample_repository_info(&args.name),
-                ]));
-        });
-        let update_mock = server.mock(|when, then| {
-            when.method(PUT)
-                .path("/v1/repositories/dourolabs/hydra")
-                .json_body(json!({
-                    "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": null
-                }));
-            then.status(200)
-                .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
-                    args.name.clone(),
-                    Repository::new(
-                        "https://example.com/hydra.git".to_string(),
-                        Some("main".to_string()),
-                        None,
-                    ),
-                )));
-        });
-        let client = mock_client(&server);
-
-        let repository = update_repository(&client, args).await.unwrap();
-
-        assert_eq!(
-            repository.repository.default_branch,
-            Some("main".to_string())
-        );
-        assert_eq!(repository.repository.default_image, None);
         list_mock.assert();
         update_mock.assert();
     }
@@ -1127,7 +958,6 @@ mergers:
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
                     "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:latest",
                     "merge_policy": {
                         "reviewers": [
                             {
@@ -1148,7 +978,6 @@ mergers:
                 let mut r = Repository::new(
                     args.remote_url.clone().unwrap(),
                     args.default_branch.clone(),
-                    args.default_image.clone(),
                 );
                 r.merge_policy = Some(serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap());
                 r
@@ -1186,8 +1015,7 @@ mergers:
                 .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:latest"
+                    "default_branch": "main"
                 }));
             then.status(200)
                 .json_body_obj(&UpsertRepositoryResponse::new(RepositoryRecord::new(
@@ -1195,7 +1023,6 @@ mergers:
                     Repository::new(
                         args.remote_url.clone().unwrap(),
                         args.default_branch.clone(),
-                        args.default_image.clone(),
                     ),
                 )));
         });
@@ -1211,7 +1038,7 @@ mergers:
     #[tokio::test]
     async fn update_repository_preserves_merge_policy_when_unmodified() {
         let mut args = sample_update_args();
-        args.default_image = Some("ghcr.io/dourolabs/hydra:canary".to_string());
+        args.default_branch = Some("release".to_string());
         let policy: MergePolicy = serde_yaml_ng::from_str(SAMPLE_MERGE_POLICY_YAML).unwrap();
         let server = MockServer::start();
         let mut existing = sample_repository_info(&args.name);
@@ -1226,14 +1053,12 @@ mergers:
                 .path("/v1/repositories/dourolabs/hydra")
                 .json_body(json!({
                     "remote_url": "https://example.com/hydra.git",
-                    "default_branch": "main",
-                    "default_image": "ghcr.io/dourolabs/hydra:canary",
+                    "default_branch": "release",
                     "merge_policy": serde_json::to_value(&policy).unwrap(),
                 }));
             let mut response_repo = Repository::new(
                 args.remote_url.clone().unwrap(),
                 args.default_branch.clone(),
-                Some("ghcr.io/dourolabs/hydra:canary".to_string()),
             );
             response_repo.merge_policy = Some(policy.clone());
             then.status(200)

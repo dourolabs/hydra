@@ -824,7 +824,7 @@ mod merge_check_tests {
     }
 
     async fn seed_repo(handles: &TestStateHandles, policy: Option<MergePolicy>) {
-        let mut repo = Repository::new("https://example.com/repo.git".to_string(), None, None);
+        let mut repo = Repository::new("https://example.com/repo.git".to_string(), None);
         repo.merge_policy = policy;
         handles
             .store

@@ -60,7 +60,7 @@ async fn create_session_enqueues_task() -> anyhow::Result<()> {
 
     assert!(matches!(&task.mode, SessionMode::Headless));
     assert_eq!(task.agent_config.system_prompt.as_deref(), Some("0"));
-    assert_eq!(resolved.context.bundle, Bundle::None);
+    assert_eq!(resolved.bundle, Bundle::None);
     assert_eq!(resolved.image, resolver_state.config.job.default_image);
 
     let status = check_state.get_session(&body.session_id).await?.status;
@@ -117,7 +117,7 @@ async fn create_session_passes_through_caller_supplied_bundle() -> anyhow::Resul
     let task = check_state2.get_session(&body.session_id).await?;
     let resolved = resolver_state2.resolve_task(&task).await?;
     assert_eq!(
-        resolved.context.bundle,
+        resolved.bundle,
         Bundle::GitRepository {
             url: repo.remote_url.clone(),
             rev: "develop".to_string()

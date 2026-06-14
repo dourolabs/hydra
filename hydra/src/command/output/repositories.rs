@@ -44,11 +44,6 @@ fn write_repository_details<W: Write>(repository: &RepositoryRecord, writer: &mu
         "  default_branch: {}",
         config.default_branch.as_deref().unwrap_or("<none>")
     )?;
-    writeln!(
-        writer,
-        "  default_image: {}",
-        config.default_image.as_deref().unwrap_or("<none>")
-    )?;
     if let Some(ref policy) = config.merge_policy {
         let yaml = serde_yaml_ng::to_string(policy)?;
         writeln!(writer, "  merge_policy:")?;

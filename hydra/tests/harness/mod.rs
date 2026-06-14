@@ -482,7 +482,7 @@ impl TestHarnessBuilder {
             let repo_name = RepoName::from_str(repo_name_str)
                 .with_context(|| format!("invalid repo name: '{repo_name_str}'"))?;
             let repository =
-                Repository::new(git_remote.url().to_string(), Some("main".to_string()), None);
+                Repository::new(git_remote.url().to_string(), Some("main".to_string()));
             store
                 .add_repository(repo_name.clone(), repository, &ActorRef::test())
                 .await

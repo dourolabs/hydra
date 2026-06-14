@@ -14,13 +14,11 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
   const [name, setName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [defaultBranch, setDefaultBranch] = useState("");
-  const [defaultImage, setDefaultImage] = useState("");
 
   const resetForm = useCallback(() => {
     setName("");
     setRemoteUrl("");
     setDefaultBranch("");
-    setDefaultImage("");
   }, []);
 
   const { mutation, handleClose, handleKeyDown, isPending } = useFormModal<CreateRepositoryRequest, unknown>({
@@ -46,9 +44,8 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
       name: name.trim(),
       remote_url: remoteUrl.trim(),
       default_branch: defaultBranch.trim() || null,
-      default_image: defaultImage.trim() || null,
     });
-  }, [name, remoteUrl, defaultBranch, defaultImage, isValid, mutation]);
+  }, [name, remoteUrl, defaultBranch, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Repository">
@@ -75,12 +72,6 @@ export function RepositoryCreateModal({ open, onClose }: RepositoryCreateModalPr
           placeholder="main"
           value={defaultBranch}
           onChange={(e) => setDefaultBranch(e.target.value)}
-        />
-        <Input
-          label="Default Image"
-          placeholder="ghcr.io/org/repo:latest"
-          value={defaultImage}
-          onChange={(e) => setDefaultImage(e.target.value)}
         />
         <div className={sharedStyles.formActions}>
           <Button
