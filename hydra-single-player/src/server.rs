@@ -14,6 +14,7 @@ use hydra::client::{HydraClient, HydraClientTimeouts};
 use hydra::config::{self, expand_path};
 use hydra::constants::DEFAULT_CONFIG_FILE;
 use hydra_common::api::v1::agents::UpsertAgentRequest;
+use hydra_common::api::v1::issues::SessionSettings;
 use hydra_common::constants::DEFAULT_CONVERSATION_TIMEOUT_SECS;
 
 /// Directory layout under ~/.hydra/
@@ -392,33 +393,53 @@ fn create_default_agents(auth_token: &str) -> Result<()> {
         &HydraClientTimeouts::default(),
     )?;
 
-    // Tuple slots: (name, prompt, is_default_conversation_agent).
+    // Chat and PM agents run lightweight workloads (no heavy code
+    // builds / test suites) — declare small `session_settings` defaults
+    // here so they don't allocate a `swe`-class machine per session.
+    // SWE / reviewer keep `SessionSettings::default()` so the cluster
+    // default applies.
+    // `SessionSettings` is `#[non_exhaustive]`, so external crates can't
+    // use struct-literal construction even with `..Default::default()`.
+    let small_session_settings = || {
+        let mut s = SessionSettings::default();
+        s.cpu_limit = Some("200m".to_string());
+        s.memory_limit = Some("512Mi".to_string());
+        s
+    };
+
+    // Tuple slots: (name, prompt, is_default_conversation_agent, session_settings).
     // `chat` is the default conversation agent (used by the Chat page and
     // `hydra chat` when no --agent is specified).
-    let agents: &[(&str, &str, bool)] = &[
-        ("swe", SWE_PROMPT, false),
-        ("pm", PM_PROMPT, false),
-        ("reviewer", REVIEWER_PROMPT, false),
-        ("chat", CHAT_PROMPT, true),
+    let agents: &[(&str, &str, bool, SessionSettings)] = &[
+        ("swe", SWE_PROMPT, false, SessionSettings::default()),
+        ("pm", PM_PROMPT, false, small_session_settings()),
+        (
+            "reviewer",
+            REVIEWER_PROMPT,
+            false,
+            SessionSettings::default(),
+        ),
+        ("chat", CHAT_PROMPT, true, small_session_settings()),
     ];
 
     // Server commands run before the tokio runtime is created (due to fork),
     // so we create a small runtime to drive the async HydraClient calls.
     let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
 
-    for &(name, prompt, is_default_conversation_agent) in agents {
+    for (name, prompt, is_default_conversation_agent, session_settings) in agents {
         let secrets = vec![];
-        let request = UpsertAgentRequest::new(
-            name,
-            prompt,
+        let mut request = UpsertAgentRequest::new(
+            *name,
+            *prompt,
             3,
             i32::MAX,
             i32::MAX,
             None,
             None,
-            is_default_conversation_agent,
+            *is_default_conversation_agent,
             secrets,
         );
+        request.session_settings = session_settings.clone();
 
         match rt.block_on(client.create_agent(&request)) {
             Ok(_) => println!("Created agent: {name}"),

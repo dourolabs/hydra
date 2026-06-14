@@ -6,6 +6,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use hydra_common::agents::{AgentRecord, UpsertAgentRequest};
+use hydra_common::api::v1::issues::SessionSettings;
+use hydra_common::api::v1::timeout::Timeout;
 
 #[derive(Debug, Subcommand)]
 pub enum AgentsCommand {
@@ -87,6 +89,44 @@ pub struct CreateAgentArgs {
     /// Comma-separated list of secret names available to this agent.
     #[arg(long = "secrets", value_name = "SECRETS")]
     pub secrets: Option<String>,
+
+    /// Per-agent default container CPU limit (e.g. `200m`, `1`). Merged
+    /// into the spawn-time `SessionSettings` chain below the per-issue
+    /// / per-status / per-project layers.
+    #[arg(long = "cpu-limit", value_name = "STRING")]
+    pub cpu_limit: Option<String>,
+
+    /// Per-agent default container memory limit (e.g. `512Mi`, `2Gi`).
+    #[arg(long = "memory-limit", value_name = "STRING")]
+    pub memory_limit: Option<String>,
+
+    /// Per-agent default container image (e.g.
+    /// `ghcr.io/dourolabs/hydra:latest`).
+    #[arg(long = "image", value_name = "STRING")]
+    pub image: Option<String>,
+
+    /// Per-agent default model for the agent (e.g. `claude-opus-4-7`).
+    #[arg(long = "model", value_name = "STRING")]
+    pub model: Option<String>,
+
+    /// Per-agent default idle timeout for interactive sessions, in seconds.
+    /// Mutually exclusive with `--idle-timeout-infinite`.
+    #[arg(
+        long = "idle-timeout-seconds",
+        value_name = "SECONDS",
+        conflicts_with = "idle_timeout_infinite"
+    )]
+    pub idle_timeout_seconds: Option<u64>,
+
+    /// Per-agent default: never time out interactive sessions due to
+    /// inactivity.
+    #[arg(long = "idle-timeout-infinite")]
+    pub idle_timeout_infinite: bool,
+
+    /// Per-agent default max retries on the spawn-time `SessionSettings`
+    /// (distinct from `--max-tries`, which caps spawn-attempt retries).
+    #[arg(long = "session-max-retries", value_name = "COUNT")]
+    pub session_max_retries: Option<u32>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -152,6 +192,79 @@ pub struct UpdateAgentArgs {
     /// Comma-separated list of secret names available to this agent.
     #[arg(long = "secrets", value_name = "SECRETS")]
     pub secrets: Option<String>,
+
+    /// Set the per-agent default container CPU limit (e.g. `200m`, `1`).
+    #[arg(
+        long = "cpu-limit",
+        value_name = "STRING",
+        conflicts_with = "clear_cpu_limit"
+    )]
+    pub cpu_limit: Option<String>,
+
+    /// Clear the per-agent default container CPU limit.
+    #[arg(long = "clear-cpu-limit")]
+    pub clear_cpu_limit: bool,
+
+    /// Set the per-agent default container memory limit (e.g. `512Mi`, `2Gi`).
+    #[arg(
+        long = "memory-limit",
+        value_name = "STRING",
+        conflicts_with = "clear_memory_limit"
+    )]
+    pub memory_limit: Option<String>,
+
+    /// Clear the per-agent default container memory limit.
+    #[arg(long = "clear-memory-limit")]
+    pub clear_memory_limit: bool,
+
+    /// Set the per-agent default container image.
+    #[arg(long = "image", value_name = "STRING", conflicts_with = "clear_image")]
+    pub image: Option<String>,
+
+    /// Clear the per-agent default container image.
+    #[arg(long = "clear-image")]
+    pub clear_image: bool,
+
+    /// Set the per-agent default model.
+    #[arg(long = "model", value_name = "STRING", conflicts_with = "clear_model")]
+    pub model: Option<String>,
+
+    /// Clear the per-agent default model.
+    #[arg(long = "clear-model")]
+    pub clear_model: bool,
+
+    /// Set the per-agent default idle timeout for interactive sessions (seconds).
+    /// Mutually exclusive with `--idle-timeout-infinite` and `--clear-idle-timeout`.
+    #[arg(
+        long = "idle-timeout-seconds",
+        value_name = "SECONDS",
+        conflicts_with_all = ["idle_timeout_infinite", "clear_idle_timeout"]
+    )]
+    pub idle_timeout_seconds: Option<u64>,
+
+    /// Set the per-agent default: never time out interactive sessions.
+    #[arg(long = "idle-timeout-infinite", conflicts_with = "clear_idle_timeout")]
+    pub idle_timeout_infinite: bool,
+
+    /// Clear the per-agent default idle timeout.
+    #[arg(long = "clear-idle-timeout")]
+    pub clear_idle_timeout: bool,
+
+    /// Set the per-agent default `SessionSettings.max_retries`.
+    #[arg(long = "session-max-retries", value_name = "COUNT")]
+    pub session_max_retries: Option<u32>,
+
+    /// Clear the per-agent default `SessionSettings.max_retries`.
+    #[arg(
+        long = "clear-session-max-retries",
+        conflicts_with = "session_max_retries"
+    )]
+    pub clear_session_max_retries: bool,
+
+    /// Clear the entire per-agent `session_settings` block, restoring
+    /// the cluster default.
+    #[arg(long = "clear-session-settings")]
+    pub clear_session_settings: bool,
 }
 
 pub async fn run(
@@ -255,6 +368,8 @@ async fn create_agent(
         .map(read_mcp_config_file)
         .transpose()?;
 
+    let session_settings = build_create_session_settings(&args)?;
+
     let mut request = if let Some(ref prompt_file) = args.prompt_file {
         let prompt = read_prompt_file(prompt_file)?;
         UpsertAgentRequest::new(
@@ -288,12 +403,34 @@ async fn create_agent(
     };
 
     request.mcp_config_path = args.mcp_config_path;
+    request.session_settings = session_settings;
 
     let response = client
         .create_agent(&request)
         .await
         .context("failed to create agent")?;
     Ok(response.agent)
+}
+
+fn build_create_session_settings(args: &CreateAgentArgs) -> Result<SessionSettings> {
+    // `hydra_common::api::v1::issues::SessionSettings` is `#[non_exhaustive]`,
+    // so external crates can't use struct-literal construction even with
+    // `..Default::default()`. Mutate from the default instead.
+    let mut s = SessionSettings::default();
+    s.cpu_limit = args.cpu_limit.clone();
+    s.memory_limit = args.memory_limit.clone();
+    s.image = args.image.clone();
+    s.model = args.model.clone();
+    s.max_retries = args.session_max_retries;
+    if args.idle_timeout_infinite {
+        s.idle_timeout = Some(Timeout::Infinite);
+    } else if let Some(seconds) = args.idle_timeout_seconds {
+        s.idle_timeout = Some(
+            Timeout::seconds(seconds)
+                .ok_or_else(|| anyhow::anyhow!("--idle-timeout-seconds must be > 0"))?,
+        );
+    }
+    Ok(s)
 }
 
 async fn update_agent(
@@ -317,7 +454,7 @@ async fn update_agent(
         request.prompt_path = normalize_non_empty(prompt_path, "prompt path")?;
         request.prompt = String::new();
     }
-    if let Some(mcp_config_path) = args.mcp_config_path {
+    if let Some(mcp_config_path) = args.mcp_config_path.clone() {
         request.mcp_config_path = Some(mcp_config_path);
     }
     if let Some(mcp_config_file) = &args.mcp_config_file {
@@ -341,11 +478,59 @@ async fn update_agent(
         request.secrets = parse_secrets(Some(secrets_str));
     }
 
+    apply_update_session_settings(&mut request.session_settings, &args)?;
+
     let response = client
         .update_agent(&name, &request)
         .await
         .context("failed to update agent")?;
     Ok(response.agent)
+}
+
+fn apply_update_session_settings(
+    session_settings: &mut SessionSettings,
+    args: &UpdateAgentArgs,
+) -> Result<()> {
+    if args.clear_session_settings {
+        *session_settings = SessionSettings::default();
+        return Ok(());
+    }
+    if args.clear_cpu_limit {
+        session_settings.cpu_limit = None;
+    } else if let Some(value) = args.cpu_limit.clone() {
+        session_settings.cpu_limit = Some(value);
+    }
+    if args.clear_memory_limit {
+        session_settings.memory_limit = None;
+    } else if let Some(value) = args.memory_limit.clone() {
+        session_settings.memory_limit = Some(value);
+    }
+    if args.clear_image {
+        session_settings.image = None;
+    } else if let Some(value) = args.image.clone() {
+        session_settings.image = Some(value);
+    }
+    if args.clear_model {
+        session_settings.model = None;
+    } else if let Some(value) = args.model.clone() {
+        session_settings.model = Some(value);
+    }
+    if args.clear_idle_timeout {
+        session_settings.idle_timeout = None;
+    } else if args.idle_timeout_infinite {
+        session_settings.idle_timeout = Some(Timeout::Infinite);
+    } else if let Some(seconds) = args.idle_timeout_seconds {
+        session_settings.idle_timeout = Some(
+            Timeout::seconds(seconds)
+                .ok_or_else(|| anyhow::anyhow!("--idle-timeout-seconds must be > 0"))?,
+        );
+    }
+    if args.clear_session_max_retries {
+        session_settings.max_retries = None;
+    } else if let Some(value) = args.session_max_retries {
+        session_settings.max_retries = Some(value);
+    }
+    Ok(())
 }
 
 async fn archive_agent(client: &dyn HydraClientInterface, name: &str) -> Result<AgentRecord> {
@@ -528,6 +713,13 @@ mod tests {
             max_simultaneous_headless: 4,
             is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            memory_limit: None,
+            image: None,
+            model: None,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            session_max_retries: None,
         };
         let response = AgentResponse::new(AgentRecord::new(
             "writer",
@@ -587,6 +779,13 @@ mod tests {
             max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: true,
             secrets: None,
+            cpu_limit: None,
+            memory_limit: None,
+            image: None,
+            model: None,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            session_max_retries: None,
         };
         let response = AgentResponse::new(AgentRecord::new(
             "chat",
@@ -687,6 +886,20 @@ mod tests {
             is_default_conversation_agent: true,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -759,6 +972,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: true,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -857,6 +1084,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -918,6 +1159,13 @@ mod tests {
             max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: Some("OPENAI_API_KEY,GH_TOKEN".to_string()),
+            cpu_limit: None,
+            memory_limit: None,
+            image: None,
+            model: None,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            session_max_retries: None,
         };
         let response = AgentResponse::new(AgentRecord::new(
             "worker",
@@ -1018,6 +1266,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: Some("ANTHROPIC_API_KEY".to_string()),
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -1090,6 +1352,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -1201,6 +1477,13 @@ mod tests {
             max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            memory_limit: None,
+            image: None,
+            model: None,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            session_max_retries: None,
         };
         let response = AgentResponse::new(AgentRecord::new(
             "tester",
@@ -1261,6 +1544,13 @@ mod tests {
             max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            memory_limit: None,
+            image: None,
+            model: None,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            session_max_retries: None,
         };
 
         let err = create_agent(&client, args).await.unwrap_err();
@@ -1317,6 +1607,13 @@ mod tests {
             max_simultaneous_headless: i32::MAX,
             is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            memory_limit: None,
+            image: None,
+            model: None,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            session_max_retries: None,
         };
         let response = AgentResponse::new(AgentRecord::new(
             "worker",
@@ -1419,6 +1716,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -1492,6 +1803,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -1568,6 +1893,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -1643,6 +1982,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -1720,6 +2073,20 @@ mod tests {
             is_default_conversation_agent: false,
             no_is_default_conversation_agent: false,
             secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
         };
 
         let response = update_agent(&client, args).await?;
@@ -1756,6 +2123,270 @@ mod tests {
 
         assert!(output.contains("mcp_config_path: /agents/worker/mcp-config.json"));
 
+        Ok(())
+    }
+
+    /// PR-B: `hydra agents create --cpu-limit 200m --memory-limit 512Mi`
+    /// sends the flags as nested `session_settings` on the wire (per
+    /// the api-nested / cli-flat split).
+    #[tokio::test]
+    async fn create_agent_sends_session_settings_from_flat_flags() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let prompt_file = write_prompt_file("do work");
+
+        let args = CreateAgentArgs {
+            name: "chat".to_string(),
+            prompt_file: Some(prompt_file.path().to_str().unwrap().to_string()),
+            prompt_path: None,
+            mcp_config_path: None,
+            mcp_config_file: None,
+            max_tries: 3,
+            max_simultaneous_interactive: i32::MAX,
+            max_simultaneous_headless: i32::MAX,
+            is_default_conversation_agent: false,
+            secrets: None,
+            cpu_limit: Some("200m".to_string()),
+            memory_limit: Some("512Mi".to_string()),
+            image: None,
+            model: None,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            session_max_retries: None,
+        };
+
+        let response_record = {
+            let mut r = AgentRecord::new(
+                "chat",
+                "do work",
+                "",
+                None,
+                None,
+                3,
+                i32::MAX,
+                i32::MAX,
+                false,
+                Vec::new(),
+            );
+            r.session_settings.cpu_limit = Some("200m".to_string());
+            r.session_settings.memory_limit = Some("512Mi".to_string());
+            r
+        };
+        let response = AgentResponse::new(response_record);
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/v1/agents").json_body(json!({
+                "name": "chat",
+                "prompt": "do work",
+                "prompt_path": "",
+                "mcp_config_path": null,
+                "mcp_config": null,
+                "max_tries": 3,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
+                "is_default_conversation_agent": false,
+                "secrets": [],
+                "session_settings": {
+                    "cpu_limit": "200m",
+                    "memory_limit": "512Mi"
+                }
+            }));
+            then.status(200).json_body_obj(&response);
+        });
+
+        let agent = create_agent(&client, args).await?;
+        mock.assert();
+        assert_eq!(agent.session_settings.cpu_limit.as_deref(), Some("200m"));
+        assert_eq!(
+            agent.session_settings.memory_limit.as_deref(),
+            Some("512Mi")
+        );
+
+        Ok(())
+    }
+
+    /// PR-B: `hydra agents update --clear-cpu-limit` clears the inner
+    /// cpu_limit. The wire request omits `session_settings` entirely
+    /// when the full struct is back at default.
+    #[tokio::test]
+    async fn update_agent_clears_session_settings_with_clear_flag() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let existing_record = {
+            let mut r = AgentRecord::new(
+                "chat",
+                "do work",
+                "",
+                None,
+                None,
+                3,
+                i32::MAX,
+                i32::MAX,
+                false,
+                Vec::new(),
+            );
+            r.session_settings.cpu_limit = Some("200m".to_string());
+            r
+        };
+        let existing = AgentResponse::new(existing_record);
+        let updated = AgentResponse::new(AgentRecord::new(
+            "chat",
+            "do work",
+            "",
+            None,
+            None,
+            3,
+            i32::MAX,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/chat");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/chat").json_body(json!({
+                "name": "chat",
+                "prompt": "do work",
+                "prompt_path": "",
+                "mcp_config_path": null,
+                "mcp_config": null,
+                "max_tries": 3,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
+                "is_default_conversation_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "chat".to_string(),
+            prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
+            mcp_config_file: None,
+            max_tries: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
+            is_default_conversation_agent: false,
+            no_is_default_conversation_agent: false,
+            secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: true,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: false,
+        };
+
+        let response = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
+        assert_eq!(response.session_settings.cpu_limit, None);
+        Ok(())
+    }
+
+    /// PR-B: `--clear-session-settings` wipes the whole block.
+    #[tokio::test]
+    async fn update_agent_clear_session_settings_flag_resets_all_fields() -> Result<()> {
+        let server = MockServer::start();
+        let client =
+            HydraClient::with_http_client(server.base_url(), TEST_HYDRA_TOKEN, HttpClient::new())?;
+        let existing_record = {
+            let mut r = AgentRecord::new(
+                "chat",
+                "do work",
+                "",
+                None,
+                None,
+                3,
+                i32::MAX,
+                i32::MAX,
+                false,
+                Vec::new(),
+            );
+            r.session_settings.cpu_limit = Some("200m".to_string());
+            r.session_settings.memory_limit = Some("512Mi".to_string());
+            r.session_settings.image = Some("ghcr.io/x:latest".to_string());
+            r
+        };
+        let existing = AgentResponse::new(existing_record);
+        let updated = AgentResponse::new(AgentRecord::new(
+            "chat",
+            "do work",
+            "",
+            None,
+            None,
+            3,
+            i32::MAX,
+            i32::MAX,
+            false,
+            Vec::new(),
+        ));
+
+        let get_mock = server.mock(|when, then| {
+            when.method(GET).path("/v1/agents/chat");
+            then.status(200).json_body_obj(&existing);
+        });
+        let put_mock = server.mock(|when, then| {
+            when.method(PUT).path("/v1/agents/chat").json_body(json!({
+                "name": "chat",
+                "prompt": "do work",
+                "prompt_path": "",
+                "mcp_config_path": null,
+                "mcp_config": null,
+                "max_tries": 3,
+                "max_simultaneous_interactive": 2147483647i64,
+                "max_simultaneous_headless": 2147483647i64,
+                "is_default_conversation_agent": false,
+                "secrets": []
+            }));
+            then.status(200).json_body_obj(&updated);
+        });
+
+        let args = UpdateAgentArgs {
+            name: "chat".to_string(),
+            prompt_file: None,
+            prompt_path: None,
+            mcp_config_path: None,
+            mcp_config_file: None,
+            max_tries: None,
+            max_simultaneous_interactive: None,
+            max_simultaneous_headless: None,
+            is_default_conversation_agent: false,
+            no_is_default_conversation_agent: false,
+            secrets: None,
+            cpu_limit: None,
+            clear_cpu_limit: false,
+            memory_limit: None,
+            clear_memory_limit: false,
+            image: None,
+            clear_image: false,
+            model: None,
+            clear_model: false,
+            idle_timeout_seconds: None,
+            idle_timeout_infinite: false,
+            clear_idle_timeout: false,
+            session_max_retries: None,
+            clear_session_max_retries: false,
+            clear_session_settings: true,
+        };
+
+        let _ = update_agent(&client, args).await?;
+        get_mock.assert();
+        put_mock.assert();
         Ok(())
     }
 }

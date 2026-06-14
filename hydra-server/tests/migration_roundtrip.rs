@@ -456,6 +456,110 @@ async fn migration_roundtrip() -> Result<()> {
             "rename_deleted_to_archived: ten entity tables carry `archived` and not `deleted` post-rename",
         )?;
 
+    add_agents_session_settings_schema_invariants(&pool)
+        .await
+        .context(
+            "add_agents_session_settings: session_settings_json TEXT NULL added to metis.agents",
+        )?;
+    add_agents_session_settings_defaults_to_null(&pool)
+        .await
+        .context("add_agents_session_settings: existing rows backfill to NULL")?;
+    add_agents_session_settings_domain_roundtrip(&pool)
+        .await
+        .context(
+            "add_agents_session_settings: PostgresStore get_agent read includes the new column",
+        )?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260724000000_add_agents_session_settings. Adds the
+// `session_settings_json TEXT NULL` column to `metis.agents` for the
+// per-agent `SessionSettings` default layer. Backfills to NULL — the
+// read path materializes `SessionSettings::default()`.
+// ---------------------------------------------------------------------------
+
+async fn add_agents_session_settings_schema_invariants(pool: &PgPool) -> Result<()> {
+    if !column_exists(pool, "agents", "session_settings_json").await? {
+        bail!("expected `metis.agents.session_settings_json` column to exist post-rollforward");
+    }
+    if !column_is_nullable(pool, "agents", "session_settings_json").await? {
+        bail!("expected `metis.agents.session_settings_json` to be NULLABLE");
+    }
+    let data_type: String = sqlx::query_scalar(
+        "SELECT data_type FROM information_schema.columns \
+         WHERE table_schema = 'metis' AND table_name = 'agents' \
+           AND column_name = 'session_settings_json'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("look up data_type for metis.agents.session_settings_json")?;
+    if data_type != "text" {
+        bail!("expected metis.agents.session_settings_json data_type=text; got {data_type:?}");
+    }
+    Ok(())
+}
+
+async fn add_agents_session_settings_defaults_to_null(pool: &PgPool) -> Result<()> {
+    let rows = sqlx::query("SELECT name, session_settings_json FROM metis.agents")
+        .fetch_all(pool)
+        .await
+        .context("read metis.agents for session_settings_json default check")?;
+    for row in &rows {
+        let name: String = row.try_get("name")?;
+        let value: Option<String> = row.try_get("session_settings_json")?;
+        if value.is_some() {
+            bail!(
+                "metis.agents({name}): expected session_settings_json=NULL (no backfill); got {value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Domain-level roundtrip: write a non-default `session_settings` via
+/// the Postgres store and confirm it reads back. Catches a missing
+/// projection on the agents `SELECT` path.
+async fn add_agents_session_settings_domain_roundtrip(pool: &PgPool) -> Result<()> {
+    use hydra_server::domain::agents::Agent as DomainAgent;
+    use hydra_server::domain::issues::SessionSettings as DomainSessionSettings;
+    use hydra_server::ee::store::postgres_v2::PostgresStoreV2;
+    use hydra_server::store::{ReadOnlyStore, Store};
+
+    let store = PostgresStoreV2::new(pool.clone());
+    let mut agent = DomainAgent::new(
+        "ss_pg_roundtrip".to_string(),
+        "/agents/ss_pg_roundtrip/prompt.md".to_string(),
+        None,
+        3,
+        i32::MAX,
+        i32::MAX,
+        false,
+        Vec::new(),
+    );
+    agent.session_settings = DomainSessionSettings {
+        cpu_limit: Some("200m".to_string()),
+        memory_limit: Some("512Mi".to_string()),
+        ..DomainSessionSettings::default()
+    };
+    store
+        .add_agent(agent.clone())
+        .await
+        .context("add_agent for session_settings roundtrip")?;
+
+    let fetched = store
+        .get_agent("ss_pg_roundtrip")
+        .await
+        .context("get_agent for session_settings roundtrip")?;
+    if fetched.session_settings != agent.session_settings {
+        bail!(
+            "ss_pg_roundtrip.session_settings roundtrip mismatch: wrote {:?}, read {:?}",
+            agent.session_settings,
+            fetched.session_settings
+        );
+    }
+
     Ok(())
 }
 

@@ -2106,6 +2106,10 @@ struct AgentRow {
     max_simultaneous_headless: i32,
     is_default_conversation_agent: bool,
     secrets: serde_json::Value,
+    // Explicitly listed in every `metis.agents` SELECT projection — do
+    // NOT add `#[sqlx(default)]`. A missing projection should fail
+    // loudly rather than zero-fill.
+    session_settings_json: Option<String>,
     archived: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -3849,7 +3853,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, \
                     max_simultaneous_interactive, max_simultaneous_headless, \
-                    is_default_conversation_agent, secrets, archived, \
+                    is_default_conversation_agent, secrets, session_settings_json, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE name = $1"
         );
@@ -3870,7 +3874,7 @@ impl ReadOnlyStore for PostgresStoreV2 {
         let sql = format!(
             "SELECT name, prompt_path, mcp_config_path, max_tries, \
                     max_simultaneous_interactive, max_simultaneous_headless, \
-                    is_default_conversation_agent, secrets, archived, \
+                    is_default_conversation_agent, secrets, session_settings_json, archived, \
                     created_at, updated_at \
              FROM {TABLE_AGENTS} WHERE archived = false ORDER BY name"
         );
@@ -5506,13 +5510,16 @@ impl Store for PostgresStoreV2 {
                 let secrets_json = serde_json::to_value(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
+                let session_settings_json =
+                    agent_session_settings_to_json_pg(&agent.session_settings)?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, \
                          max_simultaneous_interactive = $4, max_simultaneous_headless = $5, \
                          is_default_conversation_agent = $6, secrets = $7, \
-                         archived = false, created_at = $8, updated_at = $9 \
-                     WHERE name = $10"
+                         session_settings_json = $8, \
+                         archived = false, created_at = $9, updated_at = $10 \
+                     WHERE name = $11"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.prompt_path)
@@ -5522,6 +5529,7 @@ impl Store for PostgresStoreV2 {
                     .bind(agent.max_simultaneous_headless)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
+                    .bind(session_settings_json.as_deref())
                     .bind(now)
                     .bind(now)
                     .bind(&agent.name)
@@ -5536,12 +5544,15 @@ impl Store for PostgresStoreV2 {
                 let secrets_json = serde_json::to_value(&agent.secrets).map_err(|e| {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
+                let session_settings_json =
+                    agent_session_settings_to_json_pg(&agent.session_settings)?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, mcp_config_path, max_tries, \
                       max_simultaneous_interactive, max_simultaneous_headless, \
-                      is_default_conversation_agent, secrets, archived, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+                      is_default_conversation_agent, secrets, session_settings_json, \
+                      archived, created_at, updated_at) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
                 );
                 sqlx::query(&sql)
                     .bind(&agent.name)
@@ -5552,6 +5563,7 @@ impl Store for PostgresStoreV2 {
                     .bind(agent.max_simultaneous_headless)
                     .bind(agent.is_default_conversation_agent)
                     .bind(&secrets_json)
+                    .bind(session_settings_json.as_deref())
                     .bind(agent.archived)
                     .bind(agent.created_at)
                     .bind(agent.updated_at)
@@ -5570,13 +5582,15 @@ impl Store for PostgresStoreV2 {
 
         let secrets_json = serde_json::to_value(&agent.secrets)
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
+        let session_settings_json = agent_session_settings_to_json_pg(&agent.session_settings)?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, \
                  max_simultaneous_interactive = $4, max_simultaneous_headless = $5, \
                  is_default_conversation_agent = $6, secrets = $7, \
-                 updated_at = $8 \
-             WHERE name = $9"
+                 session_settings_json = $8, \
+                 updated_at = $9 \
+             WHERE name = $10"
         );
         sqlx::query(&sql)
             .bind(&agent.prompt_path)
@@ -5586,6 +5600,7 @@ impl Store for PostgresStoreV2 {
             .bind(agent.max_simultaneous_headless)
             .bind(agent.is_default_conversation_agent)
             .bind(&secrets_json)
+            .bind(session_settings_json.as_deref())
             .bind(Utc::now())
             .bind(&agent.name)
             .execute(&self.pool)
@@ -6578,6 +6593,19 @@ impl LabelRow {
 fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
     let secrets: Vec<String> = serde_json::from_value(row.secrets)
         .map_err(|e| StoreError::Internal(format!("invalid secrets JSON in database: {e}")))?;
+    let session_settings: crate::domain::issues::SessionSettings = match row
+        .session_settings_json
+        .as_deref()
+    {
+        None => crate::domain::issues::SessionSettings::default(),
+        Some(json) => {
+            let api: hydra_common::api::v1::issues::SessionSettings = serde_json::from_str(json)
+                .map_err(|e| {
+                    StoreError::Internal(format!("invalid session_settings_json in database: {e}"))
+                })?;
+            api.into()
+        }
+    };
     Ok(Agent {
         name: row.name,
         prompt_path: row.prompt_path,
@@ -6587,10 +6615,23 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         max_simultaneous_headless: row.max_simultaneous_headless,
         is_default_conversation_agent: row.is_default_conversation_agent,
         secrets,
+        session_settings,
         archived: row.archived,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
+}
+
+fn agent_session_settings_to_json_pg(
+    session_settings: &crate::domain::issues::SessionSettings,
+) -> Result<Option<String>, StoreError> {
+    if crate::domain::issues::SessionSettings::is_default(session_settings) {
+        return Ok(None);
+    }
+    let api: hydra_common::api::v1::issues::SessionSettings = session_settings.clone().into();
+    serde_json::to_string(&api)
+        .map(Some)
+        .map_err(|e| StoreError::Internal(format!("failed to serialize session_settings: {e}")))
 }
 
 /// Build the unbucketed `list_issues` SQL + bindings. See the SQLite
