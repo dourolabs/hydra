@@ -5,6 +5,17 @@
   color: var(--acc);
   text-decoration: none;
   white-space: nowrap;
+  /* The link is rendered inside narrow containers (table cells with fixed
+   * widths on desktop, `.metaMono` in rail rows on mobile). Without these,
+   * the inline-flex box ignores the parent's clipping and ellipsis, and its
+   * layout box extends past the viewport on long owner/repo combinations —
+   * surfacing a horizontal scrollbar on mobile list pages. min-width: 0
+   * lets the label shrink below its nowrap intrinsic width; max-width: 100%
+   * caps the link itself at the parent's content area so the icon doesn't
+   * push it further. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .link:hover {
@@ -14,6 +25,9 @@
 
 .label {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .icon {

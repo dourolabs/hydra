@@ -11,6 +11,40 @@ async function setSidebarHidden(page: Page) {
   });
 }
 
+const AUTH_HEADER = { Authorization: "Bearer dev-token-12345" };
+
+// Seed a patch with realistic-but-long owner/repo so the PatchRepoLink in the
+// rail row has a chance to surface its inline-flex intrinsic width. The seeded
+// fixtures only carry short repo names (acme/web-app), which masks the
+// regression at narrow viewports.
+async function seedLongRepoPatch() {
+  const res = await fetch("http://localhost:8080/v1/patches", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...AUTH_HEADER },
+    body: JSON.stringify({
+      patch: {
+        title: "Long repo regression",
+        base_branch: "main",
+        branch_name: "feat/long-repo-regression",
+        service_repo_name:
+          "extremely-long-organization-name/very-long-repository-name-here",
+        github: {
+          owner: "extremely-long-organization-name",
+          repo: "very-long-repository-name-here",
+          number: 9999999,
+          head_ref: "feat/long-branch",
+          base_ref: "main",
+          url: "https://github.com/extremely-long-organization-name/very-long-repository-name-here/pull/9999999",
+          ci: { state: "Pending" },
+        },
+      },
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`seed patch failed: ${res.status} ${await res.text()}`);
+  }
+}
+
 interface PageCase {
   path: string;
   /** Heading text rendered once the page has laid out. Every list page renders
@@ -43,6 +77,10 @@ for (const viewportWidth of VIEWPORT_WIDTHS) {
       test(`list page ${path} does not overflow horizontally at ${viewportWidth}px @mobile:list-overflow`, async ({
         authenticatedPage: page,
       }) => {
+        // Seed a long-repo patch so the /patches rail row exercises a
+        // PatchRepoLink with realistic-length owner/repo. Other paths are
+        // unaffected by the extra row but it costs nothing to share the seed.
+        await seedLongRepoPatch();
         await setSidebarHidden(page);
         await page.goto(path);
 
