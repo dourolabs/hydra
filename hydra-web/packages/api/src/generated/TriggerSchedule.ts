@@ -7,5 +7,5 @@
  * at the given UTC timestamp.
  */
 export type TriggerSchedule =
-  | { Cron: { expression: string; timezone?: string | null } }
-  | { Once: { at: string } };
+  | { type: "cron"; expression: string; timezone?: string | null }
+  | { type: "once"; at: string };

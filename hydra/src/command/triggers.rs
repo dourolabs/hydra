@@ -14,8 +14,8 @@ use chrono::{DateTime, Utc};
 use clap::Subcommand;
 use hydra_common::{
     triggers::{
-        render as render_template, Action, CreateIssueAction, RenderContext, Schedule,
-        SearchTriggersQuery, TriggerVersionRecord, UpsertTriggerRequest, UpsertTriggerResponse,
+        render as render_template, Action, RenderContext, Schedule, SearchTriggersQuery,
+        TriggerVersionRecord, UpsertTriggerRequest, UpsertTriggerResponse,
     },
     users::Username,
     TriggerId,
@@ -255,17 +255,15 @@ pub(crate) struct RenderedCreateIssue {
 
 fn render_action(idx: usize, action: &Action, ctx: &RenderContext) -> Result<RenderedAction> {
     match action {
-        Action::CreateIssue(create) => {
-            let CreateIssueAction {
-                issue_type,
-                title,
-                description,
-                assignee,
-                project_id,
-                status,
-                session_settings,
-                ..
-            } = create;
+        Action::CreateIssue {
+            issue_type,
+            title,
+            description,
+            assignee,
+            project_id,
+            status,
+            session_settings,
+        } => {
             let title =
                 render_template(title, ctx).map_err(|err| anyhow!("action {idx}: title: {err}"))?;
             let description = render_template(description, ctx)
@@ -288,6 +286,10 @@ fn render_action(idx: usize, action: &Action, ctx: &RenderContext) -> Result<Ren
                 repo_name: session_settings.repo_name.as_ref().map(ToString::to_string),
             }))
         }
+        // `Action` is `#[non_exhaustive]`; catch unknown / future variants.
+        _ => Err(anyhow!(
+            "action {idx}: unrecognized action tag — client may be too old"
+        )),
     }
 }
 
@@ -329,34 +331,34 @@ mod tests {
         r#"
 enabled: true
 schedule:
-  Cron:
-    expression: "0 9 * * MON"
-    timezone: "America/Los_Angeles"
+  type: cron
+  expression: "0 9 * * MON"
+  timezone: "America/Los_Angeles"
 actions:
-  - CreateIssue:
-      type: task
-      title: "Weekly triage — {{ now.date }}"
-      description: "Created by trigger {{ trigger.id }} at {{ now.iso }}"
-      assignee: "users/alice"
-      project_id: j-defaul
-      status: open
-      session_settings:
-        repo_name: "dourolabs/hydra"
+  - type: create_issue
+    issue_type: task
+    title: "Weekly triage — {{ now.date }}"
+    description: "Created by trigger {{ trigger.id }} at {{ now.iso }}"
+    assignee: "users/alice"
+    project_id: j-defaul
+    status: open
+    session_settings:
+      repo_name: "dourolabs/hydra"
 "#
     }
 
     fn once_yaml() -> &'static str {
         r#"
 schedule:
-  Once:
-    at: "2026-06-10T09:00:00Z"
+  type: once
+  at: "2026-06-10T09:00:00Z"
 actions:
-  - CreateIssue:
-      type: bug
-      title: "one-shot"
-      description: "fired"
-      project_id: j-defaul
-      status: open
+  - type: create_issue
+    issue_type: bug
+    title: "one-shot"
+    description: "fired"
+    project_id: j-defaul
+    status: open
 "#
     }
 
@@ -375,17 +377,23 @@ actions:
             other => panic!("expected Cron, got {other:?}"),
         }
         assert_eq!(spec.actions.len(), 1);
-        let Action::CreateIssue(action) = &spec.actions[0];
-        assert_eq!(action.issue_type, IssueType::Task);
-        assert_eq!(action.title, "Weekly triage — {{ now.date }}");
-        assert_eq!(action.assignee.as_deref(), Some("users/alice"));
-        assert_eq!(action.status, status("open"));
+        let Action::CreateIssue {
+            issue_type,
+            title,
+            assignee,
+            status: action_status,
+            session_settings,
+            ..
+        } = &spec.actions[0]
+        else {
+            panic!("expected CreateIssue variant: {:?}", spec.actions[0]);
+        };
+        assert_eq!(*issue_type, IssueType::Task);
+        assert_eq!(title, "Weekly triage — {{ now.date }}");
+        assert_eq!(assignee.as_deref(), Some("users/alice"));
+        assert_eq!(*action_status, status("open"));
         assert_eq!(
-            action
-                .session_settings
-                .repo_name
-                .as_ref()
-                .map(|r| r.to_string()),
+            session_settings.repo_name.as_ref().map(|r| r.to_string()),
             Some("dourolabs/hydra".to_string()),
         );
 
@@ -449,15 +457,15 @@ actions:
     fn test_command_surfaces_render_errors() {
         let yaml = r#"
 schedule:
-  Once:
-    at: "2026-06-10T09:00:00Z"
+  type: once
+  at: "2026-06-10T09:00:00Z"
 actions:
-  - CreateIssue:
-      type: task
-      title: "hi {{ bogus }}"
-      description: "d"
-      project_id: j-defaul
-      status: open
+  - type: create_issue
+    issue_type: task
+    title: "hi {{ bogus }}"
+    description: "d"
+    project_id: j-defaul
+    status: open
 "#;
         let spec: TriggerSpec = parse_spec(yaml).expect("parse");
         let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
@@ -498,21 +506,26 @@ actions:
     }
 
     #[test]
-    fn create_request_serialises_as_externally_tagged() {
-        // The wire format the server expects: `{"Cron": {...}}` for
-        // `schedule`, `{"CreateIssue": {...}}` for each action, and
-        // `"type": "task"` (the rename on `CreateIssueAction.issue_type`).
+    fn create_request_serialises_as_internally_tagged() {
+        // The wire format the server expects: internally-tagged `Schedule`
+        // (flat `{"type": "cron", ...}`), internally-tagged `Action` (flat
+        // `{"type": "create_issue", ...}`), and `issue_type` carrying the
+        // old `type` value (the `#[serde(rename = "type")]` was dropped).
         let spec: TriggerSpec = parse_spec(sample_yaml()).expect("parse");
         let request = spec.into_request(Username::from("alice"));
         let json = serde_json::to_value(&request).unwrap();
         assert!(json.get("enabled").unwrap().as_bool().unwrap());
         assert_eq!(json["creator"].as_str(), Some("alice"));
-        let schedule = &json["schedule"]["Cron"];
+        let schedule = &json["schedule"];
+        assert_eq!(schedule["type"].as_str(), Some("cron"));
         assert_eq!(schedule["expression"].as_str(), Some("0 9 * * MON"));
-        assert_eq!(schedule["timezone"].as_str(), Some("America/Los_Angeles"),);
-        let action = &json["actions"][0]["CreateIssue"];
-        assert_eq!(action["type"].as_str(), Some("task"));
+        assert_eq!(schedule["timezone"].as_str(), Some("America/Los_Angeles"));
+        assert!(schedule.get("Cron").is_none());
+        let action = &json["actions"][0];
+        assert_eq!(action["type"].as_str(), Some("create_issue"));
+        assert_eq!(action["issue_type"].as_str(), Some("task"));
         assert!(action["title"].as_str().unwrap().contains("Weekly triage"));
+        assert!(action.get("CreateIssue").is_none());
     }
 
     #[tokio::test]
@@ -689,15 +702,15 @@ actions:
     fn test_records_pretty_empty_description_shown_as_dash() {
         let yaml = r#"
 schedule:
-  Once:
-    at: "2026-06-10T09:00:00Z"
+  type: once
+  at: "2026-06-10T09:00:00Z"
 actions:
-  - CreateIssue:
-      type: task
-      title: "t"
-      description: ""
-      project_id: j-defaul
-      status: open
+  - type: create_issue
+    issue_type: task
+    title: "t"
+    description: ""
+    project_id: j-defaul
+    status: open
 "#;
         let spec: TriggerSpec = parse_spec(yaml).expect("parse");
         let at: DateTime<Utc> = "2026-06-10T09:00:00Z".parse().unwrap();
@@ -769,18 +782,23 @@ actions:
     fn unused_settings_field_keeps_default_session_settings() {
         let yaml = r#"
 schedule:
-  Once:
-    at: "2026-06-10T09:00:00Z"
+  type: once
+  at: "2026-06-10T09:00:00Z"
 actions:
-  - CreateIssue:
-      type: task
-      title: "t"
-      description: "d"
-      project_id: j-defaul
-      status: open
+  - type: create_issue
+    issue_type: task
+    title: "t"
+    description: "d"
+    project_id: j-defaul
+    status: open
 "#;
         let spec: TriggerSpec = parse_spec(yaml).expect("parse");
-        let Action::CreateIssue(action) = &spec.actions[0];
-        assert!(SessionSettings::is_default(&action.session_settings));
+        let Action::CreateIssue {
+            session_settings, ..
+        } = &spec.actions[0]
+        else {
+            panic!("expected CreateIssue variant: {:?}", spec.actions[0]);
+        };
+        assert!(SessionSettings::is_default(session_settings));
     }
 }

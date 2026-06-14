@@ -153,7 +153,6 @@ export type { TaskError } from "./generated/TaskError";
 export type { TaskId } from "./generated/TaskId";
 export type { Timeout } from "./generated/Timeout";
 export type { TokenUsage } from "./generated/TokenUsage";
-export type { CreateIssueAction } from "./generated/CreateIssueAction";
 export type { ListRelationsRequest } from "./generated/ListRelationsRequest";
 export type { ListRelationsResponse } from "./generated/ListRelationsResponse";
 export type { ListTriggerVersionsResponse } from "./generated/ListTriggerVersionsResponse";

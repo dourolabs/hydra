@@ -10439,22 +10439,22 @@ mod tests {
         use hydra_common::api::v1::issues::{IssueType, SessionSettings};
         use hydra_common::api::v1::users::Username as ApiUsername;
         use hydra_common::test_utils::status::status;
-        use hydra_common::triggers::{Action, CreateIssueAction, Schedule, Trigger as ApiTrigger};
+        use hydra_common::triggers::{Action, Schedule, Trigger as ApiTrigger};
         ApiTrigger::new(
             true,
             Schedule::Cron {
                 expression: "0 9 * * MON".to_string(),
                 timezone: Some("UTC".to_string()),
             },
-            vec![Action::CreateIssue(CreateIssueAction::new(
-                IssueType::Task,
-                "Daily triage".to_string(),
-                "Run triage for {{ now.date }}".to_string(),
-                Some("users/alice".to_string()),
-                crate::domain::projects::default_project_id(),
-                status("open"),
-                SessionSettings::default(),
-            ))],
+            vec![Action::CreateIssue {
+                issue_type: IssueType::Task,
+                title: "Daily triage".to_string(),
+                description: "Run triage for {{ now.date }}".to_string(),
+                assignee: Some("users/alice".to_string()),
+                project_id: crate::domain::projects::default_project_id(),
+                status: status("open"),
+                session_settings: SessionSettings::default(),
+            }],
             ApiUsername::from("alice"),
             None,
             false,

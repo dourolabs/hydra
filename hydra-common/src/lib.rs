@@ -238,7 +238,6 @@ mod ts_export {
         crate::triggers::Trigger::export_all(&cfg).expect("Trigger");
         crate::triggers::Schedule::export_all(&cfg).expect("TriggerSchedule");
         crate::triggers::Action::export_all(&cfg).expect("TriggerAction");
-        crate::triggers::CreateIssueAction::export_all(&cfg).expect("CreateIssueAction");
         crate::triggers::UpsertTriggerRequest::export_all(&cfg).expect("UpsertTriggerRequest");
         crate::triggers::UpsertTriggerResponse::export_all(&cfg).expect("UpsertTriggerResponse");
         crate::triggers::TriggerVersionRecord::export_all(&cfg).expect("TriggerVersionRecord");

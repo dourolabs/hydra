@@ -3,9 +3,9 @@ import { test, expect } from "../fixtures/auth";
 // Status options inside the picker are derived from the project the user
 // chose, not a hardcoded list. The five scenarios below exercise the
 // project ↔ status picker lifecycle introduced in [[p-dzovcovl]] and gate
-// the wire shape: `CreateIssueAction.project_id` + `.status` are both
-// required, the form must not submit until they're set, and the values
-// the user picked must round-trip into the POST body.
+// the wire shape: a create_issue action's `project_id` + `status` are
+// both required, the form must not submit until they're set, and the
+// values the user picked must round-trip into the POST body.
 test.describe("Trigger create form @triggers:create-form", () => {
   test("status picker is disabled until a project is picked @triggers:create-form", async ({
     authenticatedPage: page,
@@ -119,7 +119,7 @@ test.describe("Trigger create form @triggers:create-form", () => {
     await expect(submit).toBeEnabled();
   });
 
-  test("submitting persists the chosen project_id + status in CreateIssueAction @triggers:create-form", async ({
+  test("submitting persists the chosen project_id + status in the create_issue action @triggers:create-form", async ({
     authenticatedPage: page,
   }) => {
     await page.goto("/triggers");
@@ -153,8 +153,9 @@ test.describe("Trigger create form @triggers:create-form", () => {
 
     const body = JSON.parse(request.postData() ?? "{}");
     expect(body.actions).toHaveLength(1);
-    expect(body.actions[0].CreateIssue.project_id).toBe("j-engv2");
-    expect(body.actions[0].CreateIssue.status).toBe("backlog");
+    expect(body.actions[0].type).toBe("create_issue");
+    expect(body.actions[0].project_id).toBe("j-engv2");
+    expect(body.actions[0].status).toBe("backlog");
 
     // Modal closes on success and a toast confirms creation.
     await expect(modal).not.toBeVisible();

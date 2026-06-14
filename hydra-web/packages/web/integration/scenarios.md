@@ -108,7 +108,7 @@ the catalog stays in sync.
 
 ## Triggers
 
-- `@triggers:create-form` — The create-trigger modal's Status picker is disabled until a Project is picked; picking a project enables the Status picker and lists that project's statuses; changing the project clears the previously-selected status and re-derives the list; Add Trigger stays disabled until both fields are set; submitting POSTs a `CreateIssueAction` whose `project_id` + `status` reflect the user's picks.
+- `@triggers:create-form` — The create-trigger modal's Status picker is disabled until a Project is picked; picking a project enables the Status picker and lists that project's statuses; changing the project clears the previously-selected status and re-derives the list; Add Trigger stays disabled until both fields are set; submitting POSTs a `create_issue` action whose `project_id` + `status` reflect the user's picks.
 
 ## Error Handling
 

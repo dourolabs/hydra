@@ -176,30 +176,45 @@ function ScheduleSummary({ record }: { record: TriggerVersionRecord }) {
 }
 
 function ActionPanel({ index, action }: { index: number; action: TriggerAction }) {
-  const ci = action.CreateIssue;
+  if (action.type !== "create_issue") {
+    return (
+      <div className={styles.actionCard}>
+        <div className={styles.actionCardHead}>
+          <span className={styles.actionCardLabel}>
+            Action {index + 1} · Unknown
+          </span>
+        </div>
+        <p className={styles.muted}>
+          This action uses a tag this client does not recognize.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className={styles.actionCard}>
       <div className={styles.actionCardHead}>
         <span className={styles.actionCardLabel}>
           Action {index + 1} · CreateIssue
         </span>
-        <span className={styles.actionTypeChip}>{ci.type}</span>
+        <span className={styles.actionTypeChip}>{action.issue_type}</span>
       </div>
       <dl className={styles.dl}>
         <DataRow label="Title">
-          <code className={styles.code}>{ci.title}</code>
+          <code className={styles.code}>{action.title}</code>
         </DataRow>
         <DataRow label="Description">
-          <code className={styles.codeBlock}>{ci.description}</code>
+          <code className={styles.codeBlock}>{action.description}</code>
         </DataRow>
-        {ci.assignee && (
+        {action.assignee && (
           <DataRow label="Assignee">
-            <code className={styles.code}>{ci.assignee}</code>
+            <code className={styles.code}>{action.assignee}</code>
           </DataRow>
         )}
-        {ci.status && <DataRow label="Status">{ci.status}</DataRow>}
-        {ci.session_settings?.repo_name && (
-          <DataRow label="Repository">{ci.session_settings.repo_name}</DataRow>
+        {action.status && <DataRow label="Status">{action.status}</DataRow>}
+        {action.session_settings?.repo_name && (
+          <DataRow label="Repository">
+            {action.session_settings.repo_name}
+          </DataRow>
         )}
       </dl>
     </div>

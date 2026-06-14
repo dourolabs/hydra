@@ -4,8 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use hydra_common::{
     triggers::{
-        Action, CreateIssueAction, Schedule, ScheduleFiring, Trigger, TriggerVersionRecord,
-        UpsertTriggerResponse,
+        Action, Schedule, ScheduleFiring, Trigger, TriggerVersionRecord, UpsertTriggerResponse,
     },
     TriggerId,
 };
@@ -200,22 +199,22 @@ fn format_schedule(schedule: &Schedule) -> String {
             None => format!("cron \"{expression}\" (UTC)"),
         },
         Schedule::Once { at } => format!("once at {}", at.to_rfc3339()),
+        // `Schedule` is `#[non_exhaustive]`; catch unknown / future variants.
+        _ => "(unknown schedule — client may be too old)".to_string(),
     }
 }
 
 fn render_action<W: Write>(writer: &mut W, idx: usize, action: &Action) -> Result<()> {
     match action {
-        Action::CreateIssue(create) => {
-            let CreateIssueAction {
-                issue_type,
-                title,
-                description,
-                assignee,
-                project_id,
-                status,
-                session_settings,
-                ..
-            } = create;
+        Action::CreateIssue {
+            issue_type,
+            title,
+            description,
+            assignee,
+            project_id,
+            status,
+            session_settings,
+        } => {
             writeln!(writer, "  {idx}. create_issue ({issue_type})")?;
             writeln!(writer, "     title: {title}")?;
             if !description.trim().is_empty() {
@@ -232,6 +231,10 @@ fn render_action<W: Write>(writer: &mut W, idx: usize, action: &Action) -> Resul
             if let Some(repo) = session_settings.repo_name.as_ref() {
                 writeln!(writer, "     repo: {repo}")?;
             }
+        }
+        // `Action` is `#[non_exhaustive]`; catch unknown / future variants.
+        _ => {
+            writeln!(writer, "  {idx}. (unknown action — client may be too old)")?;
         }
     }
     Ok(())

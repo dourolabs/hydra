@@ -5190,17 +5190,18 @@
     "t-trig0001": {
       "enabled": true,
       "schedule": {
-        "Cron": { "expression": "0 9 * * 1", "timezone": "America/Los_Angeles" }
+        "type": "cron",
+        "expression": "0 9 * * 1",
+        "timezone": "America/Los_Angeles"
       },
       "actions": [
         {
-          "CreateIssue": {
-            "type": "task",
-            "title": "Weekly platform health review — {{trigger.fired_at_date}}",
-            "description": "Walk the platform health dashboard, file any regressions as child issues.",
-            "assignee": "users/alice",
-            "status": "open"
-          }
+          "type": "create_issue",
+          "issue_type": "task",
+          "title": "Weekly platform health review — {{trigger.fired_at_date}}",
+          "description": "Walk the platform health dashboard, file any regressions as child issues.",
+          "assignee": "users/alice",
+          "status": "open"
         }
       ],
       "creator": "alice",
@@ -5210,24 +5211,23 @@
     "t-trig0002": {
       "enabled": false,
       "schedule": {
-        "Once": { "at": "2026-06-30T15:00:00.000Z" }
+        "type": "once",
+        "at": "2026-06-30T15:00:00.000Z"
       },
       "actions": [
         {
-          "CreateIssue": {
-            "type": "task",
-            "title": "Q2 retrospective: collect notes",
-            "description": "Gather team notes for the Q2 retro and post them in #eng.",
-            "assignee": "users/bob"
-          }
+          "type": "create_issue",
+          "issue_type": "task",
+          "title": "Q2 retrospective: collect notes",
+          "description": "Gather team notes for the Q2 retro and post them in #eng.",
+          "assignee": "users/bob"
         },
         {
-          "CreateIssue": {
-            "type": "task",
-            "title": "Q2 retrospective: schedule readout",
-            "description": "Book a 30 min slot for the retro readout once notes are in.",
-            "assignee": "agents/swe"
-          }
+          "type": "create_issue",
+          "issue_type": "task",
+          "title": "Q2 retrospective: schedule readout",
+          "description": "Book a 30 min slot for the retro readout once notes are in.",
+          "assignee": "agents/swe"
         }
       ],
       "creator": "bob",

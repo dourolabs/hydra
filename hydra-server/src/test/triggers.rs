@@ -14,8 +14,8 @@ use hydra_common::{
     api::v1::{
         issues::{IssueType, ListIssuesResponse, SessionSettings},
         triggers::{
-            Action, CreateIssueAction, ListTriggersResponse, Schedule, TriggerVersionRecord,
-            UpsertTriggerRequest, UpsertTriggerResponse,
+            Action, ListTriggersResponse, Schedule, TriggerVersionRecord, UpsertTriggerRequest,
+            UpsertTriggerResponse,
         },
         users::Username,
     },
@@ -29,15 +29,15 @@ fn sample_request(schedule: Schedule) -> UpsertTriggerRequest {
     UpsertTriggerRequest::new(
         true,
         schedule,
-        vec![Action::CreateIssue(CreateIssueAction::new(
-            IssueType::Task,
-            "Triage {{ now.date }}".to_string(),
-            "Trigger {{ trigger.id }}".to_string(),
-            None,
-            crate::domain::projects::default_project_id(),
-            status("open"),
-            SessionSettings::default(),
-        ))],
+        vec![Action::CreateIssue {
+            issue_type: IssueType::Task,
+            title: "Triage {{ now.date }}".to_string(),
+            description: "Trigger {{ trigger.id }}".to_string(),
+            assignee: None,
+            project_id: crate::domain::projects::default_project_id(),
+            status: status("open"),
+            session_settings: SessionSettings::default(),
+        }],
         Username::from("test-creator"),
     )
 }
@@ -109,8 +109,11 @@ async fn post_rejects_unknown_template_variable() -> anyhow::Result<()> {
         expression: "* * * * *".to_string(),
         timezone: None,
     });
-    let Action::CreateIssue(ref mut a) = request.actions[0];
-    a.title = "hi {{ bogus }}".to_string();
+    if let Action::CreateIssue { ref mut title, .. } = request.actions[0] {
+        *title = "hi {{ bogus }}".to_string();
+    } else {
+        panic!("expected CreateIssue variant");
+    }
 
     let response = client
         .post(format!("{}/v1/triggers", server.base_url()))
@@ -133,8 +136,15 @@ async fn post_rejects_unknown_repo_name() -> anyhow::Result<()> {
         expression: "* * * * *".to_string(),
         timezone: None,
     });
-    let Action::CreateIssue(ref mut a) = request.actions[0];
-    a.session_settings.repo_name = Some(std::str::FromStr::from_str("acme/unknown").unwrap());
+    if let Action::CreateIssue {
+        ref mut session_settings,
+        ..
+    } = request.actions[0]
+    {
+        session_settings.repo_name = Some(std::str::FromStr::from_str("acme/unknown").unwrap());
+    } else {
+        panic!("expected CreateIssue variant");
+    }
 
     let response = client
         .post(format!("{}/v1/triggers", server.base_url()))
@@ -237,15 +247,15 @@ async fn worker_fires_once_trigger_creates_issue_and_edge() -> anyhow::Result<()
         Schedule::Once {
             at: Utc::now() - chrono::Duration::seconds(1),
         },
-        vec![Action::CreateIssue(CreateIssueAction::new(
-            IssueType::Task,
-            "Triage {{ now.date }}".to_string(),
-            "Trigger {{ trigger.id }}".to_string(),
-            None,
-            crate::domain::projects::default_project_id(),
-            status("open"),
-            SessionSettings::default(),
-        ))],
+        vec![Action::CreateIssue {
+            issue_type: IssueType::Task,
+            title: "Triage {{ now.date }}".to_string(),
+            description: "Trigger {{ trigger.id }}".to_string(),
+            assignee: None,
+            project_id: crate::domain::projects::default_project_id(),
+            status: status("open"),
+            session_settings: SessionSettings::default(),
+        }],
         Username::from("test-creator"),
         None,
         false,
@@ -372,15 +382,15 @@ async fn worker_skips_disabled_triggers() -> anyhow::Result<()> {
         Schedule::Once {
             at: Utc::now() - chrono::Duration::seconds(1),
         },
-        vec![Action::CreateIssue(CreateIssueAction::new(
-            IssueType::Task,
-            "t".to_string(),
-            "d".to_string(),
-            None,
-            crate::domain::projects::default_project_id(),
-            status("open"),
-            SessionSettings::default(),
-        ))],
+        vec![Action::CreateIssue {
+            issue_type: IssueType::Task,
+            title: "t".to_string(),
+            description: "d".to_string(),
+            assignee: None,
+            project_id: crate::domain::projects::default_project_id(),
+            status: status("open"),
+            session_settings: SessionSettings::default(),
+        }],
         Username::from("test-creator"),
         None,
         false,
@@ -415,15 +425,15 @@ async fn worker_does_not_refire_after_restart() -> anyhow::Result<()> {
             expression: "0 9 * * *".to_string(),
             timezone: None,
         },
-        vec![Action::CreateIssue(CreateIssueAction::new(
-            IssueType::Task,
-            "t".to_string(),
-            "d".to_string(),
-            None,
-            crate::domain::projects::default_project_id(),
-            status("open"),
-            SessionSettings::default(),
-        ))],
+        vec![Action::CreateIssue {
+            issue_type: IssueType::Task,
+            title: "t".to_string(),
+            description: "d".to_string(),
+            assignee: None,
+            project_id: crate::domain::projects::default_project_id(),
+            status: status("open"),
+            session_settings: SessionSettings::default(),
+        }],
         Username::from("test-creator"),
         Some(last_fired),
         false,

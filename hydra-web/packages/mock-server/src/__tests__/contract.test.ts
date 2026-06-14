@@ -1269,13 +1269,15 @@ describe("Seed data", () => {
     const list = await client.listTriggers();
     expect(list.triggers.length).toBeGreaterThanOrEqual(2);
     const schedules = list.triggers.map((t) => t.trigger.schedule);
-    expect(schedules.some((s) => "Cron" in s)).toBe(true);
-    expect(schedules.some((s) => "Once" in s)).toBe(true);
+    expect(schedules.some((s) => s.type === "cron")).toBe(true);
+    expect(schedules.some((s) => s.type === "once")).toBe(true);
   });
 
   it("seed triggers expose `created` relations with created_at for firing history", async () => {
     const list = await client.listTriggers();
-    const cronTrigger = list.triggers.find((t) => "Cron" in t.trigger.schedule);
+    const cronTrigger = list.triggers.find(
+      (t) => t.trigger.schedule.type === "cron",
+    );
     expect(cronTrigger).toBeDefined();
     const fires = await client.listRelations({
       source_id: cronTrigger!.trigger_id,
@@ -1467,16 +1469,15 @@ describe("Triggers", () => {
 
   const triggerPayload: UpsertTriggerRequest = {
     enabled: true,
-    schedule: { Cron: { expression: "0 0 * * *", timezone: "UTC" } },
+    schedule: { type: "cron", expression: "0 0 * * *", timezone: "UTC" },
     actions: [
       {
-        CreateIssue: {
-          type: "task",
-          title: "Nightly health check",
-          description: "Run the nightly health check sweep.",
-          project_id: "j-defaul",
-          status: "open",
-        },
+        type: "create_issue",
+        issue_type: "task",
+        title: "Nightly health check",
+        description: "Run the nightly health check sweep.",
+        project_id: "j-defaul",
+        status: "open",
       },
     ],
     creator: "dev-user",
@@ -1490,7 +1491,7 @@ describe("Triggers", () => {
     const fetched = await client.getTrigger(triggerId);
     expect(fetched.trigger_id).toBe(triggerId);
     expect(fetched.trigger.enabled).toBe(true);
-    expect("Cron" in fetched.trigger.schedule).toBe(true);
+    expect(fetched.trigger.schedule.type).toBe("cron");
     expect(fetched.creation_time).toBeTruthy();
 
     const list = await client.listTriggers();

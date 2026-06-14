@@ -21,7 +21,6 @@ export type IssueInput = {
   title: string;
   description: string;
   creator: Username;
-  progress: string;
   status: StatusKey;
   project_id: ProjectId;
   assignee?: Principal | null;
@@ -31,5 +30,4 @@ export type IssueInput = {
   archived?: boolean;
   form?: Form | null;
   form_response?: FormResponse | null;
-  feedback?: string | null;
 };

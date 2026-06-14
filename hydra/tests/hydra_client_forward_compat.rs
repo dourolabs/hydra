@@ -15,8 +15,8 @@ use hydra_common::{
     },
     api::v1::relations::{CreateRelationRequest, ListRelationsRequest, RemoveRelationRequest},
     api::v1::triggers::{
-        Action as TriggerAction, CreateIssueAction, Schedule as TriggerSchedule,
-        SearchTriggersQuery, UpsertTriggerRequest,
+        Action as TriggerAction, Schedule as TriggerSchedule, SearchTriggersQuery,
+        UpsertTriggerRequest,
     },
     conversations::{
         ConversationStatus, CreateConversationRequest, SearchConversationsQuery,
@@ -1590,15 +1590,15 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
             expression: "0 9 * * MON".to_string(),
             timezone: Some("UTC".to_string()),
         },
-        vec![TriggerAction::CreateIssue(CreateIssueAction::new(
-            IssueType::Task,
-            "Daily triage".to_string(),
-            "Run triage for {{ now.date }}".to_string(),
-            None,
-            project_id.clone(),
-            StatusKey::try_new("open").unwrap(),
-            Default::default(),
-        ))],
+        vec![TriggerAction::CreateIssue {
+            issue_type: IssueType::Task,
+            title: "Daily triage".to_string(),
+            description: "Run triage for {{ now.date }}".to_string(),
+            assignee: None,
+            project_id: project_id.clone(),
+            status: StatusKey::try_new("open").unwrap(),
+            session_settings: Default::default(),
+        }],
         Username::from("test-creator"),
     );
 
@@ -1615,11 +1615,14 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .actions
         .first()
         .expect("fetched trigger has at least one action");
-    let TriggerAction::CreateIssue(fetched_create_issue) = fetched_action;
-    assert!(matches!(
-        fetched_create_issue.issue_type,
-        IssueType::Unknown
-    ));
+    let TriggerAction::CreateIssue {
+        issue_type: fetched_issue_type,
+        ..
+    } = fetched_action
+    else {
+        panic!("expected CreateIssue variant: {fetched_action:?}");
+    };
+    assert!(matches!(fetched_issue_type, IssueType::Unknown));
 
     let listed_triggers = client
         .list_triggers(&SearchTriggersQuery::default())
@@ -1630,8 +1633,14 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         .actions
         .first()
         .expect("listed trigger has at least one action");
-    let TriggerAction::CreateIssue(listed_create_issue) = listed_action;
-    assert!(matches!(listed_create_issue.issue_type, IssueType::Unknown));
+    let TriggerAction::CreateIssue {
+        issue_type: listed_issue_type,
+        ..
+    } = listed_action
+    else {
+        panic!("expected CreateIssue variant: {listed_action:?}");
+    };
+    assert!(matches!(listed_issue_type, IssueType::Unknown));
 
     let deleted_trigger = client.archive_trigger(&trigger_id).await?;
     assert_eq!(deleted_trigger.trigger_id, trigger_id);
@@ -1802,14 +1811,32 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
 
     let trigger_versions = client.list_trigger_versions(&trigger_id).await?;
     assert_eq!(trigger_versions.versions.len(), 1);
-    let TriggerAction::CreateIssue(create) = &trigger_versions.versions[0].trigger.actions[0];
-    assert!(matches!(create.issue_type, IssueType::Unknown));
+    let TriggerAction::CreateIssue {
+        issue_type: versions_issue_type,
+        ..
+    } = &trigger_versions.versions[0].trigger.actions[0]
+    else {
+        panic!(
+            "expected CreateIssue variant: {:?}",
+            trigger_versions.versions[0].trigger.actions[0]
+        );
+    };
+    assert!(matches!(versions_issue_type, IssueType::Unknown));
     let trigger_version = client
         .get_trigger_version(&trigger_id, RelativeVersionNumber::new(1))
         .await?;
     assert_eq!(trigger_version.trigger_id, trigger_id);
-    let TriggerAction::CreateIssue(create) = &trigger_version.trigger.actions[0];
-    assert!(matches!(create.issue_type, IssueType::Unknown));
+    let TriggerAction::CreateIssue {
+        issue_type: version_issue_type,
+        ..
+    } = &trigger_version.trigger.actions[0]
+    else {
+        panic!(
+            "expected CreateIssue variant: {:?}",
+            trigger_version.trigger.actions[0]
+        );
+    };
+    assert!(matches!(version_issue_type, IssueType::Unknown));
 
     Ok(())
 }
@@ -2178,26 +2205,24 @@ fn forward_trigger_json(
         "trigger": {
             "enabled": true,
             "schedule": {
-                "Cron": {
-                    "expression": "0 9 * * MON",
-                    "timezone": "UTC",
-                    "future": "schedule-field"
-                }
+                "type": "cron",
+                "expression": "0 9 * * MON",
+                "timezone": "UTC",
+                "future": "schedule-field"
             },
             "actions": [
                 {
-                    "CreateIssue": {
-                        // Unknown `IssueType` tag — older clients must decode
-                        // this as `IssueType::Unknown`, not error.
-                        "type": "future-issue-type",
-                        "title": "Daily triage",
-                        "description": "Run triage for {{ now.date }}",
-                        "assignee": "users/alice",
-                        "project_id": project_id,
-                        "status": "open",
-                        "session_settings": {},
-                        "future": "action-field"
-                    }
+                    "type": "create_issue",
+                    // Unknown `IssueType` tag — older clients must decode
+                    // this as `IssueType::Unknown`, not error.
+                    "issue_type": "future-issue-type",
+                    "title": "Daily triage",
+                    "description": "Run triage for {{ now.date }}",
+                    "assignee": "users/alice",
+                    "project_id": project_id,
+                    "status": "open",
+                    "session_settings": {},
+                    "future": "action-field"
                 }
             ],
             "creator": "test-creator",

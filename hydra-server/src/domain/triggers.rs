@@ -13,7 +13,7 @@ use hydra_common::HydraId;
 use hydra_common::api::v1::users::Username as ApiUsername;
 use hydra_common::principal::Principal;
 use hydra_common::triggers::{
-    Action, CreateIssueAction, Schedule, Trigger, parse_cron_expression, render, validate_template,
+    Action, Schedule, Trigger, parse_cron_expression, render, validate_template,
 };
 
 // Re-export so existing call sites continue to work via
@@ -58,6 +58,10 @@ pub enum ValidationError {
     },
     #[error("action {action_index}: unsupported issue type")]
     UnknownIssueType { action_index: usize },
+    #[error("schedule has an unrecognized tag (client may be too new)")]
+    UnknownSchedule,
+    #[error("action {action_index}: unrecognized action tag (client may be too new)")]
+    UnknownAction { action_index: usize },
 }
 
 /// Validate a [`Trigger`]'s schedule, actions, and template fields.
@@ -84,40 +88,56 @@ pub fn validate(trigger: &Trigger) -> Result<Vec<ValidationWarning>, ValidationE
                 warnings.push(ValidationWarning::PastOnce { at: *at });
             }
         }
+        Schedule::Unknown => return Err(ValidationError::UnknownSchedule),
+        // `Schedule` is `#[non_exhaustive]`; future variants are server-rejected.
+        _ => return Err(ValidationError::UnknownSchedule),
     }
 
     for (idx, action) in trigger.actions.iter().enumerate() {
         match action {
-            Action::CreateIssue(create) => {
-                validate_create_issue(idx, create)?;
+            Action::CreateIssue { .. } => {
+                validate_create_issue_action(idx, action)?;
             }
+            Action::Unknown => {
+                return Err(ValidationError::UnknownAction { action_index: idx });
+            }
+            // `Action` is `#[non_exhaustive]`; future variants are server-rejected.
+            _ => return Err(ValidationError::UnknownAction { action_index: idx }),
         }
     }
 
     Ok(warnings)
 }
 
-fn validate_create_issue(
+fn validate_create_issue_action(
     action_index: usize,
-    action: &CreateIssueAction,
+    action: &Action,
 ) -> Result<(), ValidationError> {
     use hydra_common::issues::IssueType;
 
-    if matches!(action.issue_type, IssueType::Unknown) {
+    let Action::CreateIssue {
+        issue_type,
+        title,
+        description,
+        assignee,
+        ..
+    } = action
+    else {
+        return Ok(());
+    };
+
+    if matches!(issue_type, IssueType::Unknown) {
         return Err(ValidationError::UnknownIssueType { action_index });
     }
 
-    for (field, value) in [
-        ("title", &action.title),
-        ("description", &action.description),
-    ] {
+    for (field, value) in [("title", title), ("description", description)] {
         validate_template(value).map_err(|source| ValidationError::InvalidTemplate {
             action_index,
             field,
             source,
         })?;
     }
-    if let Some(assignee) = &action.assignee {
+    if let Some(assignee) = assignee {
         validate_template(assignee).map_err(|source| ValidationError::InvalidTemplate {
             action_index,
             field: "assignee",
@@ -136,13 +156,17 @@ pub fn referenced_repos(trigger: &Trigger) -> Vec<RepoName> {
     let mut out: Vec<RepoName> = Vec::new();
     for action in &trigger.actions {
         match action {
-            Action::CreateIssue(create) => {
-                if let Some(repo) = &create.session_settings.repo_name {
+            Action::CreateIssue {
+                session_settings, ..
+            } => {
+                if let Some(repo) = &session_settings.repo_name {
                     if !out.contains(repo) {
                         out.push(repo.clone());
                     }
                 }
             }
+            Action::Unknown => {}
+            _ => {}
         }
     }
     out
@@ -180,6 +204,8 @@ pub enum ActionError {
         #[source]
         source: StoreError,
     },
+    #[error("action carries an unrecognized tag (client may be too new)")]
+    UnknownAction,
 }
 
 /// Dispatch entry-point for one action of a firing trigger.
@@ -202,29 +228,44 @@ pub async fn run_action(
     trigger_id: &TriggerId,
 ) -> Result<ActionTarget, ActionError> {
     match action {
-        Action::CreateIssue(create) => {
-            run_create_issue(create, ctx, store, actor, creator, trigger_id).await
+        Action::CreateIssue { .. } => {
+            run_create_issue_action(action, ctx, store, actor, creator, trigger_id).await
         }
+        Action::Unknown => Err(ActionError::UnknownAction),
+        _ => Err(ActionError::UnknownAction),
     }
 }
 
-async fn run_create_issue(
-    action: &CreateIssueAction,
+async fn run_create_issue_action(
+    action: &Action,
     ctx: &RenderContext,
     store: &StoreWithEvents,
     actor: &ActorRef,
     creator: &ApiUsername,
     trigger_id: &TriggerId,
 ) -> Result<ActionTarget, ActionError> {
-    let title = render(&action.title, ctx).map_err(|source| ActionError::Render {
+    let Action::CreateIssue {
+        issue_type,
+        title,
+        description,
+        assignee,
+        project_id,
+        status,
+        session_settings,
+    } = action
+    else {
+        return Err(ActionError::UnknownAction);
+    };
+
+    let title = render(title, ctx).map_err(|source| ActionError::Render {
         field: "title",
         source,
     })?;
-    let description = render(&action.description, ctx).map_err(|source| ActionError::Render {
+    let description = render(description, ctx).map_err(|source| ActionError::Render {
         field: "description",
         source,
     })?;
-    let assignee = match action.assignee.as_deref() {
+    let assignee = match assignee.as_deref() {
         Some(template) => {
             let rendered = render(template, ctx).map_err(|source| ActionError::Render {
                 field: "assignee",
@@ -246,14 +287,14 @@ async fn run_create_issue(
     };
 
     let issue = DomainIssue::new(
-        action.issue_type.into(),
+        (*issue_type).into(),
         title,
         description,
         creator.clone().into(),
-        action.status.clone(),
-        action.project_id.clone(),
+        status.clone(),
+        project_id.clone(),
         assignee,
-        Some(action.session_settings.clone().into()),
+        Some(session_settings.clone().into()),
         Vec::new(),
         Vec::new(),
         None,
@@ -454,15 +495,15 @@ mod tests {
     ) -> Action {
         let mut settings = SessionSettings::default();
         settings.repo_name = repo;
-        Action::CreateIssue(CreateIssueAction::new(
-            IssueType::Task,
-            title.to_string(),
-            description.to_string(),
-            assignee.map(str::to_string),
-            crate::domain::projects::default_project_id(),
-            status("open"),
-            settings,
-        ))
+        Action::CreateIssue {
+            issue_type: IssueType::Task,
+            title: title.to_string(),
+            description: description.to_string(),
+            assignee: assignee.map(str::to_string),
+            project_id: crate::domain::projects::default_project_id(),
+            status: status("open"),
+            session_settings: settings,
+        }
     }
 
     #[test]
@@ -641,8 +682,14 @@ mod tests {
     #[test]
     fn validate_rejects_unknown_issue_type() {
         let mut action = create_issue("title", "desc", None, None);
-        let Action::CreateIssue(ref mut a) = action;
-        a.issue_type = IssueType::Unknown;
+        if let Action::CreateIssue {
+            ref mut issue_type, ..
+        } = action
+        {
+            *issue_type = IssueType::Unknown;
+        } else {
+            panic!("expected CreateIssue variant");
+        }
         let trigger = trigger_with_actions(
             Schedule::Cron {
                 expression: "* * * * *".to_string(),
@@ -653,6 +700,32 @@ mod tests {
         let err = trigger.validate().unwrap_err();
         assert!(
             matches!(err, ValidationError::UnknownIssueType { action_index: 0 }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_unknown_schedule() {
+        let trigger = trigger_with_actions(Schedule::Unknown, vec![]);
+        let err = trigger.validate().unwrap_err();
+        assert!(
+            matches!(err, ValidationError::UnknownSchedule),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_unknown_action() {
+        let trigger = trigger_with_actions(
+            Schedule::Cron {
+                expression: "* * * * *".to_string(),
+                timezone: None,
+            },
+            vec![Action::Unknown],
+        );
+        let err = trigger.validate().unwrap_err();
+        assert!(
+            matches!(err, ValidationError::UnknownAction { action_index: 0 }),
             "got {err:?}"
         );
     }
