@@ -33,7 +33,10 @@
   width: 100%;
   resize: none;
   display: block;
-  min-height: 36px;
+  /* MIN matches MIN_HEIGHT_PX in ChatInput.tsx. Sized to comfortably contain
+     the corner Send button at empty state (44 ≥ button height + breathing
+     room on both desktop and mobile). */
+  min-height: 44px;
   max-height: 480px;
   background: var(--bg-2);
   color: var(--fg-0);
@@ -41,7 +44,7 @@
   border-radius: var(--radius-md);
   /* Right padding reserves room for the absolute-positioned Send button so
      typed text never slides underneath it. */
-  padding: 7px 44px 7px 12px;
+  padding: 9px 44px 9px 12px;
   font-family: var(--f-sans);
   font-size: var(--t-sm);
   line-height: 1.5;
@@ -69,11 +72,13 @@
 
 /* iMessage-style Send button living in the textarea's bottom-right corner.
    Width/height overrides win over Button's default sm/md sizing AND the
-   mobile 44×44 floor — the tap target stays inside the visual textarea. */
+   mobile 44×44 floor — the tap target stays inside the visual textarea.
+   Sized + offset to leave a few px of breathing room inside the 44px-tall
+   empty textarea (44 - 32 - 6 = 6 top, 44 - 36 - 4 = 4 top on mobile). */
 .sendButton {
   position: absolute;
-  right: 4px;
-  bottom: 4px;
+  right: 6px;
+  bottom: 6px;
   width: 32px;
   height: 32px;
   min-width: 32px;
@@ -97,6 +102,8 @@
   }
 
   .sendButton {
+    right: 4px;
+    bottom: 4px;
     width: 36px;
     height: 36px;
     min-width: 36px;

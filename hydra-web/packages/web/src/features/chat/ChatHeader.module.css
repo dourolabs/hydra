@@ -1,48 +1,33 @@
 .header {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  padding: 12px 28px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 28px;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
 
-.inner {
-  max-width: 760px;
-  width: 100%;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-}
-
-.headLeft {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.title {
-  font-family: var(--f-sans);
-  font-size: var(--t-xl);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--fg-0);
-  margin: 0;
-  line-height: 1.3;
+/* The H1 lives in the DOM for screen readers + integration test signals but
+   is pulled out of the visual flow — the breadcrumb in SiteHeader is the
+   visible title on every viewport. */
+.srTitle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+  border: 0;
 }
 
 .meta {
   display: flex;
   align-items: center;
   gap: 0;
+  flex: 1;
+  min-width: 0;
   flex-wrap: wrap;
   font-family: var(--f-mono);
   font-size: var(--t-xs);
@@ -60,39 +45,30 @@
   padding: 0 8px;
 }
 
-.headRight {
-  display: flex;
-  align-items: center;
+.endChat {
   flex-shrink: 0;
 }
 
 @media (max-width: 768px) {
-  /* On mobile the breadcrumb in SiteHeader already names the conversation,
-     so the H1 + meta column is redundant. When there's no action button to
-     render (closed conversation), the whole header collapses out of the
-     layout. When End chat is present, we render a thin row with just the
-     button on the right and visually hide the title/meta — keeping them in
-     the DOM for screen readers and tests. */
   .header {
+    padding: 4px 16px;
+  }
+
+  /* Breadcrumb already names the chat; meta is shown in the Details tab.
+     Hide the inline meta on mobile so the header collapses to just the
+     trailing End chat button. */
+  .meta {
     display: none;
   }
+
+  /* When the conversation is closed there's no End chat button to host, so
+     the whole header collapses out of the mobile layout — keep the message
+     list's vertical budget intact. */
+  .header[data-has-action="false"] {
+    display: none;
+  }
+
   .header[data-has-action="true"] {
-    display: flex;
-    padding: 8px 16px;
-  }
-  .header[data-has-action="true"] .inner {
     justify-content: flex-end;
-    align-items: center;
-  }
-  .header[data-has-action="true"] .headLeft {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
   }
 }

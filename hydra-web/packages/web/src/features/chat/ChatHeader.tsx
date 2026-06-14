@@ -9,6 +9,12 @@ interface ChatHeaderProps {
   endChatDisabled?: boolean;
 }
 
+// Single-row header: meta line on the left, End chat on the right. The
+// conversation title is already rendered by SiteHeader.Breadcrumbs, so the
+// dedicated H1 row would duplicate it — we keep it in the DOM as an
+// `sr-only`-style clipped element for screen readers and existing tests but
+// drop it from the visual layout. On mobile we additionally hide the meta
+// since the breadcrumb is the only header chrome that fits.
 export function ChatHeader({ conversation, onEndChat, endChatDisabled }: ChatHeaderProps) {
   const title = conversation.title || "Untitled conversation";
 
@@ -18,31 +24,31 @@ export function ChatHeader({ conversation, onEndChat, endChatDisabled }: ChatHea
       data-testid="chat-header"
       data-has-action={onEndChat ? "true" : "false"}
     >
-      <div className={styles.inner}>
-        <div className={styles.headLeft}>
-          <h1 className={styles.title}>{title}</h1>
-          <div className={styles.meta} data-testid="chat-header-meta">
-            {conversation.agent_name && (
-              <>
-                <span>with {conversation.agent_name}</span>
-                <span className={styles.sep}>·</span>
-              </>
-            )}
-            <span data-testid="chat-header-started">
-              started <AgoTime iso={conversation.created_at} />
-            </span>
+      <h1 className={styles.srTitle}>{title}</h1>
+      <div className={styles.meta} data-testid="chat-header-meta">
+        {conversation.agent_name && (
+          <>
+            <span>with {conversation.agent_name}</span>
             <span className={styles.sep}>·</span>
-            <span>{conversation.status}</span>
-          </div>
-        </div>
-        {onEndChat && (
-          <div className={styles.headRight}>
-            <Button variant="secondary" size="sm" onClick={onEndChat} disabled={endChatDisabled}>
-              End chat
-            </Button>
-          </div>
+          </>
         )}
+        <span data-testid="chat-header-started">
+          started <AgoTime iso={conversation.created_at} />
+        </span>
+        <span className={styles.sep}>·</span>
+        <span>{conversation.status}</span>
       </div>
+      {onEndChat && (
+        <Button
+          className={styles.endChat}
+          variant="secondary"
+          size="sm"
+          onClick={onEndChat}
+          disabled={endChatDisabled}
+        >
+          End chat
+        </Button>
+      )}
     </div>
   );
 }

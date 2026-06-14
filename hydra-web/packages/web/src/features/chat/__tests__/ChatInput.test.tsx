@@ -265,18 +265,19 @@ describe("ChatInput auto-grow", () => {
   it("clamps the inline height to MIN_HEIGHT when the value is empty", () => {
     render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
     // jsdom reports 0 for scrollHeight, so the layout effect should fall back
-    // to the MIN_HEIGHT clamp (36px).
-    expect(getTextarea().style.height).toBe("36px");
+    // to the MIN_HEIGHT clamp (44px).
+    expect(getTextarea().style.height).toBe("44px");
   });
 
-  it("grows the inline height to scrollHeight when content is added", () => {
+  it("grows the inline height to scrollHeight + border when content is added", () => {
     render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
     const textarea = getTextarea();
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 120 });
 
     fireEvent.change(textarea, { target: { value: "line1\nline2\nline3\nline4" } });
 
-    expect(textarea.style.height).toBe("120px");
+    // 120 (scrollHeight = content + padding) + 2 (border-box border) = 122
+    expect(textarea.style.height).toBe("122px");
   });
 
   it("clamps growth to the maximum height", () => {
@@ -296,11 +297,11 @@ describe("ChatInput auto-grow", () => {
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 120 });
 
     fireEvent.change(textarea, { target: { value: "tall content" } });
-    expect(textarea.style.height).toBe("120px");
+    expect(textarea.style.height).toBe("122px");
 
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 0 });
     fireEvent.click(getSendButton());
 
-    expect(textarea.style.height).toBe("36px");
+    expect(textarea.style.height).toBe("44px");
   });
 });

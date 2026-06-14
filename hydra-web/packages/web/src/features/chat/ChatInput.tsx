@@ -4,8 +4,14 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConversationDraft } from "./useConversationDraft";
 import styles from "./ChatInput.module.css";
 
-const MIN_HEIGHT_PX = 36;
+const MIN_HEIGHT_PX = 44;
 const MAX_HEIGHT_PX = 480;
+// The textarea inherits the global `box-sizing: border-box`, so its `height`
+// includes the 1px top + 1px bottom border. scrollHeight reports content +
+// padding only, so we add the border thickness back when sizing — otherwise
+// each set-height would shrink the visible content area by 2px and clip the
+// last line of text.
+const BORDER_PX = 2;
 
 interface ChatInputProps {
   conversationId: string;
@@ -27,7 +33,10 @@ export function ChatInput({ conversationId, onSend, disabled }: ChatInputProps) 
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = `${MIN_HEIGHT_PX}px`;
-    const next = Math.max(MIN_HEIGHT_PX, Math.min(MAX_HEIGHT_PX, el.scrollHeight));
+    const next = Math.max(
+      MIN_HEIGHT_PX,
+      Math.min(MAX_HEIGHT_PX, el.scrollHeight + BORDER_PX),
+    );
     el.style.height = `${next}px`;
   }, [value]);
 
