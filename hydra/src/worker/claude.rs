@@ -427,7 +427,7 @@ impl Claude {
     /// * Stdout EOF (Claude exited) is the natural end.
     pub async fn run_interactive(
         &mut self,
-        mut input: mpsc::Receiver<ClaudeUserMessage>,
+        input: mpsc::Receiver<ClaudeUserMessage>,
         output: mpsc::Sender<ClaudeEvent>,
         prompt: &str,
         resume: Option<ClaudeResume>,
@@ -490,130 +490,18 @@ impl Claude {
             }
         });
 
-        let mut stdout_reader = BufReader::new(claude_stdout);
-        let mut stdout_line = String::new();
-        let mut formatter = StreamFormatter::new();
-        let mut claude_session_id: Option<String> = resume_uuid.clone();
-        // Track whether `claude_stdin` is still open. We drop it the moment the
-        // input channel closes so Claude observes EOF on stdin.
-        let mut stdin_open = true;
-        let mut stdin_taken: Option<tokio::process::ChildStdin> = Some(claude_stdin);
-
-        // Feed the first user message into Claude's stdin using the same wire
-        // shape `spawn_input_translator` uses for subsequent in-session
-        // messages. Without this, Claude blocks in `epoll_wait` since nothing
-        // else delivers the initial prompt.
-        if let Some(stdin) = stdin_taken.as_mut() {
-            let input_line = build_claude_input(prompt);
-            if stdin.write_all(input_line.as_bytes()).await.is_err() {
-                eprintln!(
-                    "Failed to write initial prompt to Claude stdin (process may have exited)"
-                );
-                stdin_open = false;
-                stdin_taken = None;
-            } else if stdin.flush().await.is_err() {
-                eprintln!("Failed to flush initial prompt to Claude stdin");
-                stdin_open = false;
-                stdin_taken = None;
-            } else {
-                println!("Forwarded initial user message to Claude stdin");
-            }
-        }
-
-        // `None` means the caller (a `Timeout::Infinite` user, or a
-        // headless dispatch that doesn't use the idle clock) opted out
-        // of the idle deadline entirely. Park the timer on
-        // `Duration::MAX` and disable the branch so it never fires.
-        let idle_timeout = self.idle_timeout;
-        let idle_arming = idle_timeout.is_some();
-        let initial_sleep = idle_timeout.unwrap_or(Duration::MAX);
-        let idle_deadline = tokio::time::sleep(initial_sleep);
-        tokio::pin!(idle_deadline);
-
-        loop {
-            tokio::select! {
-                read_result = stdout_reader.read_line(&mut stdout_line) => {
-                    match read_result {
-                        Ok(0) => {
-                            println!("Claude interactive stdout EOF (PID: {pid})");
-                            break;
-                        }
-                        Ok(_) => {
-                            if claude_session_id.is_none() {
-                                if let Some(sid) = extract_session_id(&stdout_line) {
-                                    println!("Extracted Claude session_id: {sid}");
-                                    claude_session_id = Some(sid.clone());
-                                    let _ = output.send(ClaudeEvent::SystemInit { session_id: sid }).await;
-                                }
-                            }
-
-                            for line in formatter.handle_line(&stdout_line) {
-                                print!("{line}");
-                            }
-
-                            for event in parse_claude_events(&stdout_line) {
-                                if output.send(event).await.is_err() {
-                                    // Output channel closed — keep draining
-                                    // stdout but stop sending events.
-                                }
-                            }
-
-                            stdout_line.clear();
-                        }
-                        Err(err) => {
-                            eprintln!("Error reading Claude stdout: {err}");
-                            break;
-                        }
-                    }
-                }
-
-                msg = input.recv(), if stdin_open => {
-                    match msg {
-                        Some(ClaudeUserMessage { content }) => {
-                            if let Some(window) = idle_timeout {
-                                idle_deadline
-                                    .as_mut()
-                                    .reset(tokio::time::Instant::now() + window);
-                            }
-                            if let Some(stdin) = stdin_taken.as_mut() {
-                                let input_line = build_claude_input(&content);
-                                if stdin.write_all(input_line.as_bytes()).await.is_err() {
-                                    eprintln!("Failed to write to Claude stdin (process may have exited)");
-                                    stdin_open = false;
-                                    stdin_taken = None;
-                                    continue;
-                                }
-                                if stdin.flush().await.is_err() {
-                                    eprintln!("Failed to flush Claude stdin");
-                                    stdin_open = false;
-                                    stdin_taken = None;
-                                    continue;
-                                }
-                                println!("Forwarded user message to Claude stdin");
-                            }
-                        }
-                        None => {
-                            // Input channel closed; drop stdin so Claude sees
-                            // EOF and exits cleanly. Continue draining stdout.
-                            println!("Input channel closed; dropping Claude stdin");
-                            stdin_open = false;
-                            stdin_taken = None;
-                        }
-                    }
-                }
-
-                _ = &mut idle_deadline, if idle_arming => {
-                    println!("Interactive idle timeout ({idle_timeout:?}); ending session");
-                    stdin_open = false;
-                    stdin_taken = None;
-                    // After closing stdin, fall through; the next iteration
-                    // will await stdout EOF.
-                    idle_deadline
-                        .as_mut()
-                        .reset(tokio::time::Instant::now() + Duration::from_secs(3600));
-                }
-            }
-        }
+        let stdout_reader = BufReader::new(claude_stdout);
+        let (formatter, claude_session_id) = pump_interactive_loop(
+            stdout_reader,
+            Some(claude_stdin),
+            input,
+            output,
+            prompt,
+            resume_uuid,
+            self.idle_timeout,
+            pid,
+        )
+        .await;
 
         // Best-effort SIGTERM to ensure the process group is reaped.
         #[cfg(unix)]
@@ -663,6 +551,152 @@ impl Claude {
             session_state,
         })
     }
+}
+
+/// Drive the interactive select loop: forward `input` messages to Claude's
+/// stdin, parse Claude's stdout into [`ClaudeEvent`]s on `output`, and break
+/// the loop on stdout EOF, a read error, or the idle-timeout deadline.
+///
+/// On idle-timeout the loop **breaks unconditionally** — the post-loop
+/// SIGTERM/SIGKILL cleanup in [`Claude::run_interactive`] is responsible for
+/// reaping the child. Earlier versions tried to drop stdin and "fall through"
+/// to a stdout EOF that Claude sometimes never produced (backgrounded bash
+/// tasks keep stdout open even after stdin EOF), wedging the worker. See
+/// [`pump_interactive_loop_breaks_on_idle_timeout`] for the regression test.
+async fn pump_interactive_loop<R, W>(
+    mut stdout_reader: BufReader<R>,
+    mut stdin_taken: Option<W>,
+    mut input: mpsc::Receiver<ClaudeUserMessage>,
+    output: mpsc::Sender<ClaudeEvent>,
+    initial_prompt: &str,
+    resume_uuid: Option<String>,
+    idle_timeout: Option<Duration>,
+    pid: u32,
+) -> (StreamFormatter, Option<String>)
+where
+    R: io::AsyncRead + Unpin,
+    W: io::AsyncWrite + Unpin,
+{
+    let mut formatter = StreamFormatter::new();
+    let mut claude_session_id: Option<String> = resume_uuid;
+    // Track whether `stdin_taken` is still open. We drop it the moment the
+    // input channel closes so Claude observes EOF on stdin.
+    let mut stdin_open = true;
+
+    // Feed the first user message into Claude's stdin using the same wire
+    // shape `spawn_input_translator` uses for subsequent in-session
+    // messages. Without this, Claude blocks in `epoll_wait` since nothing
+    // else delivers the initial prompt.
+    if let Some(stdin) = stdin_taken.as_mut() {
+        let input_line = build_claude_input(initial_prompt);
+        if stdin.write_all(input_line.as_bytes()).await.is_err() {
+            eprintln!("Failed to write initial prompt to Claude stdin (process may have exited)");
+            stdin_open = false;
+            stdin_taken = None;
+        } else if stdin.flush().await.is_err() {
+            eprintln!("Failed to flush initial prompt to Claude stdin");
+            stdin_open = false;
+            stdin_taken = None;
+        } else {
+            println!("Forwarded initial user message to Claude stdin");
+        }
+    }
+
+    // `None` means the caller (a `Timeout::Infinite` user, or a
+    // headless dispatch that doesn't use the idle clock) opted out
+    // of the idle deadline entirely. Park the timer on
+    // `Duration::MAX` and disable the branch so it never fires.
+    let idle_arming = idle_timeout.is_some();
+    let initial_sleep = idle_timeout.unwrap_or(Duration::MAX);
+    let idle_deadline = tokio::time::sleep(initial_sleep);
+    tokio::pin!(idle_deadline);
+
+    let mut stdout_line = String::new();
+
+    loop {
+        tokio::select! {
+            read_result = stdout_reader.read_line(&mut stdout_line) => {
+                match read_result {
+                    Ok(0) => {
+                        println!("Claude interactive stdout EOF (PID: {pid})");
+                        break;
+                    }
+                    Ok(_) => {
+                        if claude_session_id.is_none() {
+                            if let Some(sid) = extract_session_id(&stdout_line) {
+                                println!("Extracted Claude session_id: {sid}");
+                                claude_session_id = Some(sid.clone());
+                                let _ = output.send(ClaudeEvent::SystemInit { session_id: sid }).await;
+                            }
+                        }
+
+                        for line in formatter.handle_line(&stdout_line) {
+                            print!("{line}");
+                        }
+
+                        for event in parse_claude_events(&stdout_line) {
+                            if output.send(event).await.is_err() {
+                                // Output channel closed — keep draining
+                                // stdout but stop sending events.
+                            }
+                        }
+
+                        stdout_line.clear();
+                    }
+                    Err(err) => {
+                        eprintln!("Error reading Claude stdout: {err}");
+                        break;
+                    }
+                }
+            }
+
+            msg = input.recv(), if stdin_open => {
+                match msg {
+                    Some(ClaudeUserMessage { content }) => {
+                        if let Some(window) = idle_timeout {
+                            idle_deadline
+                                .as_mut()
+                                .reset(tokio::time::Instant::now() + window);
+                        }
+                        if let Some(stdin) = stdin_taken.as_mut() {
+                            let input_line = build_claude_input(&content);
+                            if stdin.write_all(input_line.as_bytes()).await.is_err() {
+                                eprintln!("Failed to write to Claude stdin (process may have exited)");
+                                stdin_open = false;
+                                stdin_taken = None;
+                                continue;
+                            }
+                            if stdin.flush().await.is_err() {
+                                eprintln!("Failed to flush Claude stdin");
+                                stdin_open = false;
+                                stdin_taken = None;
+                                continue;
+                            }
+                            println!("Forwarded user message to Claude stdin");
+                        }
+                    }
+                    None => {
+                        // Input channel closed; drop stdin so Claude sees
+                        // EOF and exits cleanly. Continue draining stdout.
+                        println!("Input channel closed; dropping Claude stdin");
+                        stdin_open = false;
+                        stdin_taken = None;
+                    }
+                }
+            }
+
+            _ = &mut idle_deadline, if idle_arming => {
+                println!("Interactive idle timeout ({idle_timeout:?}); breaking interactive loop");
+                // Drop stdin so Claude sees EOF as the post-loop cleanup
+                // sends SIGTERM. The 5s SIGTERM_WAIT in the cleanup is the
+                // graceful window for Claude to flush its last output.
+                drop(stdin_taken);
+                break;
+            }
+        }
+    }
+
+    (formatter, claude_session_id)
 }
 
 /// Sends SIGTERM then SIGKILL to a process group.
@@ -1613,5 +1647,118 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, ClaudeEvent::ToolUse { tool_name, .. } if tool_name == "Read")));
+    }
+
+    /// Wedge regression: when the idle deadline fires and the child's stdout
+    /// never EOFs (the production failure mode — backgrounded bash tasks hold
+    /// stdout open even after Claude sees stdin EOF), the loop must break
+    /// unconditionally so the caller's SIGTERM/SIGKILL cleanup can run.
+    /// Previously this branch dropped stdin and re-armed the deadline, leaving
+    /// the loop parked forever on `read_line`.
+    #[tokio::test(start_paused = true)]
+    async fn pump_interactive_loop_breaks_on_idle_timeout() {
+        // Hold the writer end so `read_line` stays parked forever (the wedge).
+        let (_stdout_writer_held, stdout_reader) = tokio::io::duplex(64);
+        let stdin_writer = io::sink();
+
+        let (_input_tx, input_rx) = mpsc::channel::<ClaudeUserMessage>(8);
+        let (output_tx, _output_rx) = mpsc::channel::<ClaudeEvent>(8);
+
+        let idle_timeout = Duration::from_secs(1200);
+
+        let task = tokio::spawn(pump_interactive_loop(
+            BufReader::new(stdout_reader),
+            Some(stdin_writer),
+            input_rx,
+            output_tx,
+            "hello",
+            None,
+            Some(idle_timeout),
+            0,
+        ));
+
+        // Let the spawned task register its read/recv/timer wakers.
+        tokio::task::yield_now().await;
+        // Advance virtual time past the idle deadline.
+        tokio::time::advance(idle_timeout + Duration::from_secs(60)).await;
+
+        let (_formatter, session_id) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("loop did not break within budget after idle deadline fired")
+            .expect("task panicked");
+
+        // Stdout produced nothing, so no session_id was extracted.
+        assert!(session_id.is_none());
+    }
+
+    /// Regression: `idle_timeout=None` (e.g. `Timeout::Infinite` sessions)
+    /// must disable the deadline branch entirely. Advancing virtual time
+    /// arbitrarily far must NOT cause the loop to break.
+    #[tokio::test(start_paused = true)]
+    async fn pump_interactive_loop_no_idle_timeout_ignores_time_advance() {
+        let (stdout_writer_held, stdout_reader) = tokio::io::duplex(64);
+        let stdin_writer = io::sink();
+
+        let (_input_tx, input_rx) = mpsc::channel::<ClaudeUserMessage>(8);
+        let (output_tx, _output_rx) = mpsc::channel::<ClaudeEvent>(8);
+
+        let task = tokio::spawn(pump_interactive_loop(
+            BufReader::new(stdout_reader),
+            Some(stdin_writer),
+            input_rx,
+            output_tx,
+            "hello",
+            None,
+            None,
+            0,
+        ));
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(7200)).await;
+        tokio::task::yield_now().await;
+
+        assert!(
+            !task.is_finished(),
+            "loop must not exit on time-advance when idle_timeout is None"
+        );
+
+        // Close stdout so the task can finish cleanly.
+        drop(stdout_writer_held);
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("loop did not exit after stdout EOF")
+            .expect("task panicked");
+    }
+
+    /// Sanity check: when stdout EOFs naturally (Claude exits on its own),
+    /// the loop breaks via the `Ok(0)` arm with no idle deadline involvement.
+    #[tokio::test(start_paused = true)]
+    async fn pump_interactive_loop_exits_on_stdout_eof() {
+        let (stdout_writer, stdout_reader) = tokio::io::duplex(64);
+        let stdin_writer = io::sink();
+
+        let (_input_tx, input_rx) = mpsc::channel::<ClaudeUserMessage>(8);
+        let (output_tx, _output_rx) = mpsc::channel::<ClaudeEvent>(8);
+
+        let task = tokio::spawn(pump_interactive_loop(
+            BufReader::new(stdout_reader),
+            Some(stdin_writer),
+            input_rx,
+            output_tx,
+            "hello",
+            None,
+            None,
+            0,
+        ));
+
+        tokio::task::yield_now().await;
+        drop(stdout_writer);
+
+        let (_formatter, session_id) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("loop did not break on stdout EOF")
+            .expect("task panicked");
+
+        assert!(session_id.is_none());
     }
 }
