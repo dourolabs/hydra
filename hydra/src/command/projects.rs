@@ -8,10 +8,12 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{builder::BoolishValueParser, Args, Subcommand};
+use hydra_common::api::v1::issues::SessionSettings;
 use hydra_common::api::v1::projects::{
     Project, ProjectKey, ProjectRecord, ProjectRef, StatusDefinition, StatusKey, StatusOnEnter,
     UpsertProjectRequest, UpsertProjectResponse,
 };
+use hydra_common::api::v1::timeout::Timeout;
 use hydra_common::{DocumentPath, Principal, Rgb};
 use std::str::FromStr;
 
@@ -75,6 +77,41 @@ pub struct CreateProjectArgs {
     /// with `/` (the server is authoritative).
     #[arg(long = "prompt-path", value_name = "PATH")]
     pub prompt_path: Option<String>,
+
+    /// Per-project container CPU limit override (e.g. `500m`, `2`). Wins
+    /// over the global default during spawn; status- and issue-level
+    /// `cpu_limit` still win over this.
+    #[arg(long = "cpu-limit", value_name = "STRING")]
+    pub cpu_limit: Option<String>,
+
+    /// Per-project container memory limit override (e.g. `1Gi`, `512Mi`).
+    /// Wins over the global default during spawn; status- and issue-level
+    /// `memory_limit` still win over this.
+    #[arg(long = "memory-limit", value_name = "STRING")]
+    pub memory_limit: Option<String>,
+
+    /// Per-project container image override. Wins over the global default
+    /// during spawn; status- and issue-level `image` still win over this.
+    #[arg(long = "image", value_name = "STRING")]
+    pub image: Option<String>,
+
+    /// Per-project model override. Wins over the global default during
+    /// spawn; status- and issue-level `model` still win over this.
+    #[arg(long = "model", value_name = "STRING")]
+    pub model: Option<String>,
+
+    /// Per-project max-retries override (headless sessions). Wins over
+    /// the global default; status- and issue-level `max_retries` still
+    /// win over this.
+    #[arg(long = "max-retries", value_name = "COUNT")]
+    pub max_retries: Option<u32>,
+
+    /// Per-project idle-timeout override (interactive sessions). Pass
+    /// `infinite` to disable the worker's idle timeout, or a duration
+    /// like `30m` / `2h`. Wins over the global default; status- and
+    /// issue-level `idle_timeout` still win over this.
+    #[arg(long = "idle-timeout", value_name = "STRING")]
+    pub idle_timeout: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -104,6 +141,75 @@ pub struct UpdateProjectArgs {
     /// `/` (the server is authoritative).
     #[arg(long = "prompt-path", value_name = "PATH")]
     pub prompt_path: Option<String>,
+
+    /// Set the per-project container CPU limit (e.g. `500m`, `2`). Pass
+    /// `--cpu-limit ""` to clear the override.
+    #[arg(
+        long = "cpu-limit",
+        value_name = "STRING",
+        conflicts_with = "clear_session_settings"
+    )]
+    pub cpu_limit: Option<String>,
+
+    /// Set the per-project container memory limit (e.g. `1Gi`, `512Mi`).
+    /// Pass `--memory-limit ""` to clear the override.
+    #[arg(
+        long = "memory-limit",
+        value_name = "STRING",
+        conflicts_with = "clear_session_settings"
+    )]
+    pub memory_limit: Option<String>,
+
+    /// Set the per-project container image override. Pass `--image ""`
+    /// to clear the override.
+    #[arg(
+        long = "image",
+        value_name = "STRING",
+        conflicts_with = "clear_session_settings"
+    )]
+    pub image: Option<String>,
+
+    /// Set the per-project model override. Pass `--model ""` to clear
+    /// the override.
+    #[arg(
+        long = "model",
+        value_name = "STRING",
+        conflicts_with = "clear_session_settings"
+    )]
+    pub model: Option<String>,
+
+    /// Set the per-project max-retries override (headless sessions).
+    /// Mutually exclusive with `--clear-max-retries`.
+    #[arg(
+        long = "max-retries",
+        value_name = "COUNT",
+        conflicts_with_all = ["clear_max_retries", "clear_session_settings"]
+    )]
+    pub max_retries: Option<u32>,
+
+    /// Clear the per-project max-retries override.
+    #[arg(long = "clear-max-retries", conflicts_with = "clear_session_settings")]
+    pub clear_max_retries: bool,
+
+    /// Set the per-project idle-timeout override (interactive sessions).
+    /// Accepts `infinite` or a positive whole number of seconds.
+    /// Mutually exclusive with `--clear-idle-timeout`.
+    #[arg(
+        long = "idle-timeout",
+        value_name = "STRING",
+        conflicts_with_all = ["clear_idle_timeout", "clear_session_settings"]
+    )]
+    pub idle_timeout: Option<String>,
+
+    /// Clear the per-project idle-timeout override.
+    #[arg(long = "clear-idle-timeout", conflicts_with = "clear_session_settings")]
+    pub clear_idle_timeout: bool,
+
+    /// Drop the project's `session_settings` back to default — wipes
+    /// every per-project override at once. Mutually exclusive with the
+    /// per-field setters/clearers.
+    #[arg(long = "clear-session-settings")]
+    pub clear_session_settings: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -513,14 +619,17 @@ async fn create_project(
     args: CreateProjectArgs,
 ) -> Result<ProjectRecord> {
     let creator = resolve_username(client).await?;
+    let session_settings = build_create_session_settings(&args)?;
     let mut request = UpsertProjectRequest::new(args.key.clone(), args.name.clone());
     request.prompt_path = args.prompt_path.clone();
+    request.session_settings = session_settings.clone();
     let response = client
         .create_project(&request)
         .await
         .context("failed to create project")?;
     let mut project = Project::new(args.key, args.name, Vec::new(), creator, false, 0.0);
     project.prompt_path = args.prompt_path;
+    project.session_settings = session_settings;
     Ok(ProjectRecord::new(
         response.project_id,
         response.version,
@@ -537,7 +646,12 @@ async fn update_project(
         .await
         .with_context(|| format!("failed to fetch project '{}'", args.project_ref))?;
 
-    let prompt_path = apply_prompt_path_arg(args.prompt_path, current.project.prompt_path.clone());
+    let prompt_path = apply_prompt_path_arg(
+        args.prompt_path.clone(),
+        current.project.prompt_path.clone(),
+    );
+    let session_settings =
+        build_update_session_settings(&args, current.project.session_settings.clone())?;
 
     let mut request = UpsertProjectRequest::new(
         args.key
@@ -549,6 +663,7 @@ async fn update_project(
     );
     request.prompt_path = prompt_path.clone();
     request.priority = current.project.priority;
+    request.session_settings = session_settings.clone();
 
     let response = client
         .update_project(&args.project_ref, &request)
@@ -564,11 +679,78 @@ async fn update_project(
         current.project.priority,
     );
     project.prompt_path = prompt_path;
+    project.session_settings = session_settings;
     Ok(ProjectRecord::new(
         response.project_id,
         response.version,
         project,
     ))
+}
+
+/// Build the [`SessionSettings`] POSTed by `projects create` from the
+/// flat per-field flags.
+fn build_create_session_settings(args: &CreateProjectArgs) -> Result<SessionSettings> {
+    let mut settings = SessionSettings::default();
+    settings.cpu_limit = normalize_blank_string(args.cpu_limit.clone());
+    settings.memory_limit = normalize_blank_string(args.memory_limit.clone());
+    settings.image = normalize_blank_string(args.image.clone());
+    settings.model = normalize_blank_string(args.model.clone());
+    settings.max_retries = args.max_retries;
+    if let Some(raw) = args.idle_timeout.as_deref() {
+        settings.idle_timeout = Some(parse_idle_timeout(raw)?);
+    }
+    Ok(settings)
+}
+
+/// Build the [`SessionSettings`] PUT by `projects update`. Per-field
+/// setters overlay the existing settings; `--clear-session-settings`
+/// wipes everything; per-field clear flags (`--clear-max-retries`,
+/// `--clear-idle-timeout`) drop a single field; passing an empty string
+/// to a String-typed field clears that field.
+fn build_update_session_settings(
+    args: &UpdateProjectArgs,
+    current: SessionSettings,
+) -> Result<SessionSettings> {
+    if args.clear_session_settings {
+        return Ok(SessionSettings::default());
+    }
+    let mut settings = current;
+    if let Some(value) = args.cpu_limit.clone() {
+        settings.cpu_limit = if value.is_empty() { None } else { Some(value) };
+    }
+    if let Some(value) = args.memory_limit.clone() {
+        settings.memory_limit = if value.is_empty() { None } else { Some(value) };
+    }
+    if let Some(value) = args.image.clone() {
+        settings.image = if value.is_empty() { None } else { Some(value) };
+    }
+    if let Some(value) = args.model.clone() {
+        settings.model = if value.is_empty() { None } else { Some(value) };
+    }
+    if args.clear_max_retries {
+        settings.max_retries = None;
+    } else if let Some(value) = args.max_retries {
+        settings.max_retries = Some(value);
+    }
+    if args.clear_idle_timeout {
+        settings.idle_timeout = None;
+    } else if let Some(raw) = args.idle_timeout.as_deref() {
+        settings.idle_timeout = Some(parse_idle_timeout(raw)?);
+    }
+    Ok(settings)
+}
+
+/// Parse an `--idle-timeout` value. Accepts `infinite` (case-insensitive)
+/// for [`Timeout::Infinite`], or a positive whole number of seconds for
+/// [`Timeout::Seconds`].
+fn parse_idle_timeout(raw: &str) -> Result<Timeout> {
+    if raw.eq_ignore_ascii_case("infinite") {
+        return Ok(Timeout::Infinite);
+    }
+    let secs: u64 = raw.parse().with_context(|| {
+        format!("expected `infinite` or a positive whole number of seconds; got '{raw}'")
+    })?;
+    Timeout::seconds(secs).ok_or_else(|| anyhow!("idle-timeout must be greater than zero seconds"))
 }
 
 async fn create_status(
@@ -1457,5 +1639,184 @@ mod tests {
         let args = parse_update(&["--label", "Refreshed"]).unwrap();
         let def = build_update_status_definition_sync(&args).unwrap();
         assert_eq!(def.on_enter, current_status_with_on_enter().on_enter);
+    }
+
+    // --- project-level session_settings CLI flag tests ----------------
+
+    #[derive(Debug, Parser)]
+    struct CreateProjectHarness {
+        #[command(flatten)]
+        args: CreateProjectArgs,
+    }
+
+    #[derive(Debug, Parser)]
+    struct UpdateProjectHarness {
+        #[command(flatten)]
+        args: UpdateProjectArgs,
+    }
+
+    fn parse_create_project(argv: &[&str]) -> Result<CreateProjectArgs, clap::Error> {
+        let mut full = vec![
+            "create-project",
+            "--key",
+            "engineering",
+            "--name",
+            "Engineering",
+        ];
+        full.extend(argv);
+        CreateProjectHarness::try_parse_from(full).map(|h| h.args)
+    }
+
+    fn parse_update_project(argv: &[&str]) -> Result<UpdateProjectArgs, clap::Error> {
+        let mut full = vec!["update-project", "engineering"];
+        full.extend(argv);
+        UpdateProjectHarness::try_parse_from(full).map(|h| h.args)
+    }
+
+    fn parse_update_project_failure(argv: &[&str]) -> clap::Error {
+        let mut full = vec!["update-project", "engineering"];
+        full.extend(argv);
+        let command = UpdateProjectHarness::command();
+        let matches = command.try_get_matches_from(full);
+        match matches {
+            Err(e) => e,
+            Ok(m) => match UpdateProjectHarness::from_arg_matches(&m) {
+                Err(e) => e,
+                Ok(_) => panic!("expected clap error, parse succeeded"),
+            },
+        }
+    }
+
+    #[test]
+    fn create_project_flat_flags_populate_session_settings() {
+        let args = parse_create_project(&[
+            "--cpu-limit",
+            "500m",
+            "--memory-limit",
+            "256Mi",
+            "--image",
+            "hydra-worker:project",
+            "--model",
+            "anthropic/claude",
+            "--max-retries",
+            "4",
+            "--idle-timeout",
+            "infinite",
+        ])
+        .unwrap();
+        let settings = build_create_session_settings(&args).unwrap();
+        assert_eq!(settings.cpu_limit.as_deref(), Some("500m"));
+        assert_eq!(settings.memory_limit.as_deref(), Some("256Mi"));
+        assert_eq!(settings.image.as_deref(), Some("hydra-worker:project"));
+        assert_eq!(settings.model.as_deref(), Some("anthropic/claude"));
+        assert_eq!(settings.max_retries, Some(4));
+        assert_eq!(settings.idle_timeout, Some(Timeout::Infinite));
+    }
+
+    #[test]
+    fn create_project_idle_timeout_seconds_parses() {
+        let args = parse_create_project(&["--idle-timeout", "1800"]).unwrap();
+        let settings = build_create_session_settings(&args).unwrap();
+        assert_eq!(settings.idle_timeout, Some(Timeout::seconds(1800).unwrap()));
+    }
+
+    #[test]
+    fn create_project_idle_timeout_rejects_zero() {
+        let args = parse_create_project(&["--idle-timeout", "0"]).unwrap();
+        let err = build_create_session_settings(&args).unwrap_err();
+        assert!(err.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn create_project_idle_timeout_rejects_garbage() {
+        let args = parse_create_project(&["--idle-timeout", "soon"]).unwrap();
+        let err = build_create_session_settings(&args).unwrap_err();
+        assert!(err.to_string().contains("expected `infinite`"));
+    }
+
+    #[test]
+    fn create_project_blank_string_drops_session_settings_field() {
+        let args = parse_create_project(&["--cpu-limit", "", "--image", ""]).unwrap();
+        let settings = build_create_session_settings(&args).unwrap();
+        assert!(settings.cpu_limit.is_none());
+        assert!(settings.image.is_none());
+    }
+
+    #[test]
+    fn update_project_flat_flags_overlay_existing_session_settings() {
+        let mut current = SessionSettings::default();
+        current.cpu_limit = Some("100m".into());
+        current.memory_limit = Some("128Mi".into());
+        current.image = Some("old-image".into());
+        let args = parse_update_project(&["--image", "new-image", "--cpu-limit", "500m"]).unwrap();
+        let settings = build_update_session_settings(&args, current).unwrap();
+        // Updated fields use new values.
+        assert_eq!(settings.image.as_deref(), Some("new-image"));
+        assert_eq!(settings.cpu_limit.as_deref(), Some("500m"));
+        // Untouched field is preserved.
+        assert_eq!(settings.memory_limit.as_deref(), Some("128Mi"));
+    }
+
+    #[test]
+    fn update_project_blank_string_clears_session_settings_field() {
+        let mut current = SessionSettings::default();
+        current.cpu_limit = Some("100m".into());
+        let args = parse_update_project(&["--cpu-limit", ""]).unwrap();
+        let settings = build_update_session_settings(&args, current).unwrap();
+        assert!(settings.cpu_limit.is_none());
+    }
+
+    #[test]
+    fn update_project_clear_max_retries_drops_only_max_retries() {
+        let mut current = SessionSettings::default();
+        current.max_retries = Some(5);
+        current.cpu_limit = Some("100m".into());
+        let args = parse_update_project(&["--clear-max-retries"]).unwrap();
+        let settings = build_update_session_settings(&args, current).unwrap();
+        assert!(settings.max_retries.is_none());
+        assert_eq!(settings.cpu_limit.as_deref(), Some("100m"));
+    }
+
+    #[test]
+    fn update_project_clear_idle_timeout_drops_only_idle_timeout() {
+        let mut current = SessionSettings::default();
+        current.idle_timeout = Some(Timeout::Infinite);
+        current.cpu_limit = Some("100m".into());
+        let args = parse_update_project(&["--clear-idle-timeout"]).unwrap();
+        let settings = build_update_session_settings(&args, current).unwrap();
+        assert!(settings.idle_timeout.is_none());
+        assert_eq!(settings.cpu_limit.as_deref(), Some("100m"));
+    }
+
+    #[test]
+    fn update_project_clear_session_settings_wipes_everything() {
+        let mut current = SessionSettings::default();
+        current.image = Some("old-image".into());
+        current.cpu_limit = Some("100m".into());
+        current.max_retries = Some(5);
+        current.idle_timeout = Some(Timeout::Infinite);
+        let args = parse_update_project(&["--clear-session-settings"]).unwrap();
+        let settings = build_update_session_settings(&args, current).unwrap();
+        assert!(SessionSettings::is_default(&settings));
+    }
+
+    #[test]
+    fn update_project_clear_session_settings_conflicts_with_per_field_flags() {
+        let err =
+            parse_update_project_failure(&["--clear-session-settings", "--cpu-limit", "500m"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn update_project_clear_max_retries_conflicts_with_max_retries() {
+        let err = parse_update_project_failure(&["--clear-max-retries", "--max-retries", "5"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn update_project_clear_idle_timeout_conflicts_with_idle_timeout() {
+        let err =
+            parse_update_project_failure(&["--clear-idle-timeout", "--idle-timeout", "infinite"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 }

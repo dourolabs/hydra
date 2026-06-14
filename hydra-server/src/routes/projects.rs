@@ -83,6 +83,7 @@ fn project_from_upsert(payload: UpsertProjectRequest, creator: Username) -> Proj
         payload.priority,
     );
     project.prompt_path = payload.prompt_path;
+    project.session_settings = payload.session_settings;
     project
 }
 

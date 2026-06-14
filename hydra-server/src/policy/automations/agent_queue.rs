@@ -459,16 +459,18 @@ pub(crate) async fn agent_task_state(
 
 /// Resolve the effective [`crate::domain::issues::SessionSettings`] for
 /// `issue` by merging issue-level overrides over the per-status overrides
-/// declared on the issue's resolved [`StatusDefinition`], then applying
-/// the global defaults via `apply_session_settings_defaults`.
+/// on the issue's resolved [`StatusDefinition`] over the per-project
+/// overrides on the issue's project, then applying the global defaults
+/// via `apply_session_settings_defaults`.
 ///
 /// Precedence (most → least specific): `issue.session_settings` →
-/// `status.session_settings` → global default. `SessionSettings::merge`
-/// is None-fill (primary wins per-field), so each field falls through
-/// the layers until one supplies a `Some`. A `resolve_status` failure
-/// degrades to issue-only settings + defaults — the spawn dispatcher
-/// already emits a warning for that branch and we don't want a stale
-/// project lookup to break headless spawning.
+/// `status.session_settings` → `project.session_settings` → global
+/// default. `SessionSettings::merge` is None-fill (primary wins
+/// per-field), so each field falls through the layers until one supplies
+/// a `Some`. A `resolve_status` or `get_project` failure degrades by
+/// skipping just that layer — the spawn dispatcher already emits a
+/// warning for the status branch, and we don't want a stale project
+/// lookup to break headless spawning.
 pub(crate) async fn resolve_session_settings_for_issue(
     state: &AppState,
     issue: &Issue,
@@ -487,10 +489,27 @@ pub(crate) async fn resolve_session_settings_for_issue(
             crate::domain::issues::SessionSettings::default()
         }
     };
+    let project_settings: crate::domain::issues::SessionSettings = match state
+        .store
+        .get_project(&issue.project_id, false)
+        .await
+    {
+        Ok(versioned) => versioned.item.session_settings.into(),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                project_id = %issue.project_id,
+                "failed to load project for issue {}; project-level session_settings unavailable",
+                issue.title
+            );
+            crate::domain::issues::SessionSettings::default()
+        }
+    };
     let merged = crate::domain::issues::SessionSettings::merge(
         issue.session_settings.clone(),
         status_settings,
     );
+    let merged = crate::domain::issues::SessionSettings::merge(merged, project_settings);
     state.apply_session_settings_defaults(merged)
 }
 
@@ -3814,6 +3833,151 @@ mod tests {
             session.memory_limit.as_deref(),
             Some("256Mi"),
             "status-level memory_limit must propagate to the spawned session"
+        );
+
+        Ok(())
+    }
+
+    /// Overlay a `SessionSettings` blob on the default project's
+    /// project-level record. Mirrors [`set_status_session_settings`]
+    /// for the project layer.
+    async fn set_project_session_settings(
+        handles: &TestStateHandles,
+        session_settings: hydra_common::api::v1::issues::SessionSettings,
+    ) {
+        let project_id = crate::domain::projects::default_project_id();
+        let mut project = handles
+            .store
+            .get_project(&project_id, false)
+            .await
+            .expect("default project exists")
+            .item;
+        project.session_settings = session_settings;
+        handles
+            .store
+            .update_project(&project_id, project, &ActorRef::test())
+            .await
+            .expect("update_project succeeds");
+    }
+
+    /// Project-level `image` flows through to the spawned session when
+    /// neither the issue nor the status sets it. Anchors the new
+    /// project layer in the merge chain.
+    #[tokio::test]
+    async fn project_level_image_flows_to_spawned_session() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let mut project_settings = hydra_common::api::v1::issues::SessionSettings::default();
+        project_settings.image = Some("project-image".to_string());
+        set_project_session_settings(&handles, project_settings).await;
+
+        let (issue_id, _) = handles
+            .store
+            .add_issue(
+                Issue {
+                    issue_type: IssueType::Task,
+                    title: String::new(),
+                    description: "Inherit image from project".to_string(),
+                    creator: default_user(),
+                    status: status("open"),
+                    project_id: crate::domain::projects::default_project_id(),
+                    assignee: Some(test_agent_principal("agent-a")),
+                    session_settings: SessionSettings {
+                        repo_name: Some(repo_name.clone()),
+                        ..SessionSettings::default()
+                    },
+                    dependencies: vec![],
+                    patches: Vec::new(),
+                    archived: false,
+                    form: None,
+                    form_response: None,
+                },
+                &ActorRef::test(),
+            )
+            .await?;
+
+        let queue = queue("agent-a");
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles.store.get_issue(&issue_id, false).await?.item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &issue_id, &issue_item, &task_state)
+            .await?;
+        let session_id = result.into_session_id().expect("session spawned");
+        let session = handles.state.get_session(&session_id).await?;
+        assert_eq!(
+            session.image.as_deref(),
+            Some("project-image"),
+            "project-level image must propagate when neither issue nor status overrides it"
+        );
+
+        Ok(())
+    }
+
+    /// Locks the full precedence chain: issue beats status beats project
+    /// beats default. Each layer sets a different field; the resolved
+    /// settings must combine the per-field winners.
+    #[tokio::test]
+    async fn resolve_session_settings_merges_issue_status_project_layers() -> anyhow::Result<()> {
+        let (handles, _repo_name) = state_with_repository().await?;
+
+        // Project layer: image=A, cpu=A, memory=A
+        let mut project_settings = hydra_common::api::v1::issues::SessionSettings::default();
+        project_settings.image = Some("project-image".to_string());
+        project_settings.cpu_limit = Some("100m".to_string());
+        project_settings.memory_limit = Some("128Mi".to_string());
+        set_project_session_settings(&handles, project_settings).await;
+
+        // Status layer: image=B, cpu=B (memory unset — falls through)
+        let project_id = crate::domain::projects::default_project_id();
+        let key = StatusKey::try_new("open").expect("status key");
+        let project = handles.store.get_project(&project_id, false).await?.item;
+        let mut def = project
+            .statuses
+            .iter()
+            .find(|s| s.key == key)
+            .expect("open status exists")
+            .clone();
+        def.session_settings.image = Some("status-image".to_string());
+        def.session_settings.cpu_limit = Some("200m".to_string());
+        handles
+            .state
+            .update_status(&project_id, &key, def, &ActorRef::test())
+            .await?;
+
+        // Issue layer: image=C (cpu and memory unset — fall through)
+        let issue = Issue {
+            issue_type: IssueType::Task,
+            title: String::new(),
+            description: "merge precedence".to_string(),
+            creator: default_user(),
+            status: status("open"),
+            project_id,
+            assignee: Some(test_agent_principal("agent-a")),
+            session_settings: SessionSettings {
+                image: Some("issue-image".to_string()),
+                ..SessionSettings::default()
+            },
+            dependencies: vec![],
+            patches: Vec::new(),
+            archived: false,
+            form: None,
+            form_response: None,
+        };
+
+        let resolved = resolve_session_settings_for_issue(&handles.state, &issue).await;
+        assert_eq!(
+            resolved.image.as_deref(),
+            Some("issue-image"),
+            "issue image must beat status image and project image"
+        );
+        assert_eq!(
+            resolved.cpu_limit.as_deref(),
+            Some("200m"),
+            "status cpu_limit must beat project cpu_limit when issue is unset"
+        );
+        assert_eq!(
+            resolved.memory_limit.as_deref(),
+            Some("128Mi"),
+            "project memory_limit must surface when both issue and status are unset"
         );
 
         Ok(())

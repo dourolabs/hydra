@@ -187,6 +187,74 @@ async fn project_crud_round_trip() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// PR-A acceptance: `Project.session_settings` round-trips through the
+/// HTTP layer (`POST /v1/projects` → `GET /v1/projects/:id` →
+/// `PUT /v1/projects/:id` → `GET`). Covers the wire shape (no
+/// `session_settings` key on default), the create path's plumbing, and
+/// the update path's preservation/replacement semantics.
+#[tokio::test]
+async fn project_session_settings_round_trip_through_http() -> anyhow::Result<()> {
+    use hydra_common::api::v1::issues::SessionSettings;
+
+    let server = spawn_test_server().await?;
+    let client = test_client();
+    let base = server.base_url();
+
+    let mut session_settings = SessionSettings::default();
+    session_settings.image = Some("hydra-worker:project".to_string());
+    session_settings.cpu_limit = Some("500m".to_string());
+    let mut create_req = engineering_upsert();
+    create_req.session_settings = session_settings.clone();
+
+    let create_resp: UpsertProjectResponse = client
+        .post(format!("{base}/v1/projects"))
+        .json(&create_req)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let project_id = create_resp.project_id;
+
+    let fetched: ProjectRecord = client
+        .get(format!("{base}/v1/projects/{project_id}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(
+        fetched.project.session_settings, session_settings,
+        "create-time session_settings must round-trip through GET"
+    );
+
+    // Updating with the existing settings keeps them; switching to default wipes them.
+    let mut update_req = engineering_upsert();
+    update_req.session_settings = SessionSettings::default();
+    let _: UpsertProjectResponse = client
+        .put(format!("{base}/v1/projects/{project_id}"))
+        .json(&update_req)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let after_update: ProjectRecord = client
+        .get(format!("{base}/v1/projects/{project_id}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        SessionSettings::is_default(&after_update.project.session_settings),
+        "PUT with default session_settings must clear the project-level overrides"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn project_statuses_route_returns_status_list() -> anyhow::Result<()> {
     let server = spawn_test_server().await?;

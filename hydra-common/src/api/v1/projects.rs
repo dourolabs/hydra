@@ -310,6 +310,13 @@ pub struct Project {
     /// reorder.
     #[serde(default)]
     pub priority: f64,
+    /// Per-project overrides for the [`SessionSettings`] applied when
+    /// spawning sessions for issues in this project. Merges below
+    /// `Issue.session_settings` and `StatusDefinition.session_settings`
+    /// during spawn — issue beats status beats project — see
+    /// `SessionSettings::merge` and `apply_session_settings_defaults`.
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
 }
 
 impl Project {
@@ -329,6 +336,7 @@ impl Project {
             archived,
             prompt_path: None,
             priority,
+            session_settings: SessionSettings::default(),
         }
     }
 
@@ -355,6 +363,11 @@ pub struct UpsertProjectRequest {
     pub prompt_path: Option<String>,
     #[serde(default)]
     pub priority: f64,
+    /// Per-project overrides for the [`SessionSettings`] applied when
+    /// spawning sessions for issues in this project. See
+    /// [`Project::session_settings`].
+    #[serde(default, skip_serializing_if = "SessionSettings::is_default")]
+    pub session_settings: SessionSettings,
 }
 
 impl UpsertProjectRequest {
@@ -364,6 +377,7 @@ impl UpsertProjectRequest {
             name,
             prompt_path: None,
             priority: 0.0,
+            session_settings: SessionSettings::default(),
         }
     }
 }
@@ -1202,5 +1216,73 @@ mod tests {
             !value.contains("prompt_path"),
             "prompt_path should be skipped when None; got {value}"
         );
+    }
+
+    #[test]
+    fn project_omits_session_settings_when_default() {
+        let proj = project(vec![status("open", "Open")]);
+        let json = serde_json::to_string(&proj).unwrap();
+        assert!(
+            !json.contains("session_settings"),
+            "session_settings should be skipped when default; got {json}"
+        );
+    }
+
+    #[test]
+    fn project_round_trips_session_settings() {
+        let mut proj = project(vec![status("open", "Open")]);
+        proj.session_settings.image = Some("hydra-worker:custom".to_string());
+        proj.session_settings.cpu_limit = Some("500m".to_string());
+        let value = serde_json::to_value(&proj).unwrap();
+        assert!(value.get("session_settings").is_some());
+        let parsed: Project = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.session_settings, proj.session_settings);
+    }
+
+    #[test]
+    fn project_deserializes_legacy_wire_payload_without_session_settings() {
+        let legacy = serde_json::json!({
+            "key": "eng",
+            "name": "Engineering",
+            "statuses": [
+                {
+                    "key": "open",
+                    "label": "Open",
+                    "color": "#abcdef",
+                    "unblocks_parents": false,
+                    "unblocks_dependents": false,
+                    "cascades_to_children": false,
+                }
+            ],
+            "creator": "jayantk",
+        });
+        let parsed: Project = serde_json::from_value(legacy).unwrap();
+        assert!(SessionSettings::is_default(&parsed.session_settings));
+    }
+
+    #[test]
+    fn upsert_project_request_omits_session_settings_when_default() {
+        let req = UpsertProjectRequest::new(
+            ProjectKey::try_new("eng").unwrap(),
+            "Engineering".to_string(),
+        );
+        let value = serde_json::to_string(&req).unwrap();
+        assert!(
+            !value.contains("session_settings"),
+            "session_settings should be skipped when default; got {value}"
+        );
+    }
+
+    #[test]
+    fn upsert_project_request_round_trips_session_settings() {
+        let mut req = UpsertProjectRequest::new(
+            ProjectKey::try_new("eng").unwrap(),
+            "Engineering".to_string(),
+        );
+        req.session_settings.image = Some("hydra-worker:custom".to_string());
+        let value = serde_json::to_value(&req).unwrap();
+        assert!(value.get("session_settings").is_some());
+        let parsed: UpsertProjectRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.session_settings, req.session_settings);
     }
 }
