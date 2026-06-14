@@ -102,8 +102,7 @@ export function PatchesView({
         )}
 
         {patches.length > 0 && !isMobile && (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
+          <table className={styles.table}>
               <thead>
                 <tr>
                   <th className={styles.colTitle}>Title</th>
@@ -164,7 +163,6 @@ export function PatchesView({
                 })}
               </tbody>
             </table>
-          </div>
         )}
 
         {hasNextPage && (

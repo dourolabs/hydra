@@ -136,8 +136,7 @@ export function SessionsView({
         )}
 
         {rows.length > 0 && !isMobile && (
-          <div className={styles.tableWrap}>
-            <table className={styles.table} data-testid="sessions-list">
+          <table className={styles.table} data-testid="sessions-list">
               <thead>
                 <tr>
                   <th className={styles.colLinked}>Linked</th>
@@ -223,7 +222,6 @@ export function SessionsView({
                 })}
               </tbody>
             </table>
-          </div>
         )}
 
         {hasNextPage && (

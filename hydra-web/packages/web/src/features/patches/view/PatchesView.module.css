@@ -69,12 +69,6 @@
 }
 
 /* ── Table ── */
-.tableWrap {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -199,10 +193,6 @@
 .mobileList {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
   padding: 12px var(--pad-x);
 }
 

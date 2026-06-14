@@ -1,7 +1,4 @@
 .tableWrap {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
   /* Right-edge breathing room so the rightmost column (Progress) doesn't
      bump against the viewport edge — matches Patches's intentional inset. */
   padding-right: var(--pad-x);
@@ -250,9 +247,6 @@
 .mobileList {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
   padding: 12px var(--pad-x);
 }
 
