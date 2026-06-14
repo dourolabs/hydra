@@ -183,6 +183,24 @@ pub async fn add_repository(
     Ok(())
 }
 
+/// Register a named user in the test store. Useful when a test needs
+/// an assignee (e.g. `Principal::User { name }`) that passes
+/// `principal_exists` validation.
+pub async fn add_user_with_name(handles: &TestStateHandles, name: &str) {
+    use crate::domain::users::{User, Username};
+    let user = User::new(Username::from(name), None, false);
+    if let Err(err) = handles
+        .store
+        .add_user(user, &crate::domain::actors::ActorRef::test())
+        .await
+    {
+        match err {
+            crate::store::StoreError::UserAlreadyExists(_) => {}
+            other => panic!("failed to seed user '{name}': {other}"),
+        }
+    }
+}
+
 /// Register a named agent in the test store with a minimal prompt
 /// document. Useful when a test needs an assignee that passes
 /// `principal_exists` validation.

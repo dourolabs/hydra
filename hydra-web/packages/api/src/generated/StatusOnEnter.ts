@@ -10,20 +10,24 @@ import type { Principal } from "./Principal";
  * `attach_form` is set, `issue.form` is replaced wholesale with that
  * form (an issue holds at most one form at a time); when
  * `clear_assignee` is `true`, `issue.assignee` is unset; when
+ * `assign_to_creator` is `true`, `issue.assignee` is set to
+ * `Principal::User { name: issue.creator }` at status-entry time; when
  * `teardown_work` is `true`, this status is marked as a "teardown" status
  * — entering it kills any `Created`/`Pending`/`Running` sessions attached
  * to the issue AND closes any non-`Closed` conversations spawned from
  * the issue. The teardown effects also fire unconditionally on issue
  * deletion (regardless of this flag), but the flag is the canonical
  * "this is a teardown status" marker that gates the status-entry path.
- * `assign_to` and `clear_assignee` are mutually exclusive — set both
- * and [`StatusOnEnter::validate`] rejects the config; `teardown_work`
- * is independent of either. `None` (or `false`) on a field leaves the
- * corresponding field untouched.
+ * `assign_to`, `clear_assignee`, and `assign_to_creator` are pairwise
+ * mutually exclusive — set any two and [`StatusOnEnter::validate`]
+ * rejects the config; `teardown_work` is independent of the trio.
+ * `None` (or `false`) on a field leaves the corresponding field
+ * untouched.
  */
 export type StatusOnEnter = {
   assign_to?: Principal | null;
   attach_form?: DocumentPath | null;
   clear_assignee?: boolean;
+  assign_to_creator?: boolean;
   teardown_work?: boolean;
 };

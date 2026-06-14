@@ -286,12 +286,14 @@ pub struct CreateStatusArgs {
 
     /// On-enter: set the issue's assignee to this principal. Accepts the
     /// canonical path form: `users/<name>`, `agents/<name>`, or
-    /// `external/<system>/<name>`.
+    /// `external/<system>/<name>`. Mutually exclusive with
+    /// `--on-enter-clear-assignee` and `--on-enter-assign-to-creator` —
+    /// all three target `issue.assignee`.
     #[arg(
         long = "on-enter-assign-to",
         value_name = "PRINCIPAL",
         value_parser = parse_principal_arg,
-        conflicts_with = "on_enter_clear_assignee",
+        conflicts_with_all = ["on_enter_clear_assignee", "on_enter_assign_to_creator"],
     )]
     pub on_enter_assign_to: Option<Principal>,
 
@@ -300,9 +302,18 @@ pub struct CreateStatusArgs {
     pub on_enter_attach_form: Option<DocumentPath>,
 
     /// On-enter: unset the issue's assignee. Mutually exclusive with
-    /// `--on-enter-assign-to`.
-    #[arg(long = "on-enter-clear-assignee")]
+    /// `--on-enter-assign-to` and `--on-enter-assign-to-creator`.
+    #[arg(
+        long = "on-enter-clear-assignee",
+        conflicts_with = "on_enter_assign_to_creator"
+    )]
     pub on_enter_clear_assignee: bool,
+
+    /// On-enter: route the issue back to its creator by setting
+    /// `issue.assignee = users/<issue.creator>`. Mutually exclusive with
+    /// `--on-enter-assign-to` and `--on-enter-clear-assignee`.
+    #[arg(long = "on-enter-assign-to-creator")]
+    pub on_enter_assign_to_creator: bool,
 
     /// On-enter: tear down agent work attached to the issue — kill any
     /// `Created`/`Pending`/`Running` sessions and close any non-`Closed`
@@ -430,12 +441,14 @@ pub struct UpdateStatusArgs {
     /// canonical path form: `users/<name>`, `agents/<name>`, or
     /// `external/<system>/<name>`. If any `--on-enter-*` flag is
     /// present, the resulting `on_enter` is rebuilt from just those
-    /// flags (other fields default).
+    /// flags (other fields default). Mutually exclusive with
+    /// `--on-enter-clear-assignee` and `--on-enter-assign-to-creator` —
+    /// all three target `issue.assignee`.
     #[arg(
         long = "on-enter-assign-to",
         value_name = "PRINCIPAL",
         value_parser = parse_principal_arg,
-        conflicts_with_all = ["on_enter_clear_assignee", "clear_on_enter"],
+        conflicts_with_all = ["on_enter_clear_assignee", "on_enter_assign_to_creator", "clear_on_enter"],
     )]
     pub on_enter_assign_to: Option<Principal>,
 
@@ -449,9 +462,18 @@ pub struct UpdateStatusArgs {
     pub on_enter_attach_form: Option<DocumentPath>,
 
     /// On-enter: unset the issue's assignee. Mutually exclusive with
-    /// `--on-enter-assign-to`.
-    #[arg(long = "on-enter-clear-assignee", conflicts_with = "clear_on_enter")]
+    /// `--on-enter-assign-to` and `--on-enter-assign-to-creator`.
+    #[arg(
+        long = "on-enter-clear-assignee",
+        conflicts_with_all = ["on_enter_assign_to_creator", "clear_on_enter"]
+    )]
     pub on_enter_clear_assignee: bool,
+
+    /// On-enter: route the issue back to its creator by setting
+    /// `issue.assignee = users/<issue.creator>`. Mutually exclusive with
+    /// `--on-enter-assign-to` and `--on-enter-clear-assignee`.
+    #[arg(long = "on-enter-assign-to-creator", conflicts_with = "clear_on_enter")]
+    pub on_enter_assign_to_creator: bool,
 
     /// On-enter: tear down agent work attached to the issue — kill any
     /// `Created`/`Pending`/`Running` sessions and close any non-`Closed`
@@ -802,6 +824,7 @@ fn build_create_status_definition(args: &CreateStatusArgs) -> Result<StatusDefin
         args.on_enter_assign_to.clone(),
         args.on_enter_attach_form.clone(),
         args.on_enter_clear_assignee,
+        args.on_enter_assign_to_creator,
         args.on_enter_teardown_work,
     )?;
     let mut def = StatusDefinition::new(
@@ -898,6 +921,7 @@ fn update_has_any_direct_flag(args: &UpdateStatusArgs) -> bool {
         || args.on_enter_assign_to.is_some()
         || args.on_enter_attach_form.is_some()
         || args.on_enter_clear_assignee
+        || args.on_enter_assign_to_creator
         || args.on_enter_teardown_work
         || args.clear_on_enter
 }
@@ -959,20 +983,27 @@ fn apply_update_overlay(
     Ok(def)
 }
 
-/// Build a [`StatusOnEnter`] from the four `--on-enter-*` flag values.
+/// Build a [`StatusOnEnter`] from the `--on-enter-*` flag values.
 /// Returns `None` when no flag is set; otherwise returns the constructed
 /// automation. Rejects configurations that fail [`StatusOnEnter::validate`].
 fn build_on_enter_from_flags(
     assign_to: Option<Principal>,
     attach_form: Option<DocumentPath>,
     clear_assignee: bool,
+    assign_to_creator: bool,
     teardown_work: bool,
 ) -> Result<Option<StatusOnEnter>> {
-    if assign_to.is_none() && attach_form.is_none() && !clear_assignee && !teardown_work {
+    if assign_to.is_none()
+        && attach_form.is_none()
+        && !clear_assignee
+        && !assign_to_creator
+        && !teardown_work
+    {
         return Ok(None);
     }
     let mut on_enter = StatusOnEnter::new(assign_to, attach_form);
     on_enter.clear_assignee = clear_assignee;
+    on_enter.assign_to_creator = assign_to_creator;
     on_enter.teardown_work = teardown_work;
     on_enter
         .validate()
@@ -994,6 +1025,7 @@ fn overlay_on_enter(
     let any_setter = args.on_enter_assign_to.is_some()
         || args.on_enter_attach_form.is_some()
         || args.on_enter_clear_assignee
+        || args.on_enter_assign_to_creator
         || args.on_enter_teardown_work;
     if !any_setter {
         return Ok(current);
@@ -1002,6 +1034,7 @@ fn overlay_on_enter(
         args.on_enter_assign_to.clone(),
         args.on_enter_attach_form.clone(),
         args.on_enter_clear_assignee,
+        args.on_enter_assign_to_creator,
         args.on_enter_teardown_work,
     )
 }
@@ -1307,6 +1340,56 @@ mod tests {
             other => panic!("expected agent principal, got {other:?}"),
         }
         assert!(on_enter.teardown_work);
+        assert!(!on_enter.clear_assignee);
+    }
+
+    #[test]
+    fn create_on_enter_assign_to_creator_conflicts_with_assign_to() {
+        let err = parse_create_failure(&[
+            "--key",
+            "backlog",
+            "--label",
+            "Backlog",
+            "--color",
+            "#aabbcc",
+            "--on-enter-assign-to",
+            "agents/swe",
+            "--on-enter-assign-to-creator",
+        ]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn create_on_enter_assign_to_creator_conflicts_with_clear_assignee() {
+        let err = parse_create_failure(&[
+            "--key",
+            "backlog",
+            "--label",
+            "Backlog",
+            "--color",
+            "#aabbcc",
+            "--on-enter-clear-assignee",
+            "--on-enter-assign-to-creator",
+        ]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn build_create_status_definition_on_enter_with_assign_to_creator() {
+        let args = parse_create(&[
+            "--key",
+            "needs-clarification",
+            "--label",
+            "Needs clarification",
+            "--color",
+            "#f39c12",
+            "--on-enter-assign-to-creator",
+        ])
+        .unwrap();
+        let def = build_create_status_definition(&args).unwrap();
+        let on_enter = def.on_enter.expect("on_enter present");
+        assert!(on_enter.assign_to_creator);
+        assert!(on_enter.assign_to.is_none());
         assert!(!on_enter.clear_assignee);
     }
 
@@ -1632,6 +1715,16 @@ mod tests {
             Principal::Agent { name } => assert_eq!(name.as_str(), "swe"),
             other => panic!("expected agent principal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn update_overlay_on_enter_with_assign_to_creator() {
+        let args = parse_update(&["--on-enter-assign-to-creator"]).unwrap();
+        let def = build_update_status_definition_sync(&args).unwrap();
+        let on_enter = def.on_enter.expect("on_enter present");
+        assert!(on_enter.assign_to_creator);
+        assert!(on_enter.assign_to.is_none());
+        assert!(!on_enter.clear_assignee);
     }
 
     #[test]
