@@ -258,9 +258,14 @@ impl EventFilter {
     fn matches(&self, event: &ServerEvent) -> bool {
         let (entity_type, entity_id) = event.entity_info();
 
-        // Check entity type filter.
+        // Check entity type filter. Comment events are scoped to issues, so
+        // callers subscribed to `types=issues` also receive `comment_created`
+        // (mirroring how relationship/label mutations surface as issue updates)
+        // — this keeps the existing frontend subscription URLs working.
         if let Some(types) = &self.entity_types {
-            if !types.contains(&entity_type.to_string()) {
+            let type_matches = types.contains(&entity_type.to_string())
+                || (entity_type == "comments" && types.iter().any(|t| t == "issues"));
+            if !type_matches {
                 return false;
             }
         }
@@ -478,6 +483,10 @@ async fn serialize_entity(
             // The state blob itself is fetched by subscribers via
             // `get_session_state`; the SSE notification carries no payload.
             return None;
+        }
+        MutationPayload::Comment { comment, .. } => {
+            let api_comment: hydra_common::api::v1::comments::Comment = comment.clone().into();
+            serde_json::to_value(api_comment).ok()?
         }
     };
     Some(value)
@@ -737,6 +746,20 @@ async fn server_event_to_sse(
             "session_state",
             session_id.to_string(),
             0,
+            *timestamp,
+            payload,
+        ),
+        ServerEvent::CommentCreated {
+            issue_id,
+            sequence,
+            timestamp,
+            payload,
+            ..
+        } => (
+            SseEventType::CommentCreated,
+            "comment",
+            issue_id.to_string(),
+            *sequence,
             *timestamp,
             payload,
         ),
@@ -1356,6 +1379,118 @@ mod tests {
         assert_eq!(data.entity_id, session_id.to_string());
         // No body — consumers must fetch the state blob via `get_session_state`.
         assert!(data.entity.is_none());
+    }
+
+    #[tokio::test]
+    async fn server_event_to_sse_comment_created() {
+        use crate::domain::comments::Comment;
+        use hydra_common::api::v1::comments::Comment as WireComment;
+
+        let state = test_app_state();
+        let issue_id = IssueId::new();
+        let timestamp = Utc::now();
+        let comment = Comment::new(
+            issue_id.clone(),
+            5,
+            "hello".to_string(),
+            ActorRef::test(),
+            timestamp,
+        );
+        let payload = Arc::new(MutationPayload::Comment {
+            comment,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::CommentCreated {
+            seq: 42,
+            issue_id: issue_id.clone(),
+            sequence: 5,
+            timestamp,
+            payload,
+        };
+
+        let (event_type, data) = server_event_to_sse(&event, &state).await;
+        assert_eq!(event_type, SseEventType::CommentCreated);
+        assert_eq!(data.entity_type, "comment");
+        assert_eq!(data.entity_id, issue_id.to_string());
+        assert_eq!(data.version, 5);
+
+        let entity = data.entity.expect("entity should be present");
+        let wire: WireComment =
+            serde_json::from_value(entity).expect("entity should deserialize as wire Comment");
+        assert_eq!(wire.issue_id, issue_id);
+        assert_eq!(wire.sequence, 5);
+        assert_eq!(wire.body, "hello");
+    }
+
+    #[test]
+    fn event_filter_issues_matches_comment_created() {
+        use crate::domain::comments::Comment;
+
+        let issue_id = IssueId::new();
+        let comment = Comment::new(
+            issue_id.clone(),
+            1,
+            "body".to_string(),
+            ActorRef::test(),
+            Utc::now(),
+        );
+        let payload = Arc::new(MutationPayload::Comment {
+            comment,
+            actor: ActorRef::test(),
+        });
+        let event = ServerEvent::CommentCreated {
+            seq: 1,
+            issue_id: issue_id.clone(),
+            sequence: 1,
+            timestamp: Utc::now(),
+            payload,
+        };
+
+        // Default filter (no types) matches.
+        let default_filter = EventFilter::from_query(&EventsQuery::default()).unwrap();
+        assert!(default_filter.matches(&event));
+
+        // types=comments matches.
+        let comments_query = EventsQuery {
+            types: Some("comments".to_string()),
+            ..Default::default()
+        };
+        let comments_filter = EventFilter::from_query(&comments_query).unwrap();
+        assert!(comments_filter.matches(&event));
+
+        // types=issues also matches — comment events ride under the issues
+        // filter group so existing subscribers don't need URL changes.
+        let issues_query = EventsQuery {
+            types: Some("issues".to_string()),
+            ..Default::default()
+        };
+        let issues_filter = EventFilter::from_query(&issues_query).unwrap();
+        assert!(issues_filter.matches(&event));
+
+        // types=sessions does NOT match.
+        let sessions_query = EventsQuery {
+            types: Some("sessions".to_string()),
+            ..Default::default()
+        };
+        let sessions_filter = EventFilter::from_query(&sessions_query).unwrap();
+        assert!(!sessions_filter.matches(&event));
+
+        // issue_ids filter targets a different issue — no match.
+        let other_id = IssueId::new();
+        let other_query = EventsQuery {
+            issue_ids: Some(other_id.to_string()),
+            ..Default::default()
+        };
+        let other_filter = EventFilter::from_query(&other_query).unwrap();
+        assert!(!other_filter.matches(&event));
+
+        // issue_ids filter matches our id.
+        let matching_query = EventsQuery {
+            issue_ids: Some(issue_id.to_string()),
+            ..Default::default()
+        };
+        let matching_filter = EventFilter::from_query(&matching_query).unwrap();
+        assert!(matching_filter.matches(&event));
     }
 
     #[test]

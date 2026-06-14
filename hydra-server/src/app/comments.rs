@@ -1,7 +1,8 @@
 //! Thin AppState pass-throughs for the comments store surface. Comments
-//! are append-only and inert (no events emitted, no issue version bump),
-//! so these wrappers do nothing beyond delegating to the underlying
-//! store.
+//! are append-only and do not bump the parent issue's version, but
+//! `add_comment` does emit a `comment_created` event on the event bus
+//! so SSE subscribers can react. The wrappers delegate to the
+//! underlying store for the persistence step.
 
 use crate::domain::actors::ActorRef;
 use crate::domain::comments::{Comment, ListCommentsPage};

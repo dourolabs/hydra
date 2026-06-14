@@ -6,7 +6,7 @@ import type { Store, StoreEvent } from "../store.js";
 /**
  * Maps an SSE event type to the entity-type category used by the `types=`
  * query parameter (`issues`, `sessions`, `patches`, `documents`, `labels`,
- * `conversations`). Mirrors `event_entity_info` in
+ * `conversations`, `comments`). Mirrors `event_entity_info` in
  * `hydra-server/src/routes/events.rs` so the mock server filters the same way
  * the real server does. Returns `null` for non-entity events (`connected`,
  * `resync`, `heartbeat`, `session_log`) that the SSE route writes directly and
@@ -39,6 +39,8 @@ export function eventCategory(eventType: SseEventType): string | null {
     case "conversation_created":
     case "conversation_updated":
       return "conversations";
+    case "comment_created":
+      return "comments";
     case "connected":
     case "resync":
     case "heartbeat":
@@ -64,8 +66,20 @@ export function createEventRoutes(store: Store): Hono {
 
     function matchesFilter(event: StoreEvent): boolean {
       const category = eventCategory(event.eventType);
-      if (typesFilter && (category === null || !typesFilter.includes(category))) return false;
-      if (issueIdsFilter && category === "issues" && !issueIdsFilter.includes(event.entityId)) return false;
+      if (typesFilter) {
+        if (category === null) return false;
+        // Comment events ride under both `types=comments` (their own category)
+        // and `types=issues` (since comments are scoped to issues) so existing
+        // issue subscribers don't need URL changes to start seeing them.
+        const typeMatches =
+          typesFilter.includes(category) ||
+          (category === "comments" && typesFilter.includes("issues"));
+        if (!typeMatches) return false;
+      }
+      // Comment events are addressed by issue_id (see entity_info in
+      // hydra-server/src/app/event_bus.rs), so `issue_ids=` filters them too.
+      const issueScoped = category === "issues" || category === "comments";
+      if (issueIdsFilter && issueScoped && !issueIdsFilter.includes(event.entityId)) return false;
       if (sessionIdsFilter && category === "sessions" && !sessionIdsFilter.includes(event.entityId)) return false;
       if (patchIdsFilter && category === "patches" && !patchIdsFilter.includes(event.entityId)) return false;
       if (documentIdsFilter && category === "documents" && !documentIdsFilter.includes(event.entityId)) return false;

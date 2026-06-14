@@ -23,6 +23,7 @@ export type SseEventType =
   | "session_event_created"
   | "session_state_updated"
   | "session_log"
+  | "comment_created"
   | "connected"
   | "resync"
   | "heartbeat"
