@@ -109,7 +109,6 @@ impl Render for IssueRecords<'_> {
                 title,
                 description,
                 creator,
-                progress,
                 status,
                 assignee,
                 dependencies,
@@ -140,15 +139,6 @@ impl Render for IssueRecords<'_> {
                 writeln!(writer, "  -")?;
             } else {
                 for line in description.lines() {
-                    writeln!(writer, "  {line}")?;
-                }
-            }
-
-            writeln!(writer, "Progress:")?;
-            if progress.trim().is_empty() {
-                writeln!(writer, "  -")?;
-            } else {
-                for line in progress.lines() {
                     writeln!(writer, "  {line}")?;
                 }
             }
