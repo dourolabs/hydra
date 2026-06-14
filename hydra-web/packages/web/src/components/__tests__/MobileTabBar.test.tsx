@@ -52,4 +52,25 @@ describe("MobileTabBar", () => {
     expect(screen.getByTestId("my-prefix-b")).toBeTruthy();
     expect(screen.getByTestId("my-prefix-c")).toBeTruthy();
   });
+
+  it("renders the trailingAction node when provided", () => {
+    render(
+      <MobileTabBar
+        tabs={TABS}
+        activeKey="a"
+        onChange={() => {}}
+        trailingAction={<button data-testid="trailing">Action</button>}
+      />,
+    );
+    expect(screen.getByTestId("trailing")).toBeTruthy();
+  });
+
+  it("omits the trailingAction wrapper when no node is provided", () => {
+    const { container } = render(
+      <MobileTabBar tabs={TABS} activeKey="a" onChange={() => {}} />,
+    );
+    // Only the three tab buttons should be children of the bar.
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(3);
+    expect(container.querySelector(".trailing")).toBeNull();
+  });
 });

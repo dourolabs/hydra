@@ -251,10 +251,15 @@ describe("ChatInput draft persistence", () => {
 });
 
 describe("ChatInput auto-grow", () => {
+  beforeEach(() => {
+    isMobileMock.mockReturnValue(false);
+  });
+
   afterEach(() => {
     cleanup();
     window.localStorage.clear();
     vi.clearAllMocks();
+    isMobileMock.mockReturnValue(false);
   });
 
   it("renders the textarea with a single visible row by default", () => {
@@ -262,11 +267,19 @@ describe("ChatInput auto-grow", () => {
     expect(getTextarea().getAttribute("rows")).toBe("1");
   });
 
-  it("clamps the inline height to MIN_HEIGHT when the value is empty", () => {
+  it("clamps the inline height to the desktop MIN when the value is empty", () => {
     render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
     // jsdom reports 0 for scrollHeight, so the layout effect should fall back
-    // to the MIN_HEIGHT clamp (44px).
-    expect(getTextarea().style.height).toBe("44px");
+    // to MIN_HEIGHT_DESKTOP_PX (36px).
+    expect(getTextarea().style.height).toBe("36px");
+  });
+
+  it("clamps the inline height to the mobile MIN when on mobile", () => {
+    isMobileMock.mockReturnValue(true);
+    render(<ChatInput conversationId="c-1" onSend={vi.fn()} />);
+    // 28px Button.iconOnly bumps to 44px on touch viewports, so the textarea
+    // floor bumps to MIN_HEIGHT_MOBILE_PX (52px) to fit it.
+    expect(getTextarea().style.height).toBe("52px");
   });
 
   it("grows the inline height to scrollHeight + border when content is added", () => {
@@ -302,6 +315,6 @@ describe("ChatInput auto-grow", () => {
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, value: 0 });
     fireEvent.click(getSendButton());
 
-    expect(textarea.style.height).toBe("44px");
+    expect(textarea.style.height).toBe("36px");
   });
 });

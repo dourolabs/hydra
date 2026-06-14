@@ -50,25 +50,11 @@
 }
 
 @media (max-width: 768px) {
+  /* Breadcrumb names the chat, meta is shown in the Details tab, and the
+     End chat button rides the trailing slot of MobileTabBar — so the entire
+     header collapses out of the mobile layout to keep the message list's
+     vertical budget intact. */
   .header {
-    padding: 4px 16px;
-  }
-
-  /* Breadcrumb already names the chat; meta is shown in the Details tab.
-     Hide the inline meta on mobile so the header collapses to just the
-     trailing End chat button. */
-  .meta {
     display: none;
-  }
-
-  /* When the conversation is closed there's no End chat button to host, so
-     the whole header collapses out of the mobile layout — keep the message
-     list's vertical budget intact. */
-  .header[data-has-action="false"] {
-    display: none;
-  }
-
-  .header[data-has-action="true"] {
-    justify-content: flex-end;
   }
 }

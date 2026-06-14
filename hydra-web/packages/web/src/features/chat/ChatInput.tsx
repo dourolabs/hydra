@@ -4,7 +4,13 @@ import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConversationDraft } from "./useConversationDraft";
 import styles from "./ChatInput.module.css";
 
-const MIN_HEIGHT_PX = 44;
+// Sized to comfortably hold the corner Send button at empty state. The Send
+// button picks up Button's iconOnly sizing (28×28 desktop, 44×44 mobile via
+// the touch-target floor in Button.module.css), so the floor differs by
+// breakpoint and the JS MIN tracks that to avoid the button overhanging the
+// textarea edge.
+const MIN_HEIGHT_DESKTOP_PX = 36;
+const MIN_HEIGHT_MOBILE_PX = 52;
 const MAX_HEIGHT_PX = 480;
 // The textarea inherits the global `box-sizing: border-box`, so its `height`
 // includes the 1px top + 1px bottom border. scrollHeight reports content +
@@ -25,6 +31,7 @@ export function ChatInput({ conversationId, onSend, disabled }: ChatInputProps) 
   const isDisabled = disabled;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isMobile = useIsMobile();
+  const minHeightPx = isMobile ? MIN_HEIGHT_MOBILE_PX : MIN_HEIGHT_DESKTOP_PX;
 
   // Auto-grow: re-measure scrollHeight whenever the value changes and clamp
   // the textarea height to [MIN, MAX]. Resetting to MIN_HEIGHT first lets
@@ -32,13 +39,13 @@ export function ChatInput({ conversationId, onSend, disabled }: ChatInputProps) 
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = `${MIN_HEIGHT_PX}px`;
+    el.style.height = `${minHeightPx}px`;
     const next = Math.max(
-      MIN_HEIGHT_PX,
+      minHeightPx,
       Math.min(MAX_HEIGHT_PX, el.scrollHeight + BORDER_PX),
     );
     el.style.height = `${next}px`;
-  }, [value]);
+  }, [value, minHeightPx]);
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();

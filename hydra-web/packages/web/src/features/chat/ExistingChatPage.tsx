@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Spinner } from "@hydra/ui";
+import { Button, Spinner } from "@hydra/ui";
 import type { Conversation, SessionEvent } from "@hydra/api";
 import { useConversation } from "./useConversations";
 import { useUsername } from "../auth/useUsername";
@@ -197,6 +197,19 @@ export function ExistingChatPage({ conversationId }: { conversationId: string })
         activeKey={activeMobileTab}
         onChange={handleMobileTabChange}
         testIdPrefix="chat-mobile-tab-"
+        trailingAction={
+          canClose ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleEndChat}
+              disabled={closeMutation.isPending}
+              data-testid="chat-mobile-end-chat"
+            >
+              End chat
+            </Button>
+          ) : undefined
+        }
       />
       <div
         className={styles.chatPane}
