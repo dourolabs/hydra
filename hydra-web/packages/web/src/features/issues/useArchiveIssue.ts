@@ -7,13 +7,17 @@ import type { IssueVersionRecord, ListIssuesResponse } from "@hydra/api";
 import { apiClient } from "../../api/client";
 import { useToast } from "../toast/useToast";
 
-// The `["paginatedIssues"]` prefix is shared by two query shapes:
+// The `["paginatedIssues"]` prefix is shared by three query shapes:
 //   - usePaginatedIssues (table view) — `InfiniteData<ListIssuesResponse>`
-//   - useBoardIssuesByProject (board view) — `ListIssuesResponse[]`
-// A single setQueriesData call has to handle both.
+//   - useBoardIssuesByProject bulk query — `ListIssuesResponse` (single)
+//   - useBoardIssuesByProject per-cell expanded — `ListIssuesResponse[]`
+// A single setQueriesData call has to handle all three; missing the bulk
+// shape sent the updater into `old.pages.map` and threw "Cannot read
+// properties of undefined (reading 'map')".
 type PaginatedIssuesCache =
   | InfiniteData<ListIssuesResponse>
-  | ListIssuesResponse[];
+  | ListIssuesResponse[]
+  | ListIssuesResponse;
 
 interface ArchiveContext {
   previousIssue?: IssueVersionRecord;
@@ -72,10 +76,13 @@ export function useArchiveIssue(issueId: string) {
           if (Array.isArray(old)) {
             return old.map((page) => dropIssueFromPage(page, issueId));
           }
-          return {
-            ...old,
-            pages: old.pages.map((page) => dropIssueFromPage(page, issueId)),
-          };
+          if ("pages" in old) {
+            return {
+              ...old,
+              pages: old.pages.map((page) => dropIssueFromPage(page, issueId)),
+            };
+          }
+          return dropIssueFromPage(old, issueId);
         },
       );
 
