@@ -121,9 +121,11 @@ impl<'de> Deserialize<'de> for Schedule {
 /// `title`, `description`, and `assignee` on `CreateIssue` are template
 /// strings rendered through [`render`]. `assignee` is parsed as a
 /// `Principal` after rendering. Both `project_id` and `status` are
-/// required on the wire — no defaults, no inference. A persisted trigger
-/// row missing either field will fail loudly at deserialization rather
-/// than silently substitute a default.
+/// required on the wire — no defaults, no inference. Malformed payloads
+/// (missing required fields, unrecognized `type`) round-trip as
+/// [`Action::Unknown`] via the `ActionHelper` deserializer rather than
+/// failing the whole row — the canonical forward-compat shape shared
+/// with [`Schedule`], `Bundle`, `MountItem`, etc.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 // Rename in TS to avoid colliding with the form-module `Action` export.
