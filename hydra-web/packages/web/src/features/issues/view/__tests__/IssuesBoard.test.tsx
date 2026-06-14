@@ -270,6 +270,16 @@ vi.mock("@hydra/ui", () => ({
     IconChevronDown: () => <span data-testid="icon-chevron-down" />,
     IconPlus: () => <span data-testid="icon-plus" />,
     IconChat: () => <span data-testid="icon-chat" />,
+    IconArchive: () => <span data-testid="icon-archive" />,
+    IconDoc: () => <span data-testid="icon-doc" />,
+    IconHalfCircle: () => <span data-testid="icon-half-circle" />,
+    IconPlay: () => <span data-testid="icon-play" />,
+    IconEye: () => <span data-testid="icon-eye" />,
+    IconSearch: () => <span data-testid="icon-search" />,
+    IconRefresh: () => <span data-testid="icon-refresh" />,
+    IconAlert: () => <span data-testid="icon-alert" />,
+    IconCheck: () => <span data-testid="icon-check" />,
+    IconX: () => <span data-testid="icon-x" />,
   },
 }));
 

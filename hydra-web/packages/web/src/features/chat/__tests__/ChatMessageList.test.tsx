@@ -8,6 +8,18 @@ vi.mock("@hydra/ui", () => ({
   Avatar: ({ name, kind }: { name: string; kind?: "human" | "agent" }) => (
     <span data-testid="avatar" data-kind={kind ?? "human"} data-name={name} />
   ),
+  Icons: {
+    IconArchive: () => <span />,
+    IconDoc: () => <span />,
+    IconHalfCircle: () => <span />,
+    IconPlay: () => <span />,
+    IconEye: () => <span />,
+    IconSearch: () => <span />,
+    IconRefresh: () => <span />,
+    IconAlert: () => <span />,
+    IconCheck: () => <span />,
+    IconX: () => <span />,
+  },
 }));
 
 vi.mock("../../../utils/time", () => ({

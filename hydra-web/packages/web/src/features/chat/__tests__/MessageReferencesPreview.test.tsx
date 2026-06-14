@@ -76,7 +76,19 @@ vi.mock("@hydra/ui", () => {
   const TypeChip = ({ type }: { type: string }) => (
     <span data-testid="type-chip" data-type={type} />
   );
-  return { PreviewCard, Badge, Avatar, TypeChip };
+  const Icons = {
+    IconArchive: () => <span />,
+    IconDoc: () => <span />,
+    IconHalfCircle: () => <span />,
+    IconPlay: () => <span />,
+    IconEye: () => <span />,
+    IconSearch: () => <span />,
+    IconRefresh: () => <span />,
+    IconAlert: () => <span />,
+    IconCheck: () => <span />,
+    IconX: () => <span />,
+  };
+  return { PreviewCard, Badge, Avatar, TypeChip, Icons };
 });
 
 // --- Stub the AgoTime component to a plain span. ---
