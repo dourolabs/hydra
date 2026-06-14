@@ -2095,6 +2095,96 @@ async fn assert_recent_migration_store_smoke(pool: &SqlitePool) -> Result<()> {
         other => bail!("smoke trigger: unexpected migrated action: {other:?}"),
     }
 
+    // Multi-action trigger: assert the post-migration `actions` array
+    // preserves the source-array order. The PG sibling pins this with
+    // `WITH ORDINALITY ... ORDER BY ord`; on SQLite the original
+    // 20260722000000 migration relies on the de-facto json_each row
+    // order and the follow-up 20260723000000 migration pins it
+    // contractually with an explicit `ORDER BY key` + `json(...)`
+    // wrap. A single-action fixture can't catch an ordering
+    // regression, so seed three CreateIssue actions with
+    // distinguishable titles and re-run both migrations in sequence
+    // (the production order) on the freshly-seeded row.
+    let multi_trigger_id = "t-migmult";
+    let multi_actions = serde_json::json!([
+        {
+            "CreateIssue": {
+                "type": "task",
+                "title": "First action",
+                "description": "first",
+                "project_id": "j-defaul",
+                "status": "open"
+            }
+        },
+        {
+            "CreateIssue": {
+                "type": "task",
+                "title": "Second action",
+                "description": "second",
+                "project_id": "j-defaul",
+                "status": "open"
+            }
+        },
+        {
+            "CreateIssue": {
+                "type": "task",
+                "title": "Third action",
+                "description": "third",
+                "project_id": "j-defaul",
+                "status": "open"
+            }
+        }
+    ])
+    .to_string();
+    sqlx::query(
+        "INSERT INTO triggers \
+           (id, version_number, enabled, creator, schedule, actions, \
+            last_fired_at, archived, actor, is_latest) \
+         VALUES (?1, 1, 1, ?2, ?3, ?4, NULL, 0, NULL, 1)",
+    )
+    .bind(multi_trigger_id)
+    .bind("alice")
+    .bind(&trigger_schedule)
+    .bind(&multi_actions)
+    .execute(pool)
+    .await
+    .context("insert multi-action smoke trigger row")?;
+
+    sqlx::raw_sql(include_str!(
+        "../sqlite-migrations/20260722000000_rewrite_trigger_jsonb_internal_tag.sql"
+    ))
+    .execute(pool)
+    .await
+    .context("re-run 20260722000000 sqlite rewrite on multi-action seeded row")?;
+    sqlx::raw_sql(include_str!(
+        "../sqlite-migrations/20260723000000_tighten_trigger_action_order.sql"
+    ))
+    .execute(pool)
+    .await
+    .context("re-run 20260723000000 sqlite action-order tightening on multi-action seeded row")?;
+
+    let multi_tid =
+        TriggerId::from_str(multi_trigger_id).context("parse multi smoke trigger id")?;
+    let fetched_multi = store
+        .get_trigger(&multi_tid, false)
+        .await
+        .context("SqliteStore::get_trigger(t-migmult)")?;
+    let titles: Vec<&str> = fetched_multi
+        .item
+        .actions
+        .iter()
+        .map(|a| match a {
+            Action::CreateIssue { title, .. } => title.as_str(),
+            other => panic!("multi smoke trigger: unexpected action variant: {other:?}"),
+        })
+        .collect();
+    if titles != ["First action", "Second action", "Third action"] {
+        bail!(
+            "multi smoke trigger: expected post-migration action order \
+             [First, Second, Third]; got {titles:?}"
+        );
+    }
+
     let project_id = "j-migsmoke";
     // Post-cutover (20260614000000), `projects.statuses` JSONB was
     // dropped and `metis.statuses` is the source of truth. Smoke
