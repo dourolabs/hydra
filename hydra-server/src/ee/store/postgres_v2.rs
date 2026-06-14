@@ -1281,7 +1281,7 @@ impl PostgresStoreV2 {
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
     {
-        let session_settings_json = project_session_settings_to_json(&project.session_settings)?;
+        let session_settings_json = session_settings_to_json("project", &project.session_settings)?;
         let query = format!(
             "INSERT INTO {TABLE_PROJECTS} \
              (id, version_number, key, name, creator, archived, actor, prompt_path, priority, next_status_sequence, session_settings_json) \
@@ -1334,7 +1334,7 @@ impl PostgresStoreV2 {
                     "failed to deserialize project session_settings: {e}"
                 ))
             })?,
-            None => Default::default(),
+            None => ApiSessionSettings::default(),
         };
         Ok(project)
     }
@@ -1383,7 +1383,7 @@ impl PostgresStoreV2 {
                     "failed to deserialize status session_settings: {e}"
                 ))
             })?,
-            None => Default::default(),
+            None => ApiSessionSettings::default(),
         };
         def.archived = row.archived;
         Ok(def)
@@ -1535,7 +1535,7 @@ impl PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
-        let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
+        let session_settings_json = session_settings_to_json("status", &status.session_settings)?;
         sqlx::query(
             "INSERT INTO metis.statuses (project_id, sequence, key, label, color, unblocks_parents, unblocks_dependents, cascades_to_children, on_enter, prompt_path, interactive, auto_archive_after_seconds, max_simultaneous_sessions, suppress_sessions, position, session_settings_json, archived) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
@@ -2548,34 +2548,22 @@ fn build_labels_predicates_pg(query: &SearchLabelsQuery) -> (Vec<String>, Vec<St
     (predicates, bindings)
 }
 
-/// Serialize a status-level [`ApiSessionSettings`] for storage. Empty
-/// overrides round-trip as SQL NULL so a SELECT that observes NULL
-/// rebuilds `SessionSettings::default()` — the wire shape and the
-/// on-disk shape agree on "no override".
-fn status_session_settings_to_json(
-    settings: &ApiSessionSettings,
-) -> Result<Option<String>, StoreError> {
-    if ApiSessionSettings::is_default(settings) {
+/// Serialize a `SessionSettings` value for storage under the given
+/// `scope` label ("status" / "project" / "agent"). Empty overrides
+/// round-trip as SQL NULL so a SELECT that observes NULL rebuilds
+/// `SessionSettings::default()` — the wire shape and the on-disk shape
+/// agree on "no override". Generic over the API and domain
+/// `SessionSettings` types (they share the same serde representation),
+/// so agent call sites can pass the domain value directly.
+fn session_settings_to_json<T>(scope: &str, settings: &T) -> Result<Option<String>, StoreError>
+where
+    T: serde::Serialize + Default + PartialEq,
+{
+    if *settings == T::default() {
         return Ok(None);
     }
     let json = serde_json::to_string(settings).map_err(|e| {
-        StoreError::Internal(format!("failed to serialize status session_settings: {e}"))
-    })?;
-    Ok(Some(json))
-}
-
-/// Serialize a project-level [`ApiSessionSettings`] for storage. Empty
-/// overrides round-trip as SQL NULL so a SELECT that observes NULL
-/// rebuilds `SessionSettings::default()` — the wire shape and the
-/// on-disk shape agree on "no override".
-fn project_session_settings_to_json(
-    settings: &ApiSessionSettings,
-) -> Result<Option<String>, StoreError> {
-    if ApiSessionSettings::is_default(settings) {
-        return Ok(None);
-    }
-    let json = serde_json::to_string(settings).map_err(|e| {
-        StoreError::Internal(format!("failed to serialize project session_settings: {e}"))
+        StoreError::Internal(format!("failed to serialize {scope} session_settings: {e}"))
     })?;
     Ok(Some(json))
 }
@@ -5511,7 +5499,7 @@ impl Store for PostgresStoreV2 {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
                 let session_settings_json =
-                    agent_session_settings_to_json_pg(&agent.session_settings)?;
+                    session_settings_to_json("agent", &agent.session_settings)?;
                 let sql = format!(
                     "UPDATE {TABLE_AGENTS} \
                      SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, \
@@ -5545,7 +5533,7 @@ impl Store for PostgresStoreV2 {
                     StoreError::Internal(format!("failed to serialize secrets: {e}"))
                 })?;
                 let session_settings_json =
-                    agent_session_settings_to_json_pg(&agent.session_settings)?;
+                    session_settings_to_json("agent", &agent.session_settings)?;
                 let sql = format!(
                     "INSERT INTO {TABLE_AGENTS} \
                      (name, prompt_path, mcp_config_path, max_tries, \
@@ -5582,7 +5570,7 @@ impl Store for PostgresStoreV2 {
 
         let secrets_json = serde_json::to_value(&agent.secrets)
             .map_err(|e| StoreError::Internal(format!("failed to serialize secrets: {e}")))?;
-        let session_settings_json = agent_session_settings_to_json_pg(&agent.session_settings)?;
+        let session_settings_json = session_settings_to_json("agent", &agent.session_settings)?;
         let sql = format!(
             "UPDATE {TABLE_AGENTS} \
              SET prompt_path = $1, mcp_config_path = $2, max_tries = $3, \
@@ -6352,7 +6340,7 @@ impl Store for PostgresStoreV2 {
             .map_err(|e| {
                 StoreError::Internal(format!("failed to serialize status on_enter: {e}"))
             })?;
-        let session_settings_json = status_session_settings_to_json(&status.session_settings)?;
+        let session_settings_json = session_settings_to_json("status", &status.session_settings)?;
         sqlx::query(
             "UPDATE metis.statuses SET key = $1, label = $2, color = $3, unblocks_parents = $4, unblocks_dependents = $5, cascades_to_children = $6, on_enter = $7, prompt_path = $8, interactive = $9, auto_archive_after_seconds = $10, max_simultaneous_sessions = $11, suppress_sessions = $12, position = $13, session_settings_json = $14, archived = $15 \
              WHERE project_id = $16 AND sequence = $17",
@@ -6620,18 +6608,6 @@ fn row_to_agent(row: AgentRow) -> Result<Agent, StoreError> {
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
-}
-
-fn agent_session_settings_to_json_pg(
-    session_settings: &crate::domain::issues::SessionSettings,
-) -> Result<Option<String>, StoreError> {
-    if crate::domain::issues::SessionSettings::is_default(session_settings) {
-        return Ok(None);
-    }
-    let api: hydra_common::api::v1::issues::SessionSettings = session_settings.clone().into();
-    serde_json::to_string(&api)
-        .map(Some)
-        .map_err(|e| StoreError::Internal(format!("failed to serialize session_settings: {e}")))
 }
 
 /// Build the unbucketed `list_issues` SQL + bindings. See the SQLite
