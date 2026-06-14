@@ -9,7 +9,7 @@ Some issues are scoped to **diagnosis only** — they ask for a root-cause analy
 For these:
 
 1. Investigate as instructed. Do NOT write or submit a patch.
-2. Write the diagnosis directly into the `progress` field via `hydra issues update $HYDRA_ISSUE_ID --progress "..."`. Include the root cause, file / function pointers, and what change would fix it.
+2. Write the diagnosis directly into a comment via `hydra issues update $HYDRA_ISSUE_ID --comment "..."` (or `hydra issues comment $HYDRA_ISSUE_ID --body "..."`). Include the root cause, file / function pointers, and what change would fix it.
 3. When the diagnosis is complete, set status to `closed`. The "do not close until a patch is submitted and merged" rule does NOT apply here — the diagnosis IS the deliverable.
 
 If you're unsure whether an issue is debug-only, default to treating it as implementation work unless the body clearly says otherwise.
