@@ -156,22 +156,4 @@
     gap: 6px;
     align-items: center;
   }
-
-  /* Drop the "Table" / "Board" labels on the narrow mobile bar so the
-     segmented control fits on the same row as the eyebrow at 375px. */
-  .segmentedLabel {
-    display: none;
-  }
-
-  .segmented {
-    /* Float to the far right edge of the toolbar so the layout switcher
-       sits opposite the search/filter cluster — matches the desktop
-       PageHead-actions placement even though they share a row here. */
-    margin-left: auto;
-  }
-
-  .segmented button {
-    padding: 0 12px;
-    min-width: var(--touch-min);
-  }
 }

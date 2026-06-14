@@ -14,7 +14,9 @@ test.describe("Mobile Issues Board @mobile:issues-board", () => {
     await setSidebarHidden(page);
     await page.goto("/");
 
-    await page.getByTestId("issues-layout-board").click();
+    // Mobile forces the board layout — no segmented control is rendered, so
+    // we land on the board directly.
+    await expect(page.getByTestId("issues-layout-board")).toHaveCount(0);
 
     // The mobile board picker must appear when more than one project exists.
     await expect(page.getByTestId("board-mobile-picker")).toBeVisible();
@@ -33,7 +35,6 @@ test.describe("Mobile Issues Board @mobile:issues-board", () => {
   }) => {
     await setSidebarHidden(page);
     await page.goto("/");
-    await page.getByTestId("issues-layout-board").click();
 
     const picker = page.getByTestId("board-mobile-picker");
     await expect(picker).toBeVisible();
@@ -58,7 +59,6 @@ test.describe("Mobile Issues Board @mobile:issues-board", () => {
     // Navigate away and back; the selection should be restored.
     await page.goto("/sessions");
     await page.goto("/");
-    await page.getByTestId("issues-layout-board").click();
 
     // The picker trigger shows the currently selected board — its text
     // should match the option we picked before navigating away.
