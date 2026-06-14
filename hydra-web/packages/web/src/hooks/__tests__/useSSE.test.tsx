@@ -69,8 +69,7 @@ class MockEventSource {
 // Stub on the global before importing the hook.
 beforeEach(() => {
   MockEventSource.instances = [];
-  (globalThis as unknown as { EventSource: typeof MockEventSource }).EventSource =
-    MockEventSource;
+  (globalThis as unknown as { EventSource: typeof MockEventSource }).EventSource = MockEventSource;
 });
 
 afterEach(() => {
@@ -295,7 +294,13 @@ describe("useSSE chatRelated cache invalidation", () => {
     expect(wasInvalidated(invalidateSpy, ["chatRelated", "referencedDocuments"])).toBe(true);
   });
 
-  it("invalidates ['sessions', 'active'] on session_created with spawned_from set", () => {
+  it("prepends a newly-created session into the ['sessions', 'active'] cache when it matches", () => {
+    // The sidebar's useActiveSessions hook uses key
+    // ["sessions", "active", creator, limit]. We replaced the prior broad
+    // invalidate with an in-place upsert so the sidebar live-updates without
+    // a refetch.
+    queryClient.setQueryData<unknown[]>(["sessions", "active", "alice", 6], []);
+
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
 
@@ -309,16 +314,23 @@ describe("useSSE chatRelated cache invalidation", () => {
       });
     });
 
-    // The sidebar's useActiveSessions hook uses key ["sessions", "active", limit].
-    // The bug was that the spawnedFrom branch never invalidated this key — only
-    // ["sessions", "all"] — so the sidebar never refetched. Verify the explicit
-    // active-sessions invalidate at the common level now covers it.
-    expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
-    // The pre-existing activeCount invalidate must still fire alongside it.
+    const cached = queryClient.getQueryData<Array<{ session_id: string }>>([
+      "sessions",
+      "active",
+      "alice",
+      6,
+    ]);
+    expect(cached?.map((s) => s.session_id)).toEqual(["s-1"]);
+    // The pre-existing activeCount invalidate must still fire alongside it
+    // (count can't be patched from a single-record payload).
     expect(wasInvalidated(invalidateSpy, ["sessions", "activeCount"])).toBe(true);
   });
 
-  it("invalidates ['sessions', 'active'] on session_updated with spawned_from set", () => {
+  it("removes a session from ['sessions', 'active'] when its status flips out of active", () => {
+    // Seed with a running session so the upsert has something to find before
+    // the update flips its status to "complete".
+    queryClient.setQueryData(["sessions", "active", "alice", 6], [makeSessionRecord("s-1", "i-1")]);
+
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
 
@@ -328,13 +340,21 @@ describe("useSSE chatRelated cache invalidation", () => {
         entity_id: "s-1",
         version: 2,
         timestamp: "2026-01-01T00:00:00Z",
-        entity: makeSessionRecord("s-1", "i-1"),
+        entity: {
+          ...makeSessionRecord("s-1", "i-1"),
+          version: 2,
+          session: { ...makeSessionRecord("s-1", "i-1").session, status: "complete" },
+        },
       });
     });
 
-    // Status transitions (e.g., running → complete) should also refresh the
-    // sidebar so terminated sessions disappear via the server's status filter.
-    expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
+    const cached = queryClient.getQueryData<Array<{ session_id: string }>>([
+      "sessions",
+      "active",
+      "alice",
+      6,
+    ]);
+    expect(cached?.map((s) => s.session_id)).toEqual([]);
   });
 
   it("invalidates ['proxyTargets', session_id] on session_updated so the ProxyTab live-updates when a worker advertises a port mid-conversation", () => {
@@ -354,9 +374,7 @@ describe("useSSE chatRelated cache invalidation", () => {
     // The Proxy tab keys its read on ["proxyTargets", activeSessionId]. Without
     // this invalidation, advertising a port mid-session leaves the cache stale
     // until the user navigates away and back (refetchOnMount: "always").
-    expect(wasInvalidated(invalidateSpy, ["proxyTargets", "s-proxy"])).toBe(
-      true,
-    );
+    expect(wasInvalidated(invalidateSpy, ["proxyTargets", "s-proxy"])).toBe(true);
   });
 
   it("routes session_updated through the SessionSummaryRecord arm even when the mock-server uses the plural entity_type 'sessions'", () => {
@@ -378,29 +396,43 @@ describe("useSSE chatRelated cache invalidation", () => {
     });
 
     expect(wasInvalidated(invalidateSpy, ["session", "s-plural"])).toBe(true);
-    expect(wasInvalidated(invalidateSpy, ["proxyTargets", "s-plural"])).toBe(
-      true,
-    );
+    expect(wasInvalidated(invalidateSpy, ["proxyTargets", "s-plural"])).toBe(true);
   });
 
-  it("invalidates ['sessions', 'active'] on session_updated without spawned_from (else branch)", () => {
+  it("patches ['sessions', 'active'] on session_updated without spawned_from", () => {
+    // The no-spawned-from branch must still flow the new record into the
+    // sidebar's active-sessions cache — we replaced the broad invalidate
+    // with an in-place upsert, so the running session must update in place.
+    queryClient.setQueryData(["sessions", "active", "alice", 6], [makeSessionRecord("s-2")]);
+
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     const es = MockEventSource.instances[0];
 
+    const updated = {
+      ...makeSessionRecord("s-2"),
+      version: 2,
+      session: {
+        ...makeSessionRecord("s-2").session,
+        prompt: "different prompt",
+      },
+    };
     act(() => {
       es.dispatch("session_updated", {
         entity_type: "session",
         entity_id: "s-2",
-        version: 1,
+        version: 2,
         timestamp: "2026-01-01T00:00:00Z",
-        entity: makeSessionRecord("s-2"),
+        entity: updated,
       });
     });
 
-    // The else branch broadly invalidates ["sessions"] (prefix match covers
-    // ["sessions", "active"]); the explicit invalidate also runs. Either way,
-    // the active-sessions cache must be invalidated.
-    expect(wasInvalidated(invalidateSpy, ["sessions", "active"])).toBe(true);
+    const cached = queryClient.getQueryData<Array<{ session: { prompt: string } }>>([
+      "sessions",
+      "active",
+      "alice",
+      6,
+    ]);
+    expect(cached?.[0]?.session.prompt).toBe("different prompt");
   });
 
   it("upserts a conversation into the ['conversations', 'batch', ids] cache on conversation_created", () => {
@@ -679,12 +711,10 @@ describe("useSSE reconnect: jittered backoff + force-close on visible/online", (
     act(() => {
       es.onerror?.call(es, new Event("error"));
     });
-    const scheduled = setTimeoutSpy.mock.calls
-      .slice(callsBefore)
-      .find((c) => {
-        const ms = c[1];
-        return typeof ms === "number" && ms >= 500 && ms <= 15_000;
-      });
+    const scheduled = setTimeoutSpy.mock.calls.slice(callsBefore).find((c) => {
+      const ms = c[1];
+      return typeof ms === "number" && ms >= 500 && ms <= 15_000;
+    });
     if (!scheduled) {
       throw new Error("Expected reconnect setTimeout to be scheduled after onerror");
     }
@@ -704,10 +734,7 @@ describe("useSSE reconnect: jittered backoff + force-close on visible/online", (
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
     expect(MockEventSource.instances.length).toBe(1);
 
-    const { delay } = fireErrorAndCaptureDelay(
-      setTimeoutSpy,
-      MockEventSource.instances[0],
-    );
+    const { delay } = fireErrorAndCaptureDelay(setTimeoutSpy, MockEventSource.instances[0]);
     expect(delay).toBe(500);
   });
 
@@ -721,10 +748,7 @@ describe("useSSE reconnect: jittered backoff + force-close on visible/online", (
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
 
     renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
-    const first = fireErrorAndCaptureDelay(
-      setTimeoutSpy,
-      MockEventSource.instances[0],
-    );
+    const first = fireErrorAndCaptureDelay(setTimeoutSpy, MockEventSource.instances[0]);
 
     // Drive the scheduled reconnect inline (instead of waiting wall-clock)
     // so the second instance comes up and we can fire a second onerror.
@@ -733,10 +757,7 @@ describe("useSSE reconnect: jittered backoff + force-close on visible/online", (
     });
     expect(MockEventSource.instances.length).toBe(2);
 
-    const second = fireErrorAndCaptureDelay(
-      setTimeoutSpy,
-      MockEventSource.instances[1],
-    );
+    const second = fireErrorAndCaptureDelay(setTimeoutSpy, MockEventSource.instances[1]);
 
     expect(first.delay).not.toBe(second.delay);
   });
@@ -814,9 +835,246 @@ describe("useSSE reconnect: jittered backoff + force-close on visible/online", (
 
     unmount();
 
-    const removedOnline = removeSpy.mock.calls.some(
-      (call) => call[0] === "online",
-    );
+    const removedOnline = removeSpy.mock.calls.some((call) => call[0] === "online");
     expect(removedOnline).toBe(true);
+  });
+});
+
+// --- Paginated-cache patching ---------------------------------------------
+// Filter-aware in-place upsert/remove against the four filtered cache shapes
+// the SSE handler now patches instead of broadly invalidating.
+
+interface SeededIssue {
+  issue_id: string;
+  version: number;
+  timestamp: string;
+  creation_time: string;
+  issue: {
+    type: string;
+    title: string;
+    description: string;
+    creator: string;
+    status: { key: string };
+    project_id?: string;
+    progress: string;
+    dependencies: never[];
+    patches: never[];
+    labels: never[];
+  };
+}
+
+function seedIssue(
+  issueId: string,
+  status = "open",
+  overrides: Partial<SeededIssue["issue"]> = {},
+): SeededIssue {
+  return {
+    issue_id: issueId,
+    version: 1,
+    timestamp: "2026-01-01T00:00:00Z",
+    creation_time: "2026-01-01T00:00:00Z",
+    issue: {
+      type: "task",
+      title: `Issue ${issueId}`,
+      description: "desc",
+      creator: "alice",
+      status: { key: status },
+      progress: "",
+      dependencies: [],
+      patches: [],
+      labels: [],
+      ...overrides,
+    },
+  };
+}
+
+describe("useSSE paginated-cache patching", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+  });
+
+  it("removes an issue from ['paginatedIssues', {status:'open'}, 'sort', ...] when its status flips out of the filter", () => {
+    const filters = { status: "open" };
+    const key = ["paginatedIssues", filters, "sort", "project_status_time_desc"];
+    queryClient.setQueryData(key, {
+      pages: [
+        {
+          issues: [seedIssue("i-1", "open"), seedIssue("i-2", "open")],
+          next_cursor: null,
+        },
+      ],
+      pageParams: [undefined],
+    });
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("issue_updated", {
+        entity_type: "issue",
+        entity_id: "i-1",
+        version: 2,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: { ...seedIssue("i-1", "in-progress"), version: 2 },
+      });
+    });
+
+    const cached = queryClient.getQueryData<{
+      pages: Array<{ issues: Array<{ issue_id: string }> }>;
+    }>(key);
+    expect(cached?.pages[0].issues.map((i) => i.issue_id)).toEqual(["i-2"]);
+  });
+
+  it("appends a newly-created issue to the board-bulk single-response cache", () => {
+    const filters = {};
+    const key = ["paginatedIssues", filters, "board-bulk", "project_status_time_desc"];
+    queryClient.setQueryData(key, { issues: [], next_cursor: null });
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("issue_created", {
+        entity_type: "issue",
+        entity_id: "i-new",
+        version: 1,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: seedIssue("i-new", "open"),
+      });
+    });
+
+    const cached = queryClient.getQueryData<{
+      issues: Array<{ issue_id: string }>;
+    }>(key);
+    expect(cached?.issues.map((i) => i.issue_id)).toEqual(["i-new"]);
+  });
+
+  it("updates and removes issues in the per-cell expanded ['depth', n] array-of-pages cache based on filter match", () => {
+    const filters = { project_id: "P1", status: "open" };
+    const key = ["paginatedIssues", filters, "depth", 2];
+    queryClient.setQueryData(key, [
+      {
+        issues: [
+          seedIssue("i-1", "open", { project_id: "P1" }),
+          seedIssue("i-2", "open", { project_id: "P1" }),
+        ],
+        next_cursor: null,
+      },
+      {
+        issues: [seedIssue("i-3", "open", { project_id: "P1" })],
+        next_cursor: null,
+      },
+    ]);
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    // Update-in-place: i-1 stays "open" but title changes.
+    act(() => {
+      es.dispatch("issue_updated", {
+        entity_type: "issue",
+        entity_id: "i-1",
+        version: 2,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: {
+          ...seedIssue("i-1", "open", { project_id: "P1", title: "Renamed" }),
+          version: 2,
+        },
+      });
+    });
+
+    let cached =
+      queryClient.getQueryData<
+        Array<{ issues: Array<{ issue_id: string; issue: { title: string } }> }>
+      >(key);
+    expect(cached?.[0].issues[0].issue.title).toBe("Renamed");
+
+    // Removal: i-2's new status flips out of the filter.
+    act(() => {
+      es.dispatch("issue_updated", {
+        entity_type: "issue",
+        entity_id: "i-2",
+        version: 2,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: {
+          ...seedIssue("i-2", "closed", { project_id: "P1" }),
+          version: 2,
+        },
+      });
+    });
+
+    cached =
+      queryClient.getQueryData<
+        Array<{ issues: Array<{ issue_id: string; issue: { title: string } }> }>
+      >(key);
+    expect(cached?.[0].issues.map((i) => i.issue_id)).toEqual(["i-1"]);
+    expect(cached?.[1].issues.map((i) => i.issue_id)).toEqual(["i-3"]);
+  });
+
+  it("prepends a newly-created session to ['paginatedSessions', filters] (InfiniteData)", () => {
+    const key = ["paginatedSessions", {}];
+    queryClient.setQueryData(key, {
+      pages: [{ sessions: [], next_cursor: null }],
+      pageParams: [undefined],
+    });
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.dispatch("session_created", {
+        entity_type: "session",
+        entity_id: "s-new",
+        version: 1,
+        timestamp: "2026-01-01T00:00:00Z",
+        entity: makeSessionRecord("s-new", "i-1"),
+      });
+    });
+
+    const cached = queryClient.getQueryData<{
+      pages: Array<{ sessions: Array<{ session_id: string }> }>;
+    }>(key);
+    expect(cached?.pages[0].sessions.map((s) => s.session_id)).toEqual(["s-new"]);
+  });
+
+  it("does not throw or write into the ['issues', id, 'comments'] infinite cache on issue_updated (P9 regression)", () => {
+    // The IssueDetail Comments tab keys on ["issues", id, "comments"], whose
+    // InfiniteData<ListCommentsResponse> shape has no `.issues` field. The
+    // prior bug was that the `["issues"]` upsert prefix-matched into this
+    // cache and threw on every issue_* SSE event. The new predicate restricts
+    // the upsert to the bare `["issues"]` flat list.
+    const commentsKey = ["issues", "i-1", "comments"];
+    const commentsCache = {
+      pages: [{ comments: [{ sequence: 1n, body: "hi" }], next_before_sequence: null }],
+      pageParams: [undefined],
+    };
+    queryClient.setQueryData(commentsKey, commentsCache);
+
+    renderHook(() => useSSE(), { wrapper: makeWrapper(queryClient) });
+    const es = MockEventSource.instances[0];
+
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() => {
+      act(() => {
+        es.dispatch("issue_updated", {
+          entity_type: "issue",
+          entity_id: "i-1",
+          version: 2,
+          timestamp: "2026-01-01T00:00:00Z",
+          entity: { ...seedIssue("i-1", "open"), version: 2 },
+        });
+      });
+    }).not.toThrow();
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    // The comments cache is unchanged.
+    expect(queryClient.getQueryData(commentsKey)).toBe(commentsCache);
+
+    consoleErrorSpy.mockRestore();
   });
 });
