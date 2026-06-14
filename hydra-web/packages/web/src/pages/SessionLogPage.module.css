@@ -117,7 +117,7 @@
 }
 
 .metaLink:hover {
-  color: oklch(0.85 0.16 290);
+  color: var(--c-violet);
   text-decoration: underline;
 }
 
