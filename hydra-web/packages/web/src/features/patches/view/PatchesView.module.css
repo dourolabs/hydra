@@ -38,14 +38,10 @@
   text-align: center;
 }
 
-/* Footer-bar pattern, mirrored from the chat page's .composer footer. */
 .loadMore {
   display: flex;
   justify-content: center;
-  padding: 14px 28px 18px;
-  border-top: 1px solid var(--line);
-  background: var(--bg-0);
-  flex-shrink: 0;
+  padding: 16px 0 24px;
 }
 
 .loadMoreButton {
@@ -213,9 +209,5 @@
 @media (max-width: 768px) {
   .toolbar {
     padding: 8px max(16px, var(--safe-area-x));
-  }
-
-  .loadMore {
-    padding: 12px max(16px, var(--safe-area-x)) 14px;
   }
 }
