@@ -30,6 +30,16 @@ use crate::policy::automations::agent_queue::AGENT_NAME_ENV_VAR;
 pub(crate) const WORKER_NAME_SESSION_LIFECYCLE: &str = "session_lifecycle";
 pub(crate) const WORKER_NAME_CLEANUP_ORPHANED_SESSIONS: &str = "cleanup_orphaned_sessions";
 
+/// Time to wait after a session transitions terminal before `stop_job`'ing
+/// its pod. Lets the worker's own `POST_AGENT_SHUTDOWN_BUDGET` (~90s) flow
+/// finish so we don't race a worker that is shutting down cleanly.
+const TERMINAL_STOP_JOB_DELAY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// Time to wait after a session transitions terminal before `delete_job`'ing
+/// its pod. Last-resort cleanup when the worker repeatedly fails to die —
+/// at this point log loss is acceptable.
+const TERMINAL_DELETE_JOB_DELAY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 #[derive(Debug, Error)]
 pub enum CreateSessionError {
     #[error(transparent)]
@@ -849,10 +859,13 @@ impl AppState {
             return;
         }
 
-        let store_session_ids: HashSet<SessionId> = {
+        let store_sessions: HashMap<SessionId, (Status, Option<DateTime<Utc>>)> = {
             let store = self.store.as_ref();
             match store.list_sessions(&SearchSessionsQuery::default()).await {
-                Ok(tasks) => tasks.into_iter().map(|(id, _)| id).collect(),
+                Ok(tasks) => tasks
+                    .into_iter()
+                    .map(|(id, v)| (id, (v.item.status, v.item.end_time)))
+                    .collect(),
                 Err(err) => {
                     error!(error = %err, "failed to list tasks from store for job reconciliation");
                     return;
@@ -860,27 +873,80 @@ impl AppState {
             }
         };
 
-        let missing_from_store: Vec<_> = job_engine_jobs
-            .into_iter()
-            .filter(|job| !store_session_ids.contains(&job.id))
-            .collect();
+        let now = Utc::now();
+        let mut missing_from_store: Vec<_> = Vec::new();
+        let mut terminal_past_stop_delay: Vec<_> = Vec::new();
+        let mut terminal_past_delete_delay: Vec<_> = Vec::new();
 
-        if missing_from_store.is_empty() {
-            return;
+        for job in job_engine_jobs {
+            match store_sessions.get(&job.id) {
+                None => missing_from_store.push(job),
+                Some((status, end_time)) => {
+                    if !status.is_terminal() {
+                        continue;
+                    }
+                    let Some(end_time) = end_time else {
+                        continue;
+                    };
+                    let Ok(elapsed) = now.signed_duration_since(*end_time).to_std() else {
+                        continue;
+                    };
+                    if elapsed >= TERMINAL_DELETE_JOB_DELAY {
+                        terminal_past_delete_delay.push(job);
+                    } else if elapsed >= TERMINAL_STOP_JOB_DELAY {
+                        terminal_past_stop_delay.push(job);
+                    }
+                }
+            }
         }
 
-        info!(
-            count = missing_from_store.len(),
-            "deleting K8s jobs with no DB session"
-        );
-
-        for job in missing_from_store {
-            match self.job_engine.delete_job(&job.id).await {
-                Ok(()) => {
-                    info!(hydra_id = %job.id, "deleted K8s job with no DB session");
+        if !missing_from_store.is_empty() {
+            info!(
+                count = missing_from_store.len(),
+                "deleting K8s jobs with no DB session"
+            );
+            for job in missing_from_store {
+                match self.job_engine.delete_job(&job.id).await {
+                    Ok(()) => {
+                        info!(hydra_id = %job.id, "deleted K8s job with no DB session");
+                    }
+                    Err(err) => {
+                        warn!(hydra_id = %job.id, error = %err, "failed to delete K8s job with no DB session");
+                    }
                 }
-                Err(err) => {
-                    warn!(hydra_id = %job.id, error = %err, "failed to delete K8s job with no DB session");
+            }
+        }
+
+        if !terminal_past_stop_delay.is_empty() {
+            info!(
+                count = terminal_past_stop_delay.len(),
+                "stop_job'ing K8s jobs whose DB session is terminal past stop delay"
+            );
+            for job in terminal_past_stop_delay {
+                match self.job_engine.stop_job(&job.id).await {
+                    Ok(()) => {
+                        info!(hydra_id = %job.id, "stop_job'd K8s job for terminal-in-store session");
+                    }
+                    Err(err) => {
+                        warn!(hydra_id = %job.id, error = %err, "failed to stop_job K8s job for terminal-in-store session");
+                    }
+                }
+            }
+        }
+
+        if !terminal_past_delete_delay.is_empty() {
+            info!(
+                count = terminal_past_delete_delay.len(),
+                "delete_job'ing K8s jobs whose DB session is terminal past delete delay"
+            );
+            for job in terminal_past_delete_delay {
+                match self.job_engine.delete_job(&job.id).await {
+                    Ok(()) => {
+                        info!(hydra_id = %job.id, "delete_job'd K8s job for stuck terminal-in-store session");
+                    }
+                    Err(err) => {
+                        warn!(hydra_id = %job.id, error = %err, "failed to delete_job K8s job for stuck terminal-in-store session");
+                    }
                 }
             }
         }
@@ -2274,7 +2340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reap_orphaned_jobs_leaves_sessions_in_store_alone() {
+    async fn reap_orphaned_jobs_leaves_running_sessions_alone() {
         let job_engine = Arc::new(MockJobEngine::new());
         let state = test_state_with_engine(job_engine.clone());
 
@@ -2294,18 +2360,38 @@ mod tests {
             .await
             .expect("session should transition to Running");
 
-        let (failed_session_id, _) = {
-            let store = state.store.as_ref();
-            store
-                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
-                .await
-                .unwrap()
-        };
+        job_engine
+            .insert_job(&running_session_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        assert_eq!(job_engine.stop_job_call_count().await, 0);
+        assert_eq!(job_engine.delete_job_call_count().await, 0);
+
+        let status = job_engine
+            .find_job_by_hydra_id(&running_session_id)
+            .await
+            .expect("running session's job should still exist")
+            .status;
+        assert_eq!(status, JobStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_leaves_recently_terminal_sessions_alone() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let store = state.store.as_ref();
+
+        let (failed_session_id, _) = store
+            .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
         state
             .transition_task_to_completion(
                 &failed_session_id,
                 Err(TaskError::JobEngineError {
-                    reason: "reaper must not touch terminal sessions".to_string(),
+                    reason: "reaper must not touch recently-terminal sessions".to_string(),
                 }),
                 None,
                 None,
@@ -2313,55 +2399,167 @@ mod tests {
             )
             .await
             .expect("session should transition to Failed");
+        backdate_session_end_time(store, &failed_session_id, Utc::now() - Duration::minutes(1))
+            .await;
 
-        let (complete_session_id, _) = {
-            let store = state.store.as_ref();
-            store
-                .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
-                .await
-                .unwrap()
-        };
-        state
-            .transition_task_to_pending(&complete_session_id, ActorRef::test())
+        job_engine
+            .insert_job(&failed_session_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        assert_eq!(job_engine.stop_job_call_count().await, 0);
+        assert_eq!(job_engine.delete_job_call_count().await, 0);
+
+        let status = job_engine
+            .find_job_by_hydra_id(&failed_session_id)
             .await
-            .expect("session should transition to Pending");
+            .expect("session's job should still exist")
+            .status;
+        assert_eq!(status, JobStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_stops_jobs_terminal_past_stop_delay() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let store = state.store.as_ref();
+
+        let (failed_session_id, _) = store
+            .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
         state
             .transition_task_to_completion(
-                &complete_session_id,
-                Ok(()),
+                &failed_session_id,
+                Err(TaskError::JobEngineError {
+                    reason: "wedged worker".to_string(),
+                }),
                 None,
                 None,
                 ActorRef::test(),
             )
             .await
-            .expect("session should transition to Complete");
+            .expect("session should transition to Failed");
+        backdate_session_end_time(store, &failed_session_id, Utc::now() - Duration::minutes(6))
+            .await;
 
         job_engine
-            .insert_job(&running_session_id, JobStatus::Running)
-            .await;
-        job_engine
             .insert_job(&failed_session_id, JobStatus::Running)
-            .await;
-        job_engine
-            .insert_job(&complete_session_id, JobStatus::Running)
             .await;
 
         state.reap_orphaned_jobs().await;
 
+        assert_eq!(job_engine.stop_job_call_count().await, 1);
         assert_eq!(job_engine.delete_job_call_count().await, 0);
+    }
 
-        for session_id in [
-            &running_session_id,
+    #[tokio::test]
+    async fn reap_orphaned_jobs_deletes_jobs_terminal_past_delete_delay() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let store = state.store.as_ref();
+
+        let (failed_session_id, _) = store
+            .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_completion(
+                &failed_session_id,
+                Err(TaskError::JobEngineError {
+                    reason: "stubbornly alive worker".to_string(),
+                }),
+                None,
+                None,
+                ActorRef::test(),
+            )
+            .await
+            .expect("session should transition to Failed");
+        backdate_session_end_time(
+            store,
             &failed_session_id,
-            &complete_session_id,
-        ] {
-            let status = job_engine
-                .find_job_by_hydra_id(session_id)
-                .await
-                .expect("session's job should still exist")
-                .status;
-            assert_eq!(status, JobStatus::Running);
-        }
+            Utc::now() - Duration::minutes(11),
+        )
+        .await;
+
+        job_engine
+            .insert_job(&failed_session_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        assert_eq!(job_engine.stop_job_call_count().await, 0);
+        assert_eq!(job_engine.delete_job_call_count().await, 1);
+        let lookup = job_engine.find_job_by_hydra_id(&failed_session_id).await;
+        assert!(
+            matches!(lookup, Err(JobEngineError::NotFound(_))),
+            "delete_job should remove the engine's tracking entry, got {lookup:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reap_orphaned_jobs_handles_terminal_session_with_no_end_time() {
+        let job_engine = Arc::new(MockJobEngine::new());
+        let state = test_state_with_engine(job_engine.clone());
+        let store = state.store.as_ref();
+
+        let (failed_session_id, _) = store
+            .add_session_with_actor(sample_task(), Utc::now(), ActorRef::test())
+            .await
+            .unwrap();
+        state
+            .transition_task_to_completion(
+                &failed_session_id,
+                Err(TaskError::JobEngineError {
+                    reason: "no end_time set".to_string(),
+                }),
+                None,
+                None,
+                ActorRef::test(),
+            )
+            .await
+            .expect("session should transition to Failed");
+        // Defensive: clear end_time so we exercise the None branch even
+        // though the transition normally fills it in.
+        backdate_session_end_time_to(store, &failed_session_id, None).await;
+
+        job_engine
+            .insert_job(&failed_session_id, JobStatus::Running)
+            .await;
+
+        state.reap_orphaned_jobs().await;
+
+        assert_eq!(job_engine.stop_job_call_count().await, 0);
+        assert_eq!(job_engine.delete_job_call_count().await, 0);
+    }
+
+    /// Test helper: rewrite the session row so its `end_time` points
+    /// `delays_in_the_past` ago, bypassing the normal `transition_*`
+    /// path so we can simulate a session that went terminal in the past.
+    async fn backdate_session_end_time(
+        store: &crate::app::event_bus::StoreWithEvents,
+        session_id: &SessionId,
+        new_end_time: chrono::DateTime<chrono::Utc>,
+    ) {
+        backdate_session_end_time_to(store, session_id, Some(new_end_time)).await;
+    }
+
+    async fn backdate_session_end_time_to(
+        store: &crate::app::event_bus::StoreWithEvents,
+        session_id: &SessionId,
+        new_end_time: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        let versioned = store
+            .get_session(session_id, false)
+            .await
+            .expect("session should exist");
+        let mut updated = versioned.item;
+        updated.end_time = new_end_time;
+        store
+            .update_session_with_actor(session_id, updated, ActorRef::test())
+            .await
+            .expect("session backdate should succeed");
     }
 
     #[tokio::test]
