@@ -11,7 +11,7 @@ Hydra ships a single-player mode that bundles the CLI, server, and web dashboard
 ### Prerequisites
 
 - **Rust** (stable toolchain) — install via [rustup](https://rustup.rs/).
-- **pnpm** - installation instructions [here](https://pnpm.io/installation).
+- **pnpm** — installation instructions [here](https://pnpm.io/installation).
 - **Docker** (recommended) — needed for the Docker job engine. See <https://docs.docker.com/get-docker/>.
 - **Linux build deps:** `pkg-config` and OpenSSL headers (e.g. `apt install pkg-config libssl-dev`).
 
