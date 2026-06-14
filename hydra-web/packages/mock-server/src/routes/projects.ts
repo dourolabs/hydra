@@ -134,6 +134,7 @@ export function createProjectRoutes(store: Store): Hono {
       archived: false,
       prompt_path: body.prompt_path ?? undefined,
       priority: body.priority ?? 0,
+      session_settings: body.session_settings ?? undefined,
     };
     const entry = store.create<Project>(COLLECTION, id, project, null);
     const resp: UpsertProjectResponse = {
@@ -321,6 +322,7 @@ export function createProjectRoutes(store: Store): Hono {
       name: body.name,
       prompt_path: body.prompt_path ?? undefined,
       priority: body.priority ?? resolved.entry.data.priority,
+      session_settings: body.session_settings ?? undefined,
     };
     const entry = store.update<Project>(COLLECTION, resolved.id, nextProject, null);
     const resp: UpsertProjectResponse = {

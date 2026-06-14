@@ -85,6 +85,9 @@ vi.mock("@hydra/ui", () => ({
     value,
     onChange,
     placeholder,
+    disabled,
+    type,
+    "aria-label": ariaLabel,
     "data-testid": testId,
   }: {
     label?: string;
@@ -92,14 +95,21 @@ vi.mock("@hydra/ui", () => ({
     onChange?: (e: { target: { value: string } }) => void;
     placeholder?: string;
     required?: boolean;
+    disabled?: boolean;
+    type?: string;
+    min?: number;
+    "aria-label"?: string;
     "data-testid"?: string;
   }) => (
     <label>
       {label}
       <input
+        type={type}
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange?.({ target: { value: e.target.value } })}
         placeholder={placeholder}
+        aria-label={ariaLabel}
         data-testid={testId}
       />
     </label>
@@ -146,6 +156,54 @@ vi.mock("@hydra/ui", () => ({
         <div>{children}</div>
       </div>
     ) : null,
+  Picker: ({
+    label,
+    value,
+    open,
+    onToggle,
+    children,
+  }: {
+    label: string;
+    value: ReactNode;
+    open: boolean;
+    onToggle: () => void;
+    hideLabel?: boolean;
+    children: ReactNode;
+  }) => (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={label}
+      >
+        {value}
+      </button>
+      {open && <div role="menu">{children}</div>}
+    </div>
+  ),
+  PickerRow: ({
+    active,
+    onClick,
+    children,
+  }: {
+    active?: boolean;
+    onClick: () => void;
+    children: ReactNode;
+  }) => (
+    <button
+      type="button"
+      role="menuitem"
+      aria-pressed={!!active}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  ),
+  Icons: {
+    IconChevronRight: () => <span aria-hidden="true">▶</span>,
+    IconChevronDown: () => <span aria-hidden="true">▼</span>,
+  },
 }));
 
 const updateProjectSpy = vi.fn(async () => ({
@@ -467,5 +525,122 @@ describe("ProjectSettingsModal", () => {
     );
     fireEvent.click(screen.getByTestId("modal-close"));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  describe("session_settings", () => {
+    function openSessionSettings() {
+      fireEvent.click(
+        screen.getByTestId("project-form-session-settings-toggle"),
+      );
+    }
+
+    it("Save sends a non-default session_settings payload when fields are filled", async () => {
+      render(
+        <ProjectSettingsModal open onClose={() => {}} project={makeProject()} />,
+      );
+      openSessionSettings();
+      fireEvent.change(screen.getByTestId("project-form-cpu-limit"), {
+        target: { value: "200m" },
+      });
+      fireEvent.change(screen.getByTestId("project-form-memory-limit"), {
+        target: { value: "512Mi" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("project-form-save"));
+      });
+
+      expect(updateProjectSpy).toHaveBeenCalledTimes(1);
+      const [, req] = updateProjectSpy.mock.calls[0] as unknown as [
+        string,
+        { session_settings?: { cpu_limit?: string; memory_limit?: string } },
+      ];
+      expect(req.session_settings).toMatchObject({
+        cpu_limit: "200m",
+        memory_limit: "512Mi",
+      });
+    });
+
+    it("clearing every subfield collapses session_settings to undefined on Save", async () => {
+      const seeded: ProjectRecord = {
+        ...makeProject(),
+        project: {
+          ...makeProject().project,
+          session_settings: {
+            cpu_limit: "500m",
+            memory_limit: "1Gi",
+          },
+        },
+      };
+      render(
+        <ProjectSettingsModal open onClose={() => {}} project={seeded} />,
+      );
+      openSessionSettings();
+      fireEvent.change(screen.getByTestId("project-form-cpu-limit"), {
+        target: { value: "" },
+      });
+      fireEvent.change(screen.getByTestId("project-form-memory-limit"), {
+        target: { value: "" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("project-form-save"));
+      });
+
+      const [, req] = updateProjectSpy.mock.calls[0] as unknown as [
+        string,
+        { session_settings?: unknown },
+      ];
+      expect(req.session_settings).toBeUndefined();
+    });
+
+    it("prefills inputs from the project's existing session_settings", () => {
+      const seeded: ProjectRecord = {
+        ...makeProject(),
+        project: {
+          ...makeProject().project,
+          session_settings: {
+            cpu_limit: "500m",
+            memory_limit: "1Gi",
+            image: "ghcr.io/org/img:v1",
+            model: "claude-opus-4-7",
+            max_retries: 3,
+            idle_timeout: {
+              kind: "seconds",
+              value: 600 as unknown as bigint,
+            },
+          },
+        },
+      };
+      render(
+        <ProjectSettingsModal open onClose={() => {}} project={seeded} />,
+      );
+      openSessionSettings();
+      expect(
+        (screen.getByTestId("project-form-cpu-limit") as HTMLInputElement).value,
+      ).toBe("500m");
+      expect(
+        (screen.getByTestId("project-form-memory-limit") as HTMLInputElement)
+          .value,
+      ).toBe("1Gi");
+      expect(
+        (screen.getByTestId("project-form-image") as HTMLInputElement).value,
+      ).toBe("ghcr.io/org/img:v1");
+      expect(
+        (screen.getByTestId("project-form-model") as HTMLInputElement).value,
+      ).toBe("claude-opus-4-7");
+      expect(
+        (screen.getByTestId("project-form-max-retries") as HTMLInputElement)
+          .value,
+      ).toBe("3");
+      expect(
+        screen.getByLabelText("Idle timeout").textContent,
+      ).toContain("Custom");
+      expect(
+        (
+          screen.getByTestId(
+            "project-form-idle-timeout-seconds",
+          ) as HTMLInputElement
+        ).value,
+      ).toBe("600");
+    });
   });
 });

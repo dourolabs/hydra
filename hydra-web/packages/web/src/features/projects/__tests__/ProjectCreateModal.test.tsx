@@ -99,6 +99,9 @@ vi.mock("@hydra/ui", () => ({
     value,
     onChange,
     placeholder,
+    disabled,
+    type,
+    "aria-label": ariaLabel,
     "data-testid": testId,
   }: {
     label?: string;
@@ -106,18 +109,73 @@ vi.mock("@hydra/ui", () => ({
     onChange?: (e: { target: { value: string } }) => void;
     placeholder?: string;
     required?: boolean;
+    disabled?: boolean;
+    type?: string;
+    min?: number;
+    "aria-label"?: string;
     "data-testid"?: string;
   }) => (
     <label>
       {label}
       <input
+        type={type}
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange?.({ target: { value: e.target.value } })}
         placeholder={placeholder}
+        aria-label={ariaLabel}
         data-testid={testId}
       />
     </label>
   ),
+  Picker: ({
+    label,
+    value,
+    open,
+    onToggle,
+    children,
+  }: {
+    label: string;
+    value: ReactNode;
+    open: boolean;
+    onToggle: () => void;
+    hideLabel?: boolean;
+    children: ReactNode;
+  }) => (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={label}
+      >
+        {value}
+      </button>
+      {open && <div role="menu">{children}</div>}
+    </div>
+  ),
+  PickerRow: ({
+    active,
+    onClick,
+    children,
+  }: {
+    active?: boolean;
+    onClick: () => void;
+    children: ReactNode;
+  }) => (
+    <button
+      type="button"
+      role="menuitem"
+      aria-pressed={!!active}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  ),
+  Icons: {
+    IconChevronRight: () => <span aria-hidden="true">▶</span>,
+    IconChevronDown: () => <span aria-hidden="true">▼</span>,
+  },
   Modal: ({
     open,
     children,
