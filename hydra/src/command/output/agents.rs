@@ -47,7 +47,16 @@ fn write_agent_details<W: Write>(agent: &AgentRecord, writer: &mut W) -> Result<
         writeln!(writer, "  mcp_config_path: {mcp_config_path}")?;
     }
     writeln!(writer, "  max_tries: {}", agent.max_tries)?;
-    writeln!(writer, "  max_simultaneous: {}", agent.max_simultaneous)?;
+    writeln!(
+        writer,
+        "  max_simultaneous_interactive: {}",
+        agent.max_simultaneous_interactive
+    )?;
+    writeln!(
+        writer,
+        "  max_simultaneous_headless: {}",
+        agent.max_simultaneous_headless
+    )?;
     writeln!(
         writer,
         "  is_default_conversation_agent: {}",

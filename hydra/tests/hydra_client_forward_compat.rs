@@ -1668,6 +1668,7 @@ async fn hydra_client_handles_forward_compatible_payloads() -> Result<()> {
         "future agent prompt".to_string(),
         3,
         5,
+        5,
         None,
         None,
         false,
@@ -2134,7 +2135,8 @@ fn forward_agent_json(agent_name: &str) -> Value {
             "mcp_config_path": null,
             "mcp_config": null,
             "max_tries": 3,
-            "max_simultaneous": 5,
+            "max_simultaneous_interactive": 5,
+            "max_simultaneous_headless": 5,
             "is_default_conversation_agent": false,
             "secrets": ["FUTURE_KEY"],
             "future": "agent-record-field"

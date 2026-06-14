@@ -120,7 +120,9 @@ pub struct AgentRecord {
     #[serde(default = "default_max_tries")]
     pub max_tries: i32,
     #[serde(default = "default_max_simultaneous")]
-    pub max_simultaneous: i32,
+    pub max_simultaneous_interactive: i32,
+    #[serde(default = "default_max_simultaneous")]
+    pub max_simultaneous_headless: i32,
     #[serde(default)]
     pub is_default_conversation_agent: bool,
     #[serde(default)]
@@ -136,7 +138,8 @@ impl AgentRecord {
         mcp_config_path: Option<String>,
         mcp_config: Option<String>,
         max_tries: i32,
-        max_simultaneous: i32,
+        max_simultaneous_interactive: i32,
+        max_simultaneous_headless: i32,
         is_default_conversation_agent: bool,
         secrets: Vec<String>,
     ) -> Self {
@@ -147,7 +150,8 @@ impl AgentRecord {
             mcp_config_path,
             mcp_config,
             max_tries,
-            max_simultaneous,
+            max_simultaneous_interactive,
+            max_simultaneous_headless,
             is_default_conversation_agent,
             secrets,
         }
@@ -170,7 +174,9 @@ pub struct UpsertAgentRequest {
     #[serde(default = "default_max_tries")]
     pub max_tries: i32,
     #[serde(default = "default_max_simultaneous")]
-    pub max_simultaneous: i32,
+    pub max_simultaneous_interactive: i32,
+    #[serde(default = "default_max_simultaneous")]
+    pub max_simultaneous_headless: i32,
     #[serde(default)]
     pub is_default_conversation_agent: bool,
     #[serde(default)]
@@ -183,7 +189,8 @@ impl UpsertAgentRequest {
         name: impl Into<String>,
         prompt: impl Into<String>,
         max_tries: i32,
-        max_simultaneous: i32,
+        max_simultaneous_interactive: i32,
+        max_simultaneous_headless: i32,
         mcp_config_path: Option<String>,
         mcp_config: Option<String>,
         is_default_conversation_agent: bool,
@@ -196,7 +203,8 @@ impl UpsertAgentRequest {
             mcp_config_path,
             mcp_config,
             max_tries,
-            max_simultaneous,
+            max_simultaneous_interactive,
+            max_simultaneous_headless,
             is_default_conversation_agent,
             secrets,
         }
@@ -212,7 +220,8 @@ impl From<UpsertAgentRequest> for AgentRecord {
             mcp_config_path: request.mcp_config_path,
             mcp_config: request.mcp_config,
             max_tries: request.max_tries,
-            max_simultaneous: request.max_simultaneous,
+            max_simultaneous_interactive: request.max_simultaneous_interactive,
+            max_simultaneous_headless: request.max_simultaneous_headless,
             is_default_conversation_agent: request.is_default_conversation_agent,
             secrets: request.secrets,
         }
@@ -228,7 +237,8 @@ impl From<AgentRecord> for UpsertAgentRequest {
             mcp_config_path: record.mcp_config_path,
             mcp_config: record.mcp_config,
             max_tries: record.max_tries,
-            max_simultaneous: record.max_simultaneous,
+            max_simultaneous_interactive: record.max_simultaneous_interactive,
+            max_simultaneous_headless: record.max_simultaneous_headless,
             is_default_conversation_agent: record.is_default_conversation_agent,
             secrets: record.secrets,
         }
@@ -290,6 +300,7 @@ mod tests {
             None,
             None,
             3,
+            2,
             5,
             true,
             vec!["OPENAI_API_KEY".to_string()],
@@ -297,6 +308,8 @@ mod tests {
         let json = serde_json::to_string(&record).unwrap();
         let parsed: AgentRecord = serde_json::from_str(&json).unwrap();
         assert!(parsed.is_default_conversation_agent);
+        assert_eq!(parsed.max_simultaneous_interactive, 2);
+        assert_eq!(parsed.max_simultaneous_headless, 5);
         assert_eq!(parsed, record);
     }
 
@@ -310,7 +323,8 @@ mod tests {
             "mcp_config_path": null,
             "mcp_config": null,
             "max_tries": 3,
-            "max_simultaneous": 5,
+            "max_simultaneous_interactive": 5,
+            "max_simultaneous_headless": 5,
             "secrets": []
         }"#;
         let parsed: AgentRecord = serde_json::from_str(json).unwrap();
@@ -370,7 +384,8 @@ mod tests {
             "name": "swe",
             "prompt": "draft",
             "max_tries": 3,
-            "max_simultaneous": 5
+            "max_simultaneous_interactive": 5,
+            "max_simultaneous_headless": 5
         }"#;
         let parsed: UpsertAgentRequest = serde_json::from_str(json).unwrap();
         assert!(!parsed.is_default_conversation_agent);

@@ -4424,7 +4424,8 @@
       "prompt": "You are a software engineering agent. You help implement features, fix bugs, and improve code quality.",
       "prompt_path": "/agents/swe/prompt.md",
       "max_tries": 3,
-      "max_simultaneous": 5,
+      "max_simultaneous_interactive": 5,
+      "max_simultaneous_headless": 5,
       "is_default_conversation_agent": false,
       "secrets": []
     },
@@ -4433,7 +4434,8 @@
       "prompt": "You are a code review agent. You review patches for correctness, security, and style.",
       "prompt_path": "/agents/reviewer/prompt.md",
       "max_tries": 1,
-      "max_simultaneous": 5,
+      "max_simultaneous_interactive": 5,
+      "max_simultaneous_headless": 5,
       "is_default_conversation_agent": false,
       "secrets": []
     },
@@ -4442,7 +4444,8 @@
       "prompt": "You are a DevOps agent. You manage deployments, infrastructure, and CI/CD pipelines.",
       "prompt_path": "/agents/ops/prompt.md",
       "max_tries": 2,
-      "max_simultaneous": 3,
+      "max_simultaneous_interactive": 3,
+      "max_simultaneous_headless": 3,
       "is_default_conversation_agent": false,
       "secrets": []
     }

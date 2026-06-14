@@ -17,7 +17,8 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [maxTries, setMaxTries] = useState("3");
-  const [maxSimultaneous, setMaxSimultaneous] = useState("1");
+  const [maxSimultaneousInteractive, setMaxSimultaneousInteractive] = useState("1");
+  const [maxSimultaneousHeadless, setMaxSimultaneousHeadless] = useState("1");
   const [isDefaultConversationAgent, setIsDefaultConversationAgent] = useState(false);
   const [mcpConfigPath, setMcpConfigPath] = useState("");
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
@@ -26,7 +27,8 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
     setName("");
     setPrompt("");
     setMaxTries("3");
-    setMaxSimultaneous("1");
+    setMaxSimultaneousInteractive("1");
+    setMaxSimultaneousHeadless("1");
     setIsDefaultConversationAgent(false);
     setMcpConfigPath("");
     setSelectedSecrets([]);
@@ -63,11 +65,12 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
       mcp_config_path: mcpConfigPath.trim() || null,
       mcp_config: null,
       max_tries: parseInt(maxTries, 10) || 3,
-      max_simultaneous: parseInt(maxSimultaneous, 10) || 1,
+      max_simultaneous_interactive: parseInt(maxSimultaneousInteractive, 10) || 1,
+      max_simultaneous_headless: parseInt(maxSimultaneousHeadless, 10) || 1,
       is_default_conversation_agent: isDefaultConversationAgent,
       secrets: selectedSecrets,
     });
-  }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneous, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
+  }, [name, prompt, mcpConfigPath, maxTries, maxSimultaneousInteractive, maxSimultaneousHeadless, isDefaultConversationAgent, selectedSecrets, isValid, mutation]);
 
   return (
     <Modal open={open} onClose={() => handleClose(onClose, resetForm)} title="Add Agent">
@@ -101,10 +104,17 @@ export function AgentCreateModal({ open, onClose, agents }: AgentCreateModalProp
           type="number"
         />
         <Input
-          label="Max Simultaneous"
+          label="Max Simultaneous Interactive"
           placeholder="1"
-          value={maxSimultaneous}
-          onChange={(e) => setMaxSimultaneous(e.target.value)}
+          value={maxSimultaneousInteractive}
+          onChange={(e) => setMaxSimultaneousInteractive(e.target.value)}
+          type="number"
+        />
+        <Input
+          label="Max Simultaneous Headless"
+          placeholder="1"
+          value={maxSimultaneousHeadless}
+          onChange={(e) => setMaxSimultaneousHeadless(e.target.value)}
           type="number"
         />
         <label className={styles.checkboxLabel}>

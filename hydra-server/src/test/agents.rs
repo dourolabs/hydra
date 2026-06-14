@@ -32,6 +32,7 @@ async fn test_state_with_agents(agent_names: &[&str]) -> TestStateHandles {
             None,
             3,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
             Vec::new(),
         );
@@ -54,6 +55,7 @@ fn agent_request(name: &str) -> UpsertAgentRequest {
         name,
         format!("prompt for {name}"),
         3,
+        DEFAULT_AGENT_MAX_SIMULTANEOUS,
         DEFAULT_AGENT_MAX_SIMULTANEOUS,
         None,
         None,
@@ -86,7 +88,14 @@ async fn list_agents_returns_configured_queues() -> anyhow::Result<()> {
 
     assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
     assert_eq!(agents[0].prompt, "prompt for alpha");
-    assert_eq!(agents[1].max_simultaneous, DEFAULT_AGENT_MAX_SIMULTANEOUS);
+    assert_eq!(
+        agents[1].max_simultaneous_interactive,
+        DEFAULT_AGENT_MAX_SIMULTANEOUS
+    );
+    assert_eq!(
+        agents[1].max_simultaneous_headless,
+        DEFAULT_AGENT_MAX_SIMULTANEOUS
+    );
     Ok(())
 }
 
@@ -142,8 +151,17 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     let server = spawn_test_server_with_state(state.state.clone(), state.store.clone()).await?;
     let client = test_client();
 
-    let request =
-        UpsertAgentRequest::new("alpha", "updated prompt", 7, 11, None, None, false, vec![]);
+    let request = UpsertAgentRequest::new(
+        "alpha",
+        "updated prompt",
+        7,
+        4,
+        11,
+        None,
+        None,
+        false,
+        vec![],
+    );
     let response = client
         .put(format!("{}/v1/agents/alpha", server.base_url()))
         .json(&request)
@@ -154,11 +172,13 @@ async fn update_agent_modifies_existing_queue() -> anyhow::Result<()> {
     let body: AgentResponse = response.json().await?;
     assert_eq!(body.agent.prompt, "updated prompt");
     assert_eq!(body.agent.max_tries, 7);
-    assert_eq!(body.agent.max_simultaneous, 11);
+    assert_eq!(body.agent.max_simultaneous_interactive, 4);
+    assert_eq!(body.agent.max_simultaneous_headless, 11);
 
     let agents = state.state.list_agents().await.unwrap();
     assert_eq!(agents[0].max_tries, 7);
-    assert_eq!(agents[0].max_simultaneous, 11);
+    assert_eq!(agents[0].max_simultaneous_interactive, 4);
+    assert_eq!(agents[0].max_simultaneous_headless, 11);
     Ok(())
 }
 

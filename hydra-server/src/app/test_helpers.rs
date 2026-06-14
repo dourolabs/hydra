@@ -118,7 +118,7 @@ pub fn issue_with_status(
     )
 }
 
-/// Register a minimal agent (`max_tries = max_simultaneous = 1`) with a
+/// Register a minimal agent (`max_tries = 1`, both per-mode caps = 1) with a
 /// prompt document at `/agents/<name>/prompt.md`.
 pub async fn register_agent(state: &AppState, name: &str) {
     let prompt_path = format!("/agents/{name}/prompt.md");
@@ -126,6 +126,7 @@ pub async fn register_agent(state: &AppState, name: &str) {
         name.to_string(),
         prompt_path.clone(),
         None,
+        1,
         1,
         1,
         false,

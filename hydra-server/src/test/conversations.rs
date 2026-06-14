@@ -110,6 +110,7 @@ async fn create_conversation_returns_conversation_with_session() -> anyhow::Resu
         "test agent prompt",
         3,
         1,
+        1,
         None,
         None,
         false,

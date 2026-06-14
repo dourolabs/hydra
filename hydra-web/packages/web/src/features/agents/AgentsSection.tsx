@@ -78,8 +78,12 @@ export function AgentsSection({ createOpen, onCreateOpenChange }: AgentsSectionP
                     {agent.max_tries}
                   </span>
                   <span className={styles.metaChip}>
-                    <span className={styles.metaChipKey}>concurrency</span>
-                    {agent.max_simultaneous}
+                    <span className={styles.metaChipKey}>interactive</span>
+                    {agent.max_simultaneous_interactive}
+                  </span>
+                  <span className={styles.metaChip}>
+                    <span className={styles.metaChipKey}>headless</span>
+                    {agent.max_simultaneous_headless}
                   </span>
                   <span className={styles.metaChip}>
                     <span className={styles.metaChipKey}>secrets</span>

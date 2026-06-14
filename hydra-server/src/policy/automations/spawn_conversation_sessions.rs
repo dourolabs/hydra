@@ -507,6 +507,7 @@ mod tests {
             None,
             1,
             1,
+            1,
             is_default,
             vec![],
         );

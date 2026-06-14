@@ -42,7 +42,8 @@ export function createAgentRoutes(store: Store): Hono {
       mcp_config_path: body.mcp_config_path,
       mcp_config: body.mcp_config,
       max_tries: body.max_tries,
-      max_simultaneous: body.max_simultaneous,
+      max_simultaneous_interactive: body.max_simultaneous_interactive,
+      max_simultaneous_headless: body.max_simultaneous_headless,
       is_default_conversation_agent: body.is_default_conversation_agent,
       secrets: body.secrets,
     };
@@ -62,7 +63,8 @@ export function createAgentRoutes(store: Store): Hono {
       mcp_config_path: body.mcp_config_path,
       mcp_config: body.mcp_config,
       max_tries: body.max_tries,
-      max_simultaneous: body.max_simultaneous,
+      max_simultaneous_interactive: body.max_simultaneous_interactive,
+      max_simultaneous_headless: body.max_simultaneous_headless,
       is_default_conversation_agent: body.is_default_conversation_agent,
       secrets: body.secrets,
     };

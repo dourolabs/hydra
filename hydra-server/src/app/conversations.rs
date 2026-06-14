@@ -725,6 +725,7 @@ mod tests {
             None,
             1,
             1,
+            1,
             is_default,
             secrets,
         );
@@ -757,6 +758,7 @@ mod tests {
             name.to_string(),
             prompt_path.clone(),
             Some(mcp_path.clone()),
+            1,
             1,
             1,
             false,

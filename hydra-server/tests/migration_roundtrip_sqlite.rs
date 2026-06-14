@@ -169,6 +169,10 @@ async fn migration_roundtrip_sqlite() -> Result<()> {
     drop_is_assignment_agent_preserves_rows(&pool).await?;
     drop_is_assignment_agent_migration_is_idempotent(&pool).await?;
 
+    split_agents_max_simultaneous_schema_invariants(&pool).await?;
+    split_agents_max_simultaneous_backfills_baselines(&pool).await?;
+    split_agents_max_simultaneous_migration_is_idempotent(&pool).await?;
+
     teardown_work_on_default_terminal_statuses_post_migration_state(&pool).await?;
     rename_kill_sessions_to_teardown_work_is_idempotent(&pool).await?;
 
@@ -820,12 +824,15 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &SqlitePool) -> Result
     // Sibling columns the migration is supposed to leave alone. By the
     // time this assertion runs, the later `rename_deleted_to_archived`
     // migration has flipped the soft-delete column over to `archived`,
-    // so the post-state name is the one we expect here.
+    // and `split_agents_max_simultaneous` has renamed `max_simultaneous`
+    // to `max_simultaneous_headless` (and added
+    // `max_simultaneous_interactive`).
     for required in [
         "name",
         "prompt_path",
         "max_tries",
-        "max_simultaneous",
+        "max_simultaneous_interactive",
+        "max_simultaneous_headless",
         "archived",
         "created_at",
         "updated_at",
@@ -839,6 +846,11 @@ async fn drop_is_assignment_agent_schema_invariants(pool: &SqlitePool) -> Result
                  the rebuild lost it"
             );
         }
+    }
+    if column_exists(pool, "agents", "max_simultaneous").await? {
+        bail!(
+            "expected `agents.max_simultaneous` to be renamed to `max_simultaneous_headless` post-split"
+        );
     }
     Ok(())
 }
@@ -959,8 +971,12 @@ async fn rename_kill_sessions_to_teardown_work_is_idempotent(pool: &SqlitePool) 
 }
 
 async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()> {
+    // `max_simultaneous` was renamed to `max_simultaneous_headless` by the
+    // later `split_agents_max_simultaneous` migration; the baseline values
+    // back-filled identically into `max_simultaneous_interactive`.
     let rows = sqlx::query(
-        "SELECT name, prompt_path, max_tries, max_simultaneous, archived, \
+        "SELECT name, prompt_path, max_tries, max_simultaneous_interactive, \
+                max_simultaneous_headless, archived, \
                 secrets, mcp_config_path, is_default_conversation_agent \
          FROM agents \
          WHERE name IN ('pm-baseline', 'chat-baseline', 'deleted-baseline') \
@@ -979,7 +995,8 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()
     let chat = &rows[0];
     assert_eq!(chat.try_get::<String, _>("name")?, "chat-baseline");
     assert_eq!(chat.try_get::<i64, _>("max_tries")?, 5);
-    assert_eq!(chat.try_get::<i64, _>("max_simultaneous")?, 10);
+    assert_eq!(chat.try_get::<i64, _>("max_simultaneous_headless")?, 10);
+    assert_eq!(chat.try_get::<i64, _>("max_simultaneous_interactive")?, 10);
     assert_eq!(chat.try_get::<i64, _>("archived")?, 0);
     assert_eq!(
         chat.try_get::<String, _>("secrets")?,
@@ -994,10 +1011,23 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()
     let archived = &rows[1];
     assert_eq!(archived.try_get::<String, _>("name")?, "deleted-baseline");
     assert_eq!(archived.try_get::<i64, _>("archived")?, 1);
+    assert_eq!(archived.try_get::<i64, _>("max_simultaneous_headless")?, 1);
+    assert_eq!(
+        archived.try_get::<i64, _>("max_simultaneous_interactive")?,
+        1
+    );
 
     let pm = &rows[2];
     assert_eq!(pm.try_get::<String, _>("name")?, "pm-baseline");
     assert_eq!(pm.try_get::<i64, _>("max_tries")?, 3);
+    assert_eq!(
+        pm.try_get::<i64, _>("max_simultaneous_headless")?,
+        2147483647
+    );
+    assert_eq!(
+        pm.try_get::<i64, _>("max_simultaneous_interactive")?,
+        2147483647
+    );
     assert_eq!(pm.try_get::<i64, _>("archived")?, 0);
     assert_eq!(pm.try_get::<i64, _>("is_default_conversation_agent")?, 0);
 
@@ -1006,7 +1036,8 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &SqlitePool) -> Result<()
 
 async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
     let snapshot_before = sqlx::query(
-        "SELECT name, prompt_path, max_tries, max_simultaneous, archived, \
+        "SELECT name, prompt_path, max_tries, \
+                max_simultaneous_interactive, max_simultaneous_headless, archived, \
                 secrets, mcp_config_path, is_default_conversation_agent \
          FROM agents ORDER BY name",
     )
@@ -1017,7 +1048,8 @@ async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> 
         .await
         .context("re-apply sqlite migrations to confirm drop-is-assignment-agent idempotency")?;
     let snapshot_after = sqlx::query(
-        "SELECT name, prompt_path, max_tries, max_simultaneous, archived, \
+        "SELECT name, prompt_path, max_tries, \
+                max_simultaneous_interactive, max_simultaneous_headless, archived, \
                 secrets, mcp_config_path, is_default_conversation_agent \
          FROM agents ORDER BY name",
     )
@@ -1043,6 +1075,106 @@ async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> 
             "`agents.is_assignment_agent` re-appeared after drop-is-assignment-agent \
              idempotency rerun; the rebuild reapplied"
         );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 20260722000000_split_agents_max_simultaneous. Renames
+// `agents.max_simultaneous` to `max_simultaneous_headless` and adds a new
+// `max_simultaneous_interactive` column back-filled from the pre-migration
+// value so existing per-agent caps are preserved on both axes.
+// ---------------------------------------------------------------------------
+
+async fn split_agents_max_simultaneous_schema_invariants(pool: &SqlitePool) -> Result<()> {
+    if !column_exists(pool, "agents", "max_simultaneous_interactive").await? {
+        bail!("expected `agents.max_simultaneous_interactive` column to exist post-rollforward");
+    }
+    if !column_exists(pool, "agents", "max_simultaneous_headless").await? {
+        bail!("expected `agents.max_simultaneous_headless` column to exist post-rollforward");
+    }
+    if column_exists(pool, "agents", "max_simultaneous").await? {
+        bail!("expected `agents.max_simultaneous` column to be renamed away post-rollforward");
+    }
+    if column_is_nullable(pool, "agents", "max_simultaneous_interactive").await? {
+        bail!("expected `agents.max_simultaneous_interactive` to be NOT NULL");
+    }
+    if column_is_nullable(pool, "agents", "max_simultaneous_headless").await? {
+        bail!("expected `agents.max_simultaneous_headless` to be NOT NULL");
+    }
+    Ok(())
+}
+
+async fn split_agents_max_simultaneous_backfills_baselines(pool: &SqlitePool) -> Result<()> {
+    // Every row carries `max_simultaneous_interactive ==
+    // max_simultaneous_headless` after the back-fill (the rename copied
+    // forward the prior value identically into both columns).
+    let rows = sqlx::query(
+        "SELECT name, max_simultaneous_interactive, max_simultaneous_headless \
+         FROM agents ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("read agents rows for split_agents_max_simultaneous back-fill check")?;
+    if rows.is_empty() {
+        bail!("expected at least one agents row to assert back-fill against");
+    }
+    for row in &rows {
+        let name: String = row.try_get("name")?;
+        let interactive: i64 = row.try_get("max_simultaneous_interactive")?;
+        let headless: i64 = row.try_get("max_simultaneous_headless")?;
+        if interactive != headless {
+            bail!(
+                "agents.{name}: expected max_simultaneous_interactive == max_simultaneous_headless \
+                 after back-fill; got interactive={interactive}, headless={headless}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn split_agents_max_simultaneous_migration_is_idempotent(pool: &SqlitePool) -> Result<()> {
+    let snapshot_before = sqlx::query(
+        "SELECT name, max_simultaneous_interactive, max_simultaneous_headless \
+         FROM agents ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot agents before split_agents_max_simultaneous idempotency rerun")?;
+    sqlite_store::run_migrations(pool, None).await.context(
+        "re-apply sqlite migrations to confirm split_agents_max_simultaneous idempotency",
+    )?;
+    let snapshot_after = sqlx::query(
+        "SELECT name, max_simultaneous_interactive, max_simultaneous_headless \
+         FROM agents ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("snapshot agents after split_agents_max_simultaneous idempotency rerun")?;
+    if snapshot_before.len() != snapshot_after.len() {
+        bail!(
+            "row count changed across split_agents_max_simultaneous idempotency rerun: {} -> {}",
+            snapshot_before.len(),
+            snapshot_after.len()
+        );
+    }
+    for (before, after) in snapshot_before.iter().zip(snapshot_after.iter()) {
+        let before_name: String = before.try_get("name")?;
+        let after_name: String = after.try_get("name")?;
+        let before_interactive: i64 = before.try_get("max_simultaneous_interactive")?;
+        let after_interactive: i64 = after.try_get("max_simultaneous_interactive")?;
+        let before_headless: i64 = before.try_get("max_simultaneous_headless")?;
+        let after_headless: i64 = after.try_get("max_simultaneous_headless")?;
+        if before_name != after_name
+            || before_interactive != after_interactive
+            || before_headless != after_headless
+        {
+            bail!(
+                "agents row changed across split_agents_max_simultaneous rerun: \
+                 {before_name}({before_interactive}, {before_headless}) -> \
+                 {after_name}({after_interactive}, {after_headless})"
+            );
+        }
     }
     Ok(())
 }

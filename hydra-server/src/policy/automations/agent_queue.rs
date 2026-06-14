@@ -282,9 +282,6 @@ impl AgentQueue {
             .is_issue_ready(issue_id)
             .await
             .context("failed to determine if issue is ready")?;
-        let active_tasks = task_state.running_tasks + task_state.pending_tasks;
-        let max_simultaneous = self.agent.max_simultaneous as usize;
-        let at_capacity = max_simultaneous == 0 || active_tasks >= max_simultaneous;
         let has_active_session = task_state.existing_issue_ids.contains(issue_id);
         let has_active_conv = has_active_conversation(state, issue_id).await?;
         let parent_running = parent_has_running_task(state, issue).await?;
@@ -306,6 +303,28 @@ impl AgentQueue {
                 None
             }
         };
+        let interactive = resolved_status
+            .as_ref()
+            .map(|def| def.interactive)
+            .unwrap_or(false);
+
+        // Pick the matching cap based on the resolved status's
+        // interactive flag — interactive (conversation-mode) and headless
+        // sessions are capped independently per agent so a SWE agent can
+        // accept N live previews without throttling its headless work
+        // (or vice versa).
+        let (max_simultaneous, active_tasks) = if interactive {
+            (
+                self.agent.max_simultaneous_interactive as usize,
+                task_state.running_interactive + task_state.pending_interactive,
+            )
+        } else {
+            (
+                self.agent.max_simultaneous_headless as usize,
+                task_state.running_headless + task_state.pending_headless,
+            )
+        };
+        let at_capacity = max_simultaneous == 0 || active_tasks >= max_simultaneous;
         let status_at_capacity = if let Some(def) = resolved_status.as_ref() {
             match def.max_simultaneous_sessions {
                 Some(cap) => {
@@ -365,11 +384,6 @@ impl AgentQueue {
         // headless branch; an interactive status mints a `Conversation`
         // whose companion session is materialized asynchronously by
         // `SpawnConversationSessionsAutomation`.
-        let interactive = resolved_status
-            .as_ref()
-            .map(|def| def.interactive)
-            .unwrap_or(false);
-
         if interactive {
             let maybe_conversation_id =
                 self.build_conversation_task(state, issue_id, issue).await?;
@@ -409,8 +423,10 @@ pub(crate) async fn has_active_conversation(
 
 pub(crate) struct AgentTaskState {
     pub(crate) existing_issue_ids: HashSet<IssueId>,
-    pub(crate) running_tasks: usize,
-    pub(crate) pending_tasks: usize,
+    pub(crate) running_interactive: usize,
+    pub(crate) running_headless: usize,
+    pub(crate) pending_interactive: usize,
+    pub(crate) pending_headless: usize,
 }
 
 pub(crate) async fn agent_task_state(
@@ -419,8 +435,10 @@ pub(crate) async fn agent_task_state(
 ) -> Result<AgentTaskState, StoreError> {
     let mut task_state = AgentTaskState {
         existing_issue_ids: HashSet::new(),
-        running_tasks: 0,
-        pending_tasks: 0,
+        running_interactive: 0,
+        running_headless: 0,
+        pending_interactive: 0,
+        pending_headless: 0,
     };
     let mut query = SearchSessionsQuery::default();
     query.status = vec![
@@ -439,9 +457,16 @@ pub(crate) async fn agent_task_state(
             continue;
         }
 
-        match session.status {
-            Status::Created => task_state.pending_tasks += 1,
-            Status::Pending | Status::Running => task_state.running_tasks += 1,
+        // Bucket by `SessionMode`: interactive (conversation-mode) and
+        // headless sessions are capped independently. The mode is
+        // first-class on the persisted session, so there's no ambiguity
+        // here.
+        let is_interactive = session.is_interactive();
+        match (session.status, is_interactive) {
+            (Status::Created, true) => task_state.pending_interactive += 1,
+            (Status::Created, false) => task_state.pending_headless += 1,
+            (Status::Pending | Status::Running, true) => task_state.running_interactive += 1,
+            (Status::Pending | Status::Running, false) => task_state.running_headless += 1,
             _ => {}
         }
 
@@ -557,6 +582,7 @@ mod tests {
             None,
             DEFAULT_AGENT_MAX_TRIES,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
             Vec::new(),
         )
@@ -578,6 +604,7 @@ mod tests {
                 format!("/agents/{agent_name}/prompt.md"),
                 None,
                 DEFAULT_AGENT_MAX_TRIES,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 false,
                 secrets,
@@ -614,6 +641,7 @@ mod tests {
                 format!("/agents/{agent_name}/prompt.md"),
                 None,
                 DEFAULT_AGENT_MAX_TRIES,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 false,
                 secrets,
@@ -1575,9 +1603,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn does_not_spawn_when_at_max_simultaneous() -> anyhow::Result<()> {
+    async fn does_not_spawn_when_at_max_simultaneous_headless() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.agent.max_simultaneous = 1;
+        queue.agent.max_simultaneous_headless = 1;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (issue_id, _) = handles
@@ -1637,7 +1665,7 @@ mod tests {
     #[tokio::test]
     async fn caps_new_tasks_to_remaining_capacity() -> anyhow::Result<()> {
         let mut queue = queue("agent-a");
-        queue.agent.max_simultaneous = 2;
+        queue.agent.max_simultaneous_headless = 2;
 
         let (handles, repo_name) = state_with_repository().await?;
         let (first_issue_id, _) = handles
@@ -1717,6 +1745,174 @@ mod tests {
                 .get(ISSUE_ID_ENV_VAR)
                 .map(String::as_str),
             Some(second_issue_id.as_ref())
+        );
+
+        Ok(())
+    }
+
+    /// With a tight interactive cap, a saturating interactive session
+    /// blocks a second interactive spawn while leaving the headless cap
+    /// untouched: a headless spawn still proceeds.
+    #[tokio::test]
+    async fn interactive_cap_blocks_interactive_but_not_headless() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, backlog_key) = seed_interactive_project(&handles).await;
+
+        let mut queue = queue("agent-a");
+        queue.agent.max_simultaneous_interactive = 1;
+        queue.agent.max_simultaneous_headless = 5;
+
+        // Saturate the interactive cap with an active interactive
+        // session for an unrelated issue.
+        let (saturating_issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(
+                    &project_id,
+                    &interactive_key,
+                    &repo_name,
+                    "saturating interactive",
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let _ = seed_parent_session(&handles, &saturating_issue_id, true, Status::Running).await?;
+
+        // A second interactive issue should be deferred.
+        let (interactive_issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(
+                    &project_id,
+                    &interactive_key,
+                    &repo_name,
+                    "blocked interactive",
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles
+            .store
+            .get_issue(&interactive_issue_id, false)
+            .await?
+            .item;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &interactive_issue_id,
+                &issue_item,
+                &task_state,
+            )
+            .await?;
+        assert!(
+            matches!(result, SpawnResult::Skipped),
+            "interactive cap saturated must defer the second interactive spawn"
+        );
+
+        // A headless issue on the same agent should still spawn — the
+        // headless cap (5) is untouched by the interactive saturation.
+        let (headless_issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &backlog_key, &repo_name, "still-ok headless"),
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles
+            .store
+            .get_issue(&headless_issue_id, false)
+            .await?
+            .item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &headless_issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            result.is_spawned(),
+            "headless cap untouched by interactive saturation — spawn must proceed"
+        );
+
+        Ok(())
+    }
+
+    /// With a tight headless cap, a saturating headless session blocks
+    /// a second headless spawn while leaving the interactive cap
+    /// untouched: an interactive spawn still proceeds.
+    #[tokio::test]
+    async fn headless_cap_blocks_headless_but_not_interactive() -> anyhow::Result<()> {
+        let (handles, repo_name) = state_with_repository().await?;
+        let (project_id, interactive_key, backlog_key) = seed_interactive_project(&handles).await;
+
+        let mut queue = queue("agent-a");
+        queue.agent.max_simultaneous_interactive = 5;
+        queue.agent.max_simultaneous_headless = 1;
+
+        // Saturate the headless cap with an active headless session for
+        // an unrelated issue.
+        let (saturating_issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &backlog_key, &repo_name, "saturating headless"),
+                &ActorRef::test(),
+            )
+            .await?;
+        let _ = seed_parent_session(&handles, &saturating_issue_id, false, Status::Running).await?;
+
+        // A second headless issue should be deferred.
+        let (headless_issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(&project_id, &backlog_key, &repo_name, "blocked headless"),
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles
+            .store
+            .get_issue(&headless_issue_id, false)
+            .await?
+            .item;
+        let result = queue
+            .spawn_for_issue(&handles.state, &headless_issue_id, &issue_item, &task_state)
+            .await?;
+        assert!(
+            matches!(result, SpawnResult::Skipped),
+            "headless cap saturated must defer the second headless spawn"
+        );
+
+        // An interactive issue on the same agent should still spawn —
+        // the interactive cap (5) is untouched by the headless
+        // saturation.
+        let (interactive_issue_id, _) = handles
+            .store
+            .add_issue(
+                interactive_issue(
+                    &project_id,
+                    &interactive_key,
+                    &repo_name,
+                    "still-ok interactive",
+                ),
+                &ActorRef::test(),
+            )
+            .await?;
+        let task_state = agent_task_state(&handles.state, "agent-a").await?;
+        let issue_item = handles
+            .store
+            .get_issue(&interactive_issue_id, false)
+            .await?
+            .item;
+        let result = queue
+            .spawn_for_issue(
+                &handles.state,
+                &interactive_issue_id,
+                &issue_item,
+                &task_state,
+            )
+            .await?;
+        assert!(
+            result.is_spawned_conversation(),
+            "interactive cap untouched by headless saturation — spawn must proceed"
         );
 
         Ok(())
@@ -2055,6 +2251,7 @@ mod tests {
             "/agents/test-agent/prompt.md".to_string(),
             None,
             5,
+            7,
             10,
             false,
             Vec::new(),
@@ -2065,7 +2262,8 @@ mod tests {
         assert_eq!(queue.agent.name, "test-agent");
         assert_eq!(queue.agent.prompt_path, "/agents/test-agent/prompt.md");
         assert_eq!(queue.agent.max_tries, 5);
-        assert_eq!(queue.agent.max_simultaneous, 10);
+        assert_eq!(queue.agent.max_simultaneous_interactive, 7);
+        assert_eq!(queue.agent.max_simultaneous_headless, 10);
     }
 
     // Dropped/failed default-project issues carry no assignee under
@@ -2510,6 +2708,7 @@ mod tests {
                 Some(mcp_config_path.to_string()),
                 DEFAULT_AGENT_MAX_TRIES,
                 DEFAULT_AGENT_MAX_SIMULTANEOUS,
+                DEFAULT_AGENT_MAX_SIMULTANEOUS,
                 false,
                 Vec::new(),
             ),
@@ -2547,6 +2746,7 @@ mod tests {
             format!("/agents/{agent_name}/prompt.md"),
             Some(mcp_config_path.to_string()),
             DEFAULT_AGENT_MAX_TRIES,
+            DEFAULT_AGENT_MAX_SIMULTANEOUS,
             DEFAULT_AGENT_MAX_SIMULTANEOUS,
             false,
             Vec::new(),
@@ -3685,7 +3885,7 @@ mod tests {
         // Agent cap: tight (1). Saturate it with an unrelated active
         // session so the agent at_capacity branch trips first.
         let mut queue = queue("agent-a");
-        queue.agent.max_simultaneous = 1;
+        queue.agent.max_simultaneous_headless = 1;
         let saturating_session = task(
             "saturating",
             Bundle::None,
