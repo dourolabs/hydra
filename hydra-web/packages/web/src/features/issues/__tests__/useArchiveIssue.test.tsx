@@ -46,7 +46,6 @@ function issue(id: string): IssueSummaryRecord {
       title: id,
       description: "",
       creator: "alice",
-      progress: "",
       status: {
         key: "open",
         label: "open",

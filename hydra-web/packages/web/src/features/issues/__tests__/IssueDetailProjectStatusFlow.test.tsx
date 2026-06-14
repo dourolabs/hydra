@@ -186,7 +186,6 @@ function makeRecord(): IssueVersionRecord {
       title: "Sample",
       description: "",
       creator: "alice",
-      progress: "",
       status: {
         key: "in-progress",
         label: "In Progress",

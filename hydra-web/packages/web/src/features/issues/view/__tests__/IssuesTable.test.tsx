@@ -167,7 +167,6 @@ function makeIssue(
       status: makeStatusDef(status ?? "open"),
       project_id: "j-defaul",
       assignee: null,
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],

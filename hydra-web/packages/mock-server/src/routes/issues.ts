@@ -131,7 +131,6 @@ function toSummaryRecord(
     status: issue.status,
     project_id: issue.project_id,
     assignee: issue.assignee,
-    progress: (issue.progress ?? "").slice(0, 200),
     dependencies: issue.dependencies,
     patches: issue.patches,
     archived: issue.archived,
@@ -514,20 +513,6 @@ export function createIssueRoutes(store: Store): Hono {
     const comment = appendIssueComment(store, id, text, actor);
     const resp: AddCommentResponse = { comment };
     return c.json(resp, 201);
-  });
-
-  // POST /v1/issues/:id/feedback — submit feedback
-  app.post("/v1/issues/:id/feedback", async (c) => {
-    const id = c.req.param("id");
-    const body = await c.req.json<{ feedback: string }>();
-    const existing = store.get<Issue>(COLLECTION, id);
-    if (!existing) {
-      return c.json({ error: `issue '${id}' not found` }, 404);
-    }
-    const updated: Issue = { ...existing.data, feedback: body.feedback };
-    const entry = store.update<Issue>(COLLECTION, id, updated, SSE_PREFIX);
-    const creationTime = store.getCreationTime(COLLECTION, id)!;
-    return c.json(toVersionRecord(id, entry.version, entry.timestamp, entry.data, creationTime));
   });
 
   return app;

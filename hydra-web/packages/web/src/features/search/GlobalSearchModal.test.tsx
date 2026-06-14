@@ -92,7 +92,6 @@ function issueRow(id: string, title: string, projectId: string | null = null) {
         cascades_to_children: false,
       },
       project_id: projectId,
-      progress: "",
       dependencies: [],
       patches: [],
     },

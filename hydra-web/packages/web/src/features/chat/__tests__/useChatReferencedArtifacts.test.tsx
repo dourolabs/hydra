@@ -58,7 +58,6 @@ function makeIssue(id: string, title = `Issue ${id}`): IssueSummaryRecord {
       creator: "alice",
       status: makeStatusDef("open"),
       project_id: "j-defaul",
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],

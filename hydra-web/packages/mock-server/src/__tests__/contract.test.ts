@@ -72,7 +72,6 @@ describe("Issues", () => {
       title: "",
       description: "Contract test issue",
       creator: "dev-user",
-      progress: "",
       status: "open",
       project_id: "j-defaul",
       assignee: { User: { name: "alice" } },
@@ -109,7 +108,6 @@ describe("Issues", () => {
       issue: {
         ...issuePayload.issue,
         status: "in-progress",
-        progress: "Working on it",
       },
       session_id: null,
     };
@@ -120,7 +118,6 @@ describe("Issues", () => {
     // Get after update
     const refetched = await client.getIssue(issueId);
     expect(refetched.issue.status.key).toBe("in-progress");
-    expect(refetched.issue.progress).toBe("Working on it");
 
     // Delete
     const deleted = await client.deleteIssue(issueId);
@@ -791,7 +788,6 @@ describe("Reset endpoint", () => {
         title: "",
         description: "Ephemeral issue for reset test",
         creator: "dev-user",
-        progress: "",
         status: "open",
         project_id: "j-defaul",
         dependencies: [],
@@ -899,7 +895,6 @@ describe("SSE Events", () => {
         title: "",
         description: "SSE test issue",
         creator: "dev-user",
-        progress: "",
         status: "open",
         project_id: "j-defaul",
         dependencies: [],
@@ -1098,7 +1093,6 @@ describe("BFF proxy rewrite", () => {
           title: "",
           description: "Created via BFF proxy",
           creator: "dev-user",
-          progress: "",
           status: "open",
           project_id: "j-defaul",
           dependencies: [],
@@ -1126,7 +1120,6 @@ describe("BFF proxy rewrite", () => {
           title: "",
           description: "BFF proxy get test",
           creator: "dev-user",
-          progress: "",
           status: "open",
           project_id: "j-defaul",
           dependencies: [],

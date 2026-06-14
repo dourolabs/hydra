@@ -56,12 +56,6 @@
   padding: var(--space-4);
 }
 
-.progressBody {
-  padding: var(--space-4);
-  background: var(--color-bg-tertiary);
-  border-left: 2px solid var(--color-border);
-}
-
 .empty {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);

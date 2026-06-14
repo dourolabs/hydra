@@ -231,7 +231,6 @@ export function IssueCreateModal({
           title: params.title,
           description: params.description,
           creator: params.creator,
-          progress: "",
           status: params.status,
           project_id: params.projectId || DEFAULT_PROJECT_ID,
           dependencies: [],

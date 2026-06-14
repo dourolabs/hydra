@@ -145,7 +145,6 @@ function makeIssue(
       creator: "alice",
       status: makeStatusDef("open"),
       project_id: "j-defaul",
-      progress: "",
       dependencies: [],
       patches: [],
       labels: [],

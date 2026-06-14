@@ -43,7 +43,6 @@ function makeIssue(
     creator: "testuser",
     status: placeholderStatus(status ?? "open"),
     project_id: "j-defaul",
-    progress: "",
     dependencies: [],
     patches: [],
     ...rest,

@@ -362,7 +362,6 @@ const getIssueSpy = vi.fn(async (id: string) => ({
     title: id,
     description: "full description",
     creator: "alice",
-    progress: "",
     status: "in-progress",
     project_id: "j-eng",
     assignee: null,

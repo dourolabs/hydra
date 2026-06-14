@@ -21,7 +21,6 @@ function makeRecord(
       creator: "test",
       status: makeStatusDef(status),
       project_id: "j-defaul",
-      progress: "",
       dependencies: dependencies as IssueSummaryRecord["issue"]["dependencies"],
       patches: [],
     },
@@ -170,7 +169,6 @@ function makeWorkItem(
         creator: "test",
         status: makeStatusDef("open"),
         project_id: "j-defaul",
-        progress: "",
         dependencies:
           dependencies as IssueSummaryRecord["issue"]["dependencies"],
         patches: [],

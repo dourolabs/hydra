@@ -54,7 +54,7 @@ function clearDeletedOnPage(
  * Row-level "Restore" action shown on archived issue rows. Re-fetches the
  * full issue (`include_archived=true`) before submitting the update so the
  * PUT body preserves fields the summary record drops (session_settings,
- * form, form_response, feedback). Without that round-trip the update would
+ * form, form_response). Without that round-trip the update would
  * blank those fields out on the server.
  */
 export function RestoreIssueButton({

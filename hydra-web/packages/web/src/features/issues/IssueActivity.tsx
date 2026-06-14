@@ -1,4 +1,3 @@
-import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { issueTypeDisplayLabel } from "@hydra/ui";
 import type { Principal, IssueVersionRecord } from "@hydra/api";
@@ -77,9 +76,6 @@ function diffIssueVersions(
       after: principalLabel(currIssue.assignee),
     });
   }
-  if (prevIssue.progress !== currIssue.progress) {
-    changes.push({ field: "progress", value: currIssue.progress });
-  }
   if (prevIssue.description !== currIssue.description) {
     changes.push({ field: "description", value: currIssue.description });
   }
@@ -108,57 +104,6 @@ function diffIssueVersions(
   return changes;
 }
 
-function ProgressValue({ value }: { value: string }) {
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [truncated, setTruncated] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-
-  useLayoutEffect(() => {
-    const el = contentRef.current;
-    if (el) {
-      setTruncated(el.scrollHeight > el.clientHeight);
-    }
-  }, [value]);
-
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-
-    const observer = new ResizeObserver(() => {
-      setTruncated(el.scrollHeight > el.clientHeight);
-    });
-    observer.observe(el);
-
-    return () => observer.disconnect();
-  }, [value]);
-
-  const toggle = useCallback(() => setExpanded((v) => !v), []);
-
-  return (
-    <div>
-      <div
-        ref={contentRef}
-        className={
-          expanded
-            ? styles.progressContentExpanded
-            : styles.progressContentTruncated
-        }
-      >
-        {value}
-      </div>
-      {truncated && (
-        <button
-          type="button"
-          className={styles.collapsibleSummary}
-          onClick={toggle}
-        >
-          {expanded ? "Show less" : "Show more"}
-        </button>
-      )}
-    </div>
-  );
-}
-
 function IssueChangeEntry({ change }: { change: Change }) {
   if (change.field === "status" && change.beforeStatus && change.afterStatus) {
     return (
@@ -182,16 +127,6 @@ function IssueChangeEntry({ change }: { change: Change }) {
           <span className={styles.arrow}>{"\u2192"}</span>
           {change.after ?? "unassigned"}
         </span>
-      </div>
-    );
-  }
-
-  if (change.field === "progress") {
-    return (
-      <div className={styles.change}>
-        <span className={styles.changeLabel}>Progress</span>
-        updated
-        {change.value && <ProgressValue value={change.value} />}
       </div>
     );
   }
