@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   ConversationSummary,
@@ -420,23 +420,9 @@ function emptyCell(overrides: Partial<BoardCellQuery> = {}): BoardCellQuery {
   };
 }
 
-// Probe that snapshots the current URL search params into a `data-search`
-// attribute so tests can read what `useSearchParams` mutators wrote. Sibling-
-// renders the board.
-function SearchProbe() {
-  const location = useLocation();
-  return <span data-testid="search-probe" data-search={location.search} />;
-}
-
-function readSearchProbe(): URLSearchParams {
-  const el = screen.getByTestId("search-probe");
-  const raw = el.getAttribute("data-search") ?? "";
-  return new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw);
-}
-
 function renderBoard(
   queryClient?: QueryClient,
-  opts: { hideIssues?: boolean; initialUrl?: string } = {},
+  opts: { hideIssues?: boolean } = {},
 ) {
   const client =
     queryClient ??
@@ -445,8 +431,7 @@ function renderBoard(
     });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[opts.initialUrl ?? "/"]}>
-        <SearchProbe />
+      <MemoryRouter>
         <IssuesBoard
           baseFilters={{}}
           filterRootId={null}
@@ -1726,6 +1711,8 @@ describe("IssuesBoard chat button", () => {
 });
 
 describe("IssuesBoard mobile single-board view", () => {
+  const STORAGE_KEY = "hydra:board-mobile-state";
+
   beforeEach(() => {
     mobileMatches = true;
     window.sessionStorage.clear();
@@ -1762,7 +1749,7 @@ describe("IssuesBoard mobile single-board view", () => {
     expect(screen.getByTestId("board-project-design")).toBeDefined();
   });
 
-  it("persists the picker selection to the URL via ?board_project", () => {
+  it("persists the picker selection to sessionStorage", () => {
     renderBoard();
 
     fireEvent.click(
@@ -1770,30 +1757,36 @@ describe("IssuesBoard mobile single-board view", () => {
     );
     fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
 
-    expect(readSearchProbe().get("board_project")).toBe("j-design");
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw!).project).toBe("j-design");
   });
 
-  it("hydrates the picker selection from ?board_project on mount", () => {
-    renderBoard(undefined, { initialUrl: "/?board_project=j-design" });
+  it("hydrates the picker selection from sessionStorage on mount", () => {
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ project: "j-design", status: null }),
+    );
+    renderBoard();
 
     expect(screen.getByTestId("board-project-design")).toBeDefined();
     expect(screen.queryByTestId("board-project-engineering")).toBeNull();
   });
 
-  it("writes ?board_project with replace (no history pollution)", () => {
-    // The page-level filter URL params should remain untouched when only the
-    // picker mutates state — the picker write must merge, not replace, the
-    // existing search.
-    renderBoard(undefined, { initialUrl: "/?status=in-progress" });
+  it("switching project clears the saved status (columns differ per project)", () => {
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ project: "j-eng", status: "in-progress" }),
+    );
+    renderBoard();
 
     fireEvent.click(
       screen.getByTestId("board-mobile-picker").querySelector("button")!,
     );
     fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
 
-    const sp = readSearchProbe();
-    expect(sp.get("board_project")).toBe("j-design");
-    expect(sp.get("status")).toBe("in-progress");
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    expect(JSON.parse(raw!)).toEqual({ project: "j-design", status: null });
   });
 
   it("suppresses the picker when scoped to a single project", () => {
@@ -1838,49 +1831,12 @@ describe("IssuesBoard mobile single-board view", () => {
     }
   });
 
-  it("falls back to the first project when ?board_project points at a missing one", () => {
-    renderBoard(undefined, { initialUrl: "/?board_project=j-deleted" });
+  it("falls back to the first project when the stored selection no longer exists", () => {
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ project: "j-deleted", status: null }),
+    );
+    renderBoard();
     expect(screen.getByTestId("board-project-engineering")).toBeDefined();
-  });
-
-  it("persists picker selection to sessionStorage so a fresh nav restores it", () => {
-    renderBoard();
-
-    fireEvent.click(
-      screen.getByTestId("board-mobile-picker").querySelector("button")!,
-    );
-    fireEvent.click(screen.getByTestId("board-mobile-picker-option-design"));
-
-    const raw = window.sessionStorage.getItem("hydra:board:mobile-state");
-    expect(raw).not.toBeNull();
-    expect(JSON.parse(raw!).project).toBe("j-design");
-  });
-
-  it("hydrates from sessionStorage when URL has no board params (nav-menu return)", async () => {
-    window.sessionStorage.setItem(
-      "hydra:board:mobile-state",
-      JSON.stringify({ project: "j-design", status: "in-progress" }),
-    );
-    renderBoard();
-
-    await waitFor(() => {
-      expect(screen.getByTestId("board-project-design")).toBeDefined();
-    });
-    expect(screen.queryByTestId("board-project-engineering")).toBeNull();
-    // Hydration should also seed the URL so back/forward keeps working.
-    const sp = readSearchProbe();
-    expect(sp.get("board_project")).toBe("j-design");
-    expect(sp.get("board_status")).toBe("in-progress");
-  });
-
-  it("URL wins over sessionStorage when both are present", () => {
-    window.sessionStorage.setItem(
-      "hydra:board:mobile-state",
-      JSON.stringify({ project: "j-eng" }),
-    );
-    renderBoard(undefined, { initialUrl: "/?board_project=j-design" });
-
-    expect(screen.getByTestId("board-project-design")).toBeDefined();
-    expect(screen.queryByTestId("board-project-engineering")).toBeNull();
   });
 });

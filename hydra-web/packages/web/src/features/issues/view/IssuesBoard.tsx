@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -77,21 +77,48 @@ interface IssuesBoardProps {
 // inserts before float precision forces a renumber.
 const PROJECT_PRIORITY_STEP = 1024;
 
-// Mobile single-board view state is mirrored to URL params (not the page-
-// level FilterBar's `?project=`, which would scope the entire issues view —
-// see filterUrlSync). These ride alongside the FilterBar params so a copied
-// URL restores the picker selection AND the currently snapped status column
-// for the recipient on mobile, and back-navigation from issue detail
-// restores both without going through localStorage.
-const MOBILE_PROJECT_URL_PARAM = "board_project";
-const MOBILE_STATUS_URL_PARAM = "board_status";
+// Mobile single-board view state is persisted to sessionStorage so that any
+// in-tab return path to /issues — back button, nav-bar tap, page reload —
+// lands the user back on the (project, status) cell they were last viewing.
+// Per-tab by design: a new tab starts fresh. We deliberately don't mirror
+// this to URL params; a top-level nav (tapping "Issues" from /sessions)
+// doesn't carry the previous URL forward, so URL-only persistence broke
+// that case.
+const MOBILE_BOARD_STATE_STORAGE_KEY = "hydra:board-mobile-state";
 
-// URL params cover back/forward and shareable links, but a fresh navigation
-// to /issues (e.g. tapping the nav bar from /sessions) arrives without them.
-// Mirror the picker + snapped column to sessionStorage so the next mount
-// can re-seed the URL when it's empty. Per-tab by design — opening /issues
-// in a new tab starts fresh.
-const MOBILE_BOARD_STATE_STORAGE_KEY = "hydra:board:mobile-state";
+type StoredMobileBoardState = {
+  project: string | null;
+  status: string | null;
+};
+
+function loadStoredMobileBoardState(): StoredMobileBoardState {
+  if (typeof window === "undefined") {
+    return { project: null, status: null };
+  }
+  try {
+    const raw = window.sessionStorage.getItem(MOBILE_BOARD_STATE_STORAGE_KEY);
+    if (!raw) return { project: null, status: null };
+    const parsed = JSON.parse(raw) as Partial<StoredMobileBoardState>;
+    return {
+      project: typeof parsed.project === "string" ? parsed.project : null,
+      status: typeof parsed.status === "string" ? parsed.status : null,
+    };
+  } catch {
+    return { project: null, status: null };
+  }
+}
+
+function saveStoredMobileBoardState(state: StoredMobileBoardState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      MOBILE_BOARD_STATE_STORAGE_KEY,
+      JSON.stringify(state),
+    );
+  } catch {
+    /* quota / private-mode — best-effort */
+  }
+}
 
 // Pick a new `priority` for a project that just landed between `left` and
 // `right` after a drag-and-drop. Mid-points between neighbors give O(1)
@@ -147,69 +174,34 @@ export function IssuesBoard({
   const { isCollapsed, onToggle: onToggleCollapse } = useProjectCollapseState();
   const [settingsProjectId, setSettingsProjectId] = useState<ProjectId | null>(null);
   const isMobile = useIsMobile();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const mobileSelectedProjectId = searchParams.get(MOBILE_PROJECT_URL_PARAM);
-  const mobileSelectedStatusKey = searchParams.get(MOBILE_STATUS_URL_PARAM);
+  const [mobileBoardState, setMobileBoardState] = useState<StoredMobileBoardState>(
+    () => loadStoredMobileBoardState(),
+  );
+  const mobileSelectedProjectId = mobileBoardState.project;
+  const mobileSelectedStatusKey = mobileBoardState.status;
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
 
-  const setMobileSelectedProjectId = useCallback(
-    (id: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (id) {
-            next.set(MOBILE_PROJECT_URL_PARAM, id);
-          } else {
-            next.delete(MOBILE_PROJECT_URL_PARAM);
-          }
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
+  const setMobileSelectedProjectId = useCallback((id: string | null) => {
+    setMobileBoardState((prev) => {
+      if (prev.project === id) return prev;
+      // Switching project: clear the status key because status columns are
+      // per-project and the previous key likely doesn't exist on the new
+      // project. ProjectSection's scroll-snap detection will repopulate it
+      // once the user scrolls.
+      const next = { project: id, status: null };
+      saveStoredMobileBoardState(next);
+      return next;
+    });
+  }, []);
 
-  const setMobileSelectedStatusKey = useCallback(
-    (key: string | null) => {
-      setSearchParams(
-        (prev) => {
-          const current = prev.get(MOBILE_STATUS_URL_PARAM);
-          if (current === key) return prev;
-          const next = new URLSearchParams(prev);
-          if (key) {
-            next.set(MOBILE_STATUS_URL_PARAM, key);
-          } else {
-            next.delete(MOBILE_STATUS_URL_PARAM);
-          }
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
-
-  // Mirror URL state into sessionStorage on every change so the keep-in-
-  // range effect below can re-seed the URL on the next fresh mount (e.g.
-  // when the user lands on /issues via the nav bar after visiting another
-  // page — URL params don't survive a top-level nav).
-  useEffect(() => {
-    if (!isMobile) return;
-    if (typeof window === "undefined") return;
-    if (!mobileSelectedProjectId && !mobileSelectedStatusKey) return;
-    try {
-      window.sessionStorage.setItem(
-        MOBILE_BOARD_STATE_STORAGE_KEY,
-        JSON.stringify({
-          project: mobileSelectedProjectId ?? undefined,
-          status: mobileSelectedStatusKey ?? undefined,
-        }),
-      );
-    } catch {
-      /* quota / private-mode — best-effort */
-    }
-  }, [isMobile, mobileSelectedProjectId, mobileSelectedStatusKey]);
+  const setMobileSelectedStatusKey = useCallback((key: string | null) => {
+    setMobileBoardState((prev) => {
+      if (prev.status === key) return prev;
+      const next = { project: prev.project, status: key };
+      saveStoredMobileBoardState(next);
+      return next;
+    });
+  }, []);
 
   const allProjectDescriptors: BoardProjectDescriptor[] = useMemo(() => {
     const out: BoardProjectDescriptor[] = [];
@@ -257,11 +249,8 @@ export function IssuesBoard({
     isMobile && !baseFilters.project_id && allProjectDescriptors.length > 1;
 
   // Keep the selected id in range if projects load late or the previously
-  // selected one disappears (deleted, filter shifts). When the URL is empty
-  // (fresh mount via the nav bar — top-level navigations don't carry the
-  // board_project / board_status params), check sessionStorage first so the
-  // user lands back on the last (project, status) they were on. Falls back
-  // to the first descriptor when nothing in storage is usable.
+  // selected one disappears (deleted, filter shifts). Falls back to the
+  // first descriptor so the board always has something mounted.
   useEffect(() => {
     if (!showMobilePicker) return;
     const stillExists =
@@ -269,48 +258,14 @@ export function IssuesBoard({
       allProjectDescriptors.some(
         (p) => p.project_id === mobileSelectedProjectId,
       );
-    if (stillExists) return;
-
-    let stored: { project?: string; status?: string } | null = null;
-    if (mobileSelectedProjectId === null && typeof window !== "undefined") {
-      try {
-        const raw = window.sessionStorage.getItem(
-          MOBILE_BOARD_STATE_STORAGE_KEY,
-        );
-        if (raw) stored = JSON.parse(raw);
-      } catch {
-        /* malformed payload — fall through to defaults */
-      }
+    if (!stillExists) {
+      setMobileSelectedProjectId(allProjectDescriptors[0].project_id);
     }
-    const storedProjectExists =
-      stored?.project !== undefined &&
-      allProjectDescriptors.some((p) => p.project_id === stored.project);
-    const projectToSet = storedProjectExists
-      ? stored!.project!
-      : allProjectDescriptors[0].project_id;
-
-    // Batch the project + status seeds into a single setSearchParams so we
-    // only push one history entry and both land in the URL atomically.
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set(MOBILE_PROJECT_URL_PARAM, projectToSet);
-        if (
-          storedProjectExists &&
-          stored?.status &&
-          !next.get(MOBILE_STATUS_URL_PARAM)
-        ) {
-          next.set(MOBILE_STATUS_URL_PARAM, stored.status);
-        }
-        return next;
-      },
-      { replace: true },
-    );
   }, [
     showMobilePicker,
     mobileSelectedProjectId,
     allProjectDescriptors,
-    setSearchParams,
+    setMobileSelectedProjectId,
   ]);
 
   const projects: BoardProjectDescriptor[] = useMemo(() => {
