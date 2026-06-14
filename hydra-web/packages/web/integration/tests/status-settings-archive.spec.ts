@@ -1,5 +1,27 @@
 import { test, expect } from "../fixtures/auth";
 
+// Seed issues currently in the default project's `failed` column. The
+// empty-column test archives these up-front so the column renders empty
+// when we open the archive-confirmation dialog.
+const DEFAULT_FAILED_ISSUES = [
+  "i-bulk00005",
+  "i-bulk00015",
+  "i-bulk00025",
+  "i-bulk00035",
+  "i-bulk00045",
+  "i-bulk00055",
+];
+
+async function archiveIssue(id: string): Promise<void> {
+  const res = await fetch(`http://localhost:8080/v1/issues/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: "Bearer dev-token-12345" },
+  });
+  if (!res.ok) {
+    throw new Error(`archive setup failed: ${res.status} ${res.statusText}`);
+  }
+}
+
 // Phase 4: archive-with-confirmation flow on `StatusSettingsModal`. The
 // modal's old bulk-move-then-delete UX is gone; the backend cascade now
 // archives every active issue at the to-archive status. The default
@@ -73,11 +95,17 @@ test.describe("Status settings — Archive status @projects:status-archive", () 
   test("archive on an empty column shows a generic confirmation (no issue count) @projects:status-archive", async ({
     authenticatedPage: page,
   }) => {
+    // Drain the `failed` column on the default project so the archive
+    // dialog renders the empty-column copy. The seed has 6 issues in
+    // this column; the empty-column copy only fires when the loaded
+    // column is empty.
+    for (const id of DEFAULT_FAILED_ISSUES) {
+      await archiveIssue(id);
+    }
+
     await page.goto("/?selected=all");
     await page.getByTestId("issues-layout-board").click();
 
-    // The default project's `failed` column is empty in the seed — drive
-    // the archive from there to verify the empty-column copy.
     const head = page.getByTestId("board-col-head-default-failed");
     await head.hover();
     await page.getByTestId("board-col-gear-default-failed").click();

@@ -502,25 +502,22 @@ impl EventBus {
         }
     }
 
-    /// Allocates the next monotonic sequence number.
-    ///
-    /// Callers MUST hold the replay-buffer mutex across alloc + broadcast +
-    /// buffer push so that snapshot atomicity holds. See [`Self::send`].
-    fn next_seq(&self) -> u64 {
-        self.next_seq.fetch_add(1, Ordering::Relaxed)
-    }
-
     /// Sends an event on the bus. If there are no active receivers the
     /// broadcast send silently fails (this is normal during startup or when
     /// no SSE clients are connected); the event is still recorded in the
     /// replay buffer.
     ///
-    /// Locks the replay buffer across the broadcast send so that
-    /// [`Self::subscribe_with_snapshot`] sees a consistent view (every
-    /// already-emitted seq is either in the buffer or was evicted, never
-    /// lost in transit).
-    fn send(&self, event: ServerEvent) {
+    /// Allocates the next seq, broadcasts, and records into the replay buffer
+    /// all under the same lock so that [`Self::subscribe_with_snapshot`] sees a
+    /// consistent view: every already-allocated seq is either in the buffer or
+    /// was evicted, never in flight between allocation and push.
+    fn send<F>(&self, build: F)
+    where
+        F: FnOnce(u64) -> ServerEvent,
+    {
         let mut guard = self.replay.lock().expect("replay buffer mutex poisoned");
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let event = build(seq);
         let _ = self.sender.send(event.clone());
         if self.replay_capacity > 0 {
             guard.push_back(event);
@@ -536,8 +533,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::IssueCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::IssueCreated {
+            seq,
             issue_id,
             version,
             timestamp: Utc::now(),
@@ -551,8 +548,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::IssueUpdated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::IssueUpdated {
+            seq,
             issue_id,
             version,
             timestamp: Utc::now(),
@@ -566,8 +563,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::IssueDeleted {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::IssueDeleted {
+            seq,
             issue_id,
             version,
             timestamp: Utc::now(),
@@ -581,8 +578,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::PatchCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::PatchCreated {
+            seq,
             patch_id,
             version,
             timestamp: Utc::now(),
@@ -596,8 +593,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::PatchUpdated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::PatchUpdated {
+            seq,
             patch_id,
             version,
             timestamp: Utc::now(),
@@ -611,8 +608,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::PatchDeleted {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::PatchDeleted {
+            seq,
             patch_id,
             version,
             timestamp: Utc::now(),
@@ -626,8 +623,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::SessionCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::SessionCreated {
+            seq,
             session_id,
             version,
             timestamp: Utc::now(),
@@ -641,8 +638,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::SessionUpdated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::SessionUpdated {
+            seq,
             session_id,
             version,
             timestamp: Utc::now(),
@@ -656,8 +653,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::DocumentCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::DocumentCreated {
+            seq,
             document_id,
             version,
             timestamp: Utc::now(),
@@ -671,8 +668,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::DocumentUpdated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::DocumentUpdated {
+            seq,
             document_id,
             version,
             timestamp: Utc::now(),
@@ -686,8 +683,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::DocumentDeleted {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::DocumentDeleted {
+            seq,
             document_id,
             version,
             timestamp: Utc::now(),
@@ -701,8 +698,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::LabelCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::LabelCreated {
+            seq,
             label_id,
             version,
             timestamp: Utc::now(),
@@ -716,8 +713,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::LabelUpdated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::LabelUpdated {
+            seq,
             label_id,
             version,
             timestamp: Utc::now(),
@@ -731,8 +728,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::LabelDeleted {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::LabelDeleted {
+            seq,
             label_id,
             version,
             timestamp: Utc::now(),
@@ -746,8 +743,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::ConversationCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::ConversationCreated {
+            seq,
             conversation_id,
             version,
             timestamp: Utc::now(),
@@ -761,8 +758,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::ConversationUpdated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::ConversationUpdated {
+            seq,
             conversation_id,
             version,
             timestamp: Utc::now(),
@@ -776,8 +773,8 @@ impl EventBus {
         version: u64,
         payload: Arc<MutationPayload>,
     ) {
-        self.send(ServerEvent::SessionEventCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::SessionEventCreated {
+            seq,
             session_id,
             version,
             timestamp: Utc::now(),
@@ -786,8 +783,8 @@ impl EventBus {
     }
 
     pub fn emit_session_state_updated(&self, session_id: SessionId, payload: Arc<MutationPayload>) {
-        self.send(ServerEvent::SessionStateUpdated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::SessionStateUpdated {
+            seq,
             session_id,
             timestamp: Utc::now(),
             payload,
@@ -798,8 +795,8 @@ impl EventBus {
         let sequence = comment.sequence;
         let timestamp = comment.created_at;
         let payload = Arc::new(MutationPayload::Comment { comment, actor });
-        self.send(ServerEvent::CommentCreated {
-            seq: self.next_seq(),
+        self.send(|seq| ServerEvent::CommentCreated {
+            seq,
             issue_id,
             sequence,
             timestamp,
@@ -2110,12 +2107,12 @@ mod tests {
     #[test]
     fn seq_numbers_are_monotonically_increasing() {
         let bus = EventBus::default();
-        let s1 = bus.next_seq();
-        let s2 = bus.next_seq();
-        let s3 = bus.next_seq();
-        assert_eq!(s1, 1);
-        assert_eq!(s2, 2);
-        assert_eq!(s3, 3);
+        for _ in 0..3 {
+            emit_dummy_issue(&bus);
+        }
+        let snapshot = bus.subscribe_with_snapshot();
+        let seqs: Vec<u64> = snapshot.buffered.iter().map(|e| e.seq()).collect();
+        assert_eq!(seqs, vec![1, 2, 3]);
     }
 
     fn dummy_issue() -> Issue {

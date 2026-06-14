@@ -86,7 +86,7 @@ test.describe("Issues page row-level 'Restore' action @issues:restore-archived",
         updateBodies.some(
           (u) =>
             u.url.pathname === `/api/v1/issues/${TARGET_ISSUE}` &&
-            /"deleted"\s*:\s*false/.test(u.body),
+            /"archived"\s*:\s*false/.test(u.body),
         ),
       )
       .toBe(true);
