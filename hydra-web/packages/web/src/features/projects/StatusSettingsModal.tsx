@@ -27,10 +27,7 @@ import { useToast } from "../toast/useToast";
 import { useAgents } from "../../hooks/useAgents";
 import { useUsers } from "../../hooks/useUsers";
 import { LABEL_COLOR_PALETTE } from "../../components/ColorPicker";
-import {
-  PROJECTS_QUERY_KEY,
-  applyOptimisticUpsert,
-} from "./projectCache";
+import { PROJECTS_QUERY_KEY, applyOptimisticUpsert } from "./projectCache";
 import {
   AUTO_ARCHIVE_UNIT_SECONDS,
   blankStatus,
@@ -94,10 +91,7 @@ export function StatusSettingsModal(props: StatusSettingsModalProps) {
         onClose={props.onClose}
         title={`New status · ${props.projectRecord.project.name}`}
       >
-        <AddStatusForm
-          onClose={props.onClose}
-          projectRecord={props.projectRecord}
-        />
+        <AddStatusForm onClose={props.onClose} projectRecord={props.projectRecord} />
       </Modal>
     );
   }
@@ -125,9 +119,7 @@ function EditStatusModal({
   }, [statuses, statusKey]);
   const index = initialStatus?.index ?? -1;
 
-  const [draft, setDraft] = useState<StatusDefinition | null>(
-    () => initialStatus?.status ?? null,
-  );
+  const [draft, setDraft] = useState<StatusDefinition | null>(() => initialStatus?.status ?? null);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   // Resync local draft whenever the modal is opened against a different
@@ -145,18 +137,10 @@ function EditStatusModal({
   // OTHER statuses so re-saving without a rename keeps its own key. The backend
   // now accepts key edits, so a rename re-slugs the key end-to-end.
   const reservedKeys = useMemo(
-    () =>
-      new Set(
-        statuses
-          .filter((_, i) => i !== index)
-          .map((s) => s.key as string),
-      ),
+    () => new Set(statuses.filter((_, i) => i !== index).map((s) => s.key as string)),
     [statuses, index],
   );
-  const { key: derivedKey, error: keyError } = deriveKeyAndError(
-    draft?.label ?? "",
-    reservedKeys,
-  );
+  const { key: derivedKey, error: keyError } = deriveKeyAndError(draft?.label ?? "", reservedKeys);
 
   // Seed the inline prompt editor from the status's document as it was opened —
   // a stable path so renaming the status doesn't refetch and discard edits. On
@@ -178,10 +162,7 @@ function EditStatusModal({
   // through the per-status archive route). The backend cascade handles the
   // issue archives — the client just flips the optimistic statuses list.
   const saveMutation = useMutation({
-    mutationFn: async (next: {
-      nextStatuses: StatusDefinition[];
-      action: "edit" | "archive";
-    }) => {
+    mutationFn: async (next: { nextStatuses: StatusDefinition[]; action: "edit" | "archive" }) => {
       const { nextStatuses, action } = next;
       if (action === "edit") {
         // The edit form uses the original `statusKey` as the path
@@ -193,8 +174,7 @@ function EditStatusModal({
     },
     onMutate: async ({ nextStatuses }) => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
-      const previous =
-        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      const previous = queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
       if (previous) {
         const nextProject = {
           ...projectRecord.project,
@@ -211,10 +191,7 @@ function EditStatusModal({
       if (context?.previous) {
         queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
       }
-      addToast(
-        err instanceof Error ? err.message : "Failed to update status",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to update status", "error");
     },
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
@@ -245,10 +222,7 @@ function EditStatusModal({
       try {
         await upsertPromptDoc(promptPath, promptBody);
       } catch (err) {
-        addToast(
-          err instanceof Error ? err.message : "Failed to save prompt",
-          "error",
-        );
+        addToast(err instanceof Error ? err.message : "Failed to save prompt", "error");
         return;
       }
     }
@@ -281,9 +255,7 @@ function EditStatusModal({
   // the board's active view before the response lands.
   const handleArchive = useCallback(() => {
     if (!canArchive || index < 0) return;
-    const next = statuses.map((s, i) =>
-      i === index ? { ...s, archived: true } : s,
-    );
+    const next = statuses.map((s, i) => (i === index ? { ...s, archived: true } : s));
     saveMutation.mutate(
       { nextStatuses: next, action: "archive" },
       {
@@ -299,15 +271,7 @@ function EditStatusModal({
         },
       },
     );
-  }, [
-    canArchive,
-    index,
-    statuses,
-    saveMutation,
-    addToast,
-    onClose,
-    issueCount,
-  ]);
+  }, [canArchive, index, statuses, saveMutation, addToast, onClose, issueCount]);
 
   if (!draft || index < 0) {
     return (
@@ -359,23 +323,14 @@ function EditStatusModal({
           </Button>
         </div>
         <div className={styles.actionsRight}>
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={onClose}
-            disabled={saveMutation.isPending}
-          >
+          <Button variant="secondary" size="md" onClick={onClose} disabled={saveMutation.isPending}>
             Cancel
           </Button>
           <Button
             variant="primary"
             size="md"
             onClick={handleSave}
-            disabled={
-              saveMutation.isPending ||
-              !!keyError ||
-              !draft.label.trim()
-            }
+            disabled={saveMutation.isPending || !!keyError || !draft.label.trim()}
             data-testid="status-settings-save"
           >
             {saveMutation.isPending ? "Saving…" : "Save"}
@@ -390,9 +345,7 @@ function EditStatusModal({
         actionLabel="Archive"
         pendingLabel="Archiving..."
         description={
-          issueCount > 0
-            ? `${issueCount} issue(s) in this status will be archived.`
-            : undefined
+          issueCount > 0 ? `${issueCount} issue(s) in this status will be archived.` : undefined
         }
         onConfirm={handleArchive}
         isPending={saveMutation.isPending}
@@ -485,9 +438,7 @@ function StatusForm({
 
   // u32 on the wire; empty input clears the cap (None).
   const maxSimultaneousValue =
-    draft.max_simultaneous_sessions == null
-      ? ""
-      : String(draft.max_simultaneous_sessions);
+    draft.max_simultaneous_sessions == null ? "" : String(draft.max_simultaneous_sessions);
   const onMaxSimultaneousChange = (raw: string) => {
     const trimmed = raw.trim();
     if (trimmed === "") {
@@ -545,9 +496,7 @@ function StatusForm({
     return "seconds";
   })();
   const idleTimeoutSeconds =
-    session.idle_timeout?.kind === "seconds"
-      ? String(session.idle_timeout.value)
-      : "";
+    session.idle_timeout?.kind === "seconds" ? String(session.idle_timeout.value) : "";
 
   const setIdleTimeoutMode = (mode: "default" | "infinite" | "seconds") => {
     if (mode === "default") {
@@ -581,13 +530,12 @@ function StatusForm({
   // The new flat picker doesn't model External, so legacy External
   // assignments render as "Unassigned" in the trigger pill until the user
   // re-picks (the underlying value stays put unless they pick a new row).
-  const assigneeView: { name: string; kind: "agent" | "user" } | null =
-    useMemo(() => {
-      if (!principal) return null;
-      if ("Agent" in principal) return { name: principal.Agent.name, kind: "agent" };
-      if ("User" in principal) return { name: principal.User.name, kind: "user" };
-      return null;
-    }, [principal]);
+  const assigneeView: { name: string; kind: "agent" | "user" } | null = useMemo(() => {
+    if (!principal) return null;
+    if ("Agent" in principal) return { name: principal.Agent.name, kind: "agent" };
+    if ("User" in principal) return { name: principal.User.name, kind: "user" };
+    return null;
+  }, [principal]);
 
   const clearAssignee = onEnter?.clear_assignee ?? false;
   const assignToCreator = onEnter?.assign_to_creator ?? false;
@@ -760,16 +708,14 @@ function StatusForm({
               { value: "weeks", label: "weeks" },
             ]}
             value={autoArchiveUnit}
-            onChange={(e) =>
-              onAutoArchiveUnitChange(e.target.value as AutoArchiveUnit)
-            }
+            onChange={(e) => onAutoArchiveUnitChange(e.target.value as AutoArchiveUnit)}
             aria-label="Auto-archive duration unit"
             data-testid="status-settings-auto-archive-unit"
           />
         </div>
         <span className={styles.helpText}>
-          Issues in this status untouched for longer than this duration are
-          archived automatically (by inactivity, not by completion).
+          Issues in this status untouched for longer than this duration are archived automatically
+          (by inactivity, not by completion).
         </span>
       </div>
 
@@ -796,9 +742,9 @@ function StatusForm({
             data-testid="status-settings-session-settings-content"
           >
             <span className={styles.helpText}>
-              Per-status overrides applied when spawning sessions for issues
-              in this status. Issue-level settings still win over these.
-              Leave blank to inherit the global / issue defaults.
+              Per-status overrides applied when spawning sessions for issues in this status.
+              Issue-level settings still win over these. Leave blank to inherit the global / issue
+              defaults.
             </span>
 
             <div className={styles.row}>
@@ -814,139 +760,134 @@ function StatusForm({
                 data-testid="status-settings-max-simultaneous-sessions"
               />
               <span className={styles.helpText}>
-                Cap on simultaneously-active sessions (interactive + headless,
-                across all agents) for issues in this status. New spawns
-                block until the active count drops below the cap.
+                Cap on simultaneously-active sessions (interactive + headless, across all agents)
+                for issues in this status. New spawns block until the active count drops below the
+                cap.
               </span>
             </div>
 
             <div className={styles.statusInputs}>
-          <Input
-            label="CPU limit"
-            value={session.cpu_limit ?? ""}
-            onChange={(e) => setSessionString("cpu_limit", e.target.value)}
-            placeholder="e.g. 500m, 2"
-            data-testid="status-settings-cpu-limit"
-          />
-          <Input
-            label="Memory limit"
-            value={session.memory_limit ?? ""}
-            onChange={(e) => setSessionString("memory_limit", e.target.value)}
-            placeholder="e.g. 1Gi, 512Mi"
-            data-testid="status-settings-memory-limit"
-          />
-        </div>
+              <Input
+                label="CPU limit"
+                value={session.cpu_limit ?? ""}
+                onChange={(e) => setSessionString("cpu_limit", e.target.value)}
+                placeholder="e.g. 500m, 2"
+                data-testid="status-settings-cpu-limit"
+              />
+              <Input
+                label="Memory limit"
+                value={session.memory_limit ?? ""}
+                onChange={(e) => setSessionString("memory_limit", e.target.value)}
+                placeholder="e.g. 1Gi, 512Mi"
+                data-testid="status-settings-memory-limit"
+              />
+            </div>
 
-        <div className={styles.statusInputs}>
-          <Input
-            label="Container image"
-            value={session.image ?? ""}
-            onChange={(e) => setSessionString("image", e.target.value)}
-            placeholder="ghcr.io/org/image:tag"
-            data-testid="status-settings-image"
-          />
-          <Input
-            label="Model"
-            value={session.model ?? ""}
-            onChange={(e) => setSessionString("model", e.target.value)}
-            placeholder="e.g. claude-opus-4-7"
-            data-testid="status-settings-model"
-          />
-        </div>
+            <div className={styles.statusInputs}>
+              <Input
+                label="Container image"
+                value={session.image ?? ""}
+                onChange={(e) => setSessionString("image", e.target.value)}
+                placeholder="ghcr.io/org/image:tag"
+                data-testid="status-settings-image"
+              />
+              <Input
+                label="Model"
+                value={session.model ?? ""}
+                onChange={(e) => setSessionString("model", e.target.value)}
+                placeholder="e.g. claude-opus-4-7"
+                data-testid="status-settings-model"
+              />
+            </div>
 
-        <div className={styles.statusInputs}>
-          <Input
-            label="Branch"
-            value={session.branch ?? ""}
-            onChange={(e) => setSessionString("branch", e.target.value)}
-            placeholder="default branch"
-            data-testid="status-settings-branch"
-          />
-          <Input
-            label="Max retries"
-            type="number"
-            min={0}
-            step={1}
-            value={session.max_retries == null ? "" : String(session.max_retries)}
-            onChange={(e) => setSessionMaxRetries(e.target.value)}
-            placeholder="Inherit"
-            data-testid="status-settings-max-retries"
-          />
-        </div>
+            <div className={styles.statusInputs}>
+              <Input
+                label="Branch"
+                value={session.branch ?? ""}
+                onChange={(e) => setSessionString("branch", e.target.value)}
+                placeholder="default branch"
+                data-testid="status-settings-branch"
+              />
+              <Input
+                label="Max retries"
+                type="number"
+                min={0}
+                step={1}
+                value={session.max_retries == null ? "" : String(session.max_retries)}
+                onChange={(e) => setSessionMaxRetries(e.target.value)}
+                placeholder="Inherit"
+                data-testid="status-settings-max-retries"
+              />
+            </div>
 
-        <div
-          className={styles.idleTimeout}
-          data-testid="status-settings-idle-timeout"
-        >
-          <label className={styles.label}>Idle timeout</label>
-          <div className={styles.idleTimeoutInputs}>
-            <Input
-              type="number"
-              min={1}
-              step={1}
-              value={idleTimeoutSeconds}
-              onChange={(e) => setIdleTimeoutSeconds(e.target.value)}
-              disabled={idleTimeoutMode !== "seconds"}
-              placeholder={
-                idleTimeoutMode === "infinite" ? "Never" : "Seconds"
-              }
-              aria-label="Idle timeout seconds"
-              data-testid="status-settings-idle-timeout-seconds"
-            />
-            <Picker
-              label="Idle timeout"
-              hideLabel
-              open={idleTimeoutPickerOpen}
-              onToggle={() => setIdleTimeoutPickerOpen((v) => !v)}
-              value={
-                idleTimeoutMode === "default" ? (
-                  <span className={styles.pillEmpty}>Server default</span>
-                ) : idleTimeoutMode === "infinite" ? (
-                  <span>Never</span>
-                ) : (
-                  <span>Custom</span>
-                )
-              }
-              data-testid="status-settings-idle-timeout-mode"
-            >
-              <PickerRow
-                active={idleTimeoutMode === "default"}
-                onClick={() => {
-                  setIdleTimeoutMode("default");
-                  setIdleTimeoutPickerOpen(false);
-                }}
-              >
-                <span>Server default</span>
-                <span className={styles.popSpacer} />
-              </PickerRow>
-              <PickerRow
-                active={idleTimeoutMode === "seconds"}
-                onClick={() => {
-                  setIdleTimeoutMode("seconds");
-                  setIdleTimeoutPickerOpen(false);
-                }}
-              >
-                <span>Custom (seconds)</span>
-                <span className={styles.popSpacer} />
-              </PickerRow>
-              <PickerRow
-                active={idleTimeoutMode === "infinite"}
-                onClick={() => {
-                  setIdleTimeoutMode("infinite");
-                  setIdleTimeoutPickerOpen(false);
-                }}
-              >
-                <span>Never</span>
-                <span className={styles.popSpacer} />
-              </PickerRow>
-            </Picker>
-          </div>
-          <span className={styles.helpText}>
-            Per-session idle timeout for sessions spawned for this status.
-            "Server default" falls back to the global config; "Never" lets
-            long-running dev-preview sessions stay alive.
-          </span>
-        </div>
+            <div className={styles.idleTimeout} data-testid="status-settings-idle-timeout">
+              <label className={styles.label}>Idle timeout</label>
+              <div className={styles.idleTimeoutInputs}>
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={idleTimeoutSeconds}
+                  onChange={(e) => setIdleTimeoutSeconds(e.target.value)}
+                  disabled={idleTimeoutMode !== "seconds"}
+                  placeholder={idleTimeoutMode === "infinite" ? "Never" : "Seconds"}
+                  aria-label="Idle timeout seconds"
+                  data-testid="status-settings-idle-timeout-seconds"
+                />
+                <Picker
+                  label="Idle timeout"
+                  hideLabel
+                  open={idleTimeoutPickerOpen}
+                  onToggle={() => setIdleTimeoutPickerOpen((v) => !v)}
+                  value={
+                    idleTimeoutMode === "default" ? (
+                      <span className={styles.pillEmpty}>Server default</span>
+                    ) : idleTimeoutMode === "infinite" ? (
+                      <span>Never</span>
+                    ) : (
+                      <span>Custom</span>
+                    )
+                  }
+                  data-testid="status-settings-idle-timeout-mode"
+                >
+                  <PickerRow
+                    active={idleTimeoutMode === "default"}
+                    onClick={() => {
+                      setIdleTimeoutMode("default");
+                      setIdleTimeoutPickerOpen(false);
+                    }}
+                  >
+                    <span>Server default</span>
+                    <span className={styles.popSpacer} />
+                  </PickerRow>
+                  <PickerRow
+                    active={idleTimeoutMode === "seconds"}
+                    onClick={() => {
+                      setIdleTimeoutMode("seconds");
+                      setIdleTimeoutPickerOpen(false);
+                    }}
+                  >
+                    <span>Custom (seconds)</span>
+                    <span className={styles.popSpacer} />
+                  </PickerRow>
+                  <PickerRow
+                    active={idleTimeoutMode === "infinite"}
+                    onClick={() => {
+                      setIdleTimeoutMode("infinite");
+                      setIdleTimeoutPickerOpen(false);
+                    }}
+                  >
+                    <span>Never</span>
+                    <span className={styles.popSpacer} />
+                  </PickerRow>
+                </Picker>
+              </div>
+              <span className={styles.helpText}>
+                Per-session idle timeout for sessions spawned for this status. "Server default"
+                falls back to the global config; "Never" lets long-running dev-preview sessions stay
+                alive.
+              </span>
+            </div>
           </div>
         )}
       </div>
@@ -969,164 +910,153 @@ function StatusForm({
           <span className={styles.onEnterTitle}>On enter</span>
         </button>
         {onEnterOpen && (
-          <div
-            className={styles.collapsibleContent}
-            data-testid="status-settings-on-enter-content"
-          >
+          <div className={styles.collapsibleContent} data-testid="status-settings-on-enter-content">
             <div data-testid="status-settings-assignee">
-          <fieldset
-            className={styles.assigneeMode}
-            data-testid="status-settings-assignment-mode"
-          >
-            <legend className={styles.label}>Assignee on enter</legend>
-            <label>
-              <input
-                type="radio"
-                name="status-settings-assignment-mode"
-                checked={assignmentMode === "pick"}
-                onChange={() => setAssignmentMode("pick")}
-                data-testid="status-settings-assignment-mode-pick"
-              />
-              Pick
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="status-settings-assignment-mode"
-                checked={assignmentMode === "clear"}
-                onChange={() => setAssignmentMode("clear")}
-                data-testid="status-settings-clear-assignee"
-              />
-              Clear assignee
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="status-settings-assignment-mode"
-                checked={assignmentMode === "creator"}
-                onChange={() => setAssignmentMode("creator")}
-                data-testid="status-settings-assign-to-creator"
-              />
-              Assign to creator
-            </label>
-          </fieldset>
-          <div
-            className={
-              assignmentMode === "pick"
-                ? undefined
-                : styles.assigneePickerDisabled
-            }
-          >
-          <Picker
-            label="Assign to"
-            open={assignmentMode === "pick" && assigneePickerOpen}
-            onToggle={() => {
-              if (assignmentMode === "pick") {
-                setAssigneePickerOpen((v) => !v);
-              }
-            }}
-            wide
-            value={
-              assignmentMode === "creator" ? (
-                <span className={styles.pillContent}>
-                  <span>Issue creator</span>
-                </span>
-              ) : assignmentMode === "clear" ? (
-                <span className={styles.pillEmpty}>Unassigned</span>
-              ) : assigneeView ? (
-                <span className={styles.pillContent}>
-                  <Avatar
-                    name={assigneeView.name}
-                    kind={assigneeView.kind === "agent" ? "agent" : "human"}
-                    size="md"
+              <fieldset
+                className={styles.assigneeMode}
+                data-testid="status-settings-assignment-mode"
+              >
+                <legend className={styles.label}>Assignee on enter</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="status-settings-assignment-mode"
+                    checked={assignmentMode === "pick"}
+                    onChange={() => setAssignmentMode("pick")}
+                    data-testid="status-settings-assignment-mode-pick"
                   />
-                  <span>{assigneeView.name}</span>
-                </span>
-              ) : (
-                <span className={styles.pillEmpty}>Unassigned</span>
-              )
-            }
-          >
-            <PickerRow
-              active={!principal}
-              onClick={() => {
-                setAssign(null);
-                setAssigneePickerOpen(false);
-              }}
-            >
-              <span className={styles.pillEmpty}>Unassigned</span>
-              <span className={styles.popSpacer} />
-            </PickerRow>
-            {agents.length > 0 && (
-              <>
-                <div className={styles.popSection}>Agents</div>
-                {agents.map((name) => (
-                  <PickerRow
-                    key={`agents/${name}`}
-                    active={
-                      !!principal &&
-                      "Agent" in principal &&
-                      principal.Agent.name === name
+                  Pick
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="status-settings-assignment-mode"
+                    checked={assignmentMode === "clear"}
+                    onChange={() => setAssignmentMode("clear")}
+                    data-testid="status-settings-clear-assignee"
+                  />
+                  Clear assignee
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="status-settings-assignment-mode"
+                    checked={assignmentMode === "creator"}
+                    onChange={() => setAssignmentMode("creator")}
+                    data-testid="status-settings-assign-to-creator"
+                  />
+                  Assign to creator
+                </label>
+              </fieldset>
+              <div
+                className={assignmentMode === "pick" ? undefined : styles.assigneePickerDisabled}
+              >
+                <Picker
+                  label="Assign to"
+                  open={assignmentMode === "pick" && assigneePickerOpen}
+                  onToggle={() => {
+                    if (assignmentMode === "pick") {
+                      setAssigneePickerOpen((v) => !v);
                     }
+                  }}
+                  wide
+                  value={
+                    assignmentMode === "creator" ? (
+                      <span className={styles.pillContent}>
+                        <span>Issue creator</span>
+                      </span>
+                    ) : assignmentMode === "clear" ? (
+                      <span className={styles.pillEmpty}>Unassigned</span>
+                    ) : assigneeView ? (
+                      <span className={styles.pillContent}>
+                        <Avatar
+                          name={assigneeView.name}
+                          kind={assigneeView.kind === "agent" ? "agent" : "human"}
+                          size="md"
+                        />
+                        <span>{assigneeView.name}</span>
+                      </span>
+                    ) : (
+                      <span className={styles.pillEmpty}>Unassigned</span>
+                    )
+                  }
+                >
+                  <PickerRow
+                    active={!principal}
                     onClick={() => {
-                      setAssign({ Agent: { name } });
+                      setAssign(null);
                       setAssigneePickerOpen(false);
                     }}
                   >
-                    <Avatar name={name} kind="agent" size="md" />
-                    <span>{name}</span>
+                    <span className={styles.pillEmpty}>Unassigned</span>
                     <span className={styles.popSpacer} />
                   </PickerRow>
-                ))}
-              </>
-            )}
-            {users.length > 0 && (
-              <>
-                <div className={styles.popSection}>Users</div>
-                {users.map((name) => (
-                  <PickerRow
-                    key={`users/${name}`}
-                    active={
-                      !!principal &&
-                      "User" in principal &&
-                      principal.User.name === name
-                    }
-                    onClick={() => {
-                      setAssign({ User: { name } });
-                      setAssigneePickerOpen(false);
-                    }}
-                  >
-                    <Avatar name={name} kind="human" size="md" />
-                    <span>{name}</span>
-                    <span className={styles.popSpacer} />
-                  </PickerRow>
-                ))}
-              </>
-            )}
-          </Picker>
-          </div>
-        </div>
-        <Input
-          label="Attach form"
-          value={attachForm}
-          onChange={(e) => setAttachForm(e.target.value)}
-          placeholder="/forms/review.yaml"
-        />
-        <div className={styles.flagRow}>
-          <label>
-            <input
-              type="checkbox"
-              checked={teardownWork}
-              onChange={(e) => setTeardownWork(e.target.checked)}
-              data-testid="status-settings-teardown-work"
+                  {agents.length > 0 && (
+                    <>
+                      <div className={styles.popSection}>Agents</div>
+                      {agents.map((name) => (
+                        <PickerRow
+                          key={`agents/${name}`}
+                          active={
+                            !!principal && "Agent" in principal && principal.Agent.name === name
+                          }
+                          onClick={() => {
+                            setAssign({ Agent: { name } });
+                            setAssigneePickerOpen(false);
+                          }}
+                        >
+                          <Avatar name={name} kind="agent" size="md" />
+                          <span>{name}</span>
+                          <span className={styles.popSpacer} />
+                        </PickerRow>
+                      ))}
+                    </>
+                  )}
+                  {users.length > 0 && (
+                    <>
+                      <div className={styles.popSection}>Users</div>
+                      {users.map((name) => (
+                        <PickerRow
+                          key={`users/${name}`}
+                          active={
+                            !!principal && "User" in principal && principal.User.name === name
+                          }
+                          onClick={() => {
+                            setAssign({ User: { name } });
+                            setAssigneePickerOpen(false);
+                          }}
+                        >
+                          <Avatar name={name} kind="human" size="md" />
+                          <span>{name}</span>
+                          <span className={styles.popSpacer} />
+                        </PickerRow>
+                      ))}
+                    </>
+                  )}
+                </Picker>
+              </div>
+            </div>
+            <Input
+              label="Attach form"
+              value={attachForm}
+              onChange={(e) => setAttachForm(e.target.value)}
+              placeholder="/forms/review.yaml"
             />
-            Teardown work
-          </label>
-        </div>
-        <span className={styles.helpText}>
-          "Pick", "Clear assignee", and "Assign to creator" are mutually
-          exclusive — the picker is only interactive in Pick mode.
-        </span>
+            <div className={styles.flagRow}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={teardownWork}
+                  onChange={(e) => setTeardownWork(e.target.checked)}
+                  data-testid="status-settings-teardown-work"
+                />
+                Teardown work
+              </label>
+            </div>
+            <span className={styles.helpText}>
+              "Pick", "Clear assignee", and "Assign to creator" are mutually exclusive — the picker
+              is only interactive in Pick mode.
+            </span>
           </div>
         )}
       </div>
@@ -1173,19 +1103,11 @@ function AddStatusForm({ onClose, projectRecord }: AddStatusFormProps) {
   const projectId = projectRecord.project_id;
   const projectKey = projectRecord.project.key as string;
 
-  const [draft, setDraft] = useState<StatusDefinition>(() =>
-    blankStatus(statuses.length),
-  );
+  const [draft, setDraft] = useState<StatusDefinition>(() => blankStatus(statuses.length));
   const [promptBody, setPromptBody] = useState("");
 
-  const existingKeys = useMemo(
-    () => new Set(statuses.map((s) => s.key as string)),
-    [statuses],
-  );
-  const { key: derivedKey, error: keyError } = deriveKeyAndError(
-    draft.label,
-    existingKeys,
-  );
+  const existingKeys = useMemo(() => new Set(statuses.map((s) => s.key as string)), [statuses]);
+  const { key: derivedKey, error: keyError } = deriveKeyAndError(draft.label, existingKeys);
   const labelMissing = !draft.label.trim();
   const promptPath = promptPathFor(projectKey, derivedKey);
 
@@ -1200,8 +1122,7 @@ function AddStatusForm({ onClose, projectRecord }: AddStatusFormProps) {
     },
     onMutate: async (status) => {
       await queryClient.cancelQueries({ queryKey: PROJECTS_QUERY_KEY });
-      const previous =
-        queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
+      const previous = queryClient.getQueryData<ListProjectsResponse>(PROJECTS_QUERY_KEY);
       if (previous) {
         const nextProject = {
           ...projectRecord.project,
@@ -1218,10 +1139,7 @@ function AddStatusForm({ onClose, projectRecord }: AddStatusFormProps) {
       if (context?.previous) {
         queryClient.setQueryData(PROJECTS_QUERY_KEY, context.previous);
       }
-      addToast(
-        err instanceof Error ? err.message : "Failed to add status",
-        "error",
-      );
+      addToast(err instanceof Error ? err.message : "Failed to add status", "error");
     },
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: PROJECTS_QUERY_KEY });
@@ -1237,8 +1155,7 @@ function AddStatusForm({ onClose, projectRecord }: AddStatusFormProps) {
     },
   });
 
-  const canSave =
-    !keyError && !labelMissing && !!derivedKey && !saveMutation.isPending;
+  const canSave = !keyError && !labelMissing && !!derivedKey && !saveMutation.isPending;
 
   const handleSave = useCallback(() => {
     if (!canSave) return;
@@ -1266,21 +1183,13 @@ function AddStatusForm({ onClose, projectRecord }: AddStatusFormProps) {
       <div className={styles.actions} data-testid="status-settings-actions">
         <div className={styles.actionsLeft}>
           {keyError && draft.label.trim() && (
-            <span
-              className={styles.error}
-              data-testid="status-settings-new-error"
-            >
+            <span className={styles.error} data-testid="status-settings-new-error">
               {keyError}
             </span>
           )}
         </div>
         <div className={styles.actionsRight}>
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={onClose}
-            disabled={saveMutation.isPending}
-          >
+          <Button variant="secondary" size="md" onClick={onClose} disabled={saveMutation.isPending}>
             Cancel
           </Button>
           <Button
