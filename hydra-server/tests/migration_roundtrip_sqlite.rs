@@ -1182,7 +1182,7 @@ async fn drop_is_assignment_agent_migration_is_idempotent(pool: &SqlitePool) -> 
 }
 
 // ---------------------------------------------------------------------------
-// 20260722000000_split_agents_max_simultaneous. Renames
+// 20260722000002_split_agents_max_simultaneous. Renames
 // `agents.max_simultaneous` to `max_simultaneous_headless` and adds a new
 // `max_simultaneous_interactive` column back-filled from the pre-migration
 // value so existing per-agent caps are preserved on both axes.
@@ -4493,7 +4493,7 @@ async fn add_projects_session_settings_store_roundtrip(pool: &SqlitePool) -> Res
 }
 
 // ---------------------------------------------------------------------------
-// 20260723000000_drop_repositories_default_image. The per-repo default_image
+// 20260723000001_drop_repositories_default_image. The per-repo default_image
 // override was never wired into image resolution at runtime — image is
 // resolved off `session.image` with a fallback to `config.job.default_image`,
 // and the only intended consumer (`ResolvedBundle.default_image`) was
