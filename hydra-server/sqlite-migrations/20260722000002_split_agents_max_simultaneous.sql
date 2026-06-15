@@ -1,4 +1,4 @@
--- Sister to the Postgres `20260722000000_split_agents_max_simultaneous.sql`.
+-- Sister to the Postgres `20260722000002_split_agents_max_simultaneous.sql`.
 -- Split `agents.max_simultaneous` into per-mode caps
 -- `max_simultaneous_interactive` / `max_simultaneous_headless` so a SWE
 -- agent can be limited to N concurrent live-preview conversations without

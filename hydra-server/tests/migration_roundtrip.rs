@@ -1224,7 +1224,7 @@ async fn drop_is_assignment_agent_preserves_rows(pool: &PgPool) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// 20260722000000_split_agents_max_simultaneous. Renames
+// 20260722000002_split_agents_max_simultaneous. Renames
 // `metis.agents.max_simultaneous` to `max_simultaneous_headless` and adds
 // a new `max_simultaneous_interactive` column back-filled from the
 // pre-migration value so existing per-agent caps are preserved on both

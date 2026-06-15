@@ -1,3 +1,10 @@
+-- Sister to the Postgres `20260723000000_drop_repositories_default_image.sql`.
+-- The version prefix is intentionally one tick ahead of the pg copy:
+-- `20260723000000` was already taken in sqlite by
+-- `tighten_trigger_action_order` (sqlite-only — no pg sibling at that
+-- timestamp), so this migration moves to `20260723000001` here while the
+-- pg copy stays at `20260723000000`. SQL body is identical to the pg copy.
+--
 -- Drop the dead `repositories_v2.default_image` column. The per-repo image
 -- override has never flowed into image resolution at runtime: `ResolvedBundle`
 -- was hardcoded to `default_image: None` in `resolve_context`, so the only
